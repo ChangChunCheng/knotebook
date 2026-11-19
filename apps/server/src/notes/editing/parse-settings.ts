@@ -16,7 +16,7 @@ export interface ParseLimits {
 export const DEFAULT_PARSE_WORKER_MEMORY_MB = SITE_LIMITS.parseWorkerMemoryMb.default;
 /** The slowest case, a 256 KiB `<br>`-dense paragraph, takes ~5–6 s; 10 s keeps pre-v0.15 content writable (~1.7×) and bounds how long others wait behind one user. */
 export const DEFAULT_PARSE_TIMEOUT_MS = SITE_LIMITS.parseTimeoutMs.default;
-/** A job can run up to 4× the time limit (bulk write-back planning: 3× file budget + 1× whole-note comparison), and someone queued behind it must still get a turn rather than a 503. */
+/** Default = `QUEUE_WAIT_TIMEOUT_FACTOR` × time limit + `QUEUE_WAIT_SLACK_MS` (follows `PARSE_TIMEOUT_MS` unless `PARSE_QUEUE_WAIT_MS` is set; 45 s by default). A job can run up to 4× the time limit (bulk write-back planning: 3× file budget + 1× whole-note comparison; read/apply conversions are 3×), and someone queued behind it must still get a turn rather than a 503. With one worker, only two or more full-length jobs ahead make a waiter time out. */
 export const QUEUE_WAIT_TIMEOUT_FACTOR = 4;
 export const QUEUE_WAIT_SLACK_MS = 5_000;
 export const DEFAULT_PARSE_QUEUE_WAIT_MS = QUEUE_WAIT_TIMEOUT_FACTOR * DEFAULT_PARSE_TIMEOUT_MS + QUEUE_WAIT_SLACK_MS;
@@ -48,7 +48,7 @@ const readOrNull = (path: string): string | null => {
   }
 };
 
-/** `availableParallelism()` is unreliable under cgroup v1 (Node 22.23 in `docker run --cpus=2` returned the host's 24), so take the smaller of it and the cgroup quota. */
+/** `availableParallelism()` is unreliable under cgroup v1 (Node 22.23 in `docker run --cpus=2` returned the host's 24), so take the smaller of it and the cgroup quota (rounded up); without a quota (`max`, -1) or off Linux, `availableParallelism()` alone. */
 export function detectCpuCount(probe: CpuProbe = {}): { cpus: number; source: CpuSource } {
   const read = probe.readFile ?? readOrNull;
   const ap = Math.max(1, (probe.availableParallelism ?? availableParallelism)());

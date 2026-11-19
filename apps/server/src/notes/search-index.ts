@@ -1,4 +1,4 @@
-// An FK violation counts as `"gone"` defensively: the transaction already holds notes KEY SHARE, so current paths can't reach it (no test guards it). `bumpSearchIndexVersion` locks only the state row (a deleter holds notes then waits on the state row: no cycle) and advances only when hash and extractor version match.
+// An FK violation counts as `"gone"` defensively: the transaction already holds notes KEY SHARE, so current paths can't reach it (no test guards it). `bumpSearchIndexVersion` locks only the state row (a deleter holds notes then waits on the state row: no cycle) and advances only when hash and extractor version match, returning the row count (0 → the caller clears its cache). Other errors are rethrown (the store swallows, backfill warns).
 import { and, asc, eq, gt, isNull, lt, ne, or, sql } from "drizzle-orm";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";

@@ -1,4 +1,4 @@
-// The visibility semantics (owned ∪ shared ∪ grouped) must have one copy: drift in a second copy would be caught by no test. Four other visibility queries hand-write their group branch (different column sets): `candidates.ts`, `service.ts` `loadNoteAudience`, `links.ts` `fetchBacklinks`, `tx/write-links.ts`.
+// Shared by `GET /api/notes`, `GET /api/favorites` and MCP `list_notes`/`search_notes`; trashed notes are always excluded (each branch has `deleted_at IS NULL`). The visibility semantics (owned ∪ shared ∪ grouped) must have one copy: drift in a second copy would be caught by no test. Four other visibility queries hand-write their group branch (different column sets): `candidates.ts`, `service.ts` `loadNoteAudience`, `links.ts` `fetchBacklinks`, `tx/write-links.ts`.
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
@@ -57,7 +57,7 @@ function placementFolderColumn() {
 }
 
 /**
- * `shared` requires `group_id IS NULL` explicitly rather than relying on `owner_id <> $u` being false on NULL. Column order must be identical across branches (a union is positional). Builders are mutable and single-use, so every call builds fresh ones; don't `.where()` the result (it replaces, not ANDs): pass `extraWhere`. `extra` takes only additional output columns.
+ * The grouped `role` is a CASE on `can_edit`, same as `roleFromGroupFlags` (equivalence test). `shared` requires `group_id IS NULL` explicitly rather than relying on `owner_id <> $u` being false on NULL. Column order must be identical across branches (a union is positional). Builders are mutable and single-use, so every call builds fresh ones; don't `.where()` the result (it replaces, not ANDs, and the contamination is retroactive): pass `extraWhere`. `extra` takes only additional output columns. `and(cond, undefined)` is safe: drizzle drops undefined.
  */
 export function visibleNoteBranches<E extends Record<string, SQL.Aliased>>(
   db: DbOrTx,

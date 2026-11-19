@@ -14,7 +14,7 @@ export interface ParseRequest {
   siteOrigin: string;
   budget?: ParseBudget;
 }
-/** Bulk write-back parses a file many times (and again after a fingerprint mismatch), so a per-parse limit isn't enough: a shared per-file budget caps total worker time. */
+/** Bulk write-back parses a file many times (and again after a fingerprint mismatch), so a per-parse limit isn't enough: a shared per-file budget (ms, deducted per parse) caps total worker time: once spent, later parses return too-complex without a worker, and a sent parse's limit never exceeds what's left. */
 export interface ParseBudget {
   remainingMs: number;
 }
@@ -23,7 +23,7 @@ export type ParseOutcome = ParsedMarkdown | ParseFailure;
 
 export interface MarkdownParser {
   parse(req: ParseRequest): Promise<ParseOutcome>;
-  /** Whole-file `markdownToHTML` is quadratic on inputs like repeated `*a ` (~64 s for 256 KiB). */
+  /** Whole-file `markdownToHTML` is quadratic on inputs like repeated `*a ` (~64 s for 256 KiB). Returns the line index, null if none, or `"too_complex"` on timeout/OOM/stack overflow. */
   openFenceLine(owner: string, lines: readonly string[], budget?: ParseBudget): Promise<number | null | "too_complex">;
   fileBudget(): ParseBudget;
   timeoutMs(): number;
@@ -65,7 +65,7 @@ export function runOpenFenceLine(lines: readonly string[]): number | null | "too
   }
 }
 
-/** The same thread can't stop midway, so the time spent is deducted afterwards. */
+/** Exhausted budget → don't run, return `tooComplex`. The same thread can't stop midway, so the time spent is deducted afterwards. */
 function charged<T, F>(budget: ParseBudget | undefined, tooComplex: F, run: () => T): T | F {
   if (budget === undefined) return run();
   if (budget.remainingMs <= 0) return tooComplex;
@@ -77,7 +77,7 @@ function charged<T, F>(budget: ParseBudget | undefined, tooComplex: F, run: () =
   }
 }
 
-/** Unit tests only; production runtimes use the worker pool (pinned by `test/unit/parse-pool.test.ts`). */
+/** Unit tests only; production runtimes use the worker pool (pinned by `test/unit/parse-pool.test.ts`). Rebuilds the editor when `rebuilds` changes (the runtime replaced its window). */
 export class InlineMarkdownParser implements MarkdownParser {
   private editor: ParserEditor | null = null;
   private builtAt = -1;

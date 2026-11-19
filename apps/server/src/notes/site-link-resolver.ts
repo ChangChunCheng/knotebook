@@ -1,4 +1,4 @@
-// Trashed candidates → null, decided before `lookup` returns rather than by adding conditions to `where`/`byId`, which would change `resolveNotePath`'s lookup order (a trashed exact-slug hit would be filtered out and resolve to another note via redirects or prev_slug).
+// User scope accepts a target only if the owner can see it (`resolveNoteAccess(owner).role !== "none"`); group scope only same-group targets, with no user check. `/n/` and `/g/` resolve redirects and prev_slug, `/notes/<ref>` legacy slugs. Trashed candidates → null, decided before `lookup` returns rather than by adding conditions to `where`/`byId`, which would change `resolveNotePath`'s lookup order (a trashed exact-slug hit would be filtered out and resolve to another note via redirects or prev_slug).
 import { eq, sql } from "drizzle-orm";
 import type { SiteLinkTarget, SiteNoteHref } from "@knotebook/shared";
 import type { Db } from "../db/index.js";

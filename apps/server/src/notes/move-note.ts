@@ -1,4 +1,4 @@
-// Callers pass lowercase ids; `toLowerCase` is kept defensively (kicks and live docs are keyed by lowercase). `versions.relocated` and the connection kick run only after a successful commit. A `.transaction(` here must be a single `moveNoteToGroupInTx` call (test/unit/s14-structure.test.ts).
+// Callers pass lowercase ids; `toLowerCase` is kept defensively (kicks and live docs are keyed by lowercase). `versions.relocated` and the connection kick run only after a successful commit. A `.transaction(` here must be a single `moveNoteToGroupInTx` call (test/unit/s14-structure.test.ts). With `folderId`: non-UUID or invisible → 404 `folder_not_found`, a folder of another group → 400 `folder_cross_space` (both returned as `aborted`); `can_edit` and the folder lock are judged in the transaction.
 import type { CollabHooks } from "../collab/hooks.js";
 import type { VersionService } from "../collab/versions.js";
 import type { Db } from "../db/index.js";
@@ -59,7 +59,7 @@ export async function moveNoteToGroup(
     if (isNoteFolderSpaceViolation(err) || foreignKeyViolationConstraint(err) === "notes_folder_fk") {
       return { kind: "aborted", err: new TxAbort(404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE) };
     }
-    // Defence in depth: the group's KEY SHARE is held. Only a hard-deleted mover account (`uploads.charged_to_id` FK; no such path in `src/`) could hit an FK here.
+    // Defence in depth: the group's KEY SHARE is held. Only a hard-deleted mover account (`uploads.charged_to_id` FK; no such path in `src/`) could hit an FK here; both map to `group_not_found`.
     if (isForeignKeyViolation(err)) return { kind: "group_not_found" };
     if (isRetryableTxError(err)) return { kind: "busy" };
     throw err;

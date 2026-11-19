@@ -1,3 +1,4 @@
+// Clones keep attributes and block ids; only nodes whose `url` is exactly `/api/uploads/<uuid>` are collected (several may share an id).
 // Known gap: upload URLs inside text link marks and same-origin absolute URLs are not rewritten.
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";

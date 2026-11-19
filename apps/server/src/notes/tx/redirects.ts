@@ -1,4 +1,4 @@
-// Transaction-only: moves and transfers rewrite a slug and write redirects in one transaction. Expired rows are purged first (lazy cleanup), then upsert (latest write wins).
+// Transaction-only: moves and transfers rewrite a slug and write redirects in one transaction. Expired rows are purged first (lazy cleanup), then upsert (latest write wins, `expires_at = now() + 1 month`).
 import { sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { noteRedirects } from "../../db/schema.js";

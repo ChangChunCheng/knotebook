@@ -1,5 +1,5 @@
 /**
- * Lock the row first, then read: `old_custom` must be the version this UPDATE actually overwrote, which also holds under concurrency (RETURNING with a subquery reads the statement-start snapshot under EPQ and gets it wrong). 0 rows = ownership changed after authorization (e.g. a move), or the row was deleted/trashed → null; the caller rereads to tell 404 from 409.
+ * Lock the row first, then read: `old_custom` must be the version this UPDATE actually overwrote, which also holds under concurrency (RETURNING with a subquery reads the statement-start snapshot under EPQ and gets it wrong). 0 rows = ownership changed after authorization (e.g. a move), or the row was deleted/trashed → null; the caller rereads to tell 404 from 409. A slug-index 23505 is rethrown for the caller to classify outside the transaction.
  * Personal scope with `old_custom` deletes the redirect for the new prev in the same transaction (redirect vs prev: last write wins); group scope doesn't (`/g/` redirects are only written by transfer, which deletes the group in the same transaction).
  * `redirectHandle` comes from the caller: don't query users here (an in-transaction owner-handle lookup deadlocked permanently under concurrency).
  */

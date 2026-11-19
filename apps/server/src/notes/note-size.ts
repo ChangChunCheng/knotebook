@@ -1,6 +1,7 @@
 /**
+ * Cap `NOTE_MAX_BYTES` (default 5 MiB; effective value from `SiteLimits`), measured on the Yjs state (`note_states.ydoc`); checked for API, MCP, bulk write-back, revert and version apply (a copy is compared against 0).
  * Judged on the result of a trial apply on a new doc, not on the structure an update claims (inferring added/deleted from structure is whack-a-mole: duplicate delete ranges, deleted map keys, subdoc meta, XmlHook names, BigInt in ContentAny). Rejects iff stateAfter > cap and stateAfter > stateBefore and (liveAfter > liveBefore or growth > SLACK): deletions and same-size rewrites on an over-cap note are accepted, state-only growth (set a huge key, delete it) is not.
- * Browser collab updates aren't checked on the server: the web editor guards paste/drop/in-site AI itself (`apps/web/src/lib/note-size-guard.ts`). Notes already over the limit still open, read and export.
+ * Browser collab updates aren't checked on the server: the web editor guards paste/drop/in-site AI itself (`apps/web/src/lib/note-size-guard.ts`). Notes already over the limit still open, read, download and export; nothing is truncated, moved or deleted.
  */
 import * as Y from "yjs";
 import { SITE_LIMITS } from "@knotebook/shared";
@@ -11,7 +12,7 @@ export const NOTE_MAX_BYTES_MAX = 1024 * 1024 * 1024;
 
 const WS_DEFAULT_MAX_PAYLOAD = 100 * 1024 * 1024;
 
-/** The web's size guard doesn't cover undo and moves, so message size ≈ 2× the largest configurable cap + 1 MiB. Bigger notes can exceed it on a single undo/move and the connection is closed. Never above ws's 100 MiB default. */
+/** The web's size guard doesn't cover undo and moves, so message size ≈ 2× the largest configurable cap + 1 MiB. Bigger notes can exceed it on a single undo/move and the connection is closed (ws code 1009). "Largest configurable cap" = the env value if set, else the admin page's maximum. Never above ws's 100 MiB default, so it only tightens; server→client messages aren't limited. */
 export function collabMaxPayloadBytes(envNoteMaxBytes: number | undefined): number {
   return Math.min(2 * (envNoteMaxBytes ?? SITE_LIMITS.noteMaxBytes.max) + 1_048_576, WS_DEFAULT_MAX_PAYLOAD);
 }

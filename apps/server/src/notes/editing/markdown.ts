@@ -24,7 +24,7 @@ import type { VisibleNoteTarget } from "./candidates.js";
 
 export const MAX_BLOCKS = 2000;
 export type ParseError = "unsupported_block" | "unsupported_color" | "unsupported_columns" | "unsupported_size" | "empty_content" | "too_many_blocks";
-/** Causes beyond the error code, used only to pick HTTP file write-back messages. `too_complex` is decided by the worker pool (`parse-pool.ts`), not returned by this function. */
+/** Causes beyond the error code, used only to pick HTTP file write-back messages, except `too_complex`, which MCP and REST edit messages also read. `too_deep`: HTML or quote nesting beyond `MAX_HTML_DEPTH` (4). `too_complex` is decided by the worker pool (`parse-pool.ts`), not returned by this function. */
 export type ParseDetail = "event_attr" | "editor_internal" | "unknown_block" | "dropped_element" | "unclosed_comment" | "nested_paragraph" | "too_deep" | "too_complex";
 export type ParseFailure = { error: ParseError; detail?: ParseDetail };
 /**
@@ -32,7 +32,7 @@ export type ParseFailure = { error: ParseError; detail?: ParseDetail };
  */
 export const DROPPED_TAGS = ["script", "style", "iframe", "object", "noscript", "title", "template"] as const;
 export const DROPPED_SELECTOR = DROPPED_TAGS.join(", ");
-/** Prefilter: DOM elements always come from a start tag in the string, so no `<name` means no DOM is needed. */
+/** Prefilter: DOM elements always come from a start tag in the string, so no `<name` means no DOM is needed (entities can't create elements). Matches any case; false hits like `<script-x>` are left to the DOM. */
 const DROPPED_PREFILTER = new RegExp(`<(?:${DROPPED_TAGS.join("|")})\\b`, "i");
 export function hasDroppedElement(html: string): boolean {
   return DROPPED_PREFILTER.test(html) && syntaxCheckRoot(html).querySelector(DROPPED_SELECTOR) !== null;
@@ -48,7 +48,7 @@ export function siteOriginOf(baseUrl: string): string {
   return new URL(baseUrl).origin;
 }
 
-// Pure, no DB. In-site links are matched against a list prefetched before the lease; redirect/prev_slug/legacy slug forms aren't resolved and stay ordinary links.
+// Pure, no DB. In-site links are matched against a list prefetched before the lease; redirect/prev_slug/legacy slug forms aren't resolved and stay ordinary links. An in-site link that can't be converted doesn't count as unbound. Wikilinks bind only on a unique hit. Unknown block types and off-palette colors reject the whole write rather than being stripped.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, markdown: string, candidates: readonly VisibleNoteTarget[], siteOrigin: string): ParsedMarkdown | ParseFailure {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
@@ -66,7 +66,7 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   if (markdown.length >= BLOCK_PRECHECK_MIN_CHARS && topLevelBlockFloor(root) > MAX_BLOCKS) return { error: "too_many_blocks" };
   let raw: AnyPartialBlock[];
   try {
-    // BlockNote's own merge of multi-paragraph quotes is quadratic.
+    // BlockNote's own merge of multi-paragraph quotes, headings and summaries is quadratic.
     const html = premergedHtml(syntax.html, root);
     raw = editor.tryParseHTMLToBlocks(html) as AnyPartialBlock[];
   } catch (err) {
@@ -85,7 +85,7 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   if (!walk(parsed)) return { error: "unsupported_block", detail: "unknown_block" };
   const shape = findStructureError(parsed, "top");
   if (shape !== null) return { error: shape };
-  // Also normalizes colors in place to lowercase #rrggbb.
+  // Accepts built-in color names and hex codes, normalized in place to lowercase #rrggbb; anything else rejects the write.
   if (normalizeNoteColors(parsed) !== null) return { error: "unsupported_color" };
   if (isBlankParseResult(parsed)) {
     return UNCLOSED_COMMENT.test(markdown) ? { error: "empty_content", detail: "unclosed_comment" } : { error: "empty_content" };

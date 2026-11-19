@@ -1,4 +1,4 @@
-// Only targets with a custom public URL (public_slug and public_token): token-only (secret) links must never appear in a public payload; group notes have no alias. Same predicates as the alias lookup in `routes/public.ts`.
+// Only targets with a custom public URL (public_slug and public_token): token-only (secret) links must never appear in a public payload; group notes have no alias. Same predicates as the alias lookup in `routes/public.ts`. Excludes the note itself and trashed targets, caps at `MAX_LINK_TARGETS`; token-only targets are excluded even in the same space.
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import * as Y from "yjs";
 import { MAX_LINK_TARGETS, extractLinkTargets, publicAliasPath, type PublicLinkDto } from "@knotebook/shared";

@@ -34,14 +34,14 @@ export function prepareSlugForPatch(raw: string): SlugValidationResult {
 // Probing is O(same-prefix count) index queries, and both title PATCH and note creation are unthrottled (cookie `POST /api/notes` has no per-user limiter), so a bound is required; beyond it fall back to `untitled-<uuid8>`.
 const AUTO_SLUG_PROBE_LIMIT = 20;
 
-// Shared by PATCH (UPDATE retry) and create (INSERT retry): separate hard-coded 5s could drift with no test failing.
+// 1..5 re-probes, then `fallbackAutoSlug()`; a further collision (~2^-32) surfaces. Shared by PATCH (UPDATE retry) and create (INSERT retry): separate hard-coded 5s could drift with no test failing.
 export const MAX_AUTO_SLUG_RETRIES = 5;
 
 export function fallbackAutoSlug(): string {
   return `untitled-${randomUUID().slice(0, 8)}`;
 }
 
-/** The two unique indexes don't collide with each other: group notes have `owner_id` NULL. */
+/** Personal notes dedupe per owner (`notes_owner_slug_idx`), group notes per group (`notes_group_slug_idx`); the two unique indexes don't collide with each other: group notes have `owner_id` NULL. */
 export type SlugScope = { ownerId: string } | { groupId: string };
 
 export function isSlugUniqueViolation(err: unknown): boolean {
@@ -84,7 +84,7 @@ export async function deriveUniqueAutoSlug(db: DbOrTx, scope: SlugScope, noteId:
 }
 
 /**
- * Looks up `notes.legacy_slug` (frozen at 0007, globally unique, immutable via trigger), deliberately not the current `notes.slug`: slugs are per-user unique, so a global lookup has no deterministic answer, and old-form links stay frozen to 0007's world. Resolves ref → id only, no authorization; null always maps to 404 (anti-enumeration).
+ * Looks up `notes.legacy_slug` (frozen at 0007, globally unique, immutable via trigger), deliberately not the current `notes.slug`: slugs are per-user unique, so a global lookup has no deterministic answer, and old-form links stay frozen to 0007's world. Then falls back to the uuid in the ref (bare or `<vanity>-<uuid>`), so pre-0007 links resolve forever; A's legacy slug beats B's later identical custom slug by design (hijack test). Resolves ref → id only, no authorization; null always maps to 404 (anti-enumeration).
  */
 export async function resolveNoteIdFromRef(db: DbOrTx, ref: string): Promise<string | null> {
   const normalized = normalizeSlug(ref);

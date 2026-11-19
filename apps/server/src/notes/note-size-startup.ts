@@ -1,4 +1,4 @@
-// Logs ids only, never titles; changes nothing: over-limit notes still open and read.
+// Logs ids only, never titles; changes nothing: over-limit notes still open and read; they just can't grow.
 import { gt, sql } from "drizzle-orm";
 import type { Db } from "../db/index.js";
 import { noteStates } from "../db/schema.js";

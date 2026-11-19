@@ -1,4 +1,4 @@
-// Walks by code point (same unit as PG's substr), so it never splits a surrogate pair. The hit start is always included; a third of the leftover budget goes to leading context. Holds only if `lower()` keeps length (libc locale; ICU can shift the window), so model-facing text says only "near the first hit".
+// Input window: 40 code points before the hit, the hit, 160 after; the caller supplies the cost function (JSON-escaped for MCP, code units for REST); budget = max − 2 (each `…` costs 1). Walks by code point (same unit as PG's substr), so it never splits a surrogate pair. The hit start is always included; a third of the leftover budget goes to leading context. No trailing context if the hit isn't complete; context whitespace collapses, the hit's doesn't. Result cost ≤ max. Holds only if `lower()` keeps length (libc locale; ICU can shift the window), so model-facing text says only "near the first hit".
 const WS = /\s/u;
 
 export interface SnippetWindow {

@@ -168,7 +168,7 @@ export class NoteWriteService {
     return { db: this.deps.db, collab, editing, log, testHooks: this.deps.testHooks, versions: this.deps.versions, shownLinks: this.shownLinks, ...(noteMaxBytes !== undefined ? { noteMaxBytes } : {}) };
   }
 
-  /** `fn` must not call a method that enters the same note's `queue.run` (e.g. `saveVersion`): it would wait for itself. */
+  /** Runs on this service's queue (serialized with MCP writes, version apply and manual save); the caller sets the wait (conversions use 1 s) and a timeout throws `QueueBusyError`. `fn` must not call a method that enters the same note's `queue.run` (e.g. `saveVersion`): it would wait for itself. */
   async runExclusive<T>(log: ApplyDeps["log"], noteId: string, waitMs: number, fn: (deps: ApplyDeps) => Promise<T>): Promise<T> {
     const { collab, editing } = this.deps;
     if (!collab || !editing) throw new Error("NoteWriteService：此部署沒有 collab／editing，呼叫端必須先檢查 available");
@@ -311,7 +311,7 @@ export class NoteWriteService {
   }
 
   /**
-   * Once the note was touched since download (title or body) the result is always 409 `note_changed`: no three-way merge. Everything runs inside one `queue.run(noteId)`. Copies that already wrote back are checked first (`already_sent`/`reverted`): the note was changed by that copy itself, so `note_changed` would be wrong. "Touched" is a content comparison, not `updated_at`: per-block fingerprints against the base segment table (a linked note being renamed doesn't count); a base with 0 blocks and now exactly one empty paragraph (browser normalization) counts as untouched. A zero-region result is treated as unchanged and the write quota is refunded. DB calls carrying content go through `redactDbError`.
+   * Once the note was touched since download (title or body) the result is always 409 `note_changed`: no three-way merge. Everything runs inside one `queue.run(noteId)`. Copies that already wrote back are checked first (`already_sent`/`reverted`): the note was changed by that copy itself, so `note_changed` would be wrong. "Touched" is a content comparison, not `updated_at`: per-block fingerprints against the base segment table (a linked note being renamed or made invisible doesn't count); a base with 0 blocks and now exactly one empty paragraph (browser normalization) counts as untouched. A zero-region result is treated as unchanged and the write quota is refunded. A copy that already wrote its body accepts no further change, title-only included (`already_sent`). `unchanged` charges `tokenRead` regardless of whether others touched the note. A body change with null segments → `not_mergeable`. A parse failure → 400 and the charge is kept. A fingerprint mismatch retries up to 3 times. DB calls carrying content go through `redactDbError`.
    * Known gaps (not fixed): for title-only changes the body check and the rename aren't one transaction (body in Yjs, title in the DB), and a title change landing between reading the title and the merge goes undetected when the file didn't change the title.
    */
   async syncFile(log: FastifyBaseLogger, input: SyncFileInput): Promise<SyncFileOutcome> {
@@ -375,7 +375,7 @@ export class NoteWriteService {
       return out;
     }
     if (bodyChanged && base.segments === null) return { ok: false, kind: "not_mergeable" };
-    // Body changed: charge before parsing (a failed parse counts), refunded for a zero region; title-only: charge before the rename. Once the quota is exhausted a body-changed file always gets 429, zero-region ones too, since telling needs a parse.
+    // Unchanged files don't touch the quota. Body changed: charge before parsing (a failed parse counts), refunded for a zero region; title-only: charge before the rename. Once the quota is exhausted a body-changed file always gets 429, zero-region ones too, since telling needs a parse.
 
     const noteChanged: SyncFileOutcome = { ok: false, kind: "base_unavailable", reason: "note_changed" };
     const [row] = await db.select({ title: notes.title }).from(notes).where(and(eq(notes.id, input.noteId), isNull(notes.deletedAt))).limit(1);
@@ -531,7 +531,7 @@ export class NoteWriteService {
     return out;
   }
 
-  /** Serialization key `create:${userId}:${fileSha}` (no note id yet). Dedupe rows outside the TTL, or whose note is in the trash, would collide on the PK, hence upsert. */
+  /** Serialization key `create:${userId}:${fileSha}` (no note id yet). Dedupe rows outside the TTL, or whose note is in the trash, would collide on the PK, hence upsert. A parse failure leaves no note and no dedupe row. */
   async createFromFile(log: FastifyBaseLogger, input: CreateFromFileInput): Promise<CreateFromFileOutcome> {
     const key = `create:${input.userId}:${input.fileSha.toString("hex")}`;
     try {
@@ -554,7 +554,7 @@ export class NoteWriteService {
       if (!input.limiters.tokenRead.consume(k)) return { ok: false, kind: "rate_limited", retryAfterMs: input.limiters.tokenRead.retryAfterMs(k) };
       return { ok: true, created: false, noteId: hit.noteId, unboundWikilinks: 0 };
     }
-    // Charge before parsing (a failed parse counts once): otherwise unparseable files cost no quota and every request could make the server parse a whole large file.
+    // Charge before parsing (a failed parse counts once): otherwise unparseable files cost no quota and every request could make the server parse a whole large file. A parse failure leaves no note and no dedupe row.
     if (!input.limiters.transferWrite.consume(input.userId)) return { ok: false, kind: "rate_limited", retryAfterMs: input.limiters.transferWrite.retryAfterMs(input.userId) };
     const pre = await this.prepareContent(log, { userId: input.userId, tokenId: input.tokenId, content: input.body });
     if (!pre.ok) return pre.kind === "parser_busy" ? pre : { ok: false, kind: "parse", code: pre.code, ...(pre.detail ? { detail: pre.detail } : {}) };

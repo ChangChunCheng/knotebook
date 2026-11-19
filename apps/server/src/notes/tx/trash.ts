@@ -1,5 +1,5 @@
 /**
- * `trashNotesInTx` is the only writer of non-NULL `deleted_at` and `restoreNotesInTx` the only one clearing it; neither touches `updated_at` (its meaning is title/URL change). Gates, file deletion and `onNotesRestored` are the caller's job outside the transaction.
+ * `trashNotesInTx` is the only writer of non-NULL `deleted_at` and `restoreNotesInTx` the only one clearing it; neither touches `updated_at` (its meaning is title/URL change). Trashing writes `trash_folder_path` in the same UPDATE; restore rebuilds the path only if the folder is gone and always clears the snapshot; neither touches child tables or files. Gates, file deletion and `onNotesRestored` are the caller's job outside the transaction.
  * Note locks always go through `lockNotes`: `FOR UPDATE` by id ascending (same order as `deleteNotesInTx`, so multiple ids don't cycle), then re-judge. Trashing only changes non-key columns, which a plain UPDATE takes as `FOR NO KEY UPDATE` and which doesn't conflict with the `FOR KEY SHARE` of uploads/copy source/indexing; the explicit FOR UPDATE is what serializes them.
  * Permission rechecks inside the transaction are written as `noteAccessFromRow((await accessQuery(tx, …))[0], …)`: the structure guard forbids the literal single-note authorization calls in `tx/` files.
  */
@@ -38,7 +38,7 @@ async function lockNotes(tx: Tx, ids: readonly string[]) {
 /** Inferred from `lockNotes` rather than restated (a guard freezes the count of `deletedAt:` literals). */
 type LockedNote = Awaited<ReturnType<typeof lockNotes>> extends Map<string, infer V> ? V : never;
 
-/** Callers must authorize and open each note's collab gate (`beforeNoteDeleted`) outside the transaction; this only re-judges after locking. The classification isn't an existence oracle (invisible and missing are both `notFound`). */
+/** Callers must authorize and open each note's collab gate (`beforeNoteDeleted`) outside the transaction; this only re-judges after locking. The classification isn't an existence oracle (invisible and missing are both `notFound`). Classification: none (trashed or missing included) → `notFound`, no delete right → `forbidden`; empty ids issue nothing. */
 export async function trashNotesInTx(tx: Tx, input: TrashIdsInput, hook?: GroupTestHook): Promise<TrashNotesOutcome> {
   const out: TrashNotesOutcome = { trashed: [], notFound: [], forbidden: [] };
   if (input.ids.length === 0) return out;
@@ -79,7 +79,7 @@ async function classifyTrashed(tx: Tx, input: TrashIdsInput, locked: Map<string,
 
 /**
  * Callers must pre-check with `resolveTrashedNoteAccess` and pass only ids the user has trash rights on: the classification order (missing → `not_found`, alive → `not_in_trash`, then trash right) is an existence oracle for arbitrary ids.
- * Lock order: groups KEY SHARE for `groupIds` (by id) → structure locks for `spaces` (by key) → `lockNotes`; both lists are pre-read by the caller outside the transaction. The rebuilt-folder INSERT (parent FK KS) comes after the note locks: the space structure lock is already held, and any transaction taking FU on that space's folders takes it first. If a note's space lock key isn't among those held (ownership changed after the pre-read, e.g. a transfer), the path isn't rebuilt and the note stays at the new space's root. Rebuilding ignores depth/count limits; permission = trash right, a superset of manage rights.
+ * Lock order: groups KEY SHARE for `groupIds` (by id) → structure locks for `spaces` (by key) → `lockNotes`; both lists are pre-read by the caller outside the transaction. The rebuilt-folder INSERT (parent FK KS) comes after the note locks: the space structure lock is already held, and any transaction taking FU on that space's folders takes it first. If a note's space lock key isn't among those held (ownership changed after the pre-read, e.g. a transfer), the path isn't rebuilt and the note stays at the new space's root. Rebuilding ignores depth/count limits; permission = trash right (personal: owner; group: `can_edit ∧ can_delete`), a superset of manage rights; an intact original folder is left alone; `done`/`skipped` keep input order.
  */
 export async function restoreNotesInTx(tx: Tx, input: TrashRestoreInput, hook?: GroupTestHook): Promise<TrashBatchOutcome> {
   if (input.ids.length === 0) return { done: [], skipped: [] };
@@ -121,7 +121,7 @@ export async function purgeTrashedNotesInTx(tx: Tx, input: TrashIdsInput, hook?:
   return { done: ok, skipped, uploadIds };
 }
 
-/** `SKIP LOCKED`: don't wait for rows being restored or purged by hand; the next round handles them. */
+/** Notes trashed strictly before `now() − retentionDays`, ordered by `deleted_at, id`, at most `limit`, timed in the DB. `SKIP LOCKED`: don't wait for rows being restored or purged by hand; the next round handles them. */
 export async function purgeExpiredBatchInTx(
   tx: Tx,
   input: { retentionDays: number; limit: number },

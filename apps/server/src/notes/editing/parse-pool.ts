@@ -1,7 +1,7 @@
-// #398: markdown parsing and doc conversions run in workers so one parse can't stall the main thread. Both are pure (workers only return data), so terminating a worker midway leaves no write.
+// #398: markdown parsing and doc conversions run in workers so one parse can't stall the main thread. Both are pure (workers only return data), so terminating a worker midway leaves no write. Time limits run from handoff, excluding queueing; a timed-out or crashed worker is terminated and replaced and its job returns TOO_COMPLEX. The queue holds at most PARSE_QUEUE_MAX; overflow or waiting past `queueWaitMs` throws ParserBusyError (503 `server_busy`). Conversion jobs default to `DOC_TIMEOUT_FACTOR × timeoutMs`.
 // A user holds at most PER_OWNER_MAX workers, the second only when nobody else is queued.
 // Workers are recycled after RECYCLE_AFTER_PARSES parses and when heap exceeds RECYCLE_HEAP_SHARE of the limit after a job: mounted-editor residue plus uncollected garbage from a read followed by an apply can exhaust the limit (ERR_WORKER_OUT_OF_MEMORY). A false positive costs one extra worker (~0.5 s).
-// configure(): a changed memory limit replaces all workers (busy ones after their job), otherwise old workers keep the old limit until recycled; time limits apply only to later jobs.
+// configure(): a changed memory limit replaces all workers (busy ones after their job), otherwise old workers keep the old limit until recycled; time limits and queue wait apply only to later jobs; more workers spawn immediately, fewer reap idle ones now and busy ones after their job.
 import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -26,7 +26,7 @@ export interface WorkerData {
 }
 
 export const PARSE_WORKER_STACK_MB = 4;
-/** Unset, Node derives the young generation from host/container memory; a large semi-space lets one scavenge promote tens of MiB past the margin Node keeps near the heap limit, aborting the whole process before the worker can be terminated. 48 fixes the heap at old + 48. */
+/** Unset, Node derives the young generation from host/container memory; a large semi-space lets one scavenge promote tens of MiB past the margin Node keeps near the heap limit, aborting the whole process before the worker can be terminated (Node doesn't guarantee a worker OOM only ends that worker; see `resourceLimits` in the `worker_threads` docs). 48 MiB fixes the heap at old + 48. */
 export const PARSE_WORKER_YOUNG_MB = 48;
 export const PARSE_QUEUE_MAX = 100;
 export const RECYCLE_AFTER_PARSES = 500;
@@ -360,7 +360,7 @@ export class ParsePool implements MarkdownParser {
       slot.task = task;
       slot.worker.ref();
       task.startedAt = performance.now();
-      // The budget may have been used up by other parses of the same file while queued: return too-complex without sending.
+      // Limit = min(per-parse limit, remaining file budget). The budget may have been used up by other parses of the same file while queued: return too-complex without sending.
       const own = task.timeoutMs ?? this.limitsNow.timeoutMs;
       const limit = task.budget === undefined ? own : Math.min(own, task.budget.remainingMs);
       if (limit <= 0) {
@@ -376,7 +376,7 @@ export class ParsePool implements MarkdownParser {
       if (task.job.kind === "doc") {
         const op = task.job.op;
         const st = op.state;
-        // A small pg Buffer may be a slice of a shared pool and can't be transferred.
+        // Transfer only large states owning their whole ArrayBuffer (`encodeStateAsUpdate` results, large pg bytea); a small pg Buffer may be a slice of a shared pool and can't be transferred.
         const own = st.byteLength >= TRANSFER_MIN_BYTES && st.byteOffset === 0 && st.byteLength === st.buffer.byteLength && st.buffer instanceof ArrayBuffer;
         slot.worker.postMessage({ id: task.id, kind: "doc", op: own ? op : { ...op, state: new Uint8Array(st) } }, own ? [st.buffer as ArrayBuffer] : []);
       } else {

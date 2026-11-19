@@ -58,7 +58,7 @@ export function placementJoinOn(viewerId: string): SQL {
   return and(eq(notePlacements.noteId, notes.id), eq(notePlacements.userId, viewerId))!;
 }
 
-/** Queries `db`: routes call it only outside the transaction. */
+/** Group note or caller is owner → `note.folderId`; otherwise the caller's placement. Queries `db`: routes call it only outside the transaction. */
 export async function viewerFolderIdFor(
   db: DbOrTx,
   note: { id: string; ownerId: string | null; groupId: string | null; folderId: string | null },
@@ -73,7 +73,7 @@ export async function viewerFolderIdFor(
   return row?.folderId ?? null;
 }
 
-/** Outer columns are table-qualified: a bare `${notes.id}` renders `"id"` in a single-table select, which inside the `uploads u` subquery resolves to `u.id` and silently miscounts. */
+/** `sizeBytes` = Yjs state bytes + attachment total. Outer columns are table-qualified: a bare `${notes.id}` renders `"id"` in a single-table select, which inside the `uploads u` subquery resolves to `u.id` and silently miscounts. */
 export function noteSizeBytesSql(): SQL.Aliased<number> {
   const outerId = sql.raw('"notes"."id"');
   return sql<number>`(coalesce((select octet_length(s.ydoc) from ${noteStates} s where s.note_id = ${outerId}), 0) + coalesce((select sum(u.size) from ${uploads} u where u.note_id = ${outerId}), 0))`

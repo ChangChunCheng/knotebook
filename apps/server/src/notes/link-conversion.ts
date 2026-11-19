@@ -1,4 +1,4 @@
-// Each note runs inside `writes.runExclusive` (the shared write queue). The pre-conversion version is saved via `versions.cutIfDirty` directly, never `writes.saveVersion` (it would wait on the queue we're in). If the signal is already aborted nothing writes a marker (the note stays pending). Logs never record href, title or text.
+// Each note runs inside `writes.runExclusive` (the shared write queue). The pre-conversion version is saved via `versions.cutIfDirty` directly, never `writes.saveVersion` (it would wait on the queue we're in). If the signal is already aborted nothing writes a marker (the note stays pending). `note_links` is only added to, always before a note is marked done. The merge carries no userId and expects the whole-note fingerprint. Logs never record href, title or text.
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -289,7 +289,7 @@ export interface LinkConversion {
 
 export const NOOP_LINK_CONVERSION: LinkConversion = { start() {}, stop: () => Promise.resolve(), deps: null };
 
-/** `stop()` never rejects: `index.ts` races it against a 2 s timer, and a rejection would skip `collab.destroy()` and lose pending edits. */
+/** `start()` runs once (later calls no-op) after `startDelayMs`; `stop()` aborts and resolves when the in-flight note finishes or is abandoned. `stop()` never rejects: `index.ts` races it against a 2 s timer, and a rejection would skip `collab.destroy()` and lose pending edits. */
 export function createLinkConversion(deps: LinkConversionDeps, opts: { startDelayMs?: number } = {}): LinkConversion {
   const controller = new AbortController();
   let started = false;

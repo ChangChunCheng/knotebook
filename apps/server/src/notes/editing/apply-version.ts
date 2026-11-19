@@ -34,7 +34,7 @@ export function blocksFromSnapshot(baseUrl: string, ydoc: Uint8Array): AnyPartia
   return yXmlFragmentToBlocks(editor, snapshot.getXmlFragment(YDOC_FRAGMENT)) as AnyPartialBlock[];
 }
 
-/** Race with pruning: the base may point at a version just deleted; `setVersionBase`'s UPDATE has `WHERE EXISTS`, so 0 rows resets the base. */
+/** Race with pruning: the base may point at a version just deleted; `setVersionBase`'s UPDATE has `WHERE EXISTS`, so 0 rows takes the reset path (no extra lock). 1 row → `endApply(seq, fp)`; 0 rows or an uncomputable fingerprint → clear the base, `endApply(reset)`. */
 async function writeBaseAfterApply(deps: ApplyVersionDeps, input: ApplyVersionInput, out: MergeOutput): Promise<void> {
   if (deps.testHooks?.beforeVersionBase) await deps.testHooks.beforeVersionBase();
   const fp = out.versionFingerprint;
@@ -54,11 +54,12 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
     .where(and(eq(noteVersions.noteId, input.noteId), eq(noteVersions.seq, input.seq)))
     .limit(1);
   if (!row) return { ok: false, code: "not_found" };
+  // Guards against a move across tabs.
   if (row.id !== input.versionId) return { ok: false, code: "version_mismatch" };
   const blocks = blocksFromSnapshot(deps.editing.baseUrl, row.ydoc);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const f = await forkAndCheck(deps, input.noteId);
-    // The retry reruns isDirty too, so with discardUnsaved:false an edit that slipped in gets 409.
+    // isDirty after the fork (uninitialized or uncomputable counts as dirty). The retry reruns isDirty too, so with discardUnsaved:false an edit that slipped in gets 409.
     if (!input.discardUnsaved && (await deps.versions.isDirty(input.noteId, f.fork, f.fork))) return { ok: false, code: "version_unsaved_changes" };
     deps.versions.beginApply(input.noteId);
     try {
@@ -71,7 +72,7 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
         { op: "replace_all", isEmptyDoc: f.isEmptyDoc, section: undefined },
       );
       if ("error" in prepared) throw new Error(`套用版本時 prepare 失敗：${prepared.error}`);
-      // Size cap is measured on a fresh doc in the parse worker (the editor's undo history would keep deleted content alive otherwise). If the trial fails (timeout/OOM), fall back to the bound base + 2×diff + 64.
+      // Rejected only if the restored version is larger than the current one and over the cap. Size is measured on a fresh doc in the parse worker (the editor's undo history would keep deleted content alive otherwise). If the trial fails (timeout/OOM), fall back to a bound: apply only if base + 2×diff + 64 bytes stays within the cap.
       if (deps.noteMaxBytes !== undefined && baseState !== null) {
         const baseBytes = baseState.byteLength; // the pool transfers this buffer: record its length first
         const diffBytes = prepared.diff.byteLength;

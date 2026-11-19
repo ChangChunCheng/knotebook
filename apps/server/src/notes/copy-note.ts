@@ -104,12 +104,12 @@ export async function copyNote(
     }
   }
   const searchExtract = extractForIndex(copy.doc);
-  // #175: charge the upload limiter per attachment copied (same limiter and 429 as uploads). Counted before the transaction and read again inside it, so the charge can be off by a few files if attachments change in between; not worth moving into the transaction.
+  // #175: charge the upload limiter per attachment copied (same limiter and 429 as uploads; unit = files, 0 attachments skips it). On 429 nothing is written and the edit limiter stays charged (a 413 refunds it). A file missing on disk is still charged. Counted before the transaction and read again inside it, so the charge can be off by a few files if attachments change in between; not worth moving into the transaction.
   const wanted = [...copy.uploadNodes.keys()];
   const toCopy = wanted.length === 0
     ? 0
     : (await deps.db.select({ n: sql<number>`count(*)::int` }).from(uploads).where(and(inArray(uploads.id, wanted), eq(uploads.noteId, sourceId))))[0]!.n;
-  // Lock-free "space full" pre-check so a doomed copy opens no transaction and consumes no upload quota; the authoritative check is in the transaction.
+  // Lock-free "space full" pre-check (409; only when there are attachments: copies without them aren't quota-limited) so a doomed copy opens no transaction and consumes no upload quota; the authoritative check is in the transaction, under the lock, using the actual copied sizes.
   if (toCopy > 0) {
     const space: StorageSpace = "groupId" in scope ? { kind: "group", id: scope.groupId } : { kind: "user", id: userId };
     const usage = await readSpaceUsage(deps.db, space);
@@ -125,7 +125,7 @@ export async function copyNote(
     await deps.groupTestHook?.("note-copy-authorized", { noteId: sourceId });
     created = await deps.db.transaction(tx => copyNoteInTx(tx, txInput, deps.groupTestHook, deps.noteCreateHooks, deps.searchIndexHooks));
   } catch (err) {
-    // Rolled back: delete the new files already written (best effort).
+    // Rolled back: delete the new files already written (best effort; failures only logged; on a quota rejection no uploads rows were written yet).
     await deleteUploadFiles(deps.uploadsDir, copiedFileIds, deps.log);
     // Check the subclass first: `StorageQuotaExceeded` extends `TxAbort` and callers need its numbers.
     if (err instanceof TxAbort) return { kind: "aborted", err };

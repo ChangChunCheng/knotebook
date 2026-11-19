@@ -26,7 +26,7 @@ export class NoteWriteQueue {
     try {
       return await chain;
     } finally {
-      // Not run (busy): evict only after the tail settles, i.e. when the previous request really finished.
+      // Ran: evict now (`size` settles with `run`). Not run (busy): evict only after the tail settles, i.e. when the previous request really finished.
       if (entered) evict(); else void tail.then(evict);
     }
   }

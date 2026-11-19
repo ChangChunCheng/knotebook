@@ -158,7 +158,7 @@ export async function cutVersionInTx(tx: Tx, input: CutVersionInput): Promise<{ 
   return { row: row!, upgraded: false, fp };
 }
 
-/** For transfers (`{ groupId }`) call before `group_id` changes; the caller already holds the notes' `FOR UPDATE`. */
+/** Move (`{ noteId }`) or transfer (`{ groupId }`, call before `group_id` changes): clears versions, numbering, base and pending; creates none; the caller already holds the notes' `FOR UPDATE`. */
 export async function resetNoteVersionsInTx(tx: Tx, target: { noteId: string } | { groupId: string }): Promise<void> {
   const noteWhere = "noteId" in target ? eq(notes.id, target.noteId) : eq(notes.groupId, target.groupId);
   const versionWhere =

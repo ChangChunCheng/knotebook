@@ -1,4 +1,4 @@
-// Reads must not open a direct connection (`disconnect()` is the persist point). No `await` between `documents.get` and `Y.encodeStateAsUpdate`: unload is `documents.delete` then `destroy()`, so yielding could return a destroyed doc.
+// Reads must not open a direct connection (`disconnect()` is the persist point), except the in-process #387 `shownLinks` record (no DB, no doc change). No `await` between `documents.get` and `Y.encodeStateAsUpdate`: unload is `documents.delete` then `destroy()`, so yielding could return a destroyed doc.
 import { eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as Y from "yjs";
@@ -20,7 +20,7 @@ export interface ReadDeps {
   shownLinks?: ShownLinkTexts;
 }
 
-/** With `opts.watch` the `LiveWatch` is attached in the same tick as the encode so no transaction is missed; the caller must `stop()` it. */
+/** With `opts.watch` the `LiveWatch` is attached in the same tick as the encode so no transaction is missed; the caller must `stop()` it. A never-opened note yields empty bytes (empty doc); an unloaded doc passes the `note_states` bytes through undecoded. Same no-`await` rule as the header. */
 export async function loadNoteState(deps: Pick<ReadDeps, "db" | "collab">, noteId: string, opts: { watch?: boolean } = {}): Promise<{ state: Uint8Array; loaded: boolean; watch?: LiveWatch }> {
   const live = deps.collab?.hocuspocus.documents.get(noteId);
   if (live) return { state: Y.encodeStateAsUpdate(live), loaded: true, ...(opts.watch ? { watch: new LiveWatch(live) } : {}) };
@@ -49,7 +49,7 @@ export async function loadNoteDoc(deps: ReadDeps, noteId: string): Promise<{ doc
   return { doc, loaded: false };
 }
 
-/** `users` needs an alias: this JOINs the editor, not the owner. */
+/** Pure SELECT, no direct connection. `users` needs an alias: this JOINs the editor, not the owner. A deleted editor account (FK `set null`) gives an empty handle. */
 export async function loadLastEdited(db: Db, noteId: string): Promise<LastEditedDto | null> {
   const editor = alias(users, "editor");
   const [r] = await db
@@ -69,7 +69,7 @@ export async function linkTitlesFor(db: Db, viewerId: string, doc: Y.Doc): Promi
   return new Map((await visibleTitlesByIds(db, viewerId, ids)).map(t => [t.id.toLowerCase(), t.title]));
 }
 
-/** Single place that builds markdown for MCP reads and file export, so they are byte-identical. Pure and DB-free (the caller holds the lease). */
+/** Single place that builds markdown for MCP reads and file export, so they are byte-identical. Wikilinks export as links using label, else the current title from `titles` (keys lowercase), else snapshotTitle. Pure and DB-free (the caller holds the lease). */
 export function toNoteMarkdown(editor: EditorSession["editor"], blocks: EditorSession["editor"]["document"], titles: ReadonlyMap<string, string>): string {
   return blocksToNoteMarkdown(editor, wikilinksToLinks(blocks, id => titles.get(id.toLowerCase())));
 }
@@ -100,7 +100,7 @@ export async function readNoteContentFromDoc(
   const { outline, whole } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
   const target = section === undefined ? undefined : outline.find(o => o.sectionId === section);
   if (section !== undefined && !target) return "section_not_found";
-  // A truly empty doc exports "" without mounting (mount would add an empty paragraph → "\n") and keeps the common cold read off jsdom.
+  // A truly empty doc exports "" without mounting (mount would add an empty paragraph → "\n") and keeps the common cold read off jsdom. The same holds for a zero-block `_top` section.
   const blockIds = target ? target.blockIds : outline.flatMap(o => o.blockIds);
   const markdown = blockIds.length === 0 ? "" : await exportMarkdown(runtime, doc, target && new Set(blockIds), titles, onShown);
   if (target) {

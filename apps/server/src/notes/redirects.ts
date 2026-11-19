@@ -11,7 +11,7 @@ export function groupNotePath(groupId: string, slug: string): string {
   return `/g/${groupId.toLowerCase()}/${slug}`;
 }
 
-/** The expired-row delete carries `expires_at <= now()` so a row renewed concurrently (e.g. by a move) isn't deleted; uses DB `now()` like the write side. Resolves paths only, no authorization. */
+/** Lookup ignores `expires_at`; an expired hit is deleted in the same request and treated as a miss. The delete carries `expires_at <= now()` so a row renewed concurrently (e.g. by a move) isn't deleted; uses DB `now()` like the write side. Resolves paths only, no authorization. */
 export async function lookupRedirect(db: DbOrTx, oldPath: string): Promise<string | null> {
   const [row] = await db
     .select({ noteId: noteRedirects.noteId, live: sql<boolean>`${noteRedirects.expiresAt} > now()` })

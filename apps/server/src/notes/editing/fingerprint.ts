@@ -1,4 +1,4 @@
-// Always computed on the unmounted Yjs structure (mount normalizes an empty doc) with a sync hash so it can be recomputed inside transact. An optimistic-concurrency check, not security; on mismatch never fall back to the whole-note fingerprint (a stale section update would pass).
+// Always computed on the unmounted Yjs structure (mount normalizes an empty doc) with a sync hash so it can be recomputed inside transact. An optimistic-concurrency check, not security; after_fingerprint follows document order, and an id missing or out of order → null → mismatch, which callers treat as 409/stale. On mismatch never fall back to the whole-note fingerprint (a stale section update would pass).
 import { createHash } from "node:crypto";
 import * as Y from "yjs";
 import { canonicalizeElements, canonicalizeSection, sectionize, topLevelContainers, type SectionInfo } from "@knotebook/shared";
@@ -22,7 +22,7 @@ export function outlineOf(fragment: Y.XmlFragment): { outline: OutlineEntry[]; w
   return { outline, whole: fingerprintOf(outline.map(o => o.fingerprint).join("")) };
 }
 
-/** One pass over the top level: `fingerprintForIds` per block rebuilds the top-level table each call, O(n²) (2,000 blocks take 14-15 s). */
+/** One pass over the top level: `fingerprintForIds` per block rebuilds the top-level table each call, O(n²) (2,000 blocks take 14-15 s). Byte-identical to per-block `fingerprintForIds`; all export fingerprints use this. Throws on a missing id, like `outlineOf`. */
 export function topLevelFingerprints(fragment: Y.XmlFragment): { ids: string[]; fps: string[] } {
   const ids: string[] = [];
   const fps: string[] = [];
@@ -50,7 +50,7 @@ export function topLevelSnapshot(fragment: Y.XmlFragment): { ids: string[]; fps:
   return { ids, fps, types };
 }
 
-/** Never call `fingerprintForIds` per id (O(n²), see `topLevelFingerprints`). */
+/** Each `expectEach` fingerprint is compared separately (order isn't checked); every anchor id must be at top level. Never call `fingerprintForIds` per id (O(n²), see `topLevelFingerprints`). */
 export function checkExpectations(fragment: Y.XmlFragment, expectEach: ReadonlyArray<{ id: string; fp: string }>, anchorIds: readonly string[]): boolean {
   const byId = new Map<string, Y.XmlElement>();
   for (const c of topLevelContainers(fragment)) {
@@ -64,7 +64,7 @@ export function checkExpectations(fragment: Y.XmlFragment, expectEach: ReadonlyA
   return anchorIds.every(id => byId.has(id));
 }
 
-/** Empty array → null: a record row with `after_block_ids: []` pairs with `after_fingerprint: null` (`fingerprint_chk`). Byte-identical to `fingerprintForIds(fragment, group)`: `editRevertable` later recomputes with it. */
+/** Empty array → null: a record row with `after_block_ids: []` pairs with `after_fingerprint: null` (`fingerprint_chk`); any id missing from the top level or out of document order → null. Byte-identical to `fingerprintForIds(fragment, group)`: `editRevertable` later recomputes with it. */
 export function fingerprintsOfGroups(fragment: Y.XmlFragment, groups: ReadonlyArray<readonly string[]>): (string | null)[] {
   const byId = new Map<string, { c: Y.XmlElement; i: number }>();
   topLevelContainers(fragment).forEach((c, i) => {

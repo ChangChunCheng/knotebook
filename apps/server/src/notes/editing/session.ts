@@ -114,7 +114,7 @@ async function disconnectQuietly(direct: DirectConnection): Promise<void> {
   }
 }
 
-/** `fn`'s error wins: a disconnect failure is only logged, or the caller would misclassify (e.g. "AI content invalid" as "persist failed"). `beforeDisconnect` failures are likewise only logged (content applied, base not updated: acceptable). */
+/** Liveness is rechecked before and after opening (`isDeleting`, `noteIsLive`; failure → `NoteGoneError`, and after opening it disconnects without transacting). `fn`'s error wins: a disconnect failure is only logged, or the caller would misclassify (e.g. "AI content invalid" as "persist failed"). `beforeDisconnect` failures are likewise only logged (content applied, base not updated: acceptable); `beforeDisconnect` runs only after a successful transact, not when `fn` failed. */
 export async function withDirectConnection<T>(
   target: DirectTarget,
   noteId: string,

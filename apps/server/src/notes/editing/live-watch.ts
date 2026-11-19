@@ -1,10 +1,10 @@
 /**
- * Records which top-level blocks others changed since the state was taken, so a merge proceeds unless a block this write cares about was touched. Starting over on any change made busy notes lose three times in a row (503). Cost is independent of note size.
+ * Records which top-level blocks others changed since the state was taken, so a merge proceeds unless a block this write cares about was touched. Starting over on any change made busy notes (from ~0.2 MB of state a worker round trip outlasts keystrokes) lose three times in a row (503). On a touched block the worker rechecks `if_match` on the new state (409 if the target section changed), still at most 3 tries, then 503. Cost is independent of note size.
  */
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 
-/** `blocks`: conflict if a listed container changed or was deleted, or a block was inserted right after one (it would land in the target section). */
+/** `none`: append/replace_all without `if_match`, create. `any`: whole-note `if_match`, bulk write-back. `blocks`: conflict if a listed container changed or was deleted, or a block was inserted right after one (it would land in the target section); deleted `anchors` conflict; `absent` ids back at top level block the merge (`mergeAtBase` checks it); empty `items` conflict only when the top level can't be read. */
 export type MergeGuard = { kind: "none" } | { kind: "any" } | { kind: "blocks"; items: string[]; anchors: string[]; absent?: string[] };
 
 export const itemKey = (id: Y.ID): string => `${id.client}:${id.clock}`;

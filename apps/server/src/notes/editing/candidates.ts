@@ -6,7 +6,7 @@ import { groupMembers, groupRoles, noteShares, notes, users } from "../../db/sch
 export type VisibleNoteTarget = SiteLinkCandidate;
 
 /**
- * The three branches (owned, shared, grouped with `can_read`) are mutually exclusive: group notes have `owner_id` NULL and shared requires `group_id IS NULL` (leftover share rows on group notes don't count), so the id dedup is purely defensive. Doesn't reuse `visibleNoteBranches`: different column set, and that one is on the wikilink rebind path.
+ * The three branches (owned, shared, grouped with `can_read`) are mutually exclusive: group notes have `owner_id` NULL and shared requires `group_id IS NULL` (leftover share rows on group notes don't count), so the id dedup is purely defensive. All three exclude trashed notes. With `ids`, each branch is restricted to them; an empty set (or all non-uuid) issues no query. `ownerHandle` is NULL for group notes. Doesn't reuse `visibleNoteBranches`: different column set, and that one is on the wikilink rebind path.
  */
 export async function visibleNoteTargets(db: Db, userId: string, ids?: readonly string[]): Promise<VisibleNoteTarget[]> {
   const only = ids === undefined ? undefined : ids.filter(id => UUID_RE.test(id)).map(id => id.toLowerCase());

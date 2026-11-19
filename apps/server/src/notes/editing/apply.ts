@@ -21,7 +21,7 @@ import type { EditingRuntime } from "./runtime.js";
 import { directTarget, withDirectConnection, type DirectConnectionCtx, type DirectCtx } from "./session.js";
 import { shownLinkTextsOf, type ShownLinks, type ShownLinkTexts } from "./shown-link-texts.js";
 
-// No DB transaction spans the merge: merge and persist first, record after (a failed record leaves the content in, the record missing).
+// No DB transaction spans the merge: merge and persist first, record after (a failed record leaves the content in, the record missing); `before_blocks` is unbounded. Merges retry up to `DOC_MERGE_ATTEMPTS` times, then 503. Version apply and link conversion still use the old `mergeDiff` (the main thread recomputes the fingerprint on the live doc; see known-limitations). `append` without `if_match` skips the check.
 // Never acquire a lease while holding one (`runtime.acquire` isn't reentrant): across the rebuild threshold it deadlocks silently.
 // Zero-block sections (`_top` of a heading-led note, an empty doc) always fingerprint to `EMPTY_SECTION_FINGERPRINT`, so `if_match` can't detect concurrent inserts there; Yjs keeps both sides, only the AI content's position is up to the CRDT.
 export interface EditingTestHooks {
@@ -62,9 +62,9 @@ export interface ApplyInput {
 export type ApplyResult =
   | {
       ok: true; editId: string; fingerprint: string; outline: NoteOutlineEntry[]; unboundWikilinks: number;
-      /** Presence must use post-edit ids: the request's `section_id` is a heading id that `replace_section`/`delete_section` replace. */
+      /** Presence must use post-edit ids: the request's `section_id` is a heading id that `replace_section`/`delete_section` replace. Document order; always `[]` for `delete_section`. */
       afterBlockIds: string[];
-      /** #108: no REST consumer; kept because it can only be computed in `mergeDiff`, before `stripIds` drops blockIds. */
+      /** #108: index in the post-write outline (`edit_note` uses it to pick the page containing the landing point); null for `delete_section`. No REST consumer; kept because it can only be computed in `mergeDiff`, before `stripIds` drops blockIds. */
       afterSectionIndex: number | null;
     }
   | { ok: false; code: "section_not_found" | "fingerprint_mismatch" | ParseError | "empty_section" | "too_complex"; detail?: ParseDetail };
@@ -100,7 +100,7 @@ export async function mergeDiff(
       const live = input.targetIds === null ? outlineOf(fragment).whole : fingerprintForIds(fragment, input.targetIds);
       if (live === null || live !== input.expectFingerprint) throw new FingerprintMismatch(); // null = id missing or order changed: no fallback to the whole fingerprint
     }
-    // Anchor recheck inside transact (revert only). No test fails if removed (`revertEdit` has no injection point for that interleaving); without it `insertBlocks` would target a vanished anchor.
+    // Anchor recheck inside transact (revert only). No test fails if removed (`revertEdit` has no injection point for that interleaving); without it `insertBlocks` would target a vanished anchor (benign: nothing lost, the CRDT picks the position, but unguarded).
     if (input.anchorId !== null && !topLevelContainers(fragment).some(c => c.getAttribute("id") === input.anchorId)) throw new FingerprintMismatch();
     const clock = docClock(doc);
     Y.applyUpdate(doc, input.diff);
@@ -144,7 +144,7 @@ export function mergeOutputOf(post: DocPost): MergeOutput {
 }
 
 /**
- * Merges only if the live doc didn't touch the blocks this write cares about (`post.guard`) or, with no watch, its snapshot equals the base. Checked before opening the direct connection (opening and closing would persist an unchanged doc) and again inside transact.
+ * Merges only if the live doc didn't touch the blocks this write cares about (`post.guard`); with no watch, or if the doc was unloaded and reloaded meanwhile (a different object), only if its snapshot equals the base. Checked before opening the direct connection (opening and closing would persist an unchanged doc) and again inside transact. The returned fingerprints and outline are the worker's (base + this write, without concurrent typing), so the caller's next `if_match` may mismatch and it rereads; `clock` is the pre-merge live doc's (links CAS).
  */
 export async function mergeAtBase(
   deps: ApplyDeps,
@@ -222,13 +222,13 @@ async function prepareBlocks(
   if (input.op === "delete_section") return { blocks: [], unbound: 0 };
   // Create path: `content` was already parsed; don't parse again. No test fails if this reparses (equivalent behaviour).
   if (input.blocks !== undefined) return { blocks: input.blocks, unbound: input.unbound ?? 0 };
-  // Parse before opening the editor so no lease is held while waiting on the worker.
+  // Parse before opening the editor so no lease is held while waiting on the worker. A parse failure opens and writes nothing.
   const parsed = input.preparsed ?? (await deps.editing.parser.parse({ owner: input.userId, markdown: input.markdown ?? "", candidates: input.candidates, siteOrigin: siteOriginOf(deps.editing.baseUrl) }));
   if ("error" in parsed) return { error: parsed.error, ...(parsed.detail ? { detail: parsed.detail } : {}) };
   // #387: keep link texts the writer read as having no custom text, even if the target was renamed since.
   const [kept, cleared] = deps.shownLinks ? deps.shownLinks.keepLabelFree(parsed.blocks, input.userId, input.candidates) : [parsed.blocks, []];
   if (!deps.shownLinks) return { blocks: kept, unbound: parsed.unbound };
-  // Cleared original texts are recorded too: the stored snapshotTitle is now the current title, so their expiry wouldn't be extended otherwise.
+  // Written links are recorded for the writer too (agents write them back as-is using the reply's fingerprint), only after a successful merge. Cleared original texts are recorded too: the stored snapshotTitle is now the current title, so their expiry wouldn't be extended otherwise.
   const written = shownLinkTextsOf(kept, new Map());
   written.free.push(...cleared);
   return { blocks: kept, unbound: parsed.unbound, written };

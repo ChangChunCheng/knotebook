@@ -76,7 +76,7 @@ export async function revertEdit(deps: ApplyDeps, input: { noteId: string; editI
     try {
       const extra = JSON.stringify(row.beforeBlocks ?? []).length;
       const out = await deps.editing.runDoc(input.userId, { kind: "revert", state, row: revertRow, othersShareAnchor }, { extraWeight: extra });
-      // Revert has no parse step: a worker timeout/OOM means the note itself is too large; retrying is useless, so no 503.
+      // Revert has no parse step: a worker timeout/OOM means the note itself is too large; retrying is useless, so no 503; content and records are untouched.
       if (out === DOC_TOO_COMPLEX) return { ok: false, code: "too_complex" };
       if (!out.ok) return { ok: false, code: "stale" };
       r = out;

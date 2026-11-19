@@ -1,7 +1,7 @@
 /**
  * Statement order is a contract. Notes KEY SHARE first: when the state row already exists, the upsert doesn't insert (no FK check), so without this the transaction would hold the state row while DELETE notes' cascade locks this note's sections rows then waits for the state row, and this transaction deleting old sections waits on the DELETE: a cycle (40P01, victim is the user's DELETE; pinned by `search-index-write.test.ts`). With notes KEY SHARE the DELETE waits on the notes row and never reaches the sections.
  * Then the state-row placeholder `INSERT … ON CONFLICT DO NOTHING` + `SELECT … FOR UPDATE` (concurrent index transactions for one note queue here; FOR UPDATE alone would let both see no row). Read `note_states.version` only after holding the state-row lock (READ COMMITTED takes a snapshot per statement): reading first would let backfill overwrite a newer index with an older one (tested). `source_version > version` only happens if note_states was written backwards outside the app: write anyway and report `regressed` for a warn.
- * Skips are exceptions so drizzle rolls back the placeholder; `writeSearchIndex` catches them, the copy transaction doesn't (the whole copy fails).
+ * Missing or different `note_states` version → `stale`; same hash and extractor version → only `source_version` advances (`unchanged`); otherwise the rows are replaced in 500-row INSERTs (none when empty) → `written`. Skips are exceptions so drizzle rolls back the placeholder; `writeSearchIndex` catches them, the copy transaction doesn't (the whole copy fails).
  * Lock order: notes KEY SHARE → note_search_state row → note_search_sections rows.
  */
 import { and, eq, sql } from "drizzle-orm";

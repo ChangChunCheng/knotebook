@@ -9,7 +9,7 @@ import { writeLinksInTx, type WriteLinksInput } from "./tx/write-links.js";
 
 export type NormalizeLinkTargetsResult = { ok: true; targets: string[] } | { ok: false };
 
-/** Self-link removal and dedup happen before the `MAX_LINK_TARGETS` check (zod's max is only a coarse pre-gate). Lowercase before comparing (#240): `note_links` is a uuid column, so an uppercase own id would otherwise pass the self filter and become a self-link, and case variants would each take a slot. */
+/** Self-link removal and dedup happen before the `MAX_LINK_TARGETS` check (over the limit → 400 `invalid_body`; zod's max is only a coarse pre-gate, and dedup can also let an oversized raw list through). Lowercase before comparing (#240): `note_links` is a uuid column, so an uppercase own id would otherwise pass the self filter and become a self-link, and case variants would each take a slot. */
 export function normalizeLinkTargets(sourceNoteId: string, rawTargetIds: string[]): NormalizeLinkTargetsResult {
   const self = sourceNoteId.toLowerCase();
   const deduped = [...new Set(rawTargetIds.map(targetId => targetId.toLowerCase()))].filter(targetId => targetId !== self);
@@ -29,7 +29,7 @@ async function attemptOnce(db: Db, params: WriteNoteLinksParams, hooks: WriteNot
   return db.transaction(tx => writeLinksInTx(tx, params, hooks.beforeLinkWrite));
 }
 
-/** An FK violation (a target deleted concurrently) retries once: `attemptOnce` reruns the authorization and drops it. 40001/40P01 → `"busy"` without a server-side retry, to avoid amplifying conflicts. */
+/** An FK violation (a target deleted concurrently) retries once: `attemptOnce` reruns the authorization and drops it. 40001/40P01 → `"busy"` without a server-side retry, to avoid amplifying conflicts (409 `server_busy`). Other errors propagate (500). */
 export async function writeNoteLinks(db: Db, params: WriteNoteLinksParams, hooks: WriteNoteLinksHooks = {}): Promise<WriteNoteLinksOutcome> {
   try {
     return await attemptOnce(db, params, hooks);
@@ -51,7 +51,7 @@ export async function syncLinksFromDoc(
   deps: { db: Db; log: { warn(o: object, m: string): void } },
   p: { sourceNoteId: string; userId: string; clock: number } & ({ doc: Y.Doc } | { targets: string[] }),
 ): Promise<void> {
-  // The self-link filter runs before the slice so self-links don't take slots; case-sensitive here, `normalizeLinkTargets` converges the final set.
+  // The self-link filter runs before the slice so self-links don't take slots; case-sensitive here (case variants may take slots first; acceptable), `normalizeLinkTargets` converges the final set.
   const deduped = ("targets" in p ? p.targets : extractLinkTargets(p.doc)).filter(t => t !== p.sourceNoteId);
   const trimmed = deduped.slice(0, MAX_LINK_TARGETS);
   if (trimmed.length < deduped.length) deps.log.warn({ noteId: p.sourceNoteId, kept: trimmed.length, dropped: deduped.length - trimmed.length }, "wikilink 目標超過 MAX_LINK_TARGETS，已截斷");
@@ -66,7 +66,7 @@ export async function syncLinksFromDoc(
   }
 }
 
-/** One SQL with the reader predicates inline, not `resolveRole` per source (N+1, and risks leaking existence/title). `union()` not `unionAll` so a source matching two branches dedupes. The `id DESC` tie-break is required: batch-inserted fixtures share `updated_at` and LIMIT would be nondeterministic. */
+/** One SQL with the reader predicates inline, not `resolveRole` per source (N+1, and risks leaking existence/title). `union()` not `unionAll` so a source matching two branches dedupes. Trashed source notes are excluded; leftover share rows on group notes don't count; filtering happens before LIMIT. The `id DESC` tie-break is required: batch-inserted fixtures share `updated_at` and LIMIT would be nondeterministic. */
 export async function fetchBacklinks(db: Db, targetNoteId: string, userId: string): Promise<BacklinkDto[]> {
   const columns = () => ({
     id: notes.id,

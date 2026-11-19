@@ -6,7 +6,7 @@ import { groupMembers, groupRoles, noteShares, notes } from "../db/schema.js";
 // pg throws on a malformed uuid string (a 500 via the global handler), so path params are checked first. Also reused for `DELETE …/shares/:userId`.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The delete gate must tell everyone who could see the note that it's gone without revealing the id to others, so this list is captured before the move transaction. Must not be called with the pool inside a transaction. Doesn't filter `deleted_at` (`noteIsLive` decides liveness). */
+/** Everyone who can see the note now (owner, shares, members with the read flag); empty for a missing note or bad id. The delete gate must tell everyone who could see the note that it's gone without revealing the id to others, so this list is captured before the move transaction. Must not be called with the pool inside a transaction. Doesn't filter `deleted_at` (`noteIsLive` decides liveness). */
 export async function loadNoteAudience(db: DbOrTx, noteId: string): Promise<Set<string>> {
   if (!UUID_RE.test(noteId)) return new Set();
 
@@ -124,7 +124,7 @@ export function trashedAccessQuery(db: DbOrTx, userId: string, noteId: string) {
 
 export type AccessRow = Awaited<ReturnType<typeof accessQuery>>[number];
 
-/** `tx/` files can't contain the literal `resolveNoteAccess(` (structure guard), so they use this with `accessQuery`. */
+/** `tx/` files can't contain the literal `resolveNoteAccess(` (structure guard), so they use this with `accessQuery`; an undefined row → none. */
 export function noteAccessFromRow(row: AccessRow | undefined, userId: string): NoteAccess {
   if (!row) return NO_ACCESS;
 

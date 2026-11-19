@@ -1,4 +1,4 @@
-// Input is always doc-state bytes and output plain data: no DB here (needs go through `ask`). Worker and main thread run the same `executeDocOp`, so results are identical.
+// Input is always doc-state bytes and output plain data: no DB here (needs go through `ask`). Worker and main thread run the same `executeDocOp`, so results are identical. Returned fingerprints and outline are those of base + this write (without concurrent changes).
 // Without a watch the main thread compares snapshots, not just state vectors: an update that only deletes doesn't change the state vector.
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
@@ -31,10 +31,10 @@ type AnyPartialBlock = PartialBlock<any, any, any>;
 type AnyBlock = Block<any, any, any>;
 export type Anchor = { block_id: string; position: "before" | "after"; placeholder?: boolean };
 
-/** Below this size one conversion stalls the main thread ~10 ms, comparable to a worker round trip, while a worker job can queue for seconds or 503 when all workers are busy. */
+/** Doc state below this size (for apply, plus the length of the content to write) converts on the main thread: one conversion stalls it ~10 ms, comparable to a worker round trip, while a worker job can queue for seconds or 503 when all workers are busy. */
 export const DOC_INLINE_MAX_BYTES = 16 * 1024;
 
-/** Reading a big note needs mount + export; apply needs mount + write + post-merge values. */
+/** A conversion job's time limit = this × `PARSE_TIMEOUT_MS`: reading a big note needs mount + export; apply needs mount + write + post-merge values. */
 export const DOC_TIMEOUT_FACTOR = 3;
 
 export const DOC_TOO_COMPLEX = "too_complex" as const;
@@ -74,7 +74,7 @@ export type EditDocOp = {
   parseError?: { error: ParseError; detail?: ParseDetail };
 };
 export type RevertDocOp = { kind: "revert"; state: Uint8Array; row: RevertRow; othersShareAnchor: boolean };
-/** Plan and apply are separate jobs because parsing a dense section can use hundreds of MiB; stacked with mount + apply it would exhaust the worker's memory, and split the pool can recycle the worker in between. */
+/** Plan and apply are separate jobs because parsing a dense section can use hundreds of MiB; stacked with mount + apply it would exhaust the worker's memory, and split the pool can recycle the worker in between. Both jobs use the same doc state. */
 export type SyncPlanDocOp = {
   kind: "syncPlan";
   state: Uint8Array;

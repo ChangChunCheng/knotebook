@@ -1,5 +1,5 @@
 /**
- * #398: jsdom 30 is quadratic on large child lists. (1) `_modified()` recomputes accessed live `childNodes`/`children` on every mutation, though live lists already recompute lazily on read, so they are hidden from it. (2) `_insert`/`_remove` compute the child's index only to update live Ranges, which our detached DOMs never have, so that call returns -1.
+ * #398: jsdom 30 is quadratic on large child lists. (1) `_modified()` recomputes accessed live `childNodes`/`children` on every mutation, though live lists already recompute lazily on read, so they are hidden from it (the version counter is still bumped). (2) `_insert`/`_remove` compute the child's index only to update live Ranges; when no Range is attached to the parent (or, for removal, the removed subtree), as in our detached DOMs, that call returns -1; with any Range attached the original path runs.
  * If jsdom's internals change nothing is patched and false is returned (`installGlobals` warns); the perf test then goes red.
  */
 import { createRequire } from "node:module";

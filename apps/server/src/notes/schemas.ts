@@ -17,7 +17,7 @@ export const TITLE = z.string().min(1).refine(noNul);
 /** Not authorization: the format guard only keeps garbage out of uuid columns (`22P02` → 500). `.transform` lowercases (#240): live docs, presence, the write queue and version state are keyed by lowercase, so an uppercase id would hit another one; handler `toLowerCase()` calls are defensive. */
 export const NOTE_ID = z.string().regex(UUID_RE).refine(noNul).transform(s => s.toLowerCase());
 
-/** No `.refine(noNul)`: the uuid format already excludes NUL. Format only; membership is decided by `loadCreateTarget`. */
+/** Shared by REST and MCP; no `.optional()` (callers add it); any case accepted. No `.refine(noNul)`: the uuid format already excludes NUL. Format only; membership is decided by `loadCreateTarget`. */
 export const GROUP_ID = z.string().uuid();
 
 // `.strict()`: unknown keys are a 400, so a mistyped `content` (`contents`/`body`) doesn't silently create an empty note. `title` gets `.refine(noNul)`: a NUL title reached pg text columns (22021) → 500. `folderId` is deliberately not `z.string().uuid()`: a non-UUID folder id must 404 `folder_not_found` like a missing one; the route checks `UUID_RE`.
@@ -25,7 +25,7 @@ export const createBodySchema = z
   .object({ title: TITLE.optional(), content: MD.optional(), groupId: GROUP_ID.optional(), folderId: z.string().optional() })
   .strict();
 
-// The per-op required-field matrix lives only here (REST and MCP share it). MCP must conditionally spread keys: `.strict()` checks `Object.keys`, so `{op:"append", section_id: undefined}` is `unrecognized_keys` (guard: `mcp-edit-note.test.ts`).
+// The per-op required-field matrix lives only here (REST and MCP share it). `append`'s `if_match` is optional (absent skips the check); the other four ops require it. MCP must conditionally spread keys: `.strict()` checks `Object.keys`, so `{op:"append", section_id: undefined}` is `unrecognized_keys` (guard: `mcp-edit-note.test.ts`).
 export const editBodySchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("replace_all"), markdown: MD, if_match: FP }).strict(),
   z.object({ op: z.literal("replace_section"), section_id: SEC, markdown: MD, if_match: FP }).strict(),
@@ -34,7 +34,7 @@ export const editBodySchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("delete_section"), section_id: SEC, if_match: FP }).strict(),
 ]);
 
-// `slug: null` clears the custom URL name, undefined leaves it alone (`nullable().optional()`, not `nullable()` alone). The inner object is exported for the same-source assertion in `mcp-write-schemas.test.ts` (a ZodEffects has no `.shape`).
+// At least one of title/slug is required (else 400 `invalid_body`); a string slug is normalized by `prepareSlugForPatch`. `slug: null` clears the custom URL name, undefined leaves it alone (`nullable().optional()`, not `nullable()` alone). The inner object is exported for the same-source assertion in `mcp-write-schemas.test.ts` (a ZodEffects has no `.shape`).
 // Intentionally not `.strict()`: unknown keys are stripped.
 export const updateBodyObject = z.object({
   title: TITLE.optional(),
