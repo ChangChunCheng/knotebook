@@ -11,19 +11,17 @@ import { SettingsGroup, SettingsPage } from "./SettingsLayout";
 import { StorageUsageGroup } from "./StorageUsageGroup";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（無共用 helper）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
 /**
- * 「依類型」區塊（#247；群組儲存空間頁沿用）。**列恆顯示**（含 0 的列），
- * 順序＝`STORAGE_KINDS`（五列）。佔比的分母取**顯示的那幾類**之和、
- * **不取 `usedBytes`**：兩者來自 server 上不同時點的兩句查詢，中間有上傳時可能瞬間不等；和為 0 時各條都是 0%。
- * ⚠ 現況上傳只收四種圖片，所以只有「影像」會非零——版面先為多類型留好（上傳放寬另開 issue）。
- * `byKind` 為 undefined（載入中或錯誤）時不渲染列：錯誤訊息由同頁的 `StorageUsageGroup` 負責。
- * 列距與列間框線同設定表格（只統一列距與框線、不換元件）。
+ * By-kind group (#247; reused by the group storage page). Rows always show, zeros included, in `STORAGE_KINDS` order (five rows).
+ * Percentages use the sum of the displayed kinds, not `usedBytes`: the two come from separate server queries at different moments and can
+ * differ briefly during an upload; a zero sum gives 0% everywhere. Uploads currently accept only four image types, so only images are
+ * nonzero; the layout is ready for more kinds. No rows while `byKind` is undefined (loading or error): `StorageUsageGroup` on the same page
+ * shows errors. Row spacing and dividers match the settings tables (spacing and borders only, not the component).
  */
 export function StorageByKindGroup({ byKind, pending }: { byKind: StorageByKind | undefined; pending: boolean }) {
   const { t } = useTranslation();
@@ -53,10 +51,7 @@ export function StorageByKindGroup({ byKind, pending }: { byKind: StorageByKind 
   );
 }
 
-/**
- * 個人空間的「自動儲存版本」開關（#247 從帳號頁搬來）：立即生效，只送
- * `{ autoVersions }`；站台總開關關閉時 disabled 並給看得見的說明。`config` 未載入時當作開。
- */
+/** The site switch counts as on until config loads. */
 function AutoVersionsGroup() {
   const { t } = useTranslation();
   const { user } = useSession();
@@ -77,7 +72,6 @@ function AutoVersionsGroup() {
   );
 }
 
-/** 個人設定「儲存空間」（`/settings/storage`，#247）：用量／依類型／版本歷史。 */
 export function SettingsStorageUsageSection() {
   const { t } = useTranslation();
   const storage = useStorageUsage();

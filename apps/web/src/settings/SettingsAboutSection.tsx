@@ -5,10 +5,7 @@ import "@/i18n/management-strings";
 
 const LINK_CLASS = "text-brand-on-soft underline-offset-4 hover:underline";
 
-/**
- * 個人設定「關於」（`/settings/about`，#247）：版本＋四個外部連結（原始碼、文件、安裝成 app 的說明、授權條款）。
- * 不放「檢查更新」、不打任何網路請求。版本號是 build 時注入的 `__APP_VERSION__`。
- */
+/** No update check and no network requests. */
 export function SettingsAboutSection() {
   const { t } = useTranslation();
   return (

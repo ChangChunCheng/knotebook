@@ -1,8 +1,7 @@
 /**
- * 「用 MCP 連接 Claude」的設定片段（#247）：PAT 兩段＋OAuth 兩段。純函式，輸入是站台 origin（`window.location.origin`）；
- * token 位置一律 `<YOUR_TOKEN>` 佔位，**不帶入任何 token 值**。
- * OAuth 片段只在 https 顯示（`oauthAvailable`，#159）；寫法是實測過的（Windows Desktop）。
- * ⚠ 這是 user-facing 文件敘述：改片段前先實連一次，並同步 docs/mcp.md How to connect。
+ * Snippets for connecting Claude over MCP (#247): two PAT, two OAuth. Pure functions of the site origin; the token is always the
+ * `<YOUR_TOKEN>` placeholder, never a real value. OAuth snippets show on https only (`oauthAvailable`, #159).
+ * User-facing docs: connect for real before editing, and keep docs/mcp.md's How to connect in sync.
  */
 
 export const TOKEN_PLACEHOLDER = "<YOUR_TOKEN>";
@@ -11,16 +10,16 @@ export function mcpEndpoint(origin: string): string {
   return `${origin}/api/mcp`;
 }
 
-/** Claude Code：PAT 走靜態 Bearer header；`-s user` 讓它在任何目錄都可用（預設 local scope 只在下指令的目錄生效，docs/mcp.md）。 */
+/** PAT as a static Bearer header. `-s user` makes it work in any directory: the default local scope only applies in the directory the command ran in (docs/mcp.md). */
 export function buildClaudeCodeSnippet(origin: string): string {
   return `claude mcp add -s user --transport http knotebook ${mcpEndpoint(origin)} --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}"`;
 }
 
 /**
- * Claude Desktop：經 mcp-remote 帶 header。header 值放進 `env`、args 裡寫 `Authorization:${AUTH_HEADER}`——
- * mcp-remote README：Claude Desktop（Windows）等客戶端呼叫 npx 時不跳脫 args 內的空白，`Bearer <token>` 會被切開。
- * `http://` 站台加 `--allow-http`（mcp-remote 對非 https 端點要明示放行）。
- * 只輸出 `"knotebook": {…}` 這一段：使用者把它加進既有的 `mcpServers` 底下，不會貼出第二個 `mcpServers`。
+ * Header via mcp-remote. The header value goes through `env`, with `Authorization:${AUTH_HEADER}` in args: per the mcp-remote README, clients
+ * such as Claude Desktop (Windows) don't escape spaces in args when calling npx, so `Bearer <token>` would split. `http://` sites add
+ * `--allow-http` (mcp-remote requires an explicit opt-in for non-https endpoints).
+ * Emits only the `"knotebook"` entry so users add it under their existing `mcpServers` instead of pasting a second `mcpServers`.
  */
 export function buildDesktopSnippet(origin: string): string {
   const args = ["-y", "mcp-remote", mcpEndpoint(origin), "--header", "Authorization:${AUTH_HEADER}"];
@@ -29,17 +28,17 @@ export function buildDesktopSnippet(origin: string): string {
   return `"knotebook": ${JSON.stringify(entry, null, 2)}`;
 }
 
-/** OAuth 只在 https 站台可用：client 端拒絕把 token 交換送到非 https 的伺服器（#159）。 */
+/** The client refuses to send the token exchange to non-https servers (#159). */
 export function oauthAvailable(origin: string): boolean {
   return origin.startsWith("https:");
 }
 
-/** Claude Code OAuth：`-t http` 必要（不帶 transport 一律當 stdio）；之後在 Claude Code 的 /mcp 選 Authenticate。 */
+/** `-t http` is required: without a transport the client assumes stdio. Then choose Authenticate in Claude Code's /mcp. */
 export function buildClaudeCodeOauthSnippet(origin: string): string {
   return `claude mcp add -s user -t http knotebook ${mcpEndpoint(origin)}`;
 }
 
-/** Claude Desktop OAuth（Windows 形）：`cmd /c npx` 包 mcp-remote；無 env、無 header、無 `--allow-http`。同樣只輸出 `"knotebook": {…}`。 */
+/** Windows form: `cmd /c npx` wraps mcp-remote; no env, header or `--allow-http`. Also emits only the `"knotebook"` entry. */
 export function buildDesktopOauthSnippet(origin: string): string {
   const entry = { command: "cmd", args: ["/c", "npx", "-y", "mcp-remote", mcpEndpoint(origin)] };
   return `"knotebook": ${JSON.stringify(entry, null, 2)}`;

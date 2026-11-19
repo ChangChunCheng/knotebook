@@ -10,9 +10,9 @@ import {
 } from "./people";
 
 /**
- * #293：訂閱 awareness 的 `change`（y-protocols 只在狀態內容不同時發；心跳只發 update），
- * 一幀內多次合併成一次重算；簽章（鍵、名字、角色、頭貼、有無游標）沒變就不 setState——游標移動不重繪頭像列，
- * 點擊時由 `cursorOf` 讀即時狀態。
+ * y-protocols emits awareness `change` only when state content differs (heartbeats emit only `update`); several changes in
+ * one frame are merged into one recompute. An unchanged signature skips setState, so cursor movement doesn't redraw the
+ * avatars; clicks read live state via `cursorOf`.
  */
 
 const EMPTY: PresencePerson[] = [];
@@ -35,7 +35,7 @@ export function usePresencePeople(
   awareness: Awareness | null,
   myUserId: string | null,
 ): { people: PresencePerson[]; cursorOf: (key: PresenceKey) => unknown | null } {
-  // 首屏直接算（不等幀）；seen／nextSeq 由同一次計算帶進 ref。
+  // First paint computes directly instead of waiting a frame; seen/nextSeq go into the ref from the same computation.
   const [initial] = useState(() => compute(awareness, myUserId, new Map(), 0));
   const trackRef = useRef<Track>({
     awareness,
@@ -49,7 +49,6 @@ export function usePresencePeople(
   useEffect(() => {
     const track = trackRef.current;
     if (track.awareness !== awareness || track.userId !== myUserId) {
-      // 換篇（新 awareness）或換人：順序重新起算。
       track.awareness = awareness;
       track.userId = myUserId;
       track.seen = new Map();
@@ -66,7 +65,7 @@ export function usePresencePeople(
       track.signature = next.signature;
       setPeople(next.people);
     };
-    // render 到 effect 之間可能已有變更：同步補算一次（簽章沒變就不 setState）。
+    // Changes may have landed between render and effect: recompute once synchronously (no setState if the signature is unchanged).
     flush();
     if (awareness === null || myUserId === null) return;
     const onChange = () => {

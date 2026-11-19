@@ -11,7 +11,6 @@ import { Select } from "@/components/ui/select";
 import { OneTimeLinkResult } from "./OneTimeLinkResult";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（同 PasswordResetDialog）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
@@ -25,8 +24,8 @@ interface Created {
 }
 
 /**
- * 對話框內容：表單與結果兩階段。`useAuthConfig()` 與 `useCreateInvite()` 都只在這裡呼叫——Radix 關閉時會卸載它，
- * 所以頁首的觸發鈕初次渲染不會多打一次 `/api/auth/config`，重開也不會繼承上一次的 pending 狀態。
+ * Dialog content: `useAuthConfig()` and `useCreateInvite()` live here because Radix unmounts it on close, so the header trigger doesn't fetch
+ * `/api/auth/config` on first render and a reopen doesn't inherit the previous pending state.
  */
 function CreateInviteDialogBody({
   days,
@@ -51,7 +50,7 @@ function CreateInviteDialogBody({
   error: string | null;
   setError: (error: string | null) => void;
   created: Created | null;
-  /** 送出當下的開啟代數；回呼帶回去，讓外層丟掉上一次開啟送出的結果。 */
+  /** Open generation at submit time; the callback returns it so the previous open's result is dropped. */
   generation: () => number;
   onCreated: (generation: number, created: Created) => void;
   onFail: (generation: number, message: string) => void;
@@ -81,7 +80,7 @@ function CreateInviteDialogBody({
     setLabelError(false);
     const gen = generation();
     try {
-      // trim 由 server 做；這裡只決定帶不帶（trim 後為空就不帶）。
+      // The server trims and stores an empty label as NULL; whitespace-only is sent as "".
       const res = await create.mutateAsync({ expiresInDays: days, label: label.trim() === "" ? "" : label });
       onCreated(gen, { token: res.token, expiresAt: res.invite.expiresAt });
     } catch (err) {
@@ -149,8 +148,9 @@ function CreateInviteDialogBody({
 }
 
 /**
- * 頁首的「建立邀請」（#285）。對話框關閉時本地狀態全部重設——產生的明文 token 只活在這裡的 state 與結果畫面的 DOM。
- * 送出後關掉（或關掉再重開）對話框：回應回來時開啟代數已變就丟棄，明文與舊錯誤都不回到畫面（形同 `PasswordResetAction`）。
+ * State resets on close: the plaintext token lives only in this state and the result DOM. A response arriving after the
+ * dialog closed (or closed and reopened) is dropped by generation, so neither the plaintext nor a stale error comes back
+ * (like `PasswordResetAction`).
  */
 export function CreateInviteDialog() {
   const { t } = useTranslation();
@@ -160,7 +160,7 @@ export function CreateInviteDialog() {
   const [labelError, setLabelError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
-  // 每次開啟／關閉遞增；送出時記下當下的值，回應回來不相符就丟棄。
+  // Bumped on every open/close; recorded at submit, and a response with a different value is dropped.
   const generationRef = useRef(0);
 
   function reset(): void {

@@ -11,7 +11,6 @@ import { Select } from "@/components/ui/select";
 import { OneTimeLinkResult } from "./OneTimeLinkResult";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（同 SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
@@ -24,10 +23,7 @@ interface Created {
   expiresAt: string;
 }
 
-/**
- * 對話框內容：表單與結果兩階段。`useAuthConfig()` 只在這裡呼叫——Radix 關閉時會卸載它，
- * 所以使用者表每一列初次渲染不會各打一次 `/api/auth/config`。
- */
+/** `useAuthConfig()` is called only here: Radix unmounts on close, so table rows don't each fetch `/api/auth/config`. */
 function PasswordResetDialogBody({
   row,
   hours,
@@ -42,7 +38,7 @@ function PasswordResetDialogBody({
   hours: number;
   setHours: (hours: number) => void;
   created: Created | null;
-  /** 送出當下的開啟代數；回呼帶回去，讓外層丟掉上一次開啟送出的結果。 */
+  /** Open generation at send time; the callbacks carry it back so the parent drops results from a previous open. */
   generation: () => number;
   onCreated: (generation: number, created: Created) => void;
   onFail: (generation: number, message: string) => void;
@@ -131,18 +127,14 @@ function PasswordResetDialogBody({
   );
 }
 
-/**
- * 使用者表列內的「重設密碼」（#286）：沒有密碼的帳號不渲染；已停用的帳號 `softDisabled`。
- * 對話框關閉時本地狀態全部重設——產生的明文連結只活在這裡的 state 與結果畫面的 DOM。
- * 產生或取消失敗：關閉對話框、錯誤交給列錯誤。
- */
+/** Local state resets on close: the generated plaintext link lives only in this state and the result DOM. A failed request closes the dialog and reports via onError. */
 export function PasswordResetAction({ row, onError }: { row: AdminUserDto; onError: (message: string | null) => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [hours, setHours] = useState(1);
   const [created, setCreated] = useState<Created | null>(null);
-  // 每次開啟遞增的代數；關著時為 null。產生請求進行中關掉對話框：回應回來時已關著就丟棄，不寫進 state
-  // （關閉後明文不留在記憶體）；關掉又重開：上一次開啟送出的結果（成功或失敗）都不碰這次的對話框。
+  // generationRef bumps on each open; openGenerationRef is null while closed. A response arriving after close is dropped (no
+  // plaintext kept in memory), and a result from a previous open never touches a reopened dialog.
   const generationRef = useRef(0);
   const openGenerationRef = useRef<number | null>(null);
 

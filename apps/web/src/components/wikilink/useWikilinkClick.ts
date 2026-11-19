@@ -7,25 +7,27 @@ import { BlockAnchorContext } from "@/hooks/block-anchor-context";
 import { FIND_STATE_KEY } from "@/hooks/useBlockAnchor";
 
 export interface WikilinkClickTarget {
-  /** 一般點擊要去的地方（member 命中＝canonical＋錨點；清單未到＝/notes/<id>[#b-…]；公開＝/p/…[#b-…]；公開同篇＝#b-…）。 */
+  /**
+   * Plain-click destination: member hit = canonical URL plus anchor; list not loaded yet = `/notes/<id>[#b-…]`;
+   * public = `/p/…[#b-…]`; same note on a public page = `#b-…`.
+   */
   href: string;
-  /** null ＝公開頁的同篇錨點（公開頁不知道本篇 id）。 */
+  /** null: same-note anchor on a public page (it doesn't know its own note id). */
   targetNoteId: string | null;
   anchorBlockId: string;
   broken: boolean;
   /**
-   * #93（側欄搜尋點片段）：要在段落範圍內找的字（`forQuery`）。同篇走 `requestAnchor(…, findText)`；別篇放進 navigation state
-   * （`FIND_STATE_KEY`），不進網址。省略＝一般錨點行為。
+   * Text to find within the section (`forQuery`). Same note passes it to `requestAnchor`; another note gets it via
+   * navigation state (`FIND_STATE_KEY`), not the URL. Omitted: plain anchor behavior.
    */
   findText?: string;
 }
 
-/** 一般左鍵、無修飾鍵。其餘（Ctrl／Cmd／Shift／Alt、非左鍵）一律交給瀏覽器原生行為（新分頁／新視窗）。 */
+/** Modified or non-left clicks are left to the browser (new tab/window). */
 export function isPlainLeftClick(e: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
   return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 }
 
-/** 一般點擊語意：斷鏈 toast、同篇只捲動、其他 navigate(push)。 */
 export function useWikilinkActivate() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -50,8 +52,8 @@ export function useWikilinkActivate() {
           );
         } else if (target.findText !== undefined) {
           anchors.requestAnchor(TOP_SECTION_ID, target.findText);
-          // 同篇 `_top` 沒有 hash 可換：也把查詢字寫進目前這筆 history 的 state（replace，不多一筆），重新整理才會跳回去、
-          // 而且不會沿用上一次搜尋留在 state 裡的舊查詢字。
+          // Same-note `_top` has no hash to change: also store findText in the current history entry (replace) so
+          // reload jumps back, and a previous search's findText isn't reused.
           void navigate({ search: location.search, hash: "" }, { replace: true, state: { [FIND_STATE_KEY]: target.findText } });
         } else {
           anchors.scrollToTop();
@@ -65,10 +67,11 @@ export function useWikilinkActivate() {
 }
 
 /**
- * #269：wikilink 點擊的**唯一**實作（member、public、公開頁同篇 `#b-` 形都用它；可編輯時也直接跳轉，工具列改由 hover／長按開）。
- * - **不用 `<Link>`**：同路徑同 hash 時它預設 REPLACE，上一頁回不到點擊前。
- * - **不留給原生 `<a href>` 預設行為**：fragment 導航不經 react-router，而且區塊只有 `data-id` 沒有 `id`，瀏覽器捲不到。
- * - 同篇錨點先 `requestAnchor` 再 `navigate({ search, hash }, { replace: false })`：捲動由待處理錨點驅動，不依賴 router 是否產生新 key。
+ * The only wikilink click handler (member, public, and same-note `#b-` links on public pages); it navigates even
+ * when editable, since the toolbar opens on hover or long-press.
+ * Not `<Link>`: on the same path and hash it REPLACEs, so Back can't return to before the click.
+ * Not the native `<a href>`: fragment navigation bypasses react-router and blocks have `data-id` but no `id`, so the browser can't scroll.
+ * Same-note anchors call `requestAnchor` before `navigate({ search, hash }, { replace: false })`: scrolling is driven by the pending anchor, not by the router making a new key.
  */
 export function useWikilinkClick() {
   const activate = useWikilinkActivate();

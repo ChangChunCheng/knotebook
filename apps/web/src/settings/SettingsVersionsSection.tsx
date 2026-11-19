@@ -10,13 +10,11 @@ import { toast } from "@/components/ui/toast";
 import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（見 SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-/** 站台總開關：立即生效（`ui/switch`），失敗 toast。 */
 function SiteSwitchGroup({ data }: { data: VersionSettingsDto }) {
   const { t } = useTranslation();
   const update = useUpdateVersionSettings();
@@ -44,8 +42,9 @@ function SiteSwitchGroup({ data }: { data: VersionSettingsDto }) {
 }
 
 /**
- * 自動存版等待＋保留天數（#272）：三個整數欄共用一顆「儲存」。輸入框 `null`＝顯示 server 值（同 `HandleSection`）。
- * 驗證先等待、再天數，只顯示第一個不合格者。等待的說明句帶 server 值，放在表單下方（放在單一欄下會讓三欄輸入框對不齊）。
+ * Auto-version wait and retention days (#272): three integer fields share one Save. A `null` input shows the server value (as in
+ * `HandleSection`). Validation checks the wait, then the days, and shows only the first failure.
+ * The wait explanation carries the server value and sits below the form (under a single field it would misalign the three inputs).
  */
 function RetentionGroup({ data }: { data: VersionSettingsDto }) {
   const { t } = useTranslation();
@@ -156,9 +155,9 @@ function RetentionGroup({ data }: { data: VersionSettingsDto }) {
 }
 
 /**
- * 站台版本設定：「版本歷史」（站台自動開關，立即生效）＋「保留政策」。#247 起嵌在站台管理的
- * 「儲存方案」頁（`SettingsStorageSection` 的 `SettingsPage` 裡、方案表之後），不再有自己的頁首——整段嵌進去會疊出兩個頁首。
- * 載入中／錯誤各以一個 `SettingsGroup` 呈現。
+ * Site switch (applies immediately) plus retention policy. Embedded in the storage plans page (inside `SettingsStorageSection`'s
+ * `SettingsPage`, after the plan table), so no header of its own (embedding the whole page would stack two headers). Loading and error
+ * each render as one `SettingsGroup`.
  */
 export function SiteVersionsGroups() {
   const { t } = useTranslation();

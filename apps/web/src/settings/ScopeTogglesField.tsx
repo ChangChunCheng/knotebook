@@ -5,13 +5,13 @@ import type { ScopeChecks } from "@/lib/token-scope";
 import "@/i18n/management-strings";
 
 /**
- * token 權限的三個細 toggle（#247；#181 加「刪除」）：行內編輯與建立對話框共用。「讀取」一律包含，不列。
- * - switch 的可及名稱與粗體標籤逐字用 `settings.account.apiTokensScopeEdit`／`apiTokensScopeMove`／`apiTokensScopeDelete`（模型面字串引用它們）；
- *   移動與刪除另有一行不重複名稱的說明（`apiTokensScopeMoveDesc`／`apiTokensScopeDeleteDesc`）。
- * - 關掉「編輯」→「搬移」「刪除」disabled 並清為關（與 `scopeFromChecks(false, …) === "notes:read"` 同向）。
- * - 「搬移」用 `tone="destructive"`（不可逆）；「刪除」用預設 tone（移到垃圾桶可還原）。各自開著時下方顯示後果說明
- *   （`apiTokensScopeMoveHint`／`apiTokensScopeDeleteHintRequiresEdit`，兩者都以「需同時勾選編輯」收尾）並 aria-describedby，關著時不顯示。
- * 建立對話框「按送出才生效」卻用 toggle 是明文例外（見 ui/switch.tsx 檔頭）。OAuth 同意頁仍用 `ScopeChecksField`。
+ * Read is always included, so it isn't listed. The switches' accessible names use
+ * `settings.account.apiTokensScopeEdit`/`apiTokensScopeMove`/`apiTokensScopeDelete` verbatim (model-facing strings quote
+ * them), shared with `ScopeChecksField` (still used by the OAuth consent page); move and delete also show them as the bold
+ * label, followed by an inline description that doesn't repeat the name. Turning off edit disables move/delete and clears them (same direction as
+ * `scopeFromChecks(false, …) === "notes:read"`). Move uses `tone="destructive"` (irreversible); delete uses the default
+ * tone (trash is restorable). Each shows its consequence hint, linked by aria-describedby, only while on. Toggles in an
+ * apply-on-submit create dialog are a deliberate exception (see the ui/switch.tsx header).
  */
 export function ScopeTogglesField({
   value,

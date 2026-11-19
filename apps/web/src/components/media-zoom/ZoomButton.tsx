@@ -4,7 +4,7 @@ import { ZoomIn } from "@/components/ui/icons-extra";
 import { cn } from "@/lib/utils";
 import { prefetchMediaLightbox } from "./lightbox-chunk";
 
-/** 圖片與 mermaid 共用的放大鈕。長相全靠 `.block-control`（含 hover／按下／焦點回饋），位置由呼叫端的容器決定。 */
+/** Shared by images and mermaid. All styling (incl. hover/press/focus feedback) comes from `.block-control`; the caller's container positions it. */
 export function ZoomButton({
   className,
   onPointerEnter,

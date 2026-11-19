@@ -8,12 +8,9 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 
 /**
- * 改密碼頁（`/change-password`，登入後可達）。
- * 頁面本身只負責「強制模式外框」：標題/說明、忘記密碼的登出逃生口，以及
- * `ChangePasswordForm` 成功後的導向——`navigate("/", {replace:true})`（現行為，
- * `ChangePasswordGate` 讀到新的 `mustChangePassword:false` 後自然放行，不需要頁面
- * 自己判斷要不要跳過 gate）。跳一則成功 toast，文案不提「請重新登入」（因為根本
- * 沒有登出——見 `ChangePasswordForm` 內的 server 重簽說明）。
+ * After success it only navigates to "/"; `ChangePasswordGate` lets the user through once `mustChangePassword` is false,
+ * so the page doesn't decide whether to skip the gate.
+ * The success toast doesn't ask to sign in again because there is no logout (the server re-issues the session; see `ChangePasswordForm`).
  */
 export default function ChangePasswordPage() {
   const { t } = useTranslation();
@@ -27,11 +24,9 @@ export default function ChangePasswordPage() {
   }
 
   /**
-   * 忘記目前密碼的使用者在這頁會被永久卡住（`ChangePasswordGate` 擋住其餘所有受保護
-   * 路由，`/login` 本身不會清 cookie——直接打開它只會因為 session 仍有效又被導回這裡）。
-   * 提供一個明確的登出出口：與 `UserMenu.handleLogout` 同一套（`useSession().logout()`
-   * → `POST /api/auth/logout` + 清 `['me']` 快取），成功後導向 `/login` 讓使用者能重新
-   * 走一般登入或請 admin 協助重設帳號。
+   * Without a way out, a user who forgot the current password is stuck: the gate blocks every other protected route and `/login` doesn't
+   * clear the cookie, so it redirects back while the session is valid. Same logout as `UserMenu.handleLogout`, then `/login` to sign in
+   * normally or ask an admin to reset the account.
    */
   async function handleLogout(): Promise<void> {
     await logout();
@@ -53,7 +48,8 @@ export default function ChangePasswordPage() {
         </div>
 
         {authConfig.data?.passwordLogin.enabled === false && (
-          // 關閉期間 must_change_password 照常生效、清除仍只有改密碼一途；說明這個密碼暫時用不到、但臨時密碼仍要換掉。
+          // While password login is off, must_change_password still applies and only changing the password clears it: the note says this
+          // password is unusable for now, but the temporary one must still be replaced.
           <p className="text-sm text-muted-foreground">{t("changePassword.ssoOnlyNote")}</p>
         )}
 

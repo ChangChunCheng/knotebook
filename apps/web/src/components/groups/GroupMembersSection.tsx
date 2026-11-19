@@ -25,7 +25,7 @@ import { afterLeaveTarget } from "./GroupAboutSection";
 import { BulkAddDialog, type BulkAddMode, type BulkAddState } from "./BulkAddDialog";
 import { parseEmailList, runBulkAdd, type BulkAddOutcome, type BulkAddResult } from "./bulk-add";
 
-/** 跑完後放回（或留在）輸入框的：沒加成、可以修正或再試的。已加入與已是成員的不放回。 */
+/** Outcomes worth fixing or retrying go back into the box after a run. */
 const KEEP_IN_BOX: ReadonlySet<BulkAddOutcome> = new Set(["invalid", "notFound", "failed", "notProcessed"]);
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
@@ -35,22 +35,19 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 名單裡掛內建管理員角色的人數（看 `builtin === "admin"` 計數）。 */
 function countAdmins(members: GroupMemberDto[]): number {
   return members.filter((member) => member.builtin === "admin").length;
 }
 
-/** 成員目前角色的顯示名：優先用 `GET …/roles` 的那一列（自訂角色要它的 `name`）；roles 還沒到時退回 `builtin`。 */
+/** Prefers the `GET …/roles` row (a custom role needs its `name`); falls back to `builtin` until roles load. */
 function memberRoleLabel(t: (key: string) => string, roles: GroupRoleDto[], member: GroupMemberDto): string {
   return roleLabel(t, roles.find((role) => role.id === member.roleId) ?? { builtin: member.builtin, name: null });
 }
 
 /**
- * 成員表：名稱｜Email｜角色（`canManageMembers` 時是下拉，否則純文字）｜操作（移除；只在有管理權時有這欄）。
- * 列名以 email 為準（`nameColumn="email"`）；移除鈕與角色下拉的名稱也帶 email（各自的 aria-label）。最後一位管理員那列：角色下拉原生 disabled＋title、
- * 移除鈕 softDisabled＋原因。角色下拉的選項與送出的值都是 `GET …/roles` 的**角色 id**（
- * 兩位管理員、沒有一般成員的群組，一般成員角色的 id 只拿得到那裡）。下拉列全部角色、含內建管理員（不防升權）。
- * #183：很長的 email 交給表格的 text 欄（wrap-anywhere、14ch 下限）與框內橫向捲動，不再把面板撐寬；移除鈕的可見文字不帶 email。
+ * Role select options and values are role ids from `GET …/roles` (the normal member role id is only available there,
+ * e.g. in a group with two admins and no normal members). All roles are listed, including builtin admin (no escalation
+ * guard here). Long emails wrap in the table's text column and scroll inside the box instead of widening the panel (#183).
  */
 function MembersSection({ group, canManageMembers }: { group: GroupDto; canManageMembers: boolean }) {
   const { t } = useTranslation();
@@ -60,18 +57,19 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
   const removeMember = useRemoveMember(group.id);
   const addMember = useAddMember(group.id);
   const [email, setEmail] = useState("");
-  // null＝還沒選過：用內建一般成員那一個的 id；roles 還沒到時不送 roleId（server 預設內建一般成員）
+  // null = never picked: use the builtin normal member's id; without roles loaded no roleId is sent (server defaults it).
   const [pickedRoleId, setPickedRoleId] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
-  // 批次加入的對話框（`BulkAddDialog`）：`mode` 在關閉後保留，免得關閉那一刻標題先換掉
-  // （專案目前沒有 animate-out 的 keyframes，Radix 立即卸載；日後加了關閉動畫，`closeDialog` 的 `setBulk(null)` 會讓內容閃回挑人畫面，要一起改）
+  // `mode` is kept after close so the title doesn't change at the moment of closing. Radix unmounts immediately (no
+  // animate-out keyframes); if a close animation is added, `closeDialog`'s `setBulk(null)` would flash the picker.
   const [dialog, setDialog] = useState<{ open: boolean; mode: BulkAddMode }>({ open: false, mode: "input" });
   const [bulk, setBulk] = useState<BulkAddState | null>(null);
-  // 一輪批次還在送（含對話框已關、正在等最後那一筆）：鎖輸入框、擋再開一輪。ref 版給防重入（同一個 tick 連按時 state 還沒更新）
+  // A run is still sending (even after the dialog closed, waiting for the last request): lock the box and block another run.
+  // The ref guards re-entry: state is still stale for a second click in the same tick.
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  // 每開／關一次對話框加一：一輪跑完時對話框已關（或已是另一次打開），就不再寫進度與結果
+  // Bumped on every dialog open/close: a run that finishes after the dialog closed (or reopened) writes no progress or results.
   const dialogSessionRef = useRef(0);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const importButtonRef = useRef<HTMLButtonElement>(null);
@@ -80,10 +78,10 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
   const myUserId = useSession().user?.id;
   const navigate = useNavigate();
   const backgroundLocation = (useLocation().state as { backgroundLocation?: Location } | null)?.backgroundLocation;
-  // #395：按垃圾桶先確認（比照 #247 退出群組的確認對話框）；null＝沒有在確認
+  // Remove asks for confirmation first, like leaving a group (#395); null = not confirming.
   const [pendingRemove, setPendingRemove] = useState<GroupMemberDto | null>(null);
 
-  // 卸載（關掉群組 modal、換頁）＝停止：正在送的那一筆跑完就不再送
+  // Unmount stops the run: the in-flight request finishes, no more are sent.
   useEffect(() => {
     const abort = abortRef;
     return () => abort.current?.abort();
@@ -105,7 +103,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
     }
   }
 
-  /** 確認後才送。移除的是自己＝退出群組：成功後照退出的去處（`afterLeaveTarget`）離開成員頁。 */
+  /** Removing yourself = leaving the group: on success navigate away like leaving does (`afterLeaveTarget`). */
   async function handleRemove(member: GroupMemberDto): Promise<void> {
     try {
       await removeMember.mutateAsync(member.userId);
@@ -123,7 +121,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
     setDialog({ open: true, mode });
   }
 
-  /** 完成、取消、Esc、✕ 都走這裡；跑到一半關掉＝停止（正在送的那一筆跑完，其餘放回輸入框）。 */
+  /** Closing mid-run stops it: the in-flight request finishes, the rest go back to the box. */
   function closeDialog(): void {
     abortRef.current?.abort();
     dialogSessionRef.current += 1;
@@ -137,19 +135,20 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
   }
 
   /**
-   * 批次加入（貼多個地址、或從其他群組匯入），進度與結果都在 `BulkAddDialog`：已在名單裡的先記「已是成員」不送；
-   * 其餘依序 `PUT`（`bulk-add.ts`），全部用加人表單目前選的角色。整批結束才失效一次快取（同單人加入的三把 key）。
-   * 跑完後沒加成的（格式不對、沒有帳號、失敗、未處理）依原順序放回輸入框方便修正或再試：輸入框那條路徑取代原內容
-   * （跑的期間輸入框鎖住，內容就是這一批），匯入那條接在原內容後面。角色重設的規則與單人加入一致：
-   * 跑完後輸入框是空的才重設回預設角色（匯入那條也算進輸入框原有、使用者還沒送出的地址：那些還要用他選的角色加）。
-   * `order`＝放回時的順序（輸入框那條是原輸入順序）。
-   * 防重入由兩個入口在開對話框之前擋（`handleAdd`、匯入鈕）：`runningRef` 在這裡同步設起來，同一個 tick 的第二次就進不來；
-   * 開頭再擋一次是防禦（匯入確認鈕靠下一次 render 換掉）。
+   * Caches are invalidated once at the end (same keys as a single add).
+   * Addresses not added (invalid, no account, failed, not processed) go back to the box in `order` (the original input
+   * order on the box path) for fixing or retrying:
+   * the box path replaces the box (it is locked during the run, so its content is this batch), the import path appends.
+   * As with a single add, the role resets to the default only if the box is empty afterwards; on the import path the
+   * addresses already typed in the box count, since they still need the picked role.
+   * Re-entry is blocked by both entry points (`handleAdd`, the import button) before the dialog opens: `runningRef` is set
+   * synchronously so a second call in the same tick can't enter; the check at the top is defensive (the import confirm
+   * button only changes on the next render).
    */
   async function runBulk(emails: string[], pre: BulkAddResult[], mode: BulkAddMode, order: readonly string[] = emails): Promise<void> {
     if (runningRef.current) return;
     runningRef.current = true;
-    // 跑的期間輸入框 readOnly，這個值到跑完都不會變
+    // The box is readOnly during the run, so this value holds until it ends.
     const boxBefore = email.trim();
     setRunning(true);
     const session = dialogSessionRef.current;
@@ -191,10 +190,10 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
     }
   }
 
-  /** 從試算表或信件貼一欄地址：單行輸入框會把換行吃掉（地址黏在一起），這裡改成逗號。 */
+  /** A column pasted from a spreadsheet or mail: the single-line input would drop the newlines and glue addresses, so use commas. */
   function handlePaste(event: ClipboardEvent<HTMLInputElement>): void {
     const text = event.clipboardData.getData("text");
-    // 跑的期間輸入框 readOnly：瀏覽器照樣送 paste 事件，這裡不能替它改值
+    // readOnly during a run: the browser still fires paste, so don't rewrite the value here.
     if (event.currentTarget.readOnly || !/[\r\n]/.test(text)) return;
     event.preventDefault();
     const input = event.currentTarget;
@@ -240,14 +239,15 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       id: member.userId,
       primary: { name: member.displayName, icon: <Avatar name={member.displayName} avatar={member.avatar ?? null} size={24} /> },
       cells: {
-        // 成員彼此看得到 email——要收回就刪這一欄（連同 nameColumn 改回主欄；server 建議的 ① 同群組成員也要一起收，見 routes/users.ts）
+        // Members can see each other's emails. To withdraw that, delete this column (and move nameColumn back to the main
+        // column), and also withdraw the server's same-group-member lookup (see routes/users.ts).
         email: { content: member.email, tone: "muted" },
         role: canManageMembers ? (
           <Select
             variant="inline"
             aria-label={t("groups.detail.roleLabel", { email: member.email })}
             value={member.roleId}
-            // roles 還沒到：只有目前角色那一個選項可顯示，先鎖住
+            // Roles not loaded: only the current role's option can render, so lock.
             disabled={locked || setRole.isPending || roles.length === 0}
             title={locked ? t("groups.detail.lastAdminHint") : undefined}
             onValueChange={(roleId) => void handleRole(member, roleId)}
@@ -320,8 +320,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
         )}
       </Dialog>
 
-      {/* 最後一位管理員的提示：移除鈕是 `aria-disabled`（`title` 浮得出來），但角色下拉仍是原生 disabled、
-          `title` 浮不出來——所以照留看得見的文字。 */}
+      {/* Visible text: the remove button is `aria-disabled` so its `title` shows, but the role select is natively disabled and its `title` doesn't. */}
       {canManageMembers && adminCount === 1 && !membersQuery.isPending && (
         <p className="mt-2 text-xs text-muted-foreground">{t("groups.detail.lastAdminHint")}</p>
       )}
@@ -329,10 +328,8 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
       {canManageMembers && (
         <>
           <form onSubmit={(event) => void handleAdd(event)} className="mt-4 flex items-center gap-2">
-            {/* 收多個地址（逗號／分號／空白／換行分隔），所以是 multiple（text 而不是 email：後者的原生驗證會擋下多個地址）；
-                「認識的人」建議只查、只換游標所在的那一個地址，已是成員與框裡已有的不再建議 */}
-            {/* 跑的期間 readOnly（不是 disabled）：跑完要把沒加成的地址寫回來，使用者這時打的字會被蓋掉；
-                對話框跑到一半被關掉時焦點還回這裡，disabled 收不到焦點。唯讀時也不開建議清單 */}
+            {/* Takes several addresses (comma, semicolon, space or newline separated), so multiple, and type text (not email: native email validation rejects several addresses). "People you know" suggestions only query and replace the address at the cursor, skipping members and addresses already in the box. */}
+            {/* readOnly, not disabled: typing during a run would be overwritten by the write-back, and focus returns here if the dialog closes mid-run, and disabled can't take focus. No suggestion list while readOnly. */}
             <UserEmailCombobox
               ref={emailInputRef}
               multiple
@@ -368,7 +365,7 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
             </p>
           )}
           <div className="mt-2">
-            {/* 跑的期間用 aria-disabled（不是 disabled）：匯入對話框跑到一半被關掉時焦點還回這顆 */}
+            {/* aria-disabled, not disabled: focus returns here if the import dialog closes mid-run. */}
             <Button
               ref={importButtonRef}
               type="button"
@@ -402,10 +399,6 @@ function MembersSection({ group, canManageMembers }: { group: GroupDto; canManag
   );
 }
 
-/**
- * 群組 modal「成員」（`/groups/:id`，#247）：成員表（`canManageMembers` 有角色下拉、紅垃圾桶移除、加人；否則唯讀）。
- * 最後一位管理員那列：角色下拉 disabled、移除鈕 `aria-disabled`＋`opacity-40`＋`title`。名稱、用量、危險區不在這頁。
- */
 export function GroupMembersSection() {
   const { t } = useTranslation();
   const group = useGroupOutlet();

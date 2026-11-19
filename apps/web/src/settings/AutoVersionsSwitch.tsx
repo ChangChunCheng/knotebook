@@ -1,10 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Switch } from "@/components/ui/switch";
 
-/**
- * 「自動儲存版本」開關列（帳號頁、群組詳情共用）。立即生效＝`ui/switch`（`role="switch"`）。
- * disabled 的理由一律用看得見的文字（`disabled:pointer-events-none` 讓 title 浮不出來）。
- */
+/** Used by the personal storage page and the group storage section; applies immediately (`ui/switch`). Disabled reasons are visible text: a title doesn't show reliably on a disabled control. */
 export function AutoVersionsSwitch({
   id,
   title,

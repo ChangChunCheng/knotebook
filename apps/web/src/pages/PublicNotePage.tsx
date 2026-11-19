@@ -33,34 +33,29 @@ import { PresentationErrorBoundary, PresentationShell, type PresentationShellSta
 import { exitFullscreenIfLeftPresentation, isPresentingSearch, searchWithoutPresent } from "@/present/present-url";
 import { usePresentEntry } from "@/present/usePresentEntry";
 
-/** #269：舊 server 沒帶 `links` 時的後備——模組層常數，identity 穩定，PublicNoteEditor 的 links Map 不會每次 render 重建。 */
+/** Fallback when an older server omits `links` (#269). Module-level so the identity is stable and the editor's links Map isn't rebuilt every render. */
 const NO_LINKS: readonly PublicLinkDto[] = [];
 
 /**
- * 公開唯讀頁（#72；#122 起雙形）：`/p/:token` 與 `/p/:handle/:slug`
- * 共用本頁。**免登入**：兩條路由都掛在 RequireAuth 外（App.tsx），整頁零 auth
- * 相依——不打 `/api/auth/me`、不掛 AppShell、不掛 useCollab（內容是快照，落後
- * 量級 debounce 2s／上限 10s，記 known-limitations）。
- *
- * 形的判別走 useParams（比照 NotePage 的 isPathForm 慣例）：`handle`＋`slug` 都在
- * ＝雙段別名形，否則單段 token 形；API 路徑與 query key 都依形分岔
- * （lib/public-note-ref.ts——兩形不得共 key）。
- *
- * 格式驗證與 404 同形都在 server 端（routes/public.ts 的四步序）；這裡只分兩種
- * 失敗呈現：404 → 失效卡（撤銷／改名／別名清除後的舊連結，同形不可區分），
- * 其餘 → errors.<code> 文案（429 節流時連結可能還活著，不能誤告「已失效」）。
+ * Serves `/p/:token` and `/p/:handle/:slug` (#72, #122). Anonymous: both routes sit outside RequireAuth (App.tsx), so no auth dependency at
+ * all: no `/api/auth/me`, no AppShell, no useCollab (the content is a snapshot lagging by a 2 s debounce, at most 10 s; see
+ * docs/known-limitations.md).
+ * The form comes from useParams (`handle` + `slug` = alias form, else token form); API path and query key branch by form
+ * (`lib/public-note-ref.ts`), and the two forms must not share a key. Format checks and the uniform 404 are server-side (routes/public.ts).
+ * Only a 404 shows the invalid-link card (revoked, renamed or cleared aliases are indistinguishable); other failures show `errors.<code>`
+ * (a 429 can hit a live link, so it mustn't say the link is dead).
  */
 export default function PublicNotePage() {
   const params = useParams<{ token?: string; handle?: string; slug?: string }>();
   const { t } = useTranslation();
 
-  // #229：簡報模式。location 取本頁自己的 useLocation()。
+  // Presentation mode (#229) reads this page's own useLocation().
   const location = useLocation();
   const navigate = useNavigate();
   const presenting = isPresentingSearch(location.search);
   const { presentHere } = usePresentEntry();
 
-  // 與 NotePage 的 isPathForm 同名同判準（可 grep 的慣例錨點）
+  // Same criterion as NotePage's user form (`handle` + `slug` both present).
   const isPathForm = params.handle !== undefined && params.slug !== undefined;
   const publicRef: PublicNoteRef = useMemo(
     () =>
@@ -75,44 +70,42 @@ export default function PublicNotePage() {
     queryKey: publicNoteQueryKey(publicRef),
     queryFn: () => api<PublicNoteDto>(publicNoteApiPath(publicRef)),
     enabled,
-    // 不重試：404 是這個端點最常見的合法結果（撤銷後的連結），預設的三連重試只會
-    // 多啃節流額度（miss 桶 key=ip）、把失效卡的出現拖慢好幾秒。
+    // No retry: 404 is the common legitimate result, and default retries burn throttle budget (miss limiter keyed by ip) and delay the invalid card by seconds.
     retry: false,
   });
 
-  // 解碼放 render（useMemo）而不是 queryFn：毀損 payload 的 throw 會冒到
-  // PublicNoteErrorBoundary 顯示錯誤卡＋重試，而不是被 react-query 當成「查詢失敗」
-  // 吃進 error 態誤標成連結問題。
+  // Decode in render so a corrupt payload throws to PublicNoteErrorBoundary instead of becoming a query error mislabeled as a link problem.
   const doc = useMemo(() => (query.data ? decodePublicYdoc(query.data.ydoc) : null), [query.data]);
 
-  // #269：公開頁的段落錨點——noteKey＝公開 ref 的識別字串（與 PublicNoteEditor 共用 publicRefIdentity）；ready＝doc 解碼完成。
+  // Paragraph anchors (#269): noteKey is the public ref identity (shared with PublicNoteEditor via publicRefIdentity); ready once the doc decodes.
   const [anchorRoot, setAnchorRoot] = useState<HTMLElement | null>(null);
   const publicKey = publicRefIdentity(publicRef);
   const blockAnchor = useBlockAnchor({ noteKey: publicKey, ready: doc !== null, root: anchorRoot, ignore: presenting, currentNoteId: null });
-  // #269：標題「#」鈕疊在文章欄 wrapper（`relative`）上。
+  // The title "#" button overlays the article column wrapper (`relative`).
   const [columnEl, setColumnEl] = useState<HTMLElement | null>(null);
-  // #465 右側標題大綱（桌機、平板；手機另有入口）。公開頁沒有版本泡泡；簡報時頁面被簡報層蓋住，不掛。
-  // 只在大綱可能出現時量版面（同筆記頁）。
+  // Right-side heading outline (#465; desktop and tablet, phones have their own entry). No version bubbles on the public page; while
+  // presenting the presentation layer covers the page, so it isn't mounted. Layout is measured only when the outline can show (as on the note page).
   const [publicEditor, setPublicEditor] = useState<OutlineEditorLike | null>(null);
   const outlineHeadings = useOutlineHeadings(publicEditor);
   const compact = useIsOutlineCompact();
   const outlineCanShow = !compact && !presenting && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? anchorRoot : null, outlineCanShow ? columnEl : null);
   const showOutline = outlineCanShow && outlineBox !== null;
-  // 釘住規則同筆記頁；寬度由公開端點給（缺值或不認得＝標準），只有標準寬能釘。
+  // Same pin rule as the note page; width comes from the public endpoint (missing or unknown = standard), and only standard width can pin.
   const noteWidth = toNoteWidth(query.data?.width);
   const [outlinePinPref, setOutlinePinPref] = useOutlinePinned();
   const outlinePinAvailable = noteWidth === "standard" && outlineBox !== null && canPinOutline(outlineBox.width);
   const outlinePinned = showOutline && outlinePinPref && outlinePinAvailable;
   const pinMotionReady = usePinMotionReady(showOutline);
-  // 手機：只有捲動時的位置泡泡（公開頁沒有 ⋮），點它開底部面板。公開頁不在文件代為捲動的外框裡，手機上仍是捲動容器自己在捲。
+  // Phone: only the scroll position bubble (no menu on the public page); tapping it opens the bottom sheet. The public page isn't inside the
+  // frame where the document scrolls on its behalf, so on phones the scroller itself still scrolls.
   const phoneOutline = compact && !presenting && outlineHeadings.length > 0;
   const [outlineSheetOpen, setOutlineSheetOpen] = useState(false);
   useEffect(() => {
     if (!phoneOutline) setOutlineSheetOpen(false);
   }, [phoneOutline]);
   const scrollerTop = useCallback(() => anchorRoot?.getBoundingClientRect().top ?? 0, [anchorRoot]);
-  // 面板沒有觸發鈕：用鍵盤或螢幕閱讀器從泡泡開的，關閉時焦點回到泡泡；手指點的（泡泡不拿焦點）不移動焦點。
+  // No trigger button: opened from the bubble by keyboard or screen reader, focus returns to it on close; a touch tap (the bubble takes no focus) leaves focus alone.
   const [outlineReturnTo, setOutlineReturnTo] = useState<HTMLElement | null>(null);
   const openOutlineSheet = useCallback((returnFocusTo: HTMLElement | null) => {
     setOutlineReturnTo(returnFocusTo);
@@ -120,25 +113,22 @@ export default function PublicNotePage() {
   }, []);
   const outlineRestoreFocus = useMemo(() => focusBackTo(outlineReturnTo), [outlineReturnTo]);
 
-  // 背景 refetch（react-query 預設 focus/reconnect 會重抓）失敗的呈現規則：
-  // 404 → **翻成失效卡**，即使手上還有內容——這是撤銷的即時傳播，正在
-  // 看的人回到分頁就該知道連結死了；**非 404 且已有內容 → 繼續渲染既有快照**——
-  // 一時的網路失敗不該把看到一半的內容整卡換成錯誤文案（query.data 在 refetch 失敗
-  // 時仍保留），下次 refetch 成功自癒。
+  // Background refetch failures (react-query refetches on focus/reconnect): a 404 flips to the invalid card even with content (revocation reaches
+  // an open tab on refocus); another failure with data keeps the snapshot (query.data survives a failed refetch), since a transient network error
+  // shouldn't replace half-read content, and the next successful refetch heals it.
   const notFound = query.isError && query.error instanceof ApiFail && query.error.status === 404;
 
-  // #229 呼叫點：重抓到 404（撤銷）→ 頁面切失效卡、外殼不掛，先退出我們要的全螢幕。
+  // A refetch hit 404 (revoked): the page switches to the invalid card and the shell unmounts, so leave owned fullscreen first (#229).
   useEffect(() => {
     if (notFound) exitOwnedFullscreen();
   }, [notFound]);
-  // #234：失效卡不該帶著 ?present 與投影片 hash——replace 拿掉（不新增歷史），其他 query 保留。
-  // 404 之後才導到 ?present 的網址也要拿掉，所以 deps 含 location。
+  // The invalid card must not keep ?present or the slide hash (#234): replace (no new history entry), keeping other query params; deps include location because a ?present URL can be reached after the 404.
   useEffect(() => {
     if (notFound && isPresentingSearch(location.search)) {
       void navigate({ pathname: location.pathname, search: searchWithoutPresent(location.search), hash: "" }, { replace: true });
     }
   }, [notFound, location.pathname, location.search, navigate]);
-  // 卸載型呼叫點（讀真實網址）。
+  // Unmount-time call (reads the real URL).
   useEffect(() => () => exitFullscreenIfLeftPresentation(), []);
 
   let body: ReactNode;
@@ -159,20 +149,19 @@ export default function PublicNotePage() {
       </p>
     );
   } else {
-    // 此分支 query.data 必有（pending／notFound／「錯誤且無資料」都在上面排除），
-    // 但 TS 的判別式聯集跟不上自訂分支，只好斷言。
+    // data is always set here (pending, notFound and error-without-data are excluded above), but TS can't narrow custom branches.
     const data = query.data!;
     body = (
       <>
-        {/* 單卡頁首：標題＋唯讀徽章＋Knotebook 字樣連回 /（匿名者點了會被 RequireAuth
-            導去 /login——那就是這顆連結的用途：從分享頁通往產品本身）。 */}
+        {/* Title, read-only badge and the Knotebook wordmark linking to /; anonymous clicks land on /login via RequireAuth, which is the
+            point of the link: the way from a shared page to the product. */}
         <header className="flex items-center gap-3 border-b border-border px-5 py-3">
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{data.title}</h1>
           <Button type="button" variant="ghost" size="sm" className={cn("shrink-0", HEADER_ICON_HIT)} onClick={presentHere}>
             <Presentation className="h-4 w-4" />
             <span className="max-sm:sr-only">{t("note.menu.present")}</span>
           </Button>
-          {/* 手機：徽章收成一個點，文字只給螢幕閱讀器；sm 起是原本的邊框標籤。 */}
+          {/* Phone: badge collapses to a dot, text for screen readers only; from sm up it is the bordered label. */}
           <span className="inline-flex shrink-0 items-center text-xs text-muted-foreground sm:rounded sm:border sm:border-border sm:px-1.5 sm:py-0.5">
             <span data-readonly-dot="" aria-hidden="true" className="h-2 w-2 rounded-full bg-muted-foreground sm:hidden" />
             <span className="max-sm:sr-only">{t("public.readonly")}</span>
@@ -181,7 +170,7 @@ export default function PublicNotePage() {
             Knotebook
           </Link>
         </header>
-        {/* 零高度錨點在捲動容器之外、貼它的上緣（同 NoteEditor）。 */}
+        {/* Zero-height anchor outside the scroller, at its top edge (as in NoteEditor). */}
         {showOutline && (
           <NoteOutline
             headings={outlineHeadings}
@@ -206,11 +195,10 @@ export default function PublicNotePage() {
             restoreFocus={outlineRestoreFocus}
           />
         )}
-        {/* 捲軸的位置固定保留：捲軸出現與否不改容器寬度，能不能釘大綱（依容器寬判斷）才不會在門檻附近來回切。 */}
+        {/* Scrollbar space is always reserved so the container width, which decides outline pinning, doesn't flip near the threshold. */}
         <div ref={setAnchorRoot} className="min-h-0 min-w-0 flex-1 overflow-y-auto sm:[scrollbar-gutter:stable]">
-          {/* 內文沿 NoteEditor 的文章欄（#115：`<md` 內距 70→20 的斷點機制在
-              article-column.ts／index.css，這裡照吃不另寫）。#297：寬度取公開端點的
-              `width`（管理公開連結的人設定）；缺值或不認得 → 標準（舊 server）。 */}
+          {/* Follows NoteEditor's article column (text inset 70px -> 20px below md; the breakpoint lives in article-column.ts/index.css). `width` comes from
+              the public endpoint (#297; set by whoever manages the public link); missing or unknown means standard (older servers). */}
           <div
             ref={setColumnEl}
             data-testid="article-column"
@@ -227,7 +215,8 @@ export default function PublicNotePage() {
     );
   }
 
-  // #229：外殼在 presenting 且不是 404 時掛；非 404 失敗且已有資料 → 續渲快照，外殼與簡報層不動。
+  // The shell mounts while presenting unless 404; a non-404 failure with data keeps rendering the snapshot and leaves the shell and
+  // presentation layer alone.
   const shellMounted = presenting && !notFound;
   const presentStatus: PresentationShellStatus = query.isPending ? "loading" : query.isError && !query.data ? "error" : "ready";
   const presentError =

@@ -9,13 +9,9 @@ import { roleLabel } from "@/lib/group-role";
 import type { GroupOutletContext } from "./group-outlet";
 
 /**
- * 群組 modal（#247）：`GroupModal`（layout route）、`GroupSubpathRedirect`（未知子路徑）、`LegacyGroupRedirect`（舊網址）。
- * 三者都在首包；四個區塊在 lazy 的 `GroupSections`。
- *
- * `LegacyGroupRedirect`：舊網址 `/settings/groups/:id`、`/settings/groups/:id/roles` 轉到群組 modal。
- * `<Navigate to="/groups/:id">` 不會代入參數，所以讀 `useParams`。**必須轉傳 `location.state`**：舊網址可能
- * 帶著 `backgroundLocation`（出貨前開著的分頁、尚未改到的呼叫點），不帶 state 的 `<Navigate>` 會把背景丟掉，
- * 關閉群組 modal 就落到 `/` 而不是原本那頁。首包、很小。
+ * `<Navigate to="/groups/:id">` doesn't substitute params, hence `useParams`. `LegacyGroupRedirect` must forward
+ * `location.state`: old URLs can carry `backgroundLocation`, and dropping it makes closing the modal land on `/`
+ * instead of the original page.
  */
 export function LegacyGroupRedirect({ suffix }: { suffix: "" | "/roles" }) {
   const { id = "" } = useParams();
@@ -24,9 +20,8 @@ export function LegacyGroupRedirect({ suffix }: { suffix: "" | "/roles" }) {
 }
 
 /**
- * `/groups/:id/<未知子路徑>` → `/groups/:id`（#247）。掛在 `GroupModal` **裡面**（它的 `path="*"` 子 route）：
- * 目的地是同一個 modal，不會閃別的面板。`<Navigate to="/groups/:id">` 不代入參數，所以讀 `useParams`；
- * 轉傳 `location.state` 才不會丟掉 `backgroundLocation`（同 `LegacyGroupRedirect` 的理由）。
+ * Sits inside `GroupModal` (its `path="*"` child) so the destination is the same modal and no other panel flashes.
+ * Forwards `location.state` to keep `backgroundLocation`, as `LegacyGroupRedirect` does.
  */
 export function GroupSubpathRedirect() {
   const { id = "" } = useParams();
@@ -35,14 +30,11 @@ export function GroupSubpathRedirect() {
 }
 
 /**
- * 群組 modal（#247）——第二棵 Routes 樹的 layout route，外殼是 `ManagementShell`。
- *
- * - 群組由 `useGroups()`（與側欄同一份快取）以 `:id` 找，**不分大小寫**（#241 起 server 一律回小寫 id，但網址可能被手打成大寫）。
- * - 非成員、不存在、id 不合法同一形——右卡 `errors.not_found`、標題 `groups.nav.label`、沒有副文字；外殼與四個項次照常。
- *   載入中與（沒有任何舊資料時的）錯誤也用同一個備用標題。
- * - 已有資料時 refetch 失敗（`isError` 但 `data` 仍在）照樣用舊資料——不把整個面板換成錯誤字。
- * - 右卡的 lazy 錯誤邊界同 `SettingsModal`：inline frame、`chunk="group"`、`resetKey` 取真實 pathname。
- * - 關閉（Esc／✕）：`navigate(backgroundLocation ?? "/")`。
+ * Group lookup (in the sidebar's `useGroups()` cache) is case-insensitive: the server returns lowercase ids but a URL
+ * can be typed in uppercase. Non-member, missing and invalid ids look the same: `errors.not_found` in the right card,
+ * `groups.nav.label` as title, no subtitle, shell and items as usual; loading and an error without data use the same
+ * fallback title. A failed refetch with data still present keeps the old data instead of replacing the panel with an error.
+ * The right card's lazy error boundary matches `SettingsModal`: inline frame, `chunk="group"`, `resetKey` from the real pathname.
  */
 export function GroupModal() {
   const { t } = useTranslation();

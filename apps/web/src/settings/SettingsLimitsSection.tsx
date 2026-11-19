@@ -20,13 +20,13 @@ import { initialDraft, isSiteLimitKey, limitValueText, SiteLimitRow } from "./Si
 import { effectiveWorkers, estimateParseMemoryMb, fromInput, toInput } from "./site-limit-format";
 import "@/i18n/management-strings";
 
-/** 這一頁的分類（`signIn` 在「登入」分頁）；註冊表裡沒有項目的分類不畫。 */
+/** `signIn` lives on the sign-in tab; categories with no registry items aren't drawn. */
 export const PAGE_CATEGORIES: readonly SiteLimitCategory[] = ["uploadsNotes", "parseWorkers", "rateLimits", "bulkTransfer"];
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 
-/** 伺服器錯誤：`limit_locked_by_env` 有自己的文案；`invalid_body` 一律「數值不在可調範圍內」，不轉譯英文 message。 */
+/** `limit_locked_by_env` has its own text; `invalid_body` always shows the range message rather than the English server text. */
 export function serverErrorMessage(t: TFunction, err: unknown): string {
   if (err instanceof ApiFail) {
     if (err.code === "limit_locked_by_env") return t("errors.limit_locked_by_env");
@@ -36,7 +36,6 @@ export function serverErrorMessage(t: TFunction, err: unknown): string {
   return t("errors.fallback");
 }
 
-/** 某分類在註冊表裡的 key（依註冊表順序）；「站台限制」與「登入」兩個分頁都由此取各自的區塊。 */
 export function categoryKeys(category: SiteLimitCategory): SiteLimitKey[] {
   return SITE_LIMIT_KEYS.filter((key) => SITE_LIMITS[key].category === category);
 }
@@ -49,7 +48,7 @@ function itemsFor(data: SiteLimitsDto, keys: readonly SiteLimitKey[]): SiteLimit
   });
 }
 
-/** 記憶體警告：用輸入框裡的值試算，超過偵測到的記憶體就提醒（不擋儲存）。 */
+/** Estimates from the draft values; warns when over the detected memory but doesn't block saving. */
 function MemoryWarning({ data, draftOf }: { data: SiteLimitsDto; draftOf: (item: SiteLimitItemDto) => string }) {
   const { t } = useTranslation();
   const memoryItem = data.items.find((item) => item.key === "parseWorkerMemoryMb");
@@ -78,9 +77,9 @@ function MachineLine({ machine }: { machine: SiteLimitsDto["machine"] }) {
 }
 
 /**
- * 一組限制＋一顆「儲存」：只送輸入框與目前值不同的 key（以 API 單位）。前端先驗整數與範圍，有錯就不送；
- * 預設是自動的項目留空＝自動（已調整的送 `null` 改回自動，本來就是自動的不送）；「恢復預設」／「改回自動」立即送 `null`。
- * 伺服器回錯顯示在區塊頂。
+ * One save sends only keys whose draft differs from the current value (in API units), after client-side integer and range
+ * checks. For items that default to auto, blank = auto: an adjusted one sends `null` to revert, an already-auto one isn't
+ * sent. "Restore default"/"Back to auto" send `null` at once. Server errors show at the top of the group.
  */
 export function SiteLimitsGroup({
   title,
@@ -91,7 +90,6 @@ export function SiteLimitsGroup({
   title: string;
   keys: readonly SiteLimitKey[];
   data: SiteLimitsDto;
-  /** 區塊頂端、列之前的內容（例如解析 worker 的機器資訊）；拿得到輸入框目前的內容。 */
   header?: (draftOf: (item: SiteLimitItemDto) => string) => ReactNode;
 }) {
   const { t } = useTranslation();
@@ -200,7 +198,7 @@ function changeValueText(t: TFunction, change: SiteLimitChangeDto, value: number
   return t(auto ? "admin.limits.changes.toAuto" : "admin.limits.changes.toDefault", { value: text(effective) });
 }
 
-/** 最近的修改：伺服器已依時間新到舊排好；不在註冊表的 key 照列原始 key 與 API 原值。 */
+/** The server already sorts newest first; keys missing from the registry show their raw key and API value. */
 function ChangesGroup({ changes }: { changes: SiteLimitChangeDto[] }) {
   const { t, i18n } = useTranslation();
   const columns: SettingsTableColumn[] = [
@@ -261,10 +259,6 @@ function LimitsBody({ data }: { data: SiteLimitsDto }) {
   );
 }
 
-/**
- * 站台管理「站台限制」分頁：依分類一個區塊（上傳與筆記、解析 worker、速率限制；批次讀寫有項目才畫），最後是最近的修改。
- * 登入期限與 token 兩項在「登入」分頁。
- */
 export function SettingsLimitsSection() {
   const { t } = useTranslation();
   const query = useSiteLimits();

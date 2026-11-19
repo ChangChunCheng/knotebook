@@ -29,31 +29,23 @@ import { RELEASE_HIGHLIGHTS, visibleHighlightItems } from "./release-highlights"
 import { visibleShortcuts, type KeyToken, type ShortcutCategory, type ShortcutEntry, type ShortcutKeys } from "./shortcut-list";
 
 /**
- * 說明視窗的內容（lazy chunk，第一次打開才下載；外殼見 `ShortcutsDialog`）。左欄由上而下是「功能導覽」「這一版新增」兩頁、分隔線、
- * 「快捷鍵」小標題與底下的各分類；右卡只顯示所選那一頁。
- *
- * 快捷鍵清單資料在 `shortcut-list.ts`，字串在 `i18n/shortcuts.*.json`（由上面那行 import 註冊）。站台能力：
- * `["ai-actions"]` 查詢有資料才列 AI 段；有 `kind === "instruct"` 的動作才列「送出指令」。載入中、錯誤、空陣列一律視為都沒有。
- *
- * 鍵面：Mac 顯示 ⌘ ⇧ ⌥，其他平台 Ctrl Shift Alt。符號鍵 `aria-hidden`、旁邊放 sr-only 名稱（報讀器讀不出 ⌘ ⇧ ↑ 的意義）；
- * 組合鍵之間的「+」與多種按法之間的「／」也 `aria-hidden`，旁邊的 sr-only 依條目的 `sep` 讀「或」（同一件事的不同按法）
- * 或「、」（各是不同動作）。
- *
- * 版面（不是單卡）：跟設定同一套兩塊 panel——左卡列分類、右卡**只顯示所選分類**；窄螢幕（< md）
- * 一次只顯示一塊（左＝分類層、右＝內容層，右卡的返回鈕回左）。不走 route，所以左欄是 state 驅動的按鈕（`aria-current`），
- * 不是 `ManagementShell` 的 NavLink；托盤、卡面、項次 class 與設定共用（`management/tray.ts`、`ui/card.ts`）。
- *
- * 焦點（比照設定）：開啟落在右卡內容區（可聚焦的捲動容器，PageDown 立刻能捲）；寬螢幕選分類後焦點留在被點的項次
- * （`aria-current` 與右卡的 region 名稱＝分類名，報讀器據此知道內容換了）；窄螢幕選分類後焦點移進內容區、返回後回到目前項次。
- *
- * 左卡底部 `<div data-shortcuts-footer>` 只有提示句、沒有按鈕：導覽的入口是「功能導覽」頁的〔開始導覽〕。
- * 「功能導覽」頁經首包的 `useTour()` 開始導覽。這個檔 import 首包裡的 `lib/tour-context` 與不在首包的 `lib/tour-find`（結束後找使用者選單觸發鈕），
- * 不 import `components/tour/` 底下的模組與導覽字串包（字串包與站點表不進這個 chunk）。
+ * Not routed, so the left column is state-driven buttons (`aria-current`), not `ManagementShell`'s NavLinks.
+ * The AI section is listed only when the `["ai-actions"]` query has data, and the send-instruction entry only
+ * when an action has `kind === "instruct"`; loading, error and an empty array all count as none.
+ * Symbol keys are `aria-hidden` with an sr-only name beside them (screen readers can't read ⌘ ⇧ ↑); the `+` and
+ * fullwidth-slash separators are `aria-hidden` too, and the slash gets an sr-only word from the entry's `sep`: "or"
+ * for alternative ways to do the same thing, an enumeration comma for different actions.
+ * Focus: opening lands on the right card's content (a focusable scroll container, so PageDown scrolls at
+ * once). On wide screens picking a category leaves focus on the clicked item: `aria-current` and the right
+ * card's region name (the category name) tell screen readers the content changed. On narrow screens focus
+ * moves into the content, and back returns it to the current item.
+ * This file imports `lib/tour-context` (first bundle) and `lib/tour-find` (not in the first bundle; finds the
+ * user menu trigger after the tour) but nothing under `components/tour/`, keeping the tour strings and stop
+ * table out of this chunk (enforced by release-highlights.guard.test.ts).
  */
 
 type TFn = (key: string) => string;
 
-/** 符號鍵：可見的是符號（aria-hidden），旁邊放給報讀器的名稱。 */
 function SymbolKey({ symbol, name }: { symbol: string; name: string }) {
   return (
     <>
@@ -110,7 +102,6 @@ function Plus() {
   );
 }
 
-/** 同時按的一組鍵：每個 token 一個 <kbd>，之間以 aria-hidden 的「+」連接。 */
 function Combo({ keys, mac, t }: { keys: readonly KeyToken[]; mac: boolean; t: TFn }) {
   return (
     <>
@@ -124,7 +115,7 @@ function Combo({ keys, mac, t }: { keys: readonly KeyToken[]; mac: boolean; t: T
   );
 }
 
-/** 一個按法；`withSpace` 為 true 時（打字觸發字後面要接空白）後面接 Space 鍵。 */
+/** `withSpace`: the typed trigger must be followed by a space, so a Space key is appended. */
 function OneKeys({ keys, mac, t, withSpace }: { keys: ShortcutKeys; mac: boolean; t: TFn; withSpace: boolean }) {
   if (keys.kind === "combo") return <Combo keys={keys.keys} mac={mac} t={t} />;
   if (keys.kind === "typed") {
@@ -143,11 +134,10 @@ function OneKeys({ keys, mac, t, withSpace }: { keys: ShortcutKeys; mac: boolean
   return null;
 }
 
-/** 一條的所有按法，多種按法之間放分隔。 */
 function EntryKeys({ entry, mac, t }: { entry: ShortcutEntry; mac: boolean; t: TFn }) {
   const list = mac && entry.macKeys ? entry.macKeys : entry.keys;
   if (list.every((k) => k.kind === "action")) return null;
-  // 每一種打字觸發字後面都要接空白時，只在最後放一個 Space，避免畫面上一排重複的 Space
+  // One trailing Space when every typed trigger needs it, instead of a row of repeated Spaces.
   const sharedSpace = list.every((k) => k.kind === "typed" && k.thenSpace === true);
   const sepName = entry.sep === "pair" ? t("shortcutsGuide.srKeys.pair") : t("shortcutsGuide.srKeys.or");
   return (
@@ -177,24 +167,22 @@ function EntryKeys({ entry, mac, t }: { entry: ShortcutEntry; mac: boolean; t: T
 
 type Layer = "items" | "content";
 
-/** 左欄的一頁：兩頁固定在最上面，其餘是快捷鍵分類。 */
 type HelpPage = "tour" | "whatsNew" | ShortcutCategory;
 
-/** `md` 斷點（768px，同 ManagementShell）。matches === false ＝ 窄視窗，才做焦點搬移。 */
+/** Same `md` breakpoint as ManagementShell; only narrow viewports move focus. */
 function isNarrowViewport(): boolean {
   return !window.matchMedia("(min-width: 768px)").matches;
 }
 
-/** 手機的卡貼齊 sheet 左緣：「‹」自己退開左側 safe area（同 `ManagementShell`）。 */
+/** Same as `ManagementShell`: phone cards sit flush with the sheet's left edge, so the button clears the left safe area itself. */
 const PHONE_BACK_LEFT = "max-sm:left-[max(0.5rem,env(safe-area-inset-left))]";
 
-/** 手機的「‹」不分指標一律 44×44（同 `ManagementShell`）。 */
+/** Same as `ManagementShell`: the phone back button is 44x44 regardless of pointer type. */
 const PHONE_BACK_HIT = "max-sm:after:absolute max-sm:after:-inset-2 max-sm:after:content-[''] pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']";
 
 /**
- * `startPage`：打開時選中的頁；`onClose`：關掉說明視窗（開始導覽前先關）。
- * `listBack`：手機（外殼傳入）分類清單左上角的「‹」——關掉說明視窗（從選單開的會重開選單，名稱由外殼給）。
- * 手機打開時先停在分類清單；內容層的「‹」回分類清單，與它在同一個位置。
+ * `onClose` runs before a tour starts. `listBack` (passed by the shell on phones) is the category list's "‹":
+ * closes the dialog, or reopens the menu it was opened from; the shell provides its name.
  */
 export function ShortcutsContent({
   startPage = "global",
@@ -216,13 +204,13 @@ export function ShortcutsContent({
   const groups = visibleShortcuts({ aiAvailable: actions.length > 0, aiInstruct: actions.some((a) => a.kind === "instruct") });
   const tt: TFn = (key) => t(key);
 
-  // 列得出來的頁，依左欄順序：沒有導覽 context 就不列「功能導覽」。所選頁若消失（例如視窗開著時站台關掉 AI）就退回第一頁。
+  // The selected page falls back to the first if it disappears (e.g. the site disables AI while open).
   const pages: HelpPage[] = [...(tour ? (["tour"] as const) : []), "whatsNew", ...groups.map((g) => g.category)];
   const [selected, setSelected] = useState<HelpPage>(startPage);
   const activePage: HelpPage = pages.includes(selected) ? selected : pages[0]!;
   const activeGroup = groups.find((g) => g.category === activePage);
   const highlights = visibleHighlightItems(RELEASE_HIGHLIGHTS.items, user?.isAdmin === true);
-  // 初值 "content"：640～767 的窄螢幕打開就直接看到內容；手機（< 640）先停在分類清單（同設定從選單打開）。
+  // Initially "content": 640-767px screens see content right away; phones (< 640px) start on the category list.
   const [layer, setLayer] = useState<Layer>(() => (isPhone() ? "items" : "content"));
   const phone = useIsPhone();
   const [focusRequest, setFocusRequest] = useState<{ target: Layer; seq: number } | null>(null);
@@ -235,7 +223,7 @@ export function ShortcutsContent({
 
   function startTour(): void {
     if (!tour) return;
-    // 先關視窗再開始：視窗關閉時會把焦點還給打開它的元素，導覽接著才會搬走焦點。
+    // Close first: closing returns focus to the opener, and only then should the tour move it.
     onClose();
     tour.start({ returnTo: `${location.pathname}${location.search}${location.hash}`, returnFocus: findUserMenuReturnTarget });
   }
@@ -251,17 +239,16 @@ export function ShortcutsContent({
     },
     className: cn(managementNavItemClass(page === activePage), "w-full text-left max-sm:w-auto"),
   });
-  // 手機的項次清單是「點進去」的清單：列尾放「›」。
   const navChevron = <ChevronRight aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 sm:hidden" />;
 
   function switchTo(target: Layer): void {
     setLayer(target);
-    if (!isNarrowViewport()) return; // md 以上維持原生焦點行為（焦點留在被點的項次）
+    if (!isNarrowViewport()) return; // wide viewports keep native focus (on the clicked item)
     seqRef.current += 1;
     setFocusRequest({ target, seq: seqRef.current });
   }
 
-  // 目標元素要等 setLayer commit 後才脫離 display:none，在 click handler 裡同步 focus() 真瀏覽器會靜默失敗（同 ManagementShell）。
+  // The target is display:none until setLayer commits, so a synchronous focus() fails silently in real browsers.
   useLayoutEffect(() => {
     if (focusRequest === null) return;
     if (focusRequest.target === "content") contentRef.current?.focus();
@@ -269,8 +256,9 @@ export function ShortcutsContent({
     setFocusRequest(null);
   }, [focusRequest]);
 
-  // 開啟：chunk 比 Dialog 晚到時，外殼的 onOpenAutoFocus 當下找不到落點、只能先把焦點放在對話框本身——這裡接手。
-  // 落點是看得見的那一層的 `[data-shortcuts-focus]`：內容層＝內容區；手機停在分類清單時＝清單的「‹」（沒有就是目前的分類）。
+  // If this chunk arrives after the Dialog, the shell's onOpenAutoFocus found no target and focused the dialog itself; take over here.
+  // The target is the visible layer's `[data-shortcuts-focus]`: the content area, or on a phone's category
+  // list the list's back button (without one, the current category).
   useEffect(() => {
     const focused = document.activeElement;
     if (!focused || focused === document.body || focused.getAttribute("role") === "dialog") {
@@ -291,7 +279,7 @@ export function ShortcutsContent({
           "md:flex",
         )}
       >
-        {/* 對話框的名稱在外殼的 sr-only DialogTitle；這裡的字只是視覺標題。 */}
+        {/* visual title only; the dialog's name is the shell's sr-only DialogTitle */}
         <div className={cn("mb-3 flex h-10 items-center gap-2 px-3", listBack && "pl-10", managementListHeaderPhone)}>
           {listBack && layer === "items" && (
             <Button
@@ -334,7 +322,7 @@ export function ShortcutsContent({
             ))}
           </div>
         </nav>
-        {/* 底部只有提示句，不放按鈕。 */}
+        {/* hint only, no button: the tour starts from the tour page's start button */}
         <div data-shortcuts-footer className="mt-auto flex flex-wrap items-center gap-2 border-t border-border px-1 pt-3 text-xs text-muted-foreground">
           <p>
             <Trans
@@ -361,7 +349,7 @@ export function ShortcutsContent({
           "md:flex",
         )}
       >
-        {/* 子節點順序承重：返回鈕（窄）→ 內容容器（✕ 在外殼、DOM 上更前面）。 */}
+        {/* child order is load-bearing: back, content (close is earlier in the DOM, in the shell) */}
         <Button
           type="button"
           variant="ghost"

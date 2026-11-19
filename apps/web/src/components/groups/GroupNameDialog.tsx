@@ -15,7 +15,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-/** ApiFail → errors.<code>；其餘 → errors.fallback（逐檔各一份，repo 慣例）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) {
     return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
@@ -23,30 +22,25 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** 與 server `validateGroupName` 同上限（1–80 個 code point）。`maxLength` 數的是 UTF-16 單元，
- * 對 emoji 會提早擋——那是體驗優化，server 才是裁決者（400 `invalid_name` 走下面的 alert）。 */
+/**
+ * Same cap as server `validateGroupName` (1–80 code points); `maxLength` counts UTF-16 units, so emoji are
+ * blocked early (a UX shortcut). The server is authoritative: its 400 `invalid_name` shows in the alert.
+ */
 export const GROUP_NAME_MAX_LENGTH = 80;
 
 type GroupNameDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 成功後（已 invalidate `['groups']`／`['notes']`）回傳 server 的 GroupDto。 */
+  /** Called after `['groups']`/`['notes']` are invalidated, with the server's GroupDto. */
   onSaved?: (group: GroupDto) => void;
-  /** 關閉時把焦點還給誰（例如群組的「＋」）。受控 Dialog 沒有 `DialogTrigger`，
-   * Radix 自己不會還原焦點（它的 `onCloseAutoFocus` 預設只 `preventDefault`）——這裡手動做。 */
+  /** Where focus returns on close (e.g. the group's "+"). A controlled Dialog has no `DialogTrigger`, so Radix doesn't restore focus; done manually here. */
   returnFocusRef?: RefObject<HTMLElement | null>;
 } & ({ mode: "create" } | { mode: "rename"; group: GroupDto });
 
 /**
- * 新增／重新命名群組（Dialog 而非 Popover）。只問名稱：文字欄
- * `autoFocus`、`maxLength=80`；Enter 送出（form submit）、Escape 取消（Radix）。**受控**
- * （`open`／`onOpenChange`）——呼叫端（側欄群組「＋」、⋮ 的「重新命名」、設定頁）
- * 各自持有 open state；要「焦點回群組「＋」」的呼叫端傳 `returnFocusRef`（見該 prop）。
- *
- * ⚠ `useState` 的初值只在掛載時讀 `props.group.name`——呼叫端每次開啟都要重新掛載
- * （`{open && <GroupNameDialog … open />}`），否則改名對話框會帶著上一次的輸入。
- *
- * 錯誤（400 `invalid_name`、403、404…）留在對話框內 `role="alert"`，不關閉、不 toast。
+ * Callers must remount on each open (`{open && <GroupNameDialog … open />}`): `useState` reads
+ * `props.group.name` only at mount, so a reused dialog would keep the previous input.
+ * Errors (400 `invalid_name`, 403, 404…) stay in the dialog as `role="alert"`: no close, no toast.
  */
 export function GroupNameDialog(props: GroupNameDialogProps) {
   const { t } = useTranslation();

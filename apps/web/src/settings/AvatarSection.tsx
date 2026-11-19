@@ -28,16 +28,16 @@ import { SettingsGroup } from "./SettingsLayout";
 import type { AvatarCropSource } from "./AvatarCropDialog";
 import "@/i18n/management-strings";
 
-// 裁切框連同它的相依只在使用者真的開框時才下載；解碼與編碼模組又再晚一步（按儲存時才載入）。
+// The crop dialog and its dependencies download only when the user opens it; the decode/encode modules load later still, on save.
 const AvatarCropDialog = lazy(() => import("./AvatarCropDialog").then(m => ({ default: m.AvatarCropDialog })));
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-/** 候選格與其 ⋮ 共用的 grid 模板：兩個容器疊在同一格，各格與對應的 ⋮ 落在同一欄同一列。 */
+/** Shared by the radiogroup and the menu grid overlaid on it, so each menu lands in its cell's column and row. */
 const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(5rem,1fr))] gap-y-2";
 
-/** 一格：「不使用頭貼」（candidate 為 null）或一張候選。 */
 interface Cell {
+  /** null = the "no avatar" cell. */
   candidate: AvatarCandidateDto | null;
 }
 
@@ -47,12 +47,12 @@ function candidateLabel(t: Translate, language: string, candidate: AvatarCandida
       ? t("settings.account.avatar.fromProvider", { provider: candidate.providerName })
       : t("settings.account.avatar.fromDisconnected");
   }
-  // 含時間：同一天上傳的幾張要能分得出來（radio 與 ⋮ 的可及名稱、刪除確認框都用這個名字）。
+  // Includes time so same-day uploads are distinguishable (accessible name and delete confirmation use it).
   const date = new Date(candidate.createdAt).toLocaleString(language, { dateStyle: "medium", timeStyle: "medium" });
   return t("settings.account.avatar.uploaded", { date });
 }
 
-/** 選用、刪除失敗的分流：404（剛被別的分頁刪掉）→ 重抓清單；忙碌 → 忙碌訊息；其餘 → 一般錯誤。 */
+/** 404 means another tab just deleted it, so refetch the list instead of showing an error. */
 function reportFailure(t: Translate, err: unknown, refetch: () => void): void {
   if (err instanceof ApiFail && err.status === 404) {
     refetch();
@@ -62,7 +62,7 @@ function reportFailure(t: Translate, err: unknown, refetch: () => void): void {
   toast({ title: t(`errors.${code}`), variant: "destructive" });
 }
 
-/** 重新取得 OIDC 頭貼失敗的分流：照 `error.code`，其餘一律通用文案。404 由呼叫端處理（重抓清單、不彈錯誤）。 */
+/** The caller handles 404 (refetch the list, no error). */
 function reportRefreshFailure(t: Translate, err: unknown, provider: string): void {
   if (err instanceof ApiFail) {
     switch (err.code) {
@@ -102,7 +102,7 @@ function CandidateMenu({
           aria-label={t("settings.account.avatar.more", { candidate: label })}
           className={cn(
             "pointer-events-auto relative h-6 w-6 shrink-0 self-start justify-self-end",
-            // 觸控裝置：視覺維持 24px，點擊區擴到 40×44。
+            // Touch: stays 24px visually, hit area grows to 40x44.
             "pointer-coarse:before:absolute pointer-coarse:before:-inset-x-2 pointer-coarse:before:-inset-y-2.5 pointer-coarse:before:content-['']",
             hoverReveal("avatarcell"),
           )}
@@ -177,13 +177,11 @@ function DeleteDialog({
 }
 
 /**
- * 設定頁的「頭貼」區塊：目前頭貼預覽、上傳、候選格（單選：不使用頭貼＋候選新到舊）、
- * 每張候選的「調整裁切」「刪除」。
- *
- * 候選格是 `role="radiogroup"`，只有一格在 Tab 序裡（roving tabindex；焦點離開群組後回到選中的那格），方向鍵／Home／End 移動焦點，
- * 選用靠點擊或空白鍵（按鈕的原生行為）。⋮ 不放在 `role="radio"` 裡（radio 的子孫是 presentational），
- * 而是第二個與 radiogroup 同模板的 grid、疊在同一格，各自指定同一欄同一列；Tab 序是 radiogroup 一次、再各 ⋮。
- * 外框的主題色用 CSS 變數（`Avatar` 的 `ringColor`），不用 `ring-brand` utility。
+ * `role="radiogroup"` with roving tabindex: one cell in the Tab order (the checked one again once focus leaves the group),
+ * arrows/Home/End move focus, click or Space picks (native button behavior). The overflow menus can't live inside `role="radio"` (its descendants are
+ * presentational), so they sit in a second grid with the same template overlaid on the same cell; Tab visits the
+ * radiogroup once, then each menu. Ring color is a CSS
+ * variable (`Avatar`'s `ringColor`), not the `ring-brand` utility.
  */
 export function AvatarSection() {
   const { t, i18n } = useTranslation();
@@ -215,18 +213,19 @@ export function AvatarSection() {
   const rovingIndex = Math.min(focusIndex ?? checkedIndex, cells.length - 1);
   const previewRef: AvatarRef | null = user?.avatar ? { id: user.avatar.id, v: user.avatar.v } : null;
 
-  // 一選了要調整的候選就登記（裁切框是 lazy chunk，等它載入完才登記會漏掉這段時間）：背景補產不碰這張，已在跑的那張也不送出。
+  // Registered as soon as chosen, so the background fill skips this candidate and doesn't submit one already running. The
+  // crop dialog is a lazy chunk, so waiting for it to load would miss that window.
   const croppingId = cropSource?.kind === "existing" ? cropSource.candidate.id : null;
   useEffect(() => {
     if (croppingId === null) return;
     return registerCropOpen(croppingId);
   }, [croppingId]);
 
-  // 清單裡待補顯示圖的候選也交給背景補產（同一版只處理一次）。
+  // Pending candidates also go to the background fill; each version is filled once.
   useFillPending(candidates.filter(c => c.pending).map(c => ({ id: c.id, v: c.avatar.v })));
   const noSpaceKeys = candidates.filter(c => c.pending && quotaFailed.has(fillKey({ id: c.id, v: c.avatar.v }))).map(c => c.id);
 
-  // 重新取得成功、那顆按鈕消失之後（清單不再列它），焦點交給目前選中的那格；按鈕還在就留在原處。
+  // After a successful refresh the button disappears once the list stops listing it: focus the checked cell then.
   useEffect(() => {
     if (focusAfterRefresh === null || list.data === undefined) return;
     setFocusAfterRefresh(null);
@@ -234,8 +233,7 @@ export function AvatarSection() {
     (stillThere ? refreshButtons.current.get(focusAfterRefresh) : radios.current[checkedIndex])?.focus();
   }, [focusAfterRefresh, list.data, checkedIndex]);
 
-  // 刪除成功、清單不再含那張之後，把焦點交給原位置的下一格（刪的是最後一格就是上一格）；沒有候選了就交給上傳鈕。
-  // 被刪候選的 ⋮ 已從 DOM 移除，不處理的話焦點會掉到 body。
+  // The deleted candidate's menu button is gone from the DOM, so without this focus would fall to body.
   useEffect(() => {
     if (focusAfterDelete === null || list.data === undefined) return;
     if (list.data.candidates.some(c => c.id === focusAfterDelete.id)) return;
@@ -260,7 +258,7 @@ export function AvatarSection() {
   }
 
   function refreshFrom(identityId: string, provider: string): void {
-    // aria-disabled 而不是 disabled：握著焦點的按鈕被停用時，Chromium 會把焦點丟到 body。
+    // aria-disabled, not disabled: Chromium drops focus to body when the focused button gets disabled.
     if (refresh.isPending) return;
     refresh.mutate(identityId, {
       onSuccess: () => {
@@ -269,7 +267,7 @@ export function AvatarSection() {
       },
       onError: err => {
         if (err instanceof ApiFail && err.status === 404) {
-          // 身分剛被解除連結：重抓清單，那顆按鈕會消失，焦點交給選中的那格；不彈錯誤。
+          // Identity was just unlinked: the button disappears after refetch and focus goes to the checked cell; no error toast.
           void refetchList().then(() => setFocusAfterRefresh(identityId));
           return;
         }
@@ -278,7 +276,6 @@ export function AvatarSection() {
     });
   }
 
-  /** 候選右下角的登入服務圖示：用候選的顯示名對到目前啟用中的服務；解除連結（`providerName` 為 null）或對不到就不疊。 */
   function sourceIcon(candidate: AvatarCandidateDto) {
     if (candidate.source !== "oidc" || candidate.providerName === null) return undefined;
     return identities.data?.identities.flatMap(identity => identity.providers).find(p => p.displayName === candidate.providerName)?.icon ?? undefined;
@@ -312,7 +309,7 @@ export function AvatarSection() {
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>): void {
     const file = event.target.files?.[0];
-    // 清掉選取：同一個檔案被取消後再選一次，change 才會再觸發。
+    // Clear so that choosing the same file again still fires change.
     event.target.value = "";
     if (file === undefined) return;
     if (maxUploadBytes !== undefined && file.size > maxUploadBytes) {
@@ -375,7 +372,7 @@ export function AvatarSection() {
               aria-label={t("settings.account.avatar.listLabel")}
               className={cn(CELL_GRID, "col-start-1 row-start-1")}
               onBlur={event => {
-                // 焦點離開群組：Tab 停點回到選中的那格（群組內移動不算）。
+                // Focus left the group (not moved within it): the Tab stop returns to the checked cell.
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusIndex(null);
               }}
             >

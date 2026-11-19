@@ -1,5 +1,6 @@
-// 測試專用（只給 *.test.* import，正式程式碼不得引用）：以真的 y-protocols `Awareness` 注入遠端狀態，
-// 參數形同 server `notes/editing/presence.ts` 的 `emit`；`fakeProvider` 形同 `NotePage.test.tsx` 的 `createStubProvider` 加上 `awareness`。
+// Test-only (import only from *.test.*, never from production code): injects remote state through a real y-protocols
+// `Awareness`, with the same arguments as `emit` in server `notes/editing/presence.ts`; `fakeProvider` matches
+// `NotePage.test.tsx`'s `createStubProvider` plus `awareness`.
 import type { Awareness } from "y-protocols/awareness";
 import { AGENT_PRESENCE_COLOR, PRESENCE_FIELD, type AvatarRef, type PresenceRole } from "@knotebook/shared";
 
@@ -21,7 +22,7 @@ export interface UserStateOptions {
   since?: number;
   avatar?: AvatarRef | unknown;
   cursor?: unknown;
-  /** false：舊版 client，沒有 `knotebook` 欄。 */
+  /** false: old client without a `knotebook` field. */
   field?: boolean;
   color?: string;
   beat?: number;

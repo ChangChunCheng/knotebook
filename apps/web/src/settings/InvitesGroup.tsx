@@ -14,13 +14,12 @@ import { toast } from "@/components/ui/toast";
 import { SettingsGroup } from "./SettingsLayout";
 import "@/i18n/management-strings";
 
-/** 逐檔複製的既有慣例（同 SettingsUsersSection）。 */
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-/** 撤銷確認（形同 ApiTokensSection 的 `RevokeDialog`）；只有 pending 列渲染。 */
+/** Same shape as ApiTokensSection's `RevokeDialog`; rendered only for pending rows. */
 function RevokeInviteDialog({ invite }: { invite: AdminInviteDto }) {
   const { t, i18n } = useTranslation();
   const revoke = useRevokeInvite();
@@ -33,7 +32,7 @@ function RevokeInviteDialog({ invite }: { invite: AdminInviteDto }) {
       setOpen(false);
     } catch (err) {
       toast({ title: errorMessage(t, err), variant: "destructive" });
-      // 409 invite_used：這列已過時（其實用掉了），關掉確認框並重抓，讓它變成「已使用」。
+      // 409 invite_used: this row is stale (the invite was used); close the dialog and refetch so it shows as used.
       if (err instanceof ApiFail && err.code === "invite_used") {
         setOpen(false);
         void queryClient.invalidateQueries({ queryKey: ADMIN_INVITES_QUERY_KEY });
@@ -41,7 +40,7 @@ function RevokeInviteDialog({ invite }: { invite: AdminInviteDto }) {
     }
   }
 
-  // 無備註時用建立時間（到秒）區分同表多顆鈕——同一分鐘連發的邀請也要不同名。
+  // Unlabeled invites are told apart by creation time to the second: same-minute invites need distinct names.
   const label =
     invite.label !== null
       ? t("admin.invites.revokeLabel", { name: invite.label })
@@ -74,7 +73,6 @@ function RevokeInviteDialog({ invite }: { invite: AdminInviteDto }) {
   );
 }
 
-/** 使用者頁的邀請表（#285）。帳密有效值關時表上方提示「未使用的邀請暫時不能用」。 */
 export function InvitesGroup() {
   const { t, i18n } = useTranslation();
   const invitesQuery = useAdminInvites();

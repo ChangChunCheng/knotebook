@@ -6,18 +6,18 @@ import type { NoteDto } from "@knotebook/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（防循環 import，同 spec.tsx）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generics; repo convention is any (avoids circular imports, same as spec.tsx)
 type AnyEditor = BlockNoteEditor<any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Node 型別在 apps/web 值層級拿不到
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror Node type isn't available at value level in apps/web
 type AnyPmNode = any;
 
 export interface WikilinkToolbarProps {
   open: boolean;
   onOpenChange(open: boolean): void;
   children: ReactElement;
-  /** 工具列本體（hover 關閉前檢查焦點是否在裡面）。 */
+  /** Checked for focus before a hover close. */
   contentRef?: RefObject<HTMLDivElement | null>;
-  /** 滑鼠移進／移出工具列（hover 開的工具列：移進取消關閉、移出排程關閉）。 */
+  /** For a hover-opened toolbar: entering cancels the close, leaving schedules it. */
   contentHandlers?: {
     onPointerEnter?: PointerEventHandler<HTMLDivElement>;
     onPointerLeave?: PointerEventHandler<HTMLDivElement>;
@@ -33,16 +33,17 @@ export interface WikilinkToolbarProps {
   onRestoreFocus(): void;
 }
 
-/** 更換目標的候選上限（清單過濾與 `[[` 選單同規則：標題小寫包含查詢字）。 */
+/** Max change-target candidates; filtered by the same rule as the `[[` menu (lowercased title contains the query). */
 const TARGET_LIMIT = 20;
 
 /**
- * #269：編輯模式 wikilink 的小工具列（hover／觸控長按開，見 `useToolbarTriggers`；三鈕，沒有「開啟」——
- * 點連結本身就跳轉）。開啟時不搶焦點（`onOpenAutoFocus` prevent，同 BlockNote 連結工具列）。Radix Popover 錨在連結元素；Esc／點外關閉；焦點回歸放在
- * `onCloseAutoFocus`（按鈕、Esc、點外三條關閉路徑都經過它），而且**只在焦點無處可去**（`activeElement` 是 body 或 null）時才拉回
- * 編輯器：點外點到可聚焦的元素（標題欄、另一個 wikilink 的工具列）時焦點已經在那裡，不可搶走。
- * `preventDefault()`：Radix 的 Popover 內容在我們的 handler 之後，若事件沒被 prevent 會做 `triggerRef.current?.focus()`——現在用
- * `Popover.Anchor`、沒有 Trigger 所以是 no-op（拿掉它測試全綠）；留著是防日後改用 `Popover.Trigger` 時焦點被搶回觸發鈕。
+ * Three buttons and no "open": clicking the link itself navigates. Opens on hover or long-press (`useToolbarTriggers`),
+ * anchored on the link; Esc or outside click closes. No autofocus on open (as BlockNote's link toolbar).
+ * `onCloseAutoFocus` (all close paths go through it) pulls focus back to the editor only when it has nowhere to go
+ * (`activeElement` is body/null): an outside click on a focusable element (the title field, another wikilink's toolbar)
+ * has already moved it. `preventDefault()` there stops Radix, which runs after this handler, calling
+ * `triggerRef.current?.focus()`, a no-op today (Anchor, no Trigger) that would steal focus if this ever switches to
+ * `Popover.Trigger`.
  */
 export function WikilinkToolbar(p: WikilinkToolbarProps) {
   const { t } = useTranslation();
@@ -53,7 +54,7 @@ export function WikilinkToolbar(p: WikilinkToolbarProps) {
     const q = query.toLowerCase();
     return (p.notes ?? []).filter((n) => n.title.toLowerCase().includes(q)).slice(0, TARGET_LIMIT);
   }, [p.notes, query]);
-  // 受控關閉（按鈕動作呼叫 `close()`）不會經過 Root 的 onOpenChange，所以兩條路都要自己回到選單態——否則下次打開停在上次的子畫面。
+  // Controlled close (`close()`) skips Root's onOpenChange, so both paths reset to the menu state; otherwise the next open resumes the old sub-view.
   const reset = () => {
     setView("menu");
     setQuery("");
@@ -132,10 +133,7 @@ export function WikilinkToolbar(p: WikilinkToolbarProps) {
   );
 }
 
-/**
- * 找出 DOM 落在 `el` 的那一個 wikilink 節點的位置。以 `view.nodeDOM(pos)` 比對而不是 props：同一段落可能有兩個 props
- * 完全相同的 wikilink。找不到回 null（文件已被別人改掉）。
- */
+/** Matched via `view.nodeDOM(pos)`, not props: one paragraph can hold two wikilinks with identical props. Null if the document changed underneath. */
 export function findWikilinkPos(editor: AnyEditor, el: HTMLElement): { pos: number; node: AnyPmNode } | null {
   const view = editor._tiptapEditor.view;
   let found: { pos: number; node: AnyPmNode } | null = null;
@@ -151,10 +149,10 @@ export function findWikilinkPos(editor: AnyEditor, el: HTMLElement): { pos: numb
 }
 
 /**
- * 移除連結（第三鈕）：把 `el` 那一個 wikilink 節點在一筆 transaction 裡換成純文字。找不到回 false。
- * 節點身上的其他 mark（粗體、文字顏色…：PM 節點帶得到，雖然 BlockNote 的 JSON 不列）原樣留給文字；只丟 `link` mark
- * （不帶 link mark ⇒ 站內連結轉換外掛不會再轉）。`placeCaret`：同一筆 transaction 把游標放到換出來的文字尾（工具列開啟時編輯器
- * 沒有焦點，關閉後拉回焦點時游標要在連結原處，不是舊選取）。
+ * Replaces the node with plain text in one transaction; false if not found. Other marks on the node (bold, color…:
+ * PM nodes carry them though BlockNote's JSON doesn't list them) carry over to the text; only `link` is dropped so the
+ * site-link converter won't re-convert. `placeCaret`: the same transaction puts the caret after the new text, because
+ * the editor is unfocused while the toolbar is open and the focus restore on close must land at the link, not the old selection.
  */
 export function removeWikilinkNode(editor: AnyEditor, el: HTMLElement, text: string, placeCaret = false): boolean {
   const hit = findWikilinkPos(editor, el);

@@ -10,11 +10,11 @@ function positive(size: Size): boolean {
 }
 
 /**
- * 內容還沒備妥時的灰塊：有原尺寸就用與放大畫面相同的「符合視窗」算法留位（換成內容時不跳動），沒有就用中性方塊。
- * `viewport` 省略時取瀏覽器視窗。
+ * Placeholder until content is ready: with a natural size it reserves space with the lightbox's fit-to-viewport math (no jump on swap),
+ * otherwise a neutral square. `viewport` defaults to the browser window.
  */
 export function ZoomSkeleton({ natural, viewport }: { natural?: Size; viewport?: Size }): JSX.Element {
-  // clientWidth 不含捲軸：與蓋滿視窗的放大畫面（`fixed inset-0`）同寬。
+  // clientWidth excludes the scrollbar, like the `fixed inset-0` lightbox.
   const view = viewport ?? { width: document.documentElement.clientWidth, height: window.innerHeight };
   const known = natural !== undefined && positive(natural) && positive(view);
   const scale = known ? fitScale(natural, view) : 1;
@@ -33,8 +33,8 @@ export function ZoomSkeleton({ natural, viewport }: { natural?: Size; viewport?:
 }
 
 /**
- * 放大畫面的 chunk 還在下載時先頂上的外殼（會留在入口 bundle，保持小）：半透明背板、灰塊與關閉鈕，
- * 與 Radix 一樣掛在 `document.body` 下。Esc、關閉鈕、點背景都能關；Tab 不離開關閉鈕。真正的畫面載好後換掉它。
+ * Stands in while the lightbox chunk downloads; lives in the entry bundle, so keep it small. Backdrop, placeholder and close button mount
+ * under `document.body` like Radix; Esc, the close button and backdrop clicks close it, and Tab stays on the close button.
  */
 export function LightboxFallback({ source, onClose }: { source: ZoomSource; onClose: () => void }): JSX.Element {
   const { t } = useTranslation();
