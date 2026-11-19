@@ -8,10 +8,12 @@ type AnyBlockNoteEditor = BlockNoteEditor<any, any, any>;
 
 export type BlockTypeItem = ReturnType<typeof blockTypeSelectItems>[number];
 
+// Same rule as BlockNote's formatting toolbar.
 export function targetBlocks(editor: AnyBlockNoteEditor) {
   return editor.getSelection()?.blocks ?? [editor.getTextCursorPosition().block];
 }
 
+// Same filter as BlockNote's BlockTypeSelect.
 export function blockTypeItemsFor(editor: AnyBlockNoteEditor): BlockTypeItem[] {
   return blockTypeSelectItems(editor.dictionary).filter((item) =>
     editorHasBlockWithType(

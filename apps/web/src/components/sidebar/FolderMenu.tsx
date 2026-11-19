@@ -20,7 +20,7 @@ import { hoverReveal } from "@/components/ui/reveal";
 import { cn } from "@/lib/utils";
 import { setFolderSort, useFolderSort, type FolderSort } from "./folder-sort";
 
-/** Sort row styling follows `DropdownMenuCheckboxItem` (RadioItem is an unstyled minimal wrapper). Picking a sort doesn't close the menu: radio items let the user compare results. */
+/** Sort row styling follows `DropdownMenuCheckboxItem` (RadioItem is an unstyled minimal wrapper). */
 const RADIO_ROW =
   "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 pointer-coarse:py-2.5 text-sm outline-none " +
   "transition-colors focus:bg-accent focus:text-accent-foreground";
@@ -95,7 +95,7 @@ function DeleteAction({ folder, hasLiveNotes, onRun }: { folder: FolderDto; hasL
   );
 }
 
-/** First-bundle module: no string-bundle import. Controlled menu; items follow the three-step pattern (`preventDefault` → close menu → action) of the GroupMenu/NoteMenu focus-trap rule. The dialogs are opened by NoteList's host (`onRequest` carries ⋮ as the focus-return target). */
+/** First-bundle module: no string-bundle import. Controlled menu; items follow the three-step pattern (`preventDefault` → close menu → action) of the GroupMenu/NoteMenu focus-trap rule. The dialogs are opened by NoteList's host (`onRequest` carries ⋮ as the focus-return target). Sort radio items `preventDefault` on select so the menu stays open to compare sorts. */
 export function FolderMenu({
   folder,
   depth,

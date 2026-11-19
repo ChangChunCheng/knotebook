@@ -64,7 +64,7 @@ export function DropdownMenu({ open: openProp, defaultOpen, onOpenChange, phoneS
 
 /**
  * Radix opens on pointerdown, but the phone sheet rises under the finger and the same press's pointerup/click would pick the item under it (e.g. move to trash). So in sheet form (`phoneSheet` and viewport narrower than 640, any pointer type) pointerdown's default open is blocked and the menu opens on click.
- * The click opens only if this button received that pointerdown (a click landing here after pressing the backdrop to close doesn't reopen); clicks without pointerdown (`detail` 0: assistive tech, programmatic) open. Keyboard opens via Radix's own keydown.
+ * The click opens only if this button received that pointerdown (a click landing here after pressing the backdrop to close doesn't reopen); clicks without pointerdown (`detail` 0: assistive tech, programmatic) open. Keyboard opens via Radix's own keydown; the click Enter/Space then fires finds it open and does nothing.
  * The phone check is read at event time (`isPhone()`), not subscribed: every sidebar row has one.
  */
 export const DropdownMenuTrigger = forwardRef<

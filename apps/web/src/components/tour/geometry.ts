@@ -39,7 +39,7 @@ export interface CardPlacement {
   top: number;
 }
 
-/** The cutout grows past the target: the outline is drawn on the cutout edge and would cover the target's own border and focus ring. */
+/** The cutout grows past the target: the outline is drawn on the cutout edge, and flush with the target it would cover the target's own border and focus ring. */
 export const HOLE_PADDING = 6;
 export const HOLE_RADIUS = 8;
 export const CARD_GAP = 20;

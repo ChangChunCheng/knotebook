@@ -9,7 +9,7 @@ import type { TourTargetId } from "@/lib/tour-targets";
  * The real menu is opened in the sample note's editor without writing the document: the cursor goes into the last empty paragraph and the menu opens with `deleteTriggerCharacter: false`, so the trigger character never enters the doc and reload, closing the tab or Back leave nothing (no version or undo entry).
  * While demoing, the editor's transaction filter (`setTourTransactionFilter`) is on: IME composition can only be blocked cleanly at transaction level. It is a flag on a permanent plugin; no plugin is registered or removed during the demo (dynamic registration breaks an open menu's state).
  * `stopLiveTrigger` (from the step's `leave`) is idempotent and may be called without a start. The AI step opens no menu: one transaction selects the demo sentence so the format toolbar appears by itself.
- * Focus in the editor raises the on-screen keyboard on touch, covering half the screen; so `inputmode="none"` is set on the editable element before focusing and restored on leave (removed if absent before). Blurring isn't used: the menu closes on editor blur.
+ * Focus in the editor raises the on-screen keyboard on touch, covering half the screen and pushing the page up; typing isn't accepted during a demo anyway, so `inputmode="none"` is set on the editable element before focusing and restored on leave (removed if absent before). Blurring isn't used: the menu closes on editor blur.
  */
 
 export type TourTrigger = "[[" | "/";
@@ -46,7 +46,7 @@ export function canRunLiveStop(noteId: string): boolean {
   }
 }
 
-/** The element, not the editor, is recorded: on leave the editor may already be unregistered or temporarily unmounted (reports destroyed), yet the attribute must still be restored. */
+/** The element, not the editor, is recorded: on leave the editor may already be unregistered or temporarily unmounted (reports destroyed, then remounts onto the same element), yet the attribute must still be restored. */
 const suppressed = new Map<string, { dom: HTMLElement; previous: string | null }>();
 
 function suppressKeyboard(noteId: string, editor: TourEditor): void {

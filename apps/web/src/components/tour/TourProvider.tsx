@@ -28,7 +28,7 @@ function loadTourLazy(): Promise<TourLazyComponent> {
   return loadingTourLazy;
 }
 
-/** A render error ends the round with a toast instead of reaching `AppErrorBoundary` (which would replace the whole app). Keyed by `session.id`, so the next round gets a fresh boundary. */
+/** A render error ends the round with a toast instead of reaching `AppErrorBoundary` (which would replace the whole app). Keyed by `session.id`, so the next round gets a fresh boundary. The sample note is kept, as for any early end. */
 class TourErrorBoundary extends Component<{ onCrash: () => void; children: ReactNode }, { crashed: boolean }> {
   state = { crashed: false };
 

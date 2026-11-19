@@ -220,7 +220,7 @@ export type WaitForTarget = (entry: TourStopEntry, ctx: StopContext, signal: Abo
 /**
  * The step order is fixed at creation (after `planStops`), and so is `ctx`.
  * Enter: `showScreen` → `prepare` → `waitForTarget`; if the target never appears skip in the same direction; going back with none found searches forward from the original step. The last step never skips (it carries [keep sample note]/[delete]): it is entered with a centred card.
- * Leave: the on-screen step's `leave` runs before the next `prepare`, since a menu opened by a demo must close first. Once `prepareStop` is called, `leave` is called once more, also for skipped or half-awaited steps.
+ * Leave: the on-screen step's `leave` runs before the next `prepare`: a menu opened by a demo must close first or the next step can't open its own. Once `prepareStop` is called, `leave` is called exactly once afterwards, also for skipped or half-awaited steps.
  * Outside wide windows `prepareStop` usually skips the step's `prepare` but `leave` still runs, so a step's `leave` must be safe without `prepare`.
  */
 export class TourEngine {
@@ -290,7 +290,7 @@ export class TourEngine {
     if (shown !== null) runLeave(shown, this.ctx);
   }
 
-  /** A failed screen change is only logged to the console and the target is awaited anyway. null when no change is needed (no `showScreen`): the rest of entering runs synchronously. */
+  /** A failed screen change is only logged to the console and the target is awaited anyway. null when no change is needed (no `showScreen`, or the step isn't shown in this layout and will be skipped at once): the rest of entering runs synchronously. */
   private enterScreen(entry: TourStopEntry, signal: AbortSignal): Promise<void> | null {
     const show = this.ctx.showScreen;
     if (show === undefined || !stopShownIn(entry.stop)) return null;

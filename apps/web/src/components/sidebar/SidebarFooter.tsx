@@ -33,10 +33,11 @@ export function SidebarFooter({
       </Button>
     </div>
   );
-  // While searching always "New note" (the search view isn't any tab's list).
+  // While searching: "New note" (the search view isn't any tab's list); on phones "New note" is the PhoneListFabs button, so it is never rendered here.
   if (searching) return phone ? null : newNote;
   if (tab !== "trash" && selection.active) {
     // Across the breakpoint each side mounts/unmounts by it, so one instance has at most one `SelectActionBar`.
+    // Wide: the actions are in the header and nothing renders here; entering select near the list bottom shifts it by about a row (no spacer on purpose).
     if (wide) return null;
     // Placeholder is as tall as the action bar (phone: 57 + bottom safe area); on chunk failure the list's copy (same chunk) shows the error and retry, so this one is hidden.
     return (
@@ -49,7 +50,7 @@ export function SidebarFooter({
       </SidebarLazyBoundary>
     );
   }
-  // New note always creates a personal note, so the Groups and Shared with me tabs don't show it.
+  // New note always creates a personal note, so the Groups and Shared with me tabs don't show it (phones: PhoneListFabs).
   if (tab === "myNotes" || tab === "recent") return phone ? null : newNote;
   if (tab !== "trash") return null;
   // Placeholder as tall as the "loading" retention note so the layout doesn't jump when the chunk arrives. On chunk failure the panel's copy (same chunk)

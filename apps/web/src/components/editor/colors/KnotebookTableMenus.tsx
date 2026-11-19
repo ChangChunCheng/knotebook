@@ -102,7 +102,7 @@ function TableRowColColorsItem({ orientation }: { orientation: "row" | "column" 
   );
 }
 
-/** No header toggle: the editor doesn't enable `headers`. */
+/** No header toggle: the editor doesn't enable `headers`. className matches BlockNote's own row/column menu. */
 export function KnotebookTableHandleMenu({ orientation }: { orientation: "row" | "column" }) {
   const Components = useComponentsContext()!;
   return (
@@ -126,6 +126,7 @@ export function KnotebookTableHandleMenu({ orientation }: { orientation: "row" |
   );
 }
 
+/** Colour item only (cell splitting is off). className matches BlockNote's own cell menu. */
 export function KnotebookTableCellMenu() {
   const Components = useComponentsContext()!;
   return (

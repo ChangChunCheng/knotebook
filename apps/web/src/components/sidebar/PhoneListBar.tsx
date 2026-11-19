@@ -11,6 +11,7 @@ interface PhoneListBarProps {
   query: string;
   onQueryChange: (query: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
+  /** Called on focus. There's deliberately no close on blur: tapping a result or dismissing the keyboard both blur. */
   onOpen: () => void;
   onClose: () => void;
 }

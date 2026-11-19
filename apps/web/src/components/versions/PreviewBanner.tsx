@@ -10,11 +10,6 @@ import { useTargetLabel } from "./use-target-label";
 
 const MODE_BUTTON = `h-7 w-7 shrink-0 ${TINT_HOVER_CLASS}`;
 
-/**
- * The banner has no ✕: leaving preview is Esc (in NotePage), clicking blank space in the panel list, clicking the selected row again, or closing the panel (`close()` leaves preview too). Time and editors are omitted (the panel rows have them).
- * Background `bg-brand-soft`: `--primary` is neutral near-black and can't be used. Single row: `flex-nowrap` and `shrink-0` buttons (overflow horizontally rather than wrap).
- * `narrow`: the full-page narrow view has no side-by-side, so the split/single buttons aren't rendered; nor when the preview area is below `SPLIT_MIN_WIDTH` (controller `previewWide` false).
- */
 /** Only affects single-column: disabled while the preview is actually side-by-side (controller `splitActive`, reported by `VersionPreview`). `aria-disabled`, not `disabled`: `disabled:pointer-events-none` would stop `title` showing, so the explanation would be invisible; the click is blocked in the handler. The narrow full page doesn't pass `iconOnly`: touch has no hover, so `title` can't be seen. */
 export function OnlyChangesToggle({ iconOnly = false }: { iconOnly?: boolean }) {
   const { t } = useTranslation();
@@ -50,6 +45,11 @@ export function OnlyChangesToggle({ iconOnly = false }: { iconOnly?: boolean }) 
   );
 }
 
+/**
+ * The banner has no ✕: leaving preview is Esc (in NotePage), clicking blank space in the panel list, clicking the selected row again, or closing the panel (`close()` leaves preview too). Time and editors are omitted (the panel rows have them).
+ * Background `bg-brand-soft`: `--primary` is neutral near-black and can't be used. Single row: `flex-nowrap` and `shrink-0` buttons (overflow horizontally rather than wrap).
+ * `narrow`: the full-page narrow view has no side-by-side, so the split/single buttons aren't rendered; nor when the preview area is below `SPLIT_MIN_WIDTH` (controller `previewWide` false).
+ */
 export function PreviewBanner({ narrow = false }: { narrow?: boolean }) {
   const { t } = useTranslation();
   const { preview, setSplitMode, previewWide, splitActive } = useVersions();

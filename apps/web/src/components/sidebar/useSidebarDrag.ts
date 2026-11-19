@@ -94,6 +94,7 @@ export function useSidebarDrag(args: {
   /** Drag source started by this instance: only when it is the same object as `getDragSource()` does it drive dragover (the other of static card and drawer stays idle). */
   const ownSourceRef = useRef<DragSource | null>(null);
   const dragTab = dragTabOf(tab);
+  // groupIds must come from the same groups data the tree was built from.
   const lookup = useMemo(() => (nodes === null || dragTab === null ? null : buildDropLookup(nodes, dragTab, groupIds)), [nodes, dragTab, groupIds]);
   const enabled = isDragEnabled({ finePointer, tab, selectionActive: selection.active, creating: view.creating !== null, nodesReady: nodes !== null });
   /** Latest lookup/index/t read when the timer fires: the timer captured an old `onHold`, and stack-folder must re-judge against the current tree. */

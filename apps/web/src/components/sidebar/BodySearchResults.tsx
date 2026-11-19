@@ -16,7 +16,7 @@ import { noteLocationLabel, type LocationContext } from "./tree";
  * Body hits show only ids present in `notes` (already loaded by `SearchResults`) and link via that `NoteDto`: the query cache lives 30 s, during which a rename, move or trash must not yield a stale path.
  * Snippet cropping and highlighting use `forQuery` (the query that produced the batch); title highlighting uses the current query (titles are filtered live on the client).
  * Every click closes the drawer: clicking the current note leaves the pathname unchanged, so AppShell's close-on-navigate doesn't fire.
- * The sidebar may hold only one `role="status"`, which lives in `SearchResults`; this component reports its row count via `onStatus`, and its own `aria-live` reads only pending/error.
+ * The sidebar may hold only one `role="status"` (an e2e locates it with a strict locator), which lives in `SearchResults`; this component reports its row count via `onStatus`, and its own `aria-live` reads only pending/error.
  */
 export interface BodySearchProps {
   query: string;

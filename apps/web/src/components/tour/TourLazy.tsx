@@ -24,7 +24,7 @@ export interface TourLazyProps extends TourStartOptions {
   onDone: () => void;
 }
 
-/** One value shared by abort and write: writing happens only while `preparing`, abort moves it to `aborted` only when not `seeded`, so a read returning after abort doesn't write and a written note isn't discarded as blank. */
+/** `seeded` = the write step returned normally, whether or not it actually wrote. One value shared by abort and write: writing happens only while `preparing`, abort moves it to `aborted` only when not `seeded`, so a read returning after abort doesn't write and a written note isn't discarded as blank. */
 type SamplePhase = "preparing" | "seeded" | "aborted";
 
 interface Session {
@@ -105,7 +105,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
   /**
    * If the note to move is open, navigate back first and wait for the location to take effect: trashing an open note sends the note page through its "deleted" exit and a second toast.
    * Tearing down `TourRunner` aborts `prepareSample`, whose `bail` runs before the back-navigation transition; while this runs (`ending` and not yet `settled`) only this trashes and `bail` doesn't.
-   * Focus returns to `returnFocus` also when the user navigated away themselves (same as normal end).
+   * Focus returns to `returnFocus` also when the user navigated away themselves (same as a normal end or leaving the sample note after step 1).
    */
   const abortStart = async () => {
     const session = sessionRef.current;
@@ -176,7 +176,7 @@ export function TourLazy({ returnTo, returnFocus, timedOut, onStarted, onDone }:
     return note;
   };
 
-  // Before the sample is written, leaving the sample note (e.g. clicking another note in the sidebar) = abort. After it, screen changes are `TourRunner`'s; leaving the screen it should be on
+  // Before the sample is written, leaving the sample note (e.g. clicking another note in the sidebar) = abort. After it, screen changes are `TourRunner`'s (on phones step 1 is on the list); leaving the screen it should be on
   // also ends there (step 1 not yet shown still reports `started: false` and aborts here).
   useEffect(() => {
     const session = sessionRef.current;

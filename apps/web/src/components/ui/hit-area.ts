@@ -20,5 +20,5 @@ export const ROW_ICON_ROW = "pointer-coarse:gap-1 pointer-coarse:[&>.row-icon:ha
 export const HEADER_ICON_HIT =
   "relative pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-1.5 pointer-coarse:after:content-['']";
 
-/** For a 24px icon button inside an input (search clear ✕). The button is already `absolute` (the anchor), so no `relative`, or the two position classes override each other. The hit area's left edge is 38px from the input's right edge, so on touch the input needs right padding ≥ 41px (`pointer-coarse:pr-10` = 40px + 1px border) to keep text out of it. */
+/** For a 24px icon button inside an input (search clear ✕). The button is already `absolute` (the anchor), so no `relative`, or the two position classes override each other. With the button 4px from the right and 24px wide, plus 10px on each side (44×44), the hit area's left edge is 38px from the input's right edge, so on touch the input needs right padding ≥ 41px (`pointer-coarse:pr-10` = 40px + 1px border) to keep text out of it. */
 export const FIELD_ICON_HIT = "pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5 pointer-coarse:after:content-['']";

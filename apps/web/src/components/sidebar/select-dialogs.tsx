@@ -8,7 +8,7 @@ import type { DestTarget } from "./destination-level";
 /**
  * Copy confirms first too, since it creates an extra copy. The plural move confirm is generic: it doesn't pre-look up each note's shares and public links.
  * While submitting (`progress` non-null) the dialog stays open until the batch ends: confirm and cancel disabled, progress shown; ✕, Esc and outside click all go through the Dialog root's `onOpenChange(false)` and are ignored here (`ui/dialog.tsx` unchanged). The caller sets `open` false at the end.
- * Reference only via `SelectLazy`.
+ * Import only through the SelectLazy chain and tests.
  */
 
 export type SelectProgress = { done: number; total: number } | null;

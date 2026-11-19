@@ -28,7 +28,7 @@ export interface DropLookup {
 type NoteEntry = DropLookup["notes"] extends ReadonlyMap<string, infer V> ? V : never;
 type FolderEntry = DropLookup["folders"] extends ReadonlyMap<string, infer V> ? V : never;
 
-/** personal: always true (the My notes tab has only own notes); `group:<id>`: `permissions.edit`; shared: `note.groupId === null`. */
+/** personal is always true: the My notes tab has only own notes. */
 export function canDragNote(note: NoteDto, space: FolderSpaceKey): boolean {
   if (space === "personal") return true;
   if (space === "shared") return note.groupId === null;
@@ -159,7 +159,7 @@ export function evaluateDragOver(input: {
   return NONE;
 }
 
-/** Tries at most `taken.size + 1` candidates; if the string is broken (same every time) returns the last candidate and leaves it to the server's 409 resend path. */
+/** Names are compared case-insensitively; `taken.size + 1` candidates guarantee a free one (pigeonhole), unless the string is broken (same every time): then the last candidate goes to the server's 409 resend path. */
 export function stackFolderName(existing: readonly string[], t: Translate, skip: ReadonlySet<string> = new Set()): string {
   const taken = new Set([...existing, ...skip].map((name) => name.toLowerCase()));
   let name = "";

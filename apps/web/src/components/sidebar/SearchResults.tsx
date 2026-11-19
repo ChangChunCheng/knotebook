@@ -33,7 +33,7 @@ export function highlightTitle(title: string, lowerQuery: string): ReactNode {
 }
 
 /**
- * Active (`bg-brand-soft`) and hover rows switch to `text-brand-on-soft`: grey on brand-soft is only 4.17:1 (3.94:1 on the hover strong background), below AA 4.5:1.
+ * Active (`bg-brand-soft`) and hover rows switch to `text-brand-on-soft`: grey on brand-soft is only 4.17:1 (3.94:1 on the hover strong background), below AA 4.5:1; on-soft gives 6.3–6.6:1 light, 6.9–8.0:1 dark.
  * The `<a>`/Link must carry `group`.
  */
 export function searchMetaLineClass(active: boolean): string {

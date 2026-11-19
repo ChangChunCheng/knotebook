@@ -6,6 +6,7 @@ import { applyBlockType, blockTypeItemsFor, currentBlockTypeIndex } from "./bloc
  * Replaces BlockNote's `BlockTypeSelect` (#464): with a multi-block selection the built-in converts every selected block,
  * including tables and images that aren't menu items, wiping their content. Here only blocks whose type is a menu item change,
  * in one transaction and its own undo step.
+ * Items, order, icons and the check rule match the built-in.
  */
 export function KnotebookBlockTypeSelect() {
   const Components = useComponentsContext()!;

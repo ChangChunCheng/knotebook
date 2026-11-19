@@ -30,6 +30,7 @@ const REVEAL_ONLY = {
 export const NOTE_MENU_COLLAPSE =
   "pointer-fine:w-0 pointer-fine:-ms-1 pointer-fine:overflow-hidden pointer-fine:group-hover/noterow:w-6 pointer-fine:group-hover/noterow:ms-0 pointer-fine:group-has-[:focus-visible]/noterow:w-6 pointer-fine:group-has-[:focus-visible]/noterow:ms-0 pointer-fine:focus-visible:w-6 pointer-fine:focus-visible:ms-0 pointer-fine:data-[state=open]:w-6 pointer-fine:data-[state=open]:ms-0 [@media(hover:none)]:w-6! [@media(hover:none)]:ms-0!";
 
+/** The filled star is hidden on touch too: adding and removing favorites both go through ⋮. */
 export const NOTE_STAR_TOUCH_HIDDEN = "[@media(hover:none)]:hidden [@media(pointer:coarse)]:hidden";
 
 export function hoverRevealOnly(scope: keyof typeof REVEAL_ONLY): string {

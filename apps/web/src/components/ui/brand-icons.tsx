@@ -16,7 +16,7 @@ export function GitLabLogo(props: SVGProps<SVGSVGElement>) {
 /**
  * Official Google G (current gradient "super G") from the Google Identity brand page download `signin-assets.zip`: `Android + Web/SVG/Light/Theme=Light, Show text=No, Shape=Square, Platform=Android+Web.svg`. Modified only as follows: button plate and outline removed; viewBox set to the G's content bounds (10 10 20 20, the file's mask area) and root width/height dropped; mask/filter/clipPath ids use `useId` (several on one page don't collide);
  * required JSX attribute and style-object rewrites; Figma `data-figma-*` attributes and the foreignObject div's xhtml xmlns omitted (React builds HTML elements inside foreignObject; no effect on rendering). No colour or path was changed.
- * Google's guidelines want this G on a white background; it is deliberately shown without the white plate.
+ * Google's guidelines want this G on a white background with size and colour proportions unchanged; it is deliberately shown without the white plate.
  */
 export function GoogleLogo(props: SVGProps<SVGSVGElement>) {
   // React 19.2's `useId` looks like `_r_0_`, already valid in an id and in `url(#…)`; the `g` prefix only avoids a leading digit.

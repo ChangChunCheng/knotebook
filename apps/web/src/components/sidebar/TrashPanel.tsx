@@ -190,6 +190,7 @@ export function TrashPanel() {
   const emptyButtonRef = useRef<HTMLButtonElement>(null);
   const selectButtonRef = useRef<HTMLButtonElement>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);
+  /** Set only by the initiating instance: the static card and the drawer are both in the DOM, and the other must not take focus. */
   const focusAfterRef = useRef<"done" | "select" | null>(null);
   const [purgeId, setPurgeId] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
@@ -493,7 +494,7 @@ export function TrashPanel() {
         open={emptyOpen}
         pending={purge.isPending || restore.isPending}
         onConfirm={() => {
-          // The list was refetched after opening and none of the selection remains: no empty request or "deleted 0" report, just close.
+          // The list was refetched to 0 after opening (emptied elsewhere): no empty request or "deleted 0" report, just close.
           if (items.length === 0) {
             setEmptyOpen(false);
             return;

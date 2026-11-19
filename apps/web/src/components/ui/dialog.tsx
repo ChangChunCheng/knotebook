@@ -28,7 +28,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 /**
  * `size="panel"` (management panels and the shortcuts dialog): the frame is transparent with no border or shadow (ManagementShell draws the tray and cards); a bottom sheet on phones.
- * Heights use `dvh`: iOS Safari's `vh` is taller than the visible height. `max-w` leaves at least 2vw or the safe area on each side (landscape edges stay out of the sensor area).
+ * Heights use `dvh`: iOS Safari's `vh` is taller than the visible height. `max-w` leaves each side at least the larger of 2vw and the left/right safe area (landscape edges stay out of the sensor area).
  * No built-in Close is rendered: the panel's right card has its own labelled ✕. The grid track is `minmax(0,1fr)`: an `auto` track grows with tray content and the right card would never scroll. `lg` was removed: using it is a type error.
  */
 const dialogContentVariants = cva(
@@ -64,7 +64,7 @@ const dialogContentVariants = cva(
 );
 
 /**
- * `dismissOnOutside={false}` blocks only clicks/focus outside (`onInteractOutside`); Esc, X and cancel still close. Form dialogs pass false so a stray click doesn't discard input; no dirty-checking, since per-form dirty conditions are easy to get wrong.
+ * `dismissOnOutside={false}` blocks only clicks/focus outside (`onInteractOutside`); Esc, X and cancel still close. Form dialogs pass false so a stray click doesn't discard input; no dirty-checking, since per-form dirty conditions are easy to get wrong. Confirm-only and read-only dialogs keep the default.
  * The caller's own `onInteractOutside` runs first; its `onPointerDownOutside`/`onFocusOutside` fire before that and are unaffected.
  */
 export const DialogContent = forwardRef<

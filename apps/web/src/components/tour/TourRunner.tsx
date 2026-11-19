@@ -39,7 +39,7 @@ import { stopBody, stopScreen, stopTarget, type StopContext, type TourScreen } f
 import { TourOverlay } from "./TourOverlay";
 
 export interface TourRunnerProps extends TourStartOptions {
-  /** null = the tour can't start (it shows its own toast); `signal` aborts on unmount. `aiActions` is the single read of AI actions per round (never rejects; failure = []): sample content and steps use the same copy, so both agree. */
+  /** null = the tour can't start (it shows its own toast); `signal` aborts on unmount. `aiActions` is the single read of AI actions per round (never rejects; failure = []): sample content and steps use the same copy, so both agree. Must resolve only after the sample note's page is mounted: the first location check would otherwise end the tour as `left`. */
   prepareSample: (signal: AbortSignal, aiActions: Promise<AiActionDto[]>) => Promise<NoteDto | null>;
   /** Called exactly once per round when step 1 appears (not repeated by re-render, going back or StrictMode); not called if aborted before the start. */
   onStarted?: () => void;
@@ -93,7 +93,7 @@ function errorMessage(t: Translate, err: unknown): string {
 }
 
 /**
- * One `TourOverlay` for the whole round: a step change swaps its content in place, since the persistent live region would otherwise treat every step as newly opened.
+ * One `TourOverlay` for the whole round: a step change swaps its content in place so its persistent live region announces the change; a remount would treat every step as just opened.
  * Start: close the drawer and wait for it to leave the DOM (it is modal: the card is unreachable and targets unfindable). AI actions are read in parallel with `prepareSample`; the editor is usually editable by the time the read is done, so writing the sample needn't wait another round trip (typing into the empty note meanwhile makes the write give up).
  * The start flow runs in a mount effect and checks the abort signal after every step: StrictMode's mount-unmount-mount stops the first round before it creates the sample, so two notes aren't created.
  * That relies on an `await` (the drawer wait) before the first abort check: round one's cleanup runs before it returns; a start that doesn't yield would create the sample first.
@@ -176,7 +176,7 @@ export function TourRunner({ returnTo, returnFocus, prepareSample, onStarted, on
 
   const snapshot = useSyncExternalStore(run?.engine.subscribe ?? subscribeNothing, run?.engine.getSnapshot ?? idleSnapshot);
 
-  // Only search/hash changes (e.g. presentation mode's `?present`) don't count as leaving. Back/forward (POP) always counts: the tour's own screen changes replace history and never produce a POP.
+  // On every location change, check it is still the expected screen (the sample note, or the list for phone list steps); search/hash-only changes (e.g. presentation mode's `?present`) don't count as leaving. Back/forward (POP) always counts: the tour's own screen changes replace history and never produce a POP.
   // Placed before the effect that enters step 1: if already off the sample note at start, don't enter.
   // Real navigation type: the tour lives at App level, outside the `<Routes>` that carries `location`, so `useNavigationType()` is real; if it moved into such a tree (type always POP), read `RealLocationContext` first.
   const realNavigationType = useRealNavigationType();

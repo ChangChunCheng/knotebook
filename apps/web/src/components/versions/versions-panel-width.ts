@@ -36,7 +36,6 @@ export function readVersionsPanelWidth(): number {
 
 export function writeVersionsPanelWidth(px: number): void {
   try {
-    // Equal to the default: remove the key rather than leave a stored value identical to the default.
     if (px === VERSIONS_PANEL_WIDTH_DEFAULT) window.localStorage.removeItem(VERSIONS_PANEL_WIDTH_STORAGE_KEY);
     else window.localStorage.setItem(VERSIONS_PANEL_WIDTH_STORAGE_KEY, String(px));
   } catch {

@@ -9,6 +9,7 @@ import { noteBucket, noteSpaceKey, type SidebarNode } from "./tree";
 
 
 // Import only through the SelectLazy chain and tests (first-bundle limit).
+
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export type SelectableTab = "recent" | "favorites" | "myNotes" | "workspace" | "shared";

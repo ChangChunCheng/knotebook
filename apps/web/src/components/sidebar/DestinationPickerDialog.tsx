@@ -15,7 +15,7 @@ function errorMessage(t: Translate, err: unknown): string {
   return t("errors.fallback");
 }
 
-/** Scroll-to-top and focus move only when `levelKey` changes, not on a same-level re-render (folder refetch). Closing and focus handoff belong to the caller. Reference only via `SelectLazy`. */
+/** Scroll-to-top and focus move only when `levelKey` changes, not on a same-level re-render (folder refetch). Closing and focus handoff belong to the caller. Import only through the SelectLazy chain and tests. */
 export function DestinationPickerDialog({
   mode,
   count,

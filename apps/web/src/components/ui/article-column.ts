@@ -12,7 +12,7 @@ export const ARTICLE_COLUMN_BASE = "mx-auto w-full";
 
 /**
  * The standard floor (42.5rem = 680px, the pre-redesign width) is load-bearing, don't turn the clamp into `min()`: on medium windows (~730px scroller) 85% is only 620px, narrower than before. Wide uses the same floor, so below ~735px parent width both sit on the floor and equal standard.
- * Standard + pinned: width = min(standard, container − 17.875rem); 17.875rem = 286px = panel 240 + gap 16 + panel's right inset 30 (same spot as the floating panel, so it doesn't move when pinned). Shift = min(0, right space after centring − 17.875rem): with room to spare `left` is 0 and the body doesn't move, otherwise it moves left just enough, keeping 286px from the column's right edge to the container's (16px between column and panel); a squeezed column ends exactly at the container's left edge.
+ * Standard + pinned: width = min(standard, container − 17.875rem); 17.875rem = 286px = panel 240 + gap 16 + panel's right inset 30 (same spot as the floating panel, so it doesn't move when pinned). Shift = min(0, right space after centring − 17.875rem): with room to spare `left` is 0 and the body doesn't move, otherwise it moves left just enough, keeping 286px from the column's right edge to the container's (16px between column and panel); a squeezed column's left edge sits exactly on the container's left edge.
  * The shift uses `left` (the column is `relative`): margin `auto` can't transition, and a transform would make the column the containing block of the fixed overlays inside.
  * On narrower windows `w-full` shrinks the column (max-width doesn't cause horizontal scroll). Percentages resolve against the parent scroll container for both max-width and `left`.
  */

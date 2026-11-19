@@ -12,7 +12,7 @@ import { changedIndices, dividerResize, ratiosFromPixels } from "@/collab/column
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** Desktop hit area: 8px left of the gutter; the right side belongs to the 16px ⋮⋮ inside the column (`index.css`). */
+/** Desktop hit area: the gutter's left 8px, flush with the left column's right edge; the rest of the gutter belongs to the 16px in-column ⋮⋮ (`index.css`). */
 const FINE_HIT_PX = 8;
 const COARSE_HIT_PX = COLUMN_GAP_PX;
 const COARSE_QUERY = "(pointer: coarse)";
@@ -176,7 +176,7 @@ export function ColumnDividers({ container, editor }: { container: HTMLElement |
   const dragRef = useRef<DragState | null>(null);
   const placesRef = useRef<DividerPlace[]>(places);
 
-  /** Columns other than the two beside the divider keep their current widths: pixels measured at pointerdown are stale if someone changed them mid-drag. */
+  /** The two columns beside the divider take the drag result; another column keeps its current value only if someone changed it mid-drag (its pointerdown pixels are stale). */
   const stopDrag = (commit: boolean) => {
     const drag = dragRef.current;
     if (!drag) return;

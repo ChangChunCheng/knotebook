@@ -20,7 +20,7 @@ import { useApplyFlow } from "./use-apply-flow";
  * Phone (< 640), URL unchanged. Step one = list, step two = preview (the step is whether `preview` is null). Bottom "older/newer version" = the next smaller/larger seq (wording deliberately avoids "previous version", which would clash with the compare target); disabled at the ends (an older page is loaded first when it exists; disabled while loading).
  * No `PreviewBanner` on the full page: step two's second header row holds the compare dropdown pair (`ComparePicker`, left → right) and "only differences" (both read controller state); only side-by-side/single isn't offered (`forceSingle`), so the dropdowns always go on row 2.
  * Focus: a controlled Dialog has no Trigger so Radix doesn't restore focus: `document.activeElement` is recorded on mount and restored by hand on close (as `GroupNameDialog`); if that element is gone (opened from the header ⋮: the menu item unmounts with the menu) fall back to `returnFocusRef` (the ⋮ trigger passed down by NotePage).
- * At 320px step two's second header row has `flex-wrap`.
+ * Step two's second header row wraps (`flex-wrap`): it doesn't fit on one line at 320px.
  * Esc: step two → back to the list, step one → close; both `preventDefault` (NotePage's preview Esc yields on `defaultPrevented`).
  */
 export function VersionsSheet({ doc, lastEdited, returnFocusRef }: { doc: Y.Doc; lastEdited: NoteDto["lastEdited"]; returnFocusRef?: RefObject<HTMLElement | null> }) {

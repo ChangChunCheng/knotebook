@@ -68,6 +68,7 @@ export function FolderNameDialog(props: FolderNameDialogProps) {
   }
 
   const trimmed = name.trim();
+  // Same order as the server: trim → control characters → length in code points (at most FOLDER_NAME_MAX).
   const invalid = hasControlChar(trimmed)
     ? t("folderDialogs.nameControlChars")
     : [...trimmed].length > FOLDER_NAME_MAX

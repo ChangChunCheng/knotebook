@@ -55,7 +55,7 @@ export interface StopDef {
   /** Called exactly once after the engine starts entering the step (next, back, skipped, ended, unmount, leaving the sample note), including when `prepare` didn't run (floating sidebar), so it must be safe then. A throw is only logged and doesn't block step changes. */
   leave?: (ctx: StopContext) => void;
   live?: (ctx: StopContext) => boolean;
-  /** Demo steps run in the editor and don't touch the sidebar. */
+  /** Run `prepare` with a floating sidebar too (default: skipped, since switching tab opens the drawer); demo steps work in the editor and don't touch the sidebar. */
   prepareInNarrow?: boolean;
 }
 
@@ -203,6 +203,7 @@ export const STOPS: Readonly<Record<StopId, StopDef>> = {
     bodyKey: "tourGuide.stops.userMenu.body",
     narrowBodyKey: "tourGuide.stops.userMenu.narrowBody",
     phoneBodyKey: "tourGuide.stops.userMenu.phoneBody",
+    // No phoneTarget: on phones the trigger is the list header's avatar, which carries the same attribute.
     target: () => all(findUserMenuTrigger()),
     narrowTarget: drawerButton,
     phoneScreen: "list",
@@ -211,6 +212,7 @@ export const STOPS: Readonly<Record<StopId, StopDef>> = {
 
 export const FULL_TOUR: readonly [StopId, ...StopId[]] = ["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "ai", "slash", "userMenu"];
 
+// The exported helpers below default `layout` to a one-time `tourLayout()` read; components subscribed to layout changes pass their value.
 export function stopShownIn(stop: StopDef, layout: TourLayout = tourLayout()): boolean {
   return !(layout === "phone" && stop.skipOnPhone === true);
 }

@@ -79,6 +79,7 @@ export function buildSampleBlocks(
 
 type PmDoc = Parameters<Parameters<TourEditor["transact"]>[0]>[0]["doc"];
 
+/** BlockNote's empty doc is doc > blockGroup > blockContainer > paragraph (`descendants` excludes doc itself, hence 3). */
 function isSingleEmptyParagraph(doc: PmDoc): boolean {
   if (doc.textContent !== "") return false;
   const kinds: string[] = [];

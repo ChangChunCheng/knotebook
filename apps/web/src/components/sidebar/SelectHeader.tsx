@@ -23,7 +23,7 @@ const OPEN_TOAST = 'li[data-swipe-direction][data-state="open"]';
  * Select all ticks only visible rows (a collapsed subtree keeps earlier ticks); deselect all (click on the all-ticked tri-state box) clears everything, including collapsed subtrees.
  * "N selected" is folders + notes, ignoring collapse and not deduped (dedupe happens before sending).
  * Classes are the same as the select branch of `TrashPanel.renderHeader`.
- * Reuses the first bundle's `trash.*` strings (the key prefix is misleading, but renaming touches both locales of the first bundle and the trash tests). Reference only via `SelectLazy`.
+ * Reuses the first bundle's `trash.*` strings (the key prefix is misleading, but renaming touches both locales of the first bundle and the trash tests). Import only through the SelectLazy chain and tests.
  */
 export function SelectHeader({
   nodes,

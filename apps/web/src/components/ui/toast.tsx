@@ -5,7 +5,7 @@ import { X } from "./icons";
 import { cn } from "@/lib/utils";
 import { Button } from "./button";
 
-
+// Module-level pub/sub instead of shadcn's reducer/actions: only show, variant and auto-dismiss are needed.
 export type ToastVariant = "default" | "destructive";
 
 export interface ToastItem {
@@ -14,6 +14,7 @@ export interface ToastItem {
   description?: string;
   variant?: ToastVariant;
   durationMs?: number;
+  /** Radix closes the toast after `onClick`. */
   action?: { label: string; onClick: () => void; /** For screen-reader users who can't operate the toast; defaults to `label`. */ altText?: string };
 }
 
@@ -22,7 +23,7 @@ type Listener = (toasts: ToastItem[]) => void;
 let toasts: ToastItem[] = [];
 const listeners = new Set<Listener>();
 
-// No `crypto.randomUUID`: it doesn't exist in non-secure contexts (plain-http LAN is a legitimate topology), so every `toast()` would throw a TypeError (jsdom/Node have a polyfill, so tests miss it). The id only needs session-wide uniqueness for dismiss matching: a counter is enough.
+// No `crypto.randomUUID`: it doesn't exist in non-secure contexts (plain-http LAN is a legitimate topology), so every `toast()` would throw a TypeError (jsdom/Node have a polyfill, so tests miss it). The id only needs session-wide uniqueness for dismiss matching, with no security need: a counter is enough.
 let toastIdSeq = 0;
 
 function emit() {

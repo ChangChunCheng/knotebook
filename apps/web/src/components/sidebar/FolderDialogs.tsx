@@ -4,7 +4,7 @@ import type { FolderDialogRequest } from "@/components/NoteList";
 import { FolderDeleteDialog } from "./FolderDeleteDialog";
 import { FolderNameDialog } from "./FolderNameDialog";
 
-/** Reference only via `FolderLazy`. */
+/** Import only through the FolderLazy chain and tests. */
 export function FolderDialogs({
   request,
   returnFocusRef,

@@ -133,6 +133,7 @@ interface Spacer {
 /**
  * Top-level units of one diff editor, in document order and one-to-one with the `blocks` passed in (with empty blocks the placeholder paragraph DiffEditor renders is an extra 0th, which `splitRows` gives no row number): top-level `.bn-block-outer` plus top-level column lists.
  * Nested children sit deeper (`.bn-block-outer > .bn-block > .bn-block-group > .bn-block-outer`), so a plain `.bn-block-outer` selector would match them too. A top-level `columnList` hangs directly under `.bn-block-group` without a `.bn-block-outer`; one row = one alignment row, no per-column alignment inside (same as nested).
+ * `root` must be `editor.domElement`, which is the `.bn-editor` element itself (hence `:scope > .bn-block-group`).
  */
 function topLevelOuters(root: HTMLElement | null): HTMLElement[] {
   return root ? Array.from(root.querySelectorAll<HTMLElement>(':scope > .bn-block-group > :is(.bn-block-outer, [data-node-type="columnList"])')) : [];
@@ -147,6 +148,7 @@ function heightsOf(roots: Array<HTMLElement | null>): number[][] {
   return roots.map((r) => topLevelOuters(r).map(blockHeight));
 }
 
+/** < 0.5px per block counts as unchanged, so fractional jitter doesn't re-layout repeatedly. */
 function sameHeights(x: number[][], y: number[][]): boolean {
   return x.length === y.length && x.every((list, i) => list.length === y[i].length && list.every((v, j) => Math.abs(v - y[i][j]) < 0.5));
 }
@@ -259,7 +261,7 @@ export function VersionPreview({ doc, forceSingle = false }: { doc: Y.Doc; force
   const rightBlocks = useMemo(() => (right.data ? ydocBytesToBlocks(right.data) : null), [right.data]);
   const rightIsCurrent = compareRight === "current";
   const [a, b] = useMemo<[DiffBlock[] | null, DiffBlock[] | null]>(() => {
-    // "Current state" is a one-off fork of the live doc (the preview compares snapshots, no subscription), resampled when `preview` changes.
+    // "Current state" is a one-off fork of the live doc, read when the right side or the previewed version changes; not subscribed (the preview compares snapshots).
     if (rightIsCurrent) return [leftBlocks, preview ? forkLiveBlocks(doc) : null];
     return [leftBlocks, rightBlocks];
   }, [rightIsCurrent, leftBlocks, rightBlocks, preview, doc]);
@@ -274,7 +276,7 @@ export function VersionPreview({ doc, forceSingle = false }: { doc: Y.Doc; force
   // Side-by-side exists only when the preview area is wide enough: narrow is always single; the user's chosen "side-by-side" stays in splitMode and returns when wide again. Same condition as the controller's `splitActive`.
   const wide = !forceSingle && width >= SPLIT_MIN_WIDTH;
   const split = wide && splitMode !== "single";
-    // Report the width verdict to the banner/page (only this component can measure it); reset to zero on unmount. useLayoutEffect: on the first wide preview the banner gets previewWide before paint, avoiding a frame without the side-by-side button (no test distinguishes this from useEffect).
+  // Report the width verdict to the banner/page (only this component can measure it); reset to zero on unmount. useLayoutEffect: on the first wide preview the banner gets previewWide before paint, avoiding a frame without the side-by-side button (no test distinguishes this from useEffect).
   useLayoutEffect(() => {
     reportPreviewWide(wide);
     return () => reportPreviewWide(false);

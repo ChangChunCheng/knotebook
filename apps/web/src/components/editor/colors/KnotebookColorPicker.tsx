@@ -65,7 +65,7 @@ function Section({ section, props, returnPrefix }: { section: ColorSection; prop
   );
 }
 
-/** Checkmarks: built-in colours only on an exact name match (as BlockNote); "Custom…" only when the current value is a canonical hex code, so a non-canonical legacy value (e.g. pasted `rgb(…)`) ticks nothing. */
+/** Checkmarks: built-in colours keep BlockNote's `data-test` values and tick only on an exact name match; "Custom…" only when the current value is a canonical hex code, so a non-canonical legacy value (e.g. pasted `rgb(…)`) ticks nothing. */
 export function KnotebookColorPicker({ text, background, returnPrefix }: KnotebookColorPickerProps) {
   return (
     <>

@@ -13,7 +13,7 @@ import { GroupRowButton } from "./GroupRowButton";
 import { visibleSelectionKeys, type SelectableTab } from "./select-model";
 import { noteLocationLabel, type LocationContext, type SidebarNode } from "./tree";
 
-/** Reference only via `SelectLazy`. Note rows are `<label>`s; a folder row is a chevron `<button>` plus a `<label>`, since a `<button>` can't live inside a `<label>` (invalid HTML). Collapse shares keys with NoteList via `collapse.ts`. */
+/** Import only through the SelectLazy chain and tests. Note rows are `<label>`s; a folder row is a chevron `<button>` plus a `<label>`, since a `<button>` can't live inside a `<label>` (invalid HTML). Collapse shares keys with NoteList via `collapse.ts`. */
 
 type RowVariant = "plain" | "group" | "recent";
 type ToggleRow = (key: string, shiftKey: boolean) => void;

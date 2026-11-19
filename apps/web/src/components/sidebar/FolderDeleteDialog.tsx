@@ -19,6 +19,7 @@ import { indexFolders } from "./folder-index";
 import { noteSpaceKey } from "./tree";
 
 // Import only through the FolderLazy chain and tests.
+
 const EMPTY_NOTES: NoteDto[] = [];
 const EMPTY_FOLDERS: FolderDto[] = [];
 

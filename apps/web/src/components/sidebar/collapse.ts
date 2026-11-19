@@ -53,7 +53,7 @@ export function useCollapseVersion(): number {
   return useSyncExternalStore(subscribe, () => version);
 }
 
-/** @internal tests only: clear overlay and version. */
+/** @internal tests only: clear overlay and version. Listeners aren't cleared: components unsubscribe on unmount. */
 export function __resetCollapseForTests(): void {
   overlay.clear();
   version = 0;

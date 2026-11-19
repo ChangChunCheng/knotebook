@@ -54,7 +54,7 @@ export function useFolderSortOf(): (folderId: string) => FolderSort {
   return useSyncExternalStore(subscribe, () => currentSortOf);
 }
 
-/** @internal tests only: clear the overlay and replace the query function. */
+/** @internal tests only: clear the overlay and replace the query function. Listeners aren't cleared: components unsubscribe on unmount. */
 export function __resetFolderSortForTests(): void {
   overlay.clear();
   currentSortOf = (folderId) => folderSortOf(folderId);

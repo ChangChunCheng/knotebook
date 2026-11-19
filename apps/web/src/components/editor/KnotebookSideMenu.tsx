@@ -23,6 +23,7 @@ import { absoluteUrl, blockLinkUrl, copyBlockLink } from "@/lib/copy-block-link"
 import { ColorMenuBody } from "./colors/ColorMenuBody";
 import { KnotebookBlockColorsItem } from "./colors/KnotebookBlockColorsItem";
 
+/** The note's canonical path (`canonicalNotePath(note)`); null hides the copy-link item. */
 export const NotePathContext = createContext<string | null>(null);
 
 function CopyBlockLinkItem() {
@@ -102,7 +103,7 @@ function hasColumnAncestor(editor: BlockNoteEditor<any, any, any>, blockId: stri
 
 /**
  * Module-level for a stable identity: SideMenuController remounts when the component identity changes.
- * Only ⋮⋮ inside columns: the column menu anchors at the column's left edge in the 24px gutter, and two 48px buttons would overlap the previous column.
+ * Only ⋮⋮ inside columns: the column menu anchors at the column's left edge in the 24px gutter, and the two buttons (48px together) would overlap the previous column.
  */
 export function KnotebookSideMenu(props: SideMenuProps) {
   const editor = useBlockNoteEditor();

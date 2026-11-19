@@ -6,7 +6,7 @@ import { Trash } from "@/components/ui/icons";
 
 /**
  * Replaces BlockNote's `FileDeleteButton` (swapped in by `AiToolbar` via key `fileDeleteButton`). Deleting goes through `keep-columns.ts`,
- * so removing an image inside a column doesn't collapse the column. Own `Trash` icon: the native one comes from `react-icons`, unreachable from apps/web.
+ * so removing an image inside a column doesn't collapse the column. Own `Trash` icon: the native one comes from `react-icons`, unreachable from apps/web. Shown under the native conditions (editable, exactly one block selected, block has a string `url` prop).
  */
 export function KnotebookFileDeleteButton() {
   const dict = useDictionary();
