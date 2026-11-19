@@ -10,8 +10,8 @@ import { AppShell } from "./AppShell";
 import { trashList } from "@/test/trash-fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 垃圾桶 tab 的 lazy chunk（TrashLazy）還沒到時的兩個 Suspense 佔位：jsdom 下 import 幾乎即到、量不到佔位，
-// 所以讓 TrashLazy 的載入卡在手動放行的 promise 上。
+// The two Suspense placeholders while TrashLazy is pending: in jsdom the import resolves almost immediately, so the placeholders can't be observed;
+// hence TrashLazy's load is held on a manually released promise.
 
 const gate = vi.hoisted(() => {
   let release!: () => void;
@@ -64,7 +64,7 @@ function stubFetch() {
 
 const aside = () => document.querySelector("aside") as HTMLElement;
 
-describe("AppShell — 垃圾桶 chunk 載入中的佔位", () => {
+describe("AppShell - placeholders while the trash chunk loads", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -73,7 +73,7 @@ describe("AppShell — 垃圾桶 chunk 載入中的佔位", () => {
     vi.unstubAllGlobals();
   });
 
-  it("chunk 還沒到：tabpanel 是「Trash＋Loading…」、底部是同高空位（沒有 New note）；放行後換成真面板與保留天數說明", async () => {
+  it("chunk pending: tabpanel is 'Trash + Loading...', bottom is a same-height blank (no New note); after release it becomes the real panel and the retention note", async () => {
     stubFetch();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -90,12 +90,12 @@ describe("AppShell — 垃圾桶 chunk 載入中的佔位", () => {
     );
     fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));
 
-    // TrashPanelFallback（改成 null → 紅）
     const panel = within(aside()).getByRole("tabpanel");
+    // TrashPanelFallback
     expect(within(panel).getByText("Trash", { exact: true })).toBeInTheDocument();
     expect(within(panel).getByText("Loading…", { exact: true })).toBeInTheDocument();
     expect(panel.querySelector("[data-sidebar-header]")).toBeNull();
-    // SidebarFooter 的佔位（改成 null → 紅）：底部是 h-7 的空位，不是「新增筆記」也不是說明句
+    // SidebarFooter's placeholder (h-7 blank).
     expect(aside().querySelector(":scope > div.h-7")).not.toBeNull();
     expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull();
     expect(within(aside()).queryByTestId("trash-footer")).toBeNull();

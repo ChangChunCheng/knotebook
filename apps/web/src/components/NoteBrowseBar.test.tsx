@@ -59,7 +59,7 @@ describe("NoteBrowseBar", () => {
     vi.unstubAllGlobals();
   });
 
-  it("左下是 56px 圓形 Search 鈕（同清單畫面那一顆），按了開搜尋層", () => {
+  it("bottom-left is a 56px round Search button (same as the list screen's), pressing it opens the search layer", () => {
     renderBar(note());
     const search = screen.getByRole("button", { name: "Search notes" });
     expect(search).toHaveClass("h-14", "w-14", "rounded-full", "fixed", "left-[calc(1rem+env(safe-area-inset-left))]", "supports-[backdrop-filter]:backdrop-blur-xs");
@@ -67,14 +67,14 @@ describe("NoteBrowseBar", () => {
     expect(openSearch).toHaveBeenCalledTimes(1);
   });
 
-  it("兩顆浮動鈕不佔版面：外層 display: contents，Home 指示條的退讓由鈕自己的 safe area 給", () => {
+  it("the two floating buttons take no layout space: outer display: contents, the Home indicator clearance comes from each button's own safe area", () => {
     renderBar(note());
     const bar = screen.getByTestId("note-browse-bar");
     expect(bar).toHaveClass("contents");
     expect(screen.getByRole("button", { name: "New note" })).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]", "bottom-[calc(1rem+env(safe-area-inset-bottom))]");
   });
 
-  it("搜尋層開著：整組不渲染；關了回來", () => {
+  it("search layer open: the whole group isn't rendered; it returns when closed", () => {
     const view = render(
       <PhoneBrowseContext.Provider value={{ openSearch, createNote, searchOpen: true }}>
         <NoteBrowseBar note={note()} />
@@ -89,20 +89,20 @@ describe("NoteBrowseBar", () => {
     expect(screen.getByTestId("note-browse-bar")).toBeInTheDocument();
   });
 
-  it("個人根層：「New note」→ createNote() 不帶參數", () => {
+  it("personal root: 'New note' -> createNote() with no arguments", () => {
     renderBar(note());
     fireEvent.click(screen.getByRole("button", { name: "New note" }));
     expect(createNote).toHaveBeenCalledWith(undefined, undefined);
   });
 
-  it("個人資料夾：createNote(undefined, folderId)", () => {
+  it("personal folder: createNote(undefined, folderId)", () => {
     data.folders = [folderDto({ id: "f1", name: "Projects" })] as FolderDto[];
     renderBar(note({ folderId: "f1" }));
     fireEvent.click(screen.getByRole("button", { name: "New note" }));
     expect(createNote).toHaveBeenCalledWith(undefined, "f1");
   });
 
-  it("群組成員：createNote(groupId, folderId)", () => {
+  it("group member: createNote(groupId, folderId)", () => {
     data.groups = [groupDto({ id: "g1", name: "Team" }, memberRole())] as GroupDto[];
     data.folders = [groupFolder({ id: "gf1", name: "Specs", groupId: "g1" })];
     renderBar(groupNote("g1", { folderId: "gf1" }));
@@ -110,7 +110,7 @@ describe("NoteBrowseBar", () => {
     expect(createNote).toHaveBeenCalledWith("g1", "gf1");
   });
 
-  it("管理員也有；檢視者、能建不能編的自訂角色、共享給我都沒有「New note」（搜尋仍在）", () => {
+  it("admin has it too; viewer, a custom role that can create but not edit, and shared-with-me have no 'New note' (Search remains)", () => {
     data.groups = [groupDto({ id: "g1", name: "Team" }, adminRole())] as GroupDto[];
     const { unmount } = renderBar(groupNote("g1"));
     expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("NoteBrowseBar", () => {
     expect(screen.getByRole("button", { name: "Search notes" })).toBeInTheDocument();
   });
 
-  it("建立中：「New note」停用，不會連點建兩篇", async () => {
+  it("while creating: 'New note' is disabled, so a double click can't create two notes", async () => {
     let resolve: () => void = () => {};
     createNote.mockImplementationOnce(() => new Promise<void>((done) => (resolve = done)));
     renderBar(note());
@@ -141,7 +141,7 @@ describe("NoteBrowseBar", () => {
     await waitFor(() => expect(button).not.toBeDisabled());
   });
 
-  describe("螢幕鍵盤", () => {
+  describe("on-screen keyboard", () => {
     let viewport: EventTarget & { height: number; offsetTop: number; scale: number };
     let frames: Array<() => void>;
 
@@ -164,7 +164,7 @@ describe("NoteBrowseBar", () => {
       Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
     });
 
-    it("鍵盤開著（例如在改標題）：這條不在；收起後回來", () => {
+    it("keyboard open (e.g. while editing the title): this bar is absent; it returns when dismissed", () => {
       renderBar(note());
       expect(screen.getByTestId("note-browse-bar")).toBeInTheDocument();
       setKeyboard(300);

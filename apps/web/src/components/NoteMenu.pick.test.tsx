@@ -1,6 +1,6 @@
-// `handlePick` 要明確判「同空間移動」，不能把 `transferTargetOf` 的任何 null 都當成同空間移動去 PUT。
-// 群組與 `DestSpace` 在真實選單裡出自同一份 `pick.groups`，UI 造不出「目的群組不在 pick.groups」，
-// 所以這裡只把 `GroupTransferMenuItems` 換成一顆按鈕、直接餵造好的 pick；其餘（NoteMenu、handlePick、transferTargetOf）都是真的。
+// `handlePick` must explicitly decide "move within the same space"; it can't treat any null from `transferTargetOf` as a same-space move and PUT.
+// In the real menu, groups and `DestSpace` come from the same `pick.groups`, so the UI can't produce "destination group not in pick.groups";
+// hence this only swaps `GroupTransferMenuItems` for one button that feeds a crafted pick directly; everything else (NoteMenu, handlePick, transferTargetOf) is real.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -74,7 +74,7 @@ async function pickIt(pick: DestinationPick): Promise<void> {
 
 const writes = () => fetchMock.mock.calls.filter(([, init]) => ((init as RequestInit | undefined)?.method ?? "GET").toUpperCase() !== "GET");
 
-describe("NoteMenu handlePick：同空間移動要明確判斷", () => {
+describe("NoteMenu handlePick: same-space moves are decided explicitly", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -93,7 +93,7 @@ describe("NoteMenu handlePick：同空間移動要明確判斷", () => {
     picks.current = null;
   });
 
-  it("HP-1 個人筆記、移動到不在 pick.groups 裡的群組 → 不 PUT、不開確認框", async () => {
+  it("personal note moved to a group not in pick.groups -> no PUT, no confirm dialog", async () => {
     renderMenu();
     await pickIt({
       kind: "move",
@@ -106,7 +106,7 @@ describe("NoteMenu handlePick：同空間移動要明確判斷", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("HP-2 對照：個人筆記、移動到我的筆記（同空間）→ 直接 PUT、不開確認框", async () => {
+  it("contrast: personal note moved to My notes (same space) -> PUT directly, no confirm dialog", async () => {
     renderMenu();
     await pickIt({
       kind: "move",

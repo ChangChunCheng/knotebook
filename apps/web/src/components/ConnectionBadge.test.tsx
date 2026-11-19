@@ -8,7 +8,7 @@ function renderBadge(state: CollabState, synced: boolean, canEdit = true) {
   return render(<ConnectionBadge state={state} synced={synced} canEdit={canEdit} />);
 }
 
-describe("ConnectionBadge（issue #48：離線可見性）", () => {
+describe("ConnectionBadge (issue #48: offline visibility)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     vi.useFakeTimers();
@@ -18,21 +18,21 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     vi.useRealTimers();
   });
 
-  it("OFFLINE_WARN_MS 是幾秒級的門檻（CHANGELOG／docs 對外承諾「a few seconds」）", () => {
-    // 其餘測試都用 OFFLINE_WARN_MS 自己推進 timer，是自我參照——改成 60_000 也會全綠。
-    // 這一條把「幾秒」這個對使用者的契約釘成字面。
+  it("OFFLINE_WARN_MS is a few-seconds threshold (CHANGELOG/docs publicly promise 'a few seconds')", () => {
+    // The other tests advance timers by OFFLINE_WARN_MS itself, which is self-referential: changing it to 60_000 would stay green.
+    // This pins the user-facing "a few seconds" contract as a literal.
     expect(OFFLINE_WARN_MS).toBeGreaterThanOrEqual(1_000);
     expect(OFFLINE_WARN_MS).toBeLessThanOrEqual(5_000);
   });
 
-  it("connected + synced：顯示「Connected」、不因時間升級", () => {
+  it("connected + synced: shows Connected and doesn't escalate over time", () => {
     renderBadge({ phase: "connected", role: "owner" }, true);
     expect(screen.getByText("Connected")).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS * 2));
     expect(screen.getByText("Connected")).toBeInTheDocument();
   });
 
-  it("短暫的 connecting（未過門檻）不閃警示——只顯示「Connecting…」", () => {
+  it("a brief connecting phase (under the threshold) doesn't flash a warning, only shows Connecting", () => {
     renderBadge({ phase: "connecting" }, false);
     expect(screen.getByText("Connecting…")).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS - 100));
@@ -40,9 +40,9 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(screen.queryByText(/offline|Not loaded/i)).not.toBeInTheDocument();
   });
 
-  it("connected 但還沒 synced（server 載入慢／卡住）→ 超過門檻也升級，不停在「已連線」", () => {
-    // #48 的反向形狀：onAuthenticated 就進 connected，但 synced 要再一個 round trip。
-    // 只看 phase 的話這一格永遠不升級，使用者卡在「已連線」配一篇空白唯讀筆記。
+  it("connected but not synced (server slow or stuck loading) -> escalates past the threshold too, doesn't stay on connected", () => {
+    // The reverse shape of #48: onAuthenticated enters connected but synced needs one more round trip.
+    // Looking at phase alone this case would never escalate, leaving the user on "connected" with a blank read-only note.
     renderBadge({ phase: "connected", role: "owner" }, false);
     expect(screen.getByText("Connected")).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
@@ -50,25 +50,24 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   });
 
-  it("從未同步 + 離線超過門檻 → 升級成「尚未載入」警示", () => {
+  it("never synced + offline past the threshold -> escalates to the not-loaded warning", () => {
     renderBadge({ phase: "connecting" }, false);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Not loaded — offline")).toBeInTheDocument();
-    // D.2：警示色訊號現在集中在狀態點上（phase 文字本身統一無色，見
-    // ConnectionBadge.tsx 檔頭）——斷言狀態點（`role=status` 底下唯一的
-    // `aria-hidden` 節點）帶 `bg-destructive`，不是預設的灰。
+    // The warning color signal now lives on the status dot (the phase text itself is uncolored, see the ConnectionBadge.tsx header):
+    // assert the dot (the `aria-hidden` node under `role=status`) has `bg-destructive`, not the default grey.
     const dot = screen.getByRole("status").querySelector('[aria-hidden="true"]');
     expect(dot).not.toBeNull();
     expect(dot!.className).toContain("bg-destructive");
   });
 
-  it("曾同步 + 離線超過門檻 → 升級成「離線編輯中」（可編輯，只是還沒同步回去）", () => {
+  it("previously synced + offline past the threshold -> escalates to editing offline (editable, just not synced back yet)", () => {
     renderBadge({ phase: "reconnecting-once" }, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Editing offline — changes not synced yet")).toBeInTheDocument();
   });
 
-  it("升級之後回到 connected → 立刻收回警示（不必等門檻）", () => {
+  it("returning to connected after escalation -> the warning is withdrawn immediately (no waiting for the threshold)", () => {
     const { rerender } = renderBadge({ phase: "connecting" }, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Editing offline — changes not synced yet")).toBeInTheDocument();
@@ -78,53 +77,51 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
   });
 
-  it("升級後回到 connected，再次離線要重新從頭計時（reset 守衛）", () => {
+  it("after escalation and return to connected, going offline again restarts the timing from zero (reset guard)", () => {
     const { rerender } = renderBadge({ phase: "connecting" }, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Editing offline — changes not synced yet")).toBeInTheDocument();
 
-    // 回到 connected：立刻收回。
     rerender(<ConnectionBadge state={{ phase: "connected", role: "owner" }} synced={true} canEdit={true} />);
     expect(screen.getByText("Connected")).toBeInTheDocument();
 
-    // 再次離線：門檻之前**不得**立刻又顯示警示（否則就是沒重新計時）。
+    // Offline again: before the threshold the warning must not reappear at once (else the timer wasn't restarted).
     rerender(<ConnectionBadge state={{ phase: "reconnecting-once" }} synced={true} canEdit={true} />);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS - 100));
     expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
-    // 補滿門檻才升級。
     act(() => vi.advanceTimersByTime(100));
     expect(screen.getByText("Editing offline — changes not synced yet")).toBeInTheDocument();
   });
 
-  it("viewer 曾同步後斷線 → 顯示中性「離線」，不是「離線編輯中」（他不能編輯、也沒有變更）", () => {
-    // 對 viewer 說「變更尚未同步」是假話。離線相位拿不到 role，所以由呼叫端傳 canEdit。
+  it("viewer disconnected after syncing -> neutral Offline, not editing offline (a viewer can't edit and has no changes)", () => {
+    // Telling a viewer "changes not synced yet" would be false. The offline phases carry no role, so the caller passes canEdit.
     renderBadge({ phase: "reconnecting-once" }, true, false);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Offline")).toBeInTheDocument();
     expect(screen.queryByText(/Editing offline/)).not.toBeInTheDocument();
   });
 
-  it("可編輯角色曾同步後斷線 → 「離線編輯中」（跟 viewer 那條對照）", () => {
+  it("editable role disconnected after syncing -> editing offline (contrast with the viewer case)", () => {
     renderBadge({ phase: "reconnecting-once" }, true, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByText("Editing offline — changes not synced yet")).toBeInTheDocument();
   });
 
-  it("終態（kicked）不算離線、不排升級 timer——維持撤權樣式", () => {
+  it("terminal state (kicked) isn't offline and schedules no escalation timer: keeps the revoked style", () => {
     renderBadge({ phase: "kicked" }, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS * 2));
     expect(screen.getByText("Access revoked")).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
   });
 
-  it.each(["owner", "editor"] as const)("#335 connected＋synced 的 %s：整個徽章只有「Connected」，不帶角色、不帶唯讀", (role) => {
+  it.each(["owner", "editor"] as const)("#335 connected + synced %s: the whole badge reads only Connected, no role, no read-only", (role) => {
     renderBadge({ phase: "connected", role }, true);
     expect(screen.getByRole("status")).toHaveTextContent(/^Connected$/);
     expect(screen.queryByText(/Owner|Editor|Viewer|Read-only/)).not.toBeInTheDocument();
   });
 
-  it("#335 connected＋synced 的 viewer：整個徽章只有「Read-only」，不寫「Connected」「Viewer」，點仍是綠的", () => {
+  it("#335 connected + synced viewer: the whole badge reads only Read-only, not Connected or Viewer, the dot is still green", () => {
     renderBadge({ phase: "connected", role: "viewer" }, true, false);
     expect(screen.getByRole("status")).toHaveTextContent(/^Read-only$/);
     expect(screen.queryByText(/Connected|Viewer/)).not.toBeInTheDocument();
@@ -135,21 +132,21 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/^Read-only$/);
   });
 
-  it("#335 viewer 斷線警示照舊：離線 → 「Offline」（紅點），沒有「Read-only」", () => {
+  it("#335 viewer disconnect warning unchanged: offline -> Offline (red dot), no Read-only", () => {
     renderBadge({ phase: "reconnecting-once" }, true, false);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByRole("status")).toHaveTextContent(/^Offline$/);
     expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
   });
 
-  it("#335 viewer connected 但未 synced：直接顯示「Read-only」；過門檻升級成「尚未載入」", () => {
+  it("#335 viewer connected but not synced: shows Read-only directly; past the threshold escalates to not loaded", () => {
     renderBadge({ phase: "connected", role: "viewer" }, false, false);
     expect(screen.getByRole("status")).toHaveTextContent(/^Read-only$/);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     expect(screen.getByRole("status")).toHaveTextContent(/^Not loaded — offline$/);
   });
 
-  it("#335 其餘文案照舊：connecting／reconnecting／kicked／deleted／outdated", () => {
+  it("#335 other texts unchanged: connecting, reconnecting, kicked, deleted, outdated", () => {
     const cases: Array<[CollabState, string]> = [
       [{ phase: "connecting" }, "Connecting…"],
       [{ phase: "reconnecting-once" }, "Reconnecting…"],
@@ -164,9 +161,9 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     }
   });
 
-  it("#115：文字 span 在手機寬或頁首不到 36rem 時為 sr-only（只留色點，但 aria-live 仍讀得到）；viewer 的「Read-only」也是", () => {
-    // 用 sr-only 而不是 hidden：容器是 role=status aria-live=polite，display:none
-    // 會讓窄視窗的螢幕閱讀器收不到撤權/降級/離線通知。
+  it("#115: the text span is sr-only on phone width or when the header is under 36rem (only the dot remains, aria-live still announces it); the viewer's Read-only too", () => {
+    // sr-only rather than hidden: the container is role=status aria-live=polite, and display:none would stop screen readers on narrow
+    // windows from getting revoke/downgrade/offline notices.
     const owner = renderBadge({ phase: "connected", role: "owner" }, true);
     expect(screen.getByText("Connected")).toHaveClass("max-sm:sr-only", "@max-[36rem]:sr-only");
     expect(screen.getByText("Connected").className).not.toContain("hidden");
@@ -176,7 +173,7 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(screen.getByText("Read-only").className).not.toContain("hidden");
   });
 
-  it("離線長文案與一般文案是同一個 span、同一組收縮 class，容器仍是 aria-live", () => {
+  it("the long offline text and the normal text are the same span with the same shrink classes; the container is still aria-live", () => {
     renderBadge({ phase: "reconnecting-once" }, true);
     act(() => vi.advanceTimersByTime(OFFLINE_WARN_MS));
     const long = screen.getByText("Editing offline — changes not synced yet");
@@ -188,7 +185,7 @@ describe("ConnectionBadge（issue #48：離線可見性）", () => {
     expect(status).toContainElement(long);
   });
 
-  it("#269 outdated：中性「Reload required」、超過門檻也不升級成離線警示", () => {
+  it("#269 outdated: neutral Reload required, no escalation to the offline warning even past the threshold", () => {
     vi.useFakeTimers();
     renderBadge({ phase: "outdated" }, true);
     act(() => {

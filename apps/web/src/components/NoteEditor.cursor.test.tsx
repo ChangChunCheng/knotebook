@@ -16,15 +16,15 @@ import { setRemote } from "@/components/presence/test-awareness";
 import { NoteEditor } from "./NoteEditor";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 分隔線浮層換成替身：這裡只驗 NoteEditor 依 editable 掛或不掛它（浮層本身的行為在 ColumnDividers.test.tsx）。
+// The column-divider overlay is replaced by a stand-in: this only checks that NoteEditor mounts or doesn't mount it depending on editable (the overlay's own behaviour is in editor/ColumnDividers.test.tsx).
 vi.mock("@/components/editor/ColumnDividers", async () => {
   const { createElement } = await import("react");
   return { ColumnDividers: () => createElement("div", { "data-testid": "column-dividers-probe" }) };
 });
 
-// #293：`NoteEditor` 的 `onCursorScroller` 接線。掛真 `<NoteEditor>`（Host 照 `NoteEditor.layout.test.tsx`）。
+// #293: `NoteEditor`'s `onCursorScroller` wiring. Mounts a real `<NoteEditor>` (Host as in `NoteEditor.layout.test.tsx`).
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 function fakeResponse(json: unknown): Response {
@@ -45,7 +45,7 @@ function stubFetch() {
   );
 }
 
-/** 照 `collab/undo.test.tsx` 的 `collabEditor()`：先用它把內容寫進 Y.Doc，再把同一個 doc 交給 `<NoteEditor>`。 */
+/** As `collabEditor()` in `collab/undo.test.tsx`: first write the content into the Y.Doc with it, then hand the same doc to `<NoteEditor>`. */
 function collabEditor(): { doc: Y.Doc; editor: AnyEditor } {
   const doc = new Y.Doc();
   const editor = BlockNoteEditor.create(
@@ -56,9 +56,9 @@ function collabEditor(): { doc: Y.Doc; editor: AnyEditor } {
         fragment: doc.getXmlFragment(YDOC_FRAGMENT),
         user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
     } as any),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   ) as any as AnyEditor;
   return { doc, editor };
 }
@@ -104,8 +104,8 @@ function Host({ children }: { children: ReactNode }) {
   );
 }
 
-describe("NoteEditor：onCursorScroller（#293）", () => {
-  // jsdom 的 HTMLElement 不一定有 scrollTo；缺就先墊一支，好讓 spy 有東西可蓋。
+describe("NoteEditor: onCursorScroller (#293)", () => {
+  // jsdom's HTMLElement doesn't always have scrollTo; shim one first so the spy has something to cover.
   let addedScrollTo = false;
   beforeAll(() => {
     if (typeof HTMLElement.prototype.scrollTo !== "function") {
@@ -127,7 +127,7 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("NE1：editor 建好後交出一次函式；卸載後最後一次交出 null", async () => {
+  it("after the editor is built it hands out a function once; after unmount the last handed value is null", async () => {
     const onCursorScroller = vi.fn();
     const doc = new Y.Doc();
     const { unmount } = render(
@@ -143,7 +143,7 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
     doc.destroy();
   });
 
-  it("NE2：真的 relative position——無預覽時捲動；版本預覽中不捲", async () => {
+  it("a real relative position: scrolls without a preview; doesn't scroll during version preview", async () => {
     const doc = await seededDoc();
     const onCursorScroller = vi.fn();
     const props = { doc, provider, editable: true, user: { id: "u1", name: "Ann" }, noteId: "note-1", onCursorScroller };
@@ -172,7 +172,7 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
     doc.destroy();
   });
 
-  it("NE3：onScrollRoot 照舊收到捲動容器", async () => {
+  it("onScrollRoot still receives the scroll container", async () => {
     const onScrollRoot = vi.fn();
     const doc = new Y.Doc();
     render(
@@ -184,12 +184,12 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
     const el = onScrollRoot.mock.calls.find(([arg]) => arg !== null)?.[0] as HTMLElement | undefined;
     expect(el).toBeDefined();
     expect(el).toHaveClass("overflow-y-auto");
-    // 欄外還有一層流程包裝（不產生盒子），再外一層才是捲動容器。
+    // Outside the columns there is one more flow wrapper (it produces no box), and only outside that is the scroll container.
     expect(column.parentElement?.parentElement).toBe(el);
     doc.destroy();
   });
 
-  it("NE4：只換 onCursorScroller 的 identity 不重交", async () => {
+  it("changing only the identity of onCursorScroller doesn't hand it out again", async () => {
     const first = vi.fn();
     const second = vi.fn();
     const doc = new Y.Doc();
@@ -211,10 +211,10 @@ describe("NoteEditor：onCursorScroller（#293）", () => {
   });
 });
 
-// #293：唯讀時本分頁不送游標（as-built）。真 y-prosemirror cursor plugin＋真 Awareness。
-// jsdom 裡 `.ProseMirror` 帶 BlockNote 無條件給的 tabIndex=0，`focus()` 會讓 `view.hasFocus()` 成立——
-// 與瀏覽器裡 viewer 點進內文同一條路。
-describe("NoteEditor：唯讀者不送游標（#293）", () => {
+// #293: a read-only viewer doesn't send a cursor from this tab. Real y-prosemirror cursor plugin + real Awareness.
+// In jsdom `.ProseMirror` carries the tabIndex=0 that BlockNote gives unconditionally, so `focus()` makes `view.hasFocus()` true,
+// the same path as a viewer clicking into the body in a browser.
+describe("NoteEditor: read-only users don't send a cursor (#293)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -244,7 +244,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     return { doc, awareness, setEditable };
   }
 
-  // editable 翻面時 BlockNoteView 會重掛 PM view，每次都重新找。
+  // When editable flips, BlockNoteView remounts the PM view; look it up again each time.
   function pmDom(): HTMLElement {
     const el = screen.getByTestId("note-editor").querySelector<HTMLElement>(".ProseMirror");
     if (!el) throw new Error("no .ProseMirror");
@@ -265,7 +265,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
 
   const localCursor = (awareness: Awareness): unknown => (awareness.getLocalState() as { cursor?: unknown } | null)?.cursor ?? null;
 
-  it("RC1：可編輯——聚焦＋選取後 awareness 有 cursor", async () => {
+  it("editable: after focus + selection awareness has a cursor", async () => {
     const { doc, awareness } = await mount(true);
     focusAndSelect();
     expect(localCursor(awareness)).not.toBeNull();
@@ -273,7 +273,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     doc.destroy();
   });
 
-  it("RC2：唯讀——編輯區照樣可聚焦，但聚焦＋選取後 awareness 沒有 cursor、也不多送更新；user 照寫；別人的游標照樣畫得出來", async () => {
+  it("read-only: the editing area is still focusable, but after focus + selection awareness has no cursor and sends no extra update; user is still written; other people's cursors are still drawn", async () => {
     const { doc, awareness } = await mount(false);
     expect(pmDom()).toHaveAttribute("contenteditable", "false");
     expect((awareness.getLocalState() as { user?: { name?: string } } | null)?.user?.name).toBe("Ann");
@@ -296,7 +296,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     doc.destroy();
   });
 
-  it("RC3：唯讀 → 可編輯——之後聚焦就開始送", async () => {
+  it("read-only -> editable: sending starts once focused afterwards", async () => {
     const { doc, awareness, setEditable } = await mount(false);
     focusAndSelect();
     expect(localCursor(awareness)).toBeNull();
@@ -307,7 +307,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     doc.destroy();
   });
 
-  it("CD1：欄間分隔線浮層只在可編輯時掛上；切成唯讀就拿掉，切回可編輯再掛上", async () => {
+  it("the column divider overlay is mounted only when editable; switching to read-only removes it, switching back mounts it again", async () => {
     const { doc, awareness, setEditable } = await mount(true);
     expect(screen.getByTestId("column-dividers-probe")).toBeInTheDocument();
     expect(screen.getByTestId("article-column")).toContainElement(screen.getByTestId("column-dividers-probe"));
@@ -319,7 +319,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
     doc.destroy();
   });
 
-  it("RC4：可編輯 → 唯讀——已送出的 cursor 立即清掉，之後再聚焦＋選取也不送", async () => {
+  it("editable -> read-only: an already sent cursor is cleared at once, and focusing + selecting afterwards doesn't send", async () => {
     const { doc, awareness, setEditable } = await mount(true);
     focusAndSelect();
     expect(localCursor(awareness)).not.toBeNull();
@@ -332,7 +332,7 @@ describe("NoteEditor：唯讀者不送游標（#293）", () => {
   });
 });
 
-describe("NoteEditor：遠端 awareness 先清洗再畫（#312）", () => {
+describe("NoteEditor: remote awareness is sanitised before drawing (#312)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -356,7 +356,7 @@ describe("NoteEditor：遠端 awareness 先清洗再畫（#312）", () => {
     return { doc, awareness, text };
   }
 
-  it("畸形的遠端 cursor 不會讓編輯器丟錯", async () => {
+  it("a malformed remote cursor doesn't make the editor throw", async () => {
     const { doc, awareness, text } = await mount();
     expect(() => {
       act(() => {
@@ -372,7 +372,7 @@ describe("NoteEditor：遠端 awareness 先清洗再畫（#312）", () => {
     doc.destroy();
   });
 
-  it("注入的顏色不會進游標與選取的 style，選取有合法的底色", async () => {
+  it("an injected color doesn't reach the cursor and selection style, the selection has a valid background", async () => {
     const { doc, awareness, text } = await mount();
     act(() => {
       setRemote(awareness, 4244, {
@@ -394,7 +394,7 @@ describe("NoteEditor：遠端 awareness 先清洗再畫（#312）", () => {
     for (const el of selections) {
       const style = el.getAttribute("style") ?? "";
       expect(style).not.toContain("url(");
-      // 6 位 hex 後接 alpha 才是合法的 CSS；jsdom 會正規化成 rgba(...)，不合法的值整條被丟掉。
+      // A 6-digit hex followed by alpha is valid CSS; jsdom normalises it to rgba(...), and an invalid value is dropped entirely.
       expect(style).toMatch(/background-color:\s*rgba\(\d+, \d+, \d+, [\d.]+\)/);
     }
     awareness.destroy();

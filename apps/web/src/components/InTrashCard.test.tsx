@@ -9,7 +9,7 @@ import * as toastModule from "@/components/ui/toast";
 import { OWNER_PERMS } from "@/test/fixtures";
 import { InTrashCard } from "./InTrashCard";
 
-// 筆記頁「在垃圾桶裡」卡片（IC-T*）。接進 NotePage 的部分在 NotePage.test.tsx。
+// The part wired into NotePage is in pages/NotePage.test.tsx.
 
 afterEach(() => {
   localStorage.clear();
@@ -39,7 +39,7 @@ function fakeResponse(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: () => Promise.resolve(body) } as unknown as Response;
 }
 
-/** `POST /api/trash/restore` 的回應；`hold` 有給時等它 resolve 才回（測送出中的狀態）。 */
+/** Response of `POST /api/trash/restore`; if `hold` is given it waits for it to resolve before replying (to test the in-flight state). */
 function stubRestore(reply: { status: number; body: unknown }, hold?: Promise<void>) {
   const posts: unknown[] = [];
   vi.stubGlobal(
@@ -52,7 +52,7 @@ function stubRestore(reply: { status: number; body: unknown }, hold?: Promise<vo
         const make = () => fakeResponse(reply.body, reply.status);
         return hold ? hold.then(make) : Promise.resolve(make());
       }
-      // 還原後 invalidateTrashRelated 失效的 key 都沒有掛載的 observer，不會打請求；打了就是意外。
+      // After restore, none of the keys invalidated by invalidateTrashRelated has a mounted observer, so no request is made; a request would be unexpected.
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
   );
@@ -79,7 +79,7 @@ function renderCard() {
   return { onRestored };
 }
 
-/** Radix Toast Root（`<li>`）——variant 的 class 掛在它身上。 */
+/** Radix Toast Root (`<li>`): the variant class is on it. */
 function toastRoot(title: string): HTMLElement {
   return screen.getByText(title, { exact: true }).closest("li") as HTMLElement;
 }
@@ -96,7 +96,7 @@ describe("InTrashCard", () => {
     vi.unstubAllGlobals();
   });
 
-  it("IC-T1 標題與兩顆鈕", () => {
+  it("title and two buttons", () => {
     stubRestore({ status: 200, body: { restored: [], skipped: [] } });
     renderCard();
     expect(screen.getByRole("heading", { level: 2, name: "This note is in the trash" })).toBeInTheDocument();
@@ -104,7 +104,7 @@ describe("InTrashCard", () => {
     expect(screen.getByRole("button", { name: "Go to trash" })).toBeEnabled();
   });
 
-  it("IC-T2 還原成功：送 {ids:[n1]}、onRestored 一次、沒有 toast", async () => {
+  it("restore success: sends {ids:[n1]}, onRestored once, no toast", async () => {
     const { posts } = stubRestore({ status: 200, body: { restored: [RESTORED], skipped: [] } });
     const toastSpy = vi.spyOn(toastModule, "toast");
     onTestFinished(() => toastSpy.mockRestore());
@@ -117,7 +117,7 @@ describe("InTrashCard", () => {
     expect(toastSpy).not.toHaveBeenCalled();
   });
 
-  it("IC-T2b 送出中「還原」disabled，回來後恢復", async () => {
+  it("while sending, Restore is disabled and recovers when the response returns", async () => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => {
       release = resolve;
@@ -134,7 +134,7 @@ describe("InTrashCard", () => {
     await waitFor(() => expect(restoreButton()).toBeEnabled());
   });
 
-  it("IC-T3 全略過：toast 結果句（destructive），onRestored 仍呼叫（重抓）", async () => {
+  it("all skipped: result-sentence toast (destructive), onRestored is still called (refetch)", async () => {
     stubRestore({ status: 200, body: { restored: [], skipped: [{ id: NOTE_ID, reason: "not_in_trash" }] } });
     const { onRestored } = renderCard();
 
@@ -146,7 +146,7 @@ describe("InTrashCard", () => {
     await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1));
   });
 
-  it("IC-T4 失敗（500）：錯誤 toast、onRestored 不呼叫、按鈕恢復可按", async () => {
+  it("failure (500): error toast, onRestored not called, button usable again", async () => {
     stubRestore({ status: 500, body: { error: { code: "internal", message: "x" } } });
     const { onRestored } = renderCard();
 
@@ -159,7 +159,7 @@ describe("InTrashCard", () => {
     expect(onRestored).not.toHaveBeenCalled();
   });
 
-  it("IC-T5 前往垃圾桶：經 actions 的 showTab——localStorage 與同一 provider 的 state 都是 trash", async () => {
+  it("go to trash: via actions' showTab, localStorage and the same provider's state are both trash", async () => {
     stubRestore({ status: 200, body: { restored: [], skipped: [] } });
     renderCard();
     expect(screen.getByTestId("tab-probe")).toHaveTextContent("myNotes");

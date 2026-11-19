@@ -9,7 +9,6 @@ import { stubLayoutTier, type LayoutTier } from "@/test/layout-tier";
 import { CornerStack } from "./CornerStack";
 import { CORNER_STACK_FOOTPRINT_PX, CORNER_STACK_RIGHT_INSET_PX, CORNER_STACK_SIZE_PX } from "./corner-stack-geometry";
 
-/** 探針：印出版本面板狀態，並提供「從 ⋮ 開版本面板」的外部按鈕。 */
 function Probe() {
   const v = useVersions();
   return (
@@ -39,13 +38,13 @@ function renderStack(enabled: boolean) {
   );
 }
 
-describe("CornerStack（筆記右下角的歷史泡泡）", () => {
+describe("CornerStack (history bubble at the bottom right of a note)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("容器：零高度錨點（relative、h-0）貼在捲動區下緣，堆疊 absolute 在錨點上方右側；不是 fixed、不吃 safe area；唯一子項是歷史泡泡", async () => {
+  it("container: zero-height anchor (relative, h-0) at the scroll area's bottom edge, stack absolute above the anchor on the right; not fixed, ignores safe area; the only child is the history bubble", async () => {
     renderStack(true);
     const stack = await screen.findByTestId("corner-stack");
     expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble"]);
@@ -63,7 +62,7 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     return (next) => act(() => handle.setLayoutTier(next));
   }
 
-  it("手機（< 640）：沒有歷史泡泡（整個容器不渲染）；浮動與固定段都有；跨斷點跟著變", async () => {
+  it("phone (< 640): no history bubble (whole container not rendered); floating and fixed tiers have it; follows when crossing breakpoints", async () => {
     const setTier = installTier("phone");
     renderStack(true);
     expect(screen.queryByTestId("versions-bubble")).not.toBeInTheDocument();
@@ -77,22 +76,22 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     expect(screen.queryByTestId("versions-bubble")).not.toBeInTheDocument();
   });
 
-  it("viewer（versions enabled=false）→ 整個容器不渲染", () => {
+  it("viewer (versions enabled=false) -> whole container not rendered", () => {
     renderStack(false);
     expect(screen.queryByTestId("corner-stack")).not.toBeInTheDocument();
     expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
-  it("歷史泡泡：毛玻璃面（與手機浮動鈕同一份）、brand 圖示色、aria-label；點了開面板，開著時整個容器消失", async () => {
+  it("history bubble: frosted surface (same as the phone floating button), brand icon color, aria-label; clicking opens the panel and the whole container disappears while it is open", async () => {
     renderStack(true);
     const bubble = await screen.findByTestId("versions-bubble");
     expect(bubble).toHaveAttribute("aria-label", "Version history");
     expect(bubble).toHaveClass("h-12", "w-12", "rounded-full", "text-brand-on-soft");
-    // 共用面的 token 都在（hover／按下的透明度由泡泡自己加深，見下）。
+    // All tokens of the shared surface are present (hover/active opacity are deepened by the bubble itself, see below).
     for (const token of FROSTED_SURFACE.split(" ").filter((c) => !/hover:bg-card|active:bg-card/.test(c))) expect(bubble).toHaveClass(token);
     expect(bubble).toHaveClass("supports-[backdrop-filter]:backdrop-blur-xs", "supports-[backdrop-filter]:backdrop-saturate-150", "bg-card/95", "shadow-lg");
     expect(bubble).not.toHaveClass("bg-brand-soft");
-    // hover 是淺品牌色底、按下深一階、游標手指；毛玻璃的 hover／按下透明度被合併掉。
+    // hover is a light brand background, pressed one step darker, pointer cursor; the frosted surface's hover/pressed opacity is merged away.
     expect(bubble).toHaveClass("cursor-pointer", "hover:bg-brand-soft", "supports-[backdrop-filter]:hover:bg-brand-soft", "active:bg-brand-soft-strong", "supports-[backdrop-filter]:active:bg-brand-soft-strong");
     expect(bubble).not.toHaveClass("hover:shadow-xl", "hover:bg-card/95", "active:bg-card/95");
     expect(bubble).not.toHaveClass("supports-[backdrop-filter]:hover:bg-card/30", "supports-[backdrop-filter]:active:bg-card/40");
@@ -102,7 +101,7 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
-  it("CORNER_STACK_FOOTPRINT_PX 等於泡泡離下緣 18px 加泡泡高 48px，且泡泡的 class 仍是 bottom-[18px]、h-12", async () => {
+  it("CORNER_STACK_FOOTPRINT_PX equals the bubble's 18px offset from the bottom plus the 48px bubble height, and the bubble classes are still bottom-[18px] and h-12", async () => {
     expect(CORNER_STACK_FOOTPRINT_PX).toBe(18 + 48);
     renderStack(true);
     expect(await screen.findByTestId("corner-stack")).toHaveClass("bottom-[18px]");
@@ -117,7 +116,7 @@ describe("CornerStack（筆記右下角的歷史泡泡）", () => {
     expect(screen.getByTestId("versions-bubble")).toHaveClass("h-12", "w-12");
   });
 
-  it("捲動時不淡出：任何捲動事件後容器沒有 opacity-0／pointer-events-none、沒有計時器", async () => {
+  it("doesn't fade on scroll: after any scroll event the container has no opacity-0/pointer-events-none and no timer", async () => {
     renderStack(true);
     const stack = await screen.findByTestId("corner-stack");
     const anchor = screen.getByTestId("corner-anchor");

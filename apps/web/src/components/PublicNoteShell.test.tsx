@@ -11,8 +11,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("PublicNoteFallback（#72：/p/ chunk 載入中的專屬 fallback）", () => {
-  it("極簡 loading 卡：loading 文案在場、**沒有** AppShell（側欄的 New note／搜尋都不得露給匿名者）", () => {
+describe("PublicNoteFallback (#72: dedicated fallback while the /p/ chunk loads)", () => {
+  it("minimal loading card: loading text present, **no** AppShell (the sidebar's New note and search must not be exposed to anonymous visitors)", () => {
     render(<PublicNoteFallback />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(screen.queryByText("New note")).not.toBeInTheDocument();
@@ -20,8 +20,8 @@ describe("PublicNoteFallback（#72：/p/ chunk 載入中的專屬 fallback）", 
   });
 });
 
-describe("PublicPageFrame（#229：inert prop）", () => {
-  it("inert 時根 div 有 inert 屬性；沒給時沒有", () => {
+describe("PublicPageFrame (#229: inert prop)", () => {
+  it("with inert the root div has the inert attribute; without it, it doesn't", () => {
     const { container, rerender } = render(<PublicPageFrame inert>x</PublicPageFrame>);
     expect(container.firstElementChild).toHaveAttribute("inert");
     rerender(<PublicPageFrame>x</PublicPageFrame>);
@@ -29,12 +29,12 @@ describe("PublicPageFrame（#229：inert prop）", () => {
   });
 });
 
-describe("PublicNoteErrorBoundary（#72：/p/ 的 chunk／render 錯誤邊界）", () => {
+describe("PublicNoteErrorBoundary (#72: chunk/render error boundary for /p/)", () => {
   function Boom(): never {
     throw new Error("failed to fetch dynamically imported module: /assets/PublicNotePage-x.js");
   }
 
-  it("正常時原樣渲染 children", () => {
+  it("renders children unchanged when nothing fails", () => {
     render(
       <PublicNoteErrorBoundary reload={vi.fn()}>
         <p>public-content</p>
@@ -43,7 +43,7 @@ describe("PublicNoteErrorBoundary（#72：/p/ 的 chunk／render 錯誤邊界）
     expect(screen.getByText("public-content")).toBeInTheDocument();
   });
 
-  it("child throw → 錯誤卡（role=alert＋載入失敗文案＋重試鈕）；**不**自動 reload（公開頁沒有旗標額度機制，手動重試是唯一出口）", () => {
+  it("child throws -> error card (role=alert + load-failure text + retry button); does **not** auto-reload (public pages have no flag allowance mechanism, manual retry is the only exit)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const reload = vi.fn();
     render(
@@ -54,11 +54,11 @@ describe("PublicNoteErrorBoundary（#72：/p/ 的 chunk／render 錯誤邊界）
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load this page — check your connection and try again.")).toBeInTheDocument();
     expect(reload).not.toHaveBeenCalled();
-    // 錯誤卡也不得包 AppShell（同 fallback：匿名者拿不到側欄）
+    // The error card must not wrap AppShell either (same as the fallback: anonymous visitors get no sidebar).
     expect(screen.queryByText("New note")).not.toBeInTheDocument();
   });
 
-  it("按重試 → 整頁 reload 恰一次", () => {
+  it("pressing retry -> one full page reload", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const reload = vi.fn();
     render(
@@ -70,10 +70,10 @@ describe("PublicNoteErrorBoundary（#72：/p/ 的 chunk／render 錯誤邊界）
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("離線時重試鈕 disabled＋顯示離線說明（離線 reload 只會落到瀏覽器錯誤頁——比照 ErrorBoundary 兩個錯誤畫面的既有行為）", () => {
+  it("offline: retry button disabled + offline explanation shown (an offline reload only lands on the browser error page; same as the existing behaviour of the two ErrorBoundary error screens)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    // 與 ErrorBoundary.test.tsx 同款手法：defineProperty 蓋 instance own property，
-    // afterEach 的 restoreAllMocks 管不到它，這裡自己刪回（回落到 prototype getter）。
+    // Same technique as ErrorBoundary.test.tsx: defineProperty sets an instance own property that afterEach's restoreAllMocks can't manage,
+    // so delete it here (falls back to the prototype getter).
     Object.defineProperty(window.navigator, "onLine", { value: false, configurable: true });
     try {
       render(
@@ -91,11 +91,10 @@ describe("PublicNoteErrorBoundary（#72：/p/ 的 chunk／render 錯誤邊界）
   });
 });
 
-// ──────────────── 滿版外框（對齊 #115 之後主 app 的滿版語彙） ────────────────
 
-describe("PublicPageFrame（滿版外框）", () => {
-  it("frame 層鋪滿視窗（h-screen＋flex flex-col＋overflow-hidden＋bg-card）、無卡片語彙", async () => {
-    // 動態 import：本檔頭部的具名 import 沒帶 PublicPageFrame，避免動舊測試的 import 行。
+describe("PublicPageFrame (full-bleed frame)", () => {
+  it("frame layer fills the window (h-dvh + flex flex-col + overflow-hidden + bg-card), no card vocabulary", async () => {
+    // Dynamic import: the named imports at the top of this file don't include PublicPageFrame, to avoid touching the older tests' import lines.
     const { PublicPageFrame } = await import("./PublicNoteShell");
     render(
       <PublicPageFrame>
@@ -103,28 +102,25 @@ describe("PublicPageFrame（滿版外框）", () => {
       </PublicPageFrame>,
     );
     const probe = screen.getByTestId("probe");
-    // 只斷 **frame 自己那一層**（probe 的直接父層）：頁面內容合法帶 border-b 分隔線
-    // 與 rounded 徽章，鏈式掃描會誤殺——卡片語彙的禁令只針對外框。
+    // Assert only **the frame's own layer** (the probe's direct parent): the page content legitimately carries a border-b divider and rounded badges, so a chain scan would misfire;
+    // the card-vocabulary ban applies only to the frame.
     const frame = probe.parentElement!;
-    // 高度/捲動鏈四件套缺一不可：flex+flex-col 是內文
-    // `min-h-0 flex-1 overflow-y-auto` 的前提，overflow-hidden 是「頁面本身不得
-    // 整體捲動」的支點（AppShell 同款鏈），h-screen 定根高。
-    // token 比對、非子字串（#88 前科：includes 放行過本尊
-    // ——`min-h-screen` 內含 "h-screen"、`flex-col` 內含 "flex"，字串形兩個退化都放行）
-    // 底色是 bg-card（第五件、同樣承重）：BlockNote 編輯器全域畫 --color-card 底
-    // （index.css）——frame 用更深的 bg-background 時，文章欄寬的卡色長條浮在頁底
-    // 上、看起來仍像一張內文卡（user 二次回報實證）。整頁同卡色才是「滿版一色」。
+    // The height/scroll chain needs all four: flex + flex-col is the precondition of the body's `min-h-0 flex-1 overflow-y-auto`,
+    // overflow-hidden is the pivot of "the page itself must not scroll as a whole" (same chain as AppShell), h-dvh fixes the root height.
+    // Token comparison, not substring: `flex-col` contains "flex" (and `min-h-dvh` contains "h-dvh"), so a substring check lets degenerate forms through.
+    // The background is bg-card (a fifth load-bearing item): BlockNote's editor paints --color-card globally (index.css); with the darker bg-background on the frame,
+    // the article-width card-colored strip floats above the page bottom and still looks like a content card. The whole page in the same card color is what makes it "full-bleed in one color".
     const tokens = frame.className.split(/\s+/);
     for (const cls of ["h-dvh", "flex", "flex-col", "overflow-hidden", "bg-card"]) {
       expect(tokens).toContain(cls);
     }
-    // 卡面退場：無 max-w 上限、無圓角、無邊框（滿版——不是置中卡）
+    // Card face withdrawn: no max-w cap, no rounded corners, no border (full-bleed, not a centered card).
     expect(frame.className).not.toMatch(/max-w-|rounded|border/);
-    // 滿版頁框四邊都避開瀏海與 Home 指示條。
+    // The full-bleed frame avoids the notch and Home indicator on all four sides.
     for (const side of ["top", "right", "bottom", "left"]) {
       expect(frame.className).toContain(`env(safe-area-inset-${side})`);
     }
-    // frame 直接包 children（中間不再有卡層）
-    expect(frame.parentElement?.className ?? "").toBe(""); // RTL 容器
+    // The frame wraps children directly (no card layer in between).
+    expect(frame.parentElement?.className ?? "").toBe(""); // RTL container
   });
 });

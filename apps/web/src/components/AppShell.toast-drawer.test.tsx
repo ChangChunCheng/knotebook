@@ -11,12 +11,9 @@ import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { OWNER_PERMS } from "@/test/fixtures";
 
 /**
- * 窄螢幕抽屜開著時跳出的 toast：抽屜是 modal Radix Dialog，開著時 `hideOthers` 把抽屜以外（含 `#root` 裡的 Toaster）
- * 標成 aria-hidden、FocusScope 把焦點鎖在抽屜裡——toast 若留在原處，螢幕閱讀器與鍵盤都碰不到它的「Undo」。
- * 修正：抽屜開著時 ToastViewport 搬進抽屜內容裡，關了再回原處。
+ * Toast while the narrow-screen drawer is open: the drawer is a modal Radix Dialog, so `hideOthers` marks everything outside it (including the Toaster in `#root`) aria-hidden and FocusScope traps focus in the drawer; a toast left in place would be unreachable by screen reader and keyboard (its "Undo"). Fix: while the drawer is open ToastViewport moves into the drawer content and returns on close.
  *
- * 掛法照 `App.tsx`：`<Toaster />` 是 Router 的**兄弟**（不在 AppShell 裡），兩者同在 render 容器（＝`#root`）下；
- * 抽屜內容由 Radix Portal 掛在 body，所以 hideOthers 會把 render 容器標成 aria-hidden，與真實 app 同形。
+ * Mounted as in `App.tsx`: `<Toaster />` is a sibling of the Router (not inside AppShell), both under the render container (= `#root`); Radix portals the drawer content to body, so hideOthers marks the render container aria-hidden, same shape as the real app.
  */
 
 interface FakeResponseInit {
@@ -96,7 +93,7 @@ function renderApp() {
   );
 }
 
-/** 只用 role 查得到（＝不在 aria-hidden 子樹裡）的 Notifications 區。 */
+/** Notifications region reachable by role only (= not inside an aria-hidden subtree). */
 function notificationsRegion(): HTMLElement {
   return screen.getByRole("region", { name: /^Notifications/ });
 }
@@ -116,7 +113,7 @@ function raiseUndoToast(onUndo: () => void = () => {}) {
   });
 }
 
-describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得到）", () => {
+describe("AppShell - toast while the drawer is open (reachable by keyboard and screen reader)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -127,7 +124,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     vi.unstubAllGlobals();
   });
 
-  it("抽屜開著：Notifications 區在抽屜內容裡、沒有 aria-hidden 祖先", async () => {
+  it("drawer open: the Notifications region is inside the drawer content and has no aria-hidden ancestor", async () => {
     renderApp();
     const drawer = await openDrawer();
 
@@ -136,7 +133,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     expect(hasAriaHiddenAncestor(region)).toBe(false);
   });
 
-  it("抽屜開著時跳的 toast：以 role 找得到、Undo 可聚焦且焦點留得住（在抽屜的 focus scope 內）", async () => {
+  it("toast raised while the drawer is open: found by role, Undo is focusable and focus stays within the drawer's focus scope", async () => {
     renderApp();
     const drawer = await openDrawer();
     raiseUndoToast();
@@ -150,7 +147,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     expect(undo).toHaveFocus();
   });
 
-  it("F8 把焦點交給 toast 區，抽屜的 focus trap 不會把它拉回去", async () => {
+  it("F8 moves focus to the toast region and the drawer's focus trap doesn't pull it back", async () => {
     renderApp();
     await openDrawer();
     raiseUndoToast();
@@ -161,7 +158,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     expect(viewportList).toHaveFocus();
   });
 
-  it("開抽屜前就在的 toast 跟著搬進抽屜（狀態保留、仍只有一則）", async () => {
+  it("a toast present before opening the drawer moves into it (state kept, still a single toast)", async () => {
     renderApp();
     raiseUndoToast();
     await screen.findByRole("button", { name: "Undo" });
@@ -173,7 +170,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     expect(within(region).getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("點 toast 與 Undo 不會關抽屜；Undo 照常呼叫並關掉 toast", async () => {
+  it("clicking the toast and Undo doesn't close the drawer; Undo is still called and closes the toast", async () => {
     const onUndo = vi.fn();
     renderApp();
     await openDrawer();
@@ -191,7 +188,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
     expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
   });
 
-  it("抽屜關掉（點抽屜裡的筆記換頁）→ Notifications 區回到原處，toast 仍在、以 role 找得到", async () => {
+  it("drawer closes (navigating via a note in the drawer) -> the Notifications region returns to its original place, the toast remains and is found by role", async () => {
     renderApp();
     const drawer = await openDrawer();
     raiseUndoToast();
@@ -207,7 +204,7 @@ describe("AppShell — 抽屜開著時的 toast（鍵盤與螢幕閱讀器碰得
   });
 });
 
-describe("AppShell — 抽屜容器不畫焦點環", () => {
+describe("AppShell - drawer container draws no focus ring", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -217,7 +214,7 @@ describe("AppShell — 抽屜容器不畫焦點環", () => {
     vi.unstubAllGlobals();
   });
 
-  it("側欄鈕開抽屜時焦點落在 Content 本身，Content 有 outline-none", async () => {
+  it("opening the drawer with the sidebar button focuses Content itself, which has outline-none", async () => {
     renderApp();
     const drawer = await openDrawer();
     expect(drawer).toHaveClass("outline-none");

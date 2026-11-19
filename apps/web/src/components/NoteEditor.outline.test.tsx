@@ -143,9 +143,8 @@ async function renderAt(tier: LayoutTier, versions: Partial<VersionsContextValue
   );
   const utils = render(tree(versions, previewSlot));
   const editor = await screen.findByTestId("note-editor");
-  // 大綱出現滿一個畫格後欄才有釘住過場：先過一個畫格，之後的斷言看的是穩定下來的樣子。
+  // The column's pin transition exists only after the outline has been present for a full frame: pass one frame first, so later assertions look at the settled state.
   await nextFrame();
-  // 欄 → 流程包裝 → 捲動容器。
   const scroll = editor.parentElement!.parentElement!.parentElement!;
   /** Re-renders with new versions state or preview, picking up whatever `outline.box` is now. */
   const update = (v: Partial<VersionsContextValue> = versions, preview: ReactNode = previewSlot) => utils.rerender(tree(v, preview));
@@ -193,7 +192,7 @@ function trackColumnClasses(): () => string[] {
   };
 }
 
-describe("NoteEditor：右側標題大綱的掛載條件", () => {
+describe("NoteEditor: mounting conditions of the right-side heading outline", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.clear();
@@ -208,7 +207,7 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     vi.unstubAllGlobals();
   });
 
-  it("沒有標題 → 不掛，也不量版面", async () => {
+  it("no headings -> not mounted, and no layout measuring", async () => {
     outline.headings = [];
     const { doc } = await renderAt("docked");
     expect(stub()).toBeNull();
@@ -216,13 +215,13 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     doc.destroy();
   });
 
-  it("有標題、固定段 → 掛一份，在頁首槽位之後、捲動容器之前；拿到捲動容器，泡泡在", async () => {
+  it("headings, fixed tier -> one mounted, after the header slot and before the scroll container; it gets the scroll container; the bubble is there", async () => {
     const { doc, scroll } = await renderAt("docked");
     expect(screen.getAllByTestId("outline-stub")).toHaveLength(1);
     const header = document.querySelector("[data-note-header-slot]")!;
     expect(header.compareDocumentPosition(stub()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stub()!.compareDocumentPosition(scroll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 錨點不在捲動容器裡（細線不隨內文捲）。
+    // The anchor isn't inside the scroll container (the thin line doesn't scroll with the body).
     expect(scroll.contains(stub())).toBe(false);
     expect(stub()!.parentElement).toBe(scroll.parentElement);
     expect(scroll).toHaveClass("overflow-y-auto");
@@ -231,21 +230,21 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     expect(props.headings).toBe(HEADINGS);
     expect(props.box).toEqual({ width: 1072, height: 700, firstLineTop: null });
     expect(props.bubbleShown).toBe(true);
-    // 沒有釘住偏好：標準寬、容器夠寬，可以釘但沒釘。
+    // No pin preference: standard width, container wide enough, can pin but isn't pinned.
     expect(props.pinned).toBe(false);
     expect(props.pinAvailable).toBe(true);
     expectColumn("standard");
     doc.destroy();
   });
 
-  it("版本預覽中 → 不掛", async () => {
+  it("during version preview -> not mounted", async () => {
     const { doc } = await renderAt("docked", {}, <div data-testid="preview-marker">preview</div>);
     expect(screen.getByTestId("preview-marker")).toBeInTheDocument();
     expect(stub()).toBeNull();
     doc.destroy();
   });
 
-  it("版本面板開著：浮動段（面板蓋在卡上）不掛；固定段（面板是第三欄）掛、沒有泡泡", async () => {
+  it("versions panel open: floating tier (panel covers the card) -> not mounted; fixed tier (panel is the third column) -> mounted, no bubble", async () => {
     const overlay = await renderAt("overlay", { panelOpen: true, mode: "panel" });
     expect(stub()).toBeNull();
     overlay.unmount();
@@ -258,21 +257,21 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
     docked.doc.destroy();
   });
 
-  it("浮動段、面板沒開 → 掛（平板寬度照常有大綱）", async () => {
+  it("floating tier, panel not open -> mounted (tablet width has the outline as usual)", async () => {
     const { doc } = await renderAt("overlay");
     expect(stub()).not.toBeNull();
     expect(lastProps().bubbleShown).toBe(true);
     doc.destroy();
   });
 
-  it("手機段 → 不掛，也不量版面", async () => {
+  it("phone tier -> not mounted, and no layout measuring", async () => {
     const { doc } = await renderAt("phone");
     expect(stub()).toBeNull();
     expect(outline.measured).toBe(0);
     doc.destroy();
   });
 
-  it("沒有版本功能（檢視者）→ 掛、沒有泡泡", async () => {
+  it("no versions feature (viewer) -> mounted, no bubble", async () => {
     const { doc } = await renderAt("docked", { enabled: false, noteId: null });
     expect(stub()).not.toBeNull();
     expect(lastProps().bubbleShown).toBe(false);
@@ -280,7 +279,7 @@ describe("NoteEditor：右側標題大綱的掛載條件", () => {
   });
 });
 
-describe("NoteEditor：釘住大綱", () => {
+describe("NoteEditor: pinned outline", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.clear();
@@ -297,7 +296,7 @@ describe("NoteEditor：釘住大綱", () => {
     resetNoteWidthsForTest();
   });
 
-  it("標準寬、容器 1072、偏好釘住 → 欄換成釘住那一態（含過場），大綱拿到 pinned、pinAvailable", async () => {
+  it("standard width, container 1072, preference pinned -> the column switches to the pinned state (with transition), the outline gets pinned and pinAvailable", async () => {
     const { doc } = await renderAt("docked");
     expectColumn("standard-pinned");
     expect(lastProps().pinned).toBe(true);
@@ -305,35 +304,35 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("版本預覽中 → 沒有大綱，欄回到未釘住的標準寬、沒有過場", async () => {
+  it("during version preview -> no outline, the column returns to the unpinned standard width, no transition", async () => {
     const { doc } = await renderAt("docked", {}, <div data-testid="preview-marker">preview</div>);
     expect(stub()).toBeNull();
     expectColumn("standard", false);
     doc.destroy();
   });
 
-  it("640-767（大綱用手機形）：就算偏好釘住也不釘，欄是未釘住的標準寬", async () => {
+  it("640-767 (outline uses the phone shape): not pinned even with the preference pinned, the column is the unpinned standard width", async () => {
     const { doc } = await renderAt("compact");
     expect(stub()).toBeNull();
     expectColumn("standard", false);
     doc.destroy();
   });
 
-  it("768-1279 版本面板浮在卡上 → 沒有大綱，欄回到未釘住的標準寬、沒有過場", async () => {
+  it("768-1279 with the versions panel floating over the card -> no outline, the column returns to the unpinned standard width, no transition", async () => {
     const { doc } = await renderAt("overlay", { panelOpen: true, mode: "panel" });
     expect(stub()).toBeNull();
     expectColumn("standard", false);
     doc.destroy();
   });
 
-  it("開筆記：欄第一次換成釘住寬度的那一次沒有過場（不從標準寬滑過去）；過一個畫格後按釘選才有過場", async () => {
+  it("opening a note: the first switch of the column to the pinned width has no transition (doesn't slide from standard width); pressing pin after one frame has one", async () => {
     const history = trackColumnClasses();
     const { doc } = await renderAt("docked");
     const values = history();
     const firstPinned = values.find((c) => c.split(" ").includes(PINNED_MAX));
     expect(firstPinned, values.join("\n")).toBeDefined();
     expect(firstPinned!.split(" ")).not.toContain(PIN_TRANSITION);
-    // 過了一個畫格（renderAt 已等過）：過場打開。
+    // One frame has passed (renderAt already waited): the transition is on.
     expectColumn("standard-pinned");
 
     act(() => lastProps().onPinnedChange(false));
@@ -343,7 +342,7 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("離開版本預覽、關掉浮動版本面板：大綱回來時欄直接是釘住寬度，沒有過場；一個畫格後才有", async () => {
+  it("leaving version preview and closing the floating versions panel: when the outline returns the column is directly at pinned width without a transition; with one after a frame", async () => {
     const preview = await renderAt("docked", {}, <div data-testid="preview-marker">preview</div>);
     let history = trackColumnClasses();
     preview.update({}, null);
@@ -368,7 +367,7 @@ describe("NoteEditor：釘住大綱", () => {
     overlay.doc.destroy();
   });
 
-  it("釘住中開預覽再離開、開浮動面板再關：回來那一次一樣沒有過場（不沿用先前打開的過場）", async () => {
+  it("opening preview while pinned then leaving, opening the floating panel then closing: the return has no transition either (an earlier-enabled transition isn't carried over)", async () => {
     const note = await renderAt("docked");
     expectColumn("standard-pinned");
     note.update({}, <div data-testid="preview-marker">preview</div>);
@@ -397,7 +396,7 @@ describe("NoteEditor：釘住大綱", () => {
     tablet.doc.destroy();
   });
 
-  it("容器 912 放不下 640 的欄 → 退回細線、偏好照舊；寬回 1072 → 自動再釘", async () => {
+  it("container 912 can't fit a 640 column -> falls back to the thin line, preference unchanged; width back to 1072 -> pins again automatically", async () => {
     outline.box = { ...WIDE_BOX, width: 912 };
     const { doc, update } = await renderAt("docked");
     expectColumn("standard");
@@ -412,7 +411,7 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("固定段開版本面板、容器 1072 → 740 → 退回細線；關面板、寬回 1072 → 再釘", async () => {
+  it("fixed tier opens the versions panel, container 1072 -> 740 -> falls back to the thin line; closing the panel and width back to 1072 -> pins again", async () => {
     const { doc, update } = await renderAt("docked");
     expectColumn("standard-pinned");
 
@@ -431,7 +430,7 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("筆記改寬版 → 欄是寬版、不能釘；改回標準 → 再釘", async () => {
+  it("note changes to wide -> the column is wide and can't pin; back to standard -> pins again", async () => {
     const { doc } = await renderAt("docked");
     expectColumn("standard-pinned");
 
@@ -446,7 +445,7 @@ describe("NoteEditor：釘住大綱", () => {
     doc.destroy();
   });
 
-  it("沒有偏好 → 可以釘但沒釘；按釘選（onPinnedChange(true)）→ 記住偏好、欄換成釘住那一態", async () => {
+  it("no preference -> can pin but isn't pinned; pressing pin (onPinnedChange(true)) -> remembers the preference, the column switches to the pinned state", async () => {
     window.localStorage.removeItem(OUTLINE_PINNED_STORAGE_KEY);
     const { doc } = await renderAt("docked");
     expect(lastProps().pinAvailable).toBe(true);
@@ -465,7 +464,7 @@ describe("NoteEditor：釘住大綱", () => {
   });
 });
 
-describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () => {
+describe("NoteEditor: phone position bubble, bottom sheet and the header menu entry", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.clear();
@@ -521,14 +520,14 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
   const lastBubble = () => phoneStubs.bubble[phoneStubs.bubble.length - 1]!;
   const lastSheet = () => phoneStubs.sheet[phoneStubs.sheet.length - 1]!;
 
-  it("手機、有標題 → 沒有桌機的細線；泡泡固定在頁首下方、聽視窗的捲動、跳轉在捲動容器裡；頁首槽位裡的 ⋮ 拿到 available", async () => {
+  it("phone, headings -> none of the desktop thin line; the bubble is fixed below the header, listens to the window's scroll, jumps inside the scroll container; the header menu in the header slot gets available", async () => {
     const { doc, scroll } = await renderPhone();
     expect(stub()).toBeNull();
     expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
     expect(lastBubble().placement).toBe("page");
     expect(lastBubble().scrollTarget).toBe(window);
     expect(lastBubble().headings).toBe(HEADINGS);
-    // 打字造成的捲動不叫出泡泡：看的是文章欄裡的輸入。
+    // Scrolling caused by typing doesn't bring up the bubble: it looks at input inside the article column.
     expect(lastBubble().inputRoot).toBe(column());
     expect(probe()).toHaveAttribute("data-available", "true");
     expect(scroll.contains(screen.getByTestId("bubble-stub"))).toBe(false);
@@ -536,7 +535,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("640-767：同樣沒有細線；泡泡浮在容器上緣的錨點層、聽容器的捲動（文件不捲）；⋮ 拿到 available", async () => {
+  it("640-767: likewise no thin line; the bubble floats on the anchor layer at the container's top edge and listens to the container's scroll (the document doesn't scroll); the header menu gets available", async () => {
     const { doc, scroll } = await renderPhone({ tier: "compact" });
     expect(stub()).toBeNull();
     expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
@@ -547,7 +546,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("767 → 768：從手機形換成細線，面板收起；回到 767 再換回泡泡", async () => {
+  it("767 -> 768: switches from the phone shape to the thin line and the sheet closes; back to 767 switches to the bubble again", async () => {
     const { doc, tier } = await renderPhone({ tier: "compact" });
     expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
     act(() => tier.setLayoutTier("overlay"));
@@ -559,7 +558,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("640-767 開著面板時變寬到 768：面板收起", async () => {
+  it("widening to 768 at 640-767 with the sheet open: the sheet closes", async () => {
     const { doc, tier } = await renderPhone({ tier: "compact" });
     fireEvent.click(probe());
     expect(lastSheet().open).toBe(true);
@@ -571,7 +570,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("⋮ 的 open() → 底部面板打開；關掉（onOpenChange(false)）→ 收起；點泡泡也打開", async () => {
+  it("the header menu's open() -> the bottom sheet opens; closing it (onOpenChange(false)) -> closed; tapping the bubble also opens it", async () => {
     const { doc } = await renderPhone();
     fireEvent.click(probe());
     expect(lastSheet().open).toBe(true);
@@ -582,7 +581,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("手機：瀏覽時軌道底端讓開右下的浮動鈕；編輯工具列在時改讓開工具列", async () => {
+  it("phone: while browsing the track's bottom end clears the floating button at the bottom right; with the editing toolbar present it clears the toolbar instead", async () => {
     const browsing = await renderPhone({ fabClearance: true });
     expect(lastBubble().bottomReserve).toBe(PHONE_FAB_FOOTPRINT_PX);
     expect(lastBubble().editToolbarHeight).toBe(0);
@@ -595,20 +594,20 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     editing.doc.destroy();
   });
 
-  it("640-767：軌道底端停在版本泡泡上方", async () => {
+  it("640-767: the track's bottom end stops above the versions bubble", async () => {
     const { doc } = await renderPhone({ tier: "compact" });
     expect(lastBubble().bottomReserve).toBe(CORNER_STACK_FOOTPRINT_PX);
     expect(lastBubble().editToolbarHeight).toBe(0);
     doc.destroy();
   });
 
-  it("編輯中點泡泡（泡泡不搶焦點，工具列還在）→ 面板拿到把焦點還給編輯器、不捲動的 restoreFocus；工具列在面板開著時收起也不變", async () => {
+  it("tapping the bubble while editing (the bubble doesn't take focus, the toolbar stays): the sheet gets a restoreFocus that returns focus to the editor without scrolling; the toolbar collapsing while the sheet is open doesn't change it", async () => {
     const editing = await renderPhone({ mobileToolbar: true });
     fireEvent.click(screen.getByTestId("bubble-stub"));
     expect(lastSheet().open).toBe(true);
     const restore = lastSheet().restoreFocus;
     expect(restore).toEqual(expect.any(Function));
-    // 面板開著時焦點在面板裡、工具列收起：restoreFocus 仍是開的那一刻記下的。
+    // While the sheet is open focus is inside the sheet and the toolbar collapses: restoreFocus is still the one recorded at the moment it opened.
     editing.setMobileToolbar(false);
     expect(lastSheet().restoreFocus).toBe(restore);
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
@@ -619,7 +618,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     editing.doc.destroy();
   });
 
-  it("沒在編輯：restoreFocus 回到開它的元素（⋮ 交出觸發鈕、泡泡交出自己）；沒交元素 → 沒有", async () => {
+  it("not editing: restoreFocus returns to the element that opened it (the header menu hands over its trigger, the bubble hands over itself); no element handed over -> none", async () => {
     const { doc } = await renderPhone();
     fireEvent.click(probe());
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
@@ -637,12 +636,12 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  describe("真的底部面板：直接關掉（Esc）時焦點落在哪", () => {
+  describe("the real bottom sheet: where focus lands when it is closed directly (Esc)", () => {
     beforeEach(() => {
       phoneStubs.realSheet = true;
     });
 
-    it("編輯中從泡泡開 → Esc 關掉 → 焦點回到編輯器（工具列跟著焦點，不會消失）", async () => {
+    it("opened from the bubble while editing -> Esc closes -> focus returns to the editor (the toolbar follows focus, doesn't disappear)", async () => {
       const { doc } = await renderPhone({ mobileToolbar: true });
       fireEvent.click(screen.getByTestId("bubble-stub"));
       const dialog = await screen.findByRole("dialog", { name: "Heading outline" });
@@ -652,7 +651,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
       doc.destroy();
     });
 
-    it("從 ⋮ 開 → Esc 關掉 → 焦點回到 ⋮（不掉到 body）", async () => {
+    it("opened from the header menu -> Esc closes -> focus returns to the header menu (doesn't fall to body)", async () => {
       const { doc } = await renderPhone();
       fireEvent.click(probe());
       const dialog = await screen.findByRole("dialog", { name: "Heading outline" });
@@ -664,10 +663,10 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
   });
 
   it.each([
-    ["版本預覽中", { previewSlot: <div>preview</div> }],
-    ["固定段（有細線）", { tier: "docked" as const }],
-    ["浮動段（有細線）", { tier: "overlay" as const }],
-  ])("%s → ⋮ 拿到 available=false、沒有泡泡與面板", async (_label, opts) => {
+    ["version preview", { previewSlot: <div>preview</div> }],
+    ["fixed tier (with thin line)", { tier: "docked" as const }],
+    ["floating tier (with thin line)", { tier: "overlay" as const }],
+  ])("%s -> the header menu gets available=false, no bubble and no sheet", async (_label, opts) => {
     const { doc } = await renderPhone(opts);
     expect(probe()).toHaveAttribute("data-available", "false");
     expect(screen.queryByTestId("bubble-stub")).toBeNull();
@@ -675,7 +674,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("沒有標題 → available=false、沒有泡泡", async () => {
+  it("no headings -> available=false, no bubble", async () => {
     outline.headings = [];
     const { doc } = await renderPhone();
     expect(probe()).toHaveAttribute("data-available", "false");
@@ -683,7 +682,7 @@ describe("NoteEditor：手機的位置泡泡、底部面板與 ⋮ 入口", () =
     doc.destroy();
   });
 
-  it("面板開著時變寬離開手機段 → 面板關掉；再回到手機段不會自己再開", async () => {
+  it("widening out of the phone tier with the sheet open -> the sheet closes; returning to the phone tier doesn't reopen it by itself", async () => {
     const { doc, tier } = await renderPhone();
     fireEvent.click(probe());
     expect(lastSheet().open).toBe(true);

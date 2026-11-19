@@ -82,7 +82,6 @@ function setup() {
 }
 
 const star = () => screen.getByRole("button", { name: "Favorite" });
-/** 清單到了（鈕不再 disabled）。 */
 const ready = () => waitFor(() => expect(star()).not.toBeDisabled());
 
 describe("FavoriteToggle", () => {
@@ -95,7 +94,7 @@ describe("FavoriteToggle", () => {
     vi.unstubAllGlobals();
   });
 
-  it("在最愛：可及名稱仍是 Favorite、aria-pressed=true、title 是移出、實心星", async () => {
+  it("in favorites: accessible name is still Favorite, aria-pressed=true, title is remove, filled star", async () => {
     stubServer({ favorites: [NOTE.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -103,7 +102,7 @@ describe("FavoriteToggle", () => {
     expect(star().querySelector("svg")).toHaveAttribute("fill", "currentColor");
   });
 
-  it("不在最愛：aria-pressed=false、title 是加入、空心星", async () => {
+  it("not in favorites: aria-pressed=false, title is add, hollow star", async () => {
     stubServer();
     setup();
     await ready();
@@ -112,14 +111,14 @@ describe("FavoriteToggle", () => {
     expect(star().querySelector("svg")).toHaveAttribute("fill", "none");
   });
 
-  it("清單還沒到 → disabled、aria-pressed=false", () => {
+  it("list not arrived yet -> disabled, aria-pressed=false", () => {
     stubServer({ get: "pending" });
     setup();
     expect(star()).toBeDisabled();
     expect(star()).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("未加入時點下：樂觀變成 pressed、送 PUT、不開框、不出 toast", async () => {
+  it("click when not added: optimistically pressed, sends PUT, no dialog, no toast", async () => {
     const server = stubServer();
     setup();
     await ready();
@@ -132,7 +131,7 @@ describe("FavoriteToggle", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("PUT 回 404 → 回到 not pressed、出錯誤 toast", async () => {
+  it("PUT returns 404 -> back to not pressed, error toast", async () => {
     stubServer({ put: 404 });
     setup();
     await ready();
@@ -141,7 +140,7 @@ describe("FavoriteToggle", () => {
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "false"));
   });
 
-  it("已加入時點下：開確認框、還沒送任何請求；Cancel → 沒送、焦點回星號", async () => {
+  it("click when added: opens the confirm dialog with no request sent; Cancel -> nothing sent, focus returns to the star", async () => {
     const server = stubServer({ favorites: [NOTE.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -156,7 +155,7 @@ describe("FavoriteToggle", () => {
     await waitFor(() => expect(star()).toHaveFocus());
   });
 
-  it("確認移出 → 送 DELETE、成功後 not pressed、框關、沒有 toast、焦點回星號", async () => {
+  it("confirm removal -> sends DELETE; on success not pressed, dialog closed, no toast, focus returns to the star", async () => {
     const server = stubServer({ favorites: [NOTE.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -171,7 +170,7 @@ describe("FavoriteToggle", () => {
     await waitFor(() => expect(star()).toHaveFocus());
   });
 
-  it("DELETE 回 429 → 框關、錯誤 toast、仍是 pressed、焦點回星號", async () => {
+  it("DELETE returns 429 -> dialog closed, error toast, still pressed, focus returns to the star", async () => {
     stubServer({ favorites: [NOTE.id], del: 429 });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -184,7 +183,7 @@ describe("FavoriteToggle", () => {
     await waitFor(() => expect(star()).toHaveFocus());
   });
 
-  it("送出中：aria-disabled=true、沒有 disabled 屬性、焦點仍在星號、連點兩次只送一次", async () => {
+  it("while sending: aria-disabled=true, no disabled attribute, focus stays on the star, a double click sends only once", async () => {
     const server = stubServer({ put: "pending" });
     setup();
     await ready();
@@ -199,7 +198,7 @@ describe("FavoriteToggle", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("加入送出中再點（此時已是 pressed）：不開確認框、不送 DELETE", async () => {
+  it("clicking again while add is in flight (already pressed): no confirm dialog, no DELETE", async () => {
     const server = stubServer({ put: "pending" });
     setup();
     await ready();
@@ -210,7 +209,7 @@ describe("FavoriteToggle", () => {
     expect(server.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
   });
 
-  it("移出送出中：確認框不關、Esc 無效、DELETE 只送一次、星號是 aria-disabled", async () => {
+  it("while removal is in flight: dialog doesn't close, Esc has no effect, DELETE is sent once, the star is aria-disabled", async () => {
     const server = stubServer({ favorites: [NOTE.id], del: "pending" });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -218,7 +217,7 @@ describe("FavoriteToggle", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(count(server, `DELETE /api/favorites/${NOTE.id}`)).toBe(1));
-    // 框開著時 Radix 把框外標成 aria-hidden，所以用 hidden 查。
+    // With the dialog open Radix marks everything outside it aria-hidden, hence the hidden query.
     const hiddenStar = screen.getByRole("button", { name: "Favorite", hidden: true });
     await waitFor(() => expect(hiddenStar).toHaveAttribute("aria-disabled", "true"));
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -226,7 +225,7 @@ describe("FavoriteToggle", () => {
     expect(count(server, `DELETE /api/favorites/${NOTE.id}`)).toBe(1);
   });
 
-  it("className：shrink-0 與 @max-[18rem]:hidden，沒有獨立的 hidden class", async () => {
+  it("className: shrink-0 and @max-[18rem]:hidden, no separate hidden class", async () => {
     stubServer();
     setup();
     await ready();

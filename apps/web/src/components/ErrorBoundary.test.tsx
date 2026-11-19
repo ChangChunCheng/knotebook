@@ -18,16 +18,15 @@ import { NotePageFallback } from "./NotePageFallback";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * Issue #66：NoteRouteErrorBoundary／AppErrorBoundary／ChunkLoadBeacon 的行為判準
- * （案 1–10）。接線案（App.tsx 真的有包）在 App.errorBoundary.test.tsx／
- * App.appBoundary.test.tsx——這裡手組的形狀對，不代表 App.tsx 的對，兩邊都要有。
+ * Issue #66: criteria for the behaviour of NoteRouteErrorBoundary / AppErrorBoundary / ChunkLoadBeacon. The wiring cases (App.tsx really wraps them) are in
+ * App.errorBoundary.test.tsx and App.appBoundary.test.tsx: a hand-assembled shape being right doesn't prove App.tsx is right, so both are needed.
  *
- * 鑑別力紀律（本 repo 慣性缺陷形）：
- * - B 畫面與 NotePageFallback 都在 layout route 的 AppShell 裡——只斷言 AppShell 招牌元素不鑑別；
- *   斷言載入畫面＝載入文案在場「且」兩支錯誤文案皆不在場，斷言 B＝分支文案/重試鈕。
- * - 凡斷言旗標狀態的案子，起始值顯式設成與期望終態相反（beforeEach 清空後直接
- *   斷言「被清」是恆真式）。
- * - 自建 lazy 的 payload 是該 lazy 物件的永久快取——每案 case 內新建，不得共用。
+ * Discrimination:
+ * - The B screen and NotePageFallback both render inside the layout route's AppShell, so asserting AppShell landmarks doesn't discriminate;
+ *   assert the loading screen as loading text present AND both error texts absent, assert B by the branch text / retry button.
+ * - For cases asserting flag state, set the start value explicitly to the opposite of the expected end (asserting "cleared" right after
+ *   beforeEach cleared it is a tautology).
+ * - A hand-built lazy's payload is that lazy object's permanent cache: create it inside each case, never share it.
  */
 
 const FLAG_KEY = "knotebook:chunk-reload:notepage";
@@ -67,10 +66,10 @@ function fakeResponse({ ok, status, json }: FakeResponseInit): Response {
   } as unknown as Response;
 }
 
-// B 畫面與 NotePageFallback 在 layout route 的 AppShell 裡渲染，AppShell 需要 Router + QueryClientProvider +
-// useSession 的 fetch——boundary 不接自己 fallback 丟的錯，缺任一項會以難解方式炸。
+// The B screen and NotePageFallback render inside the layout route's AppShell, which needs Router + QueryClientProvider + useSession's fetch;
+// the boundary doesn't catch errors thrown by its own fallback, so missing any of them blows up in a hard-to-diagnose way.
 function Providers({ children }: { children: ReactNode }) {
-  // useState 惰性初始化：案 8a–8d 走 rerender，直接 new 會每次重建 client
+  // Lazy useState init: cases that call rerender would rebuild the client on every render if it were created directly.
   const [queryClient] = useState(() => new QueryClient());
   return (
     <QueryClientProvider client={queryClient}>
@@ -117,7 +116,7 @@ function setOffline() {
 }
 
 function restoreOnline() {
-  // defineProperty 蓋的是 instance own property，刪掉即回落到 prototype getter
+  // defineProperty sets an instance own property; deleting it falls back to the prototype getter.
   delete (window.navigator as unknown as Record<string, unknown>).onLine;
 }
 
@@ -139,8 +138,8 @@ function expectLoadingScreen() {
   expect(screen.queryByText(CRASH_TEXT)).not.toBeInTheDocument();
 }
 
-describe("NoteRouteErrorBoundary（案 1–8）", () => {
-  it("案 1：chunk 錯誤（首次、online、旗標未設）→ reload 恰一次＋旗標被設；期間畫面是載入樣式非錯誤畫面", async () => {
+describe("NoteRouteErrorBoundary", () => {
+  it("chunk error (first time, online, flag unset) -> reload exactly once and the flag is set; meanwhile the screen is the loading style, not the error screen", async () => {
     const reload = vi.fn();
     render(
       <Providers>
@@ -152,13 +151,13 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem(FLAG_KEY)).not.toBeNull();
-    // 鑑別式斷言：載入文案在場、兩支錯誤文案皆不在場（B 也含 AppShell，只斷言
-    // AppShell 招牌不鑑別）；AppShell 在場另外釘（不得是唯一斷言）。
+    // Discriminating assertion: loading text present and both error texts absent (B also contains AppShell, so asserting AppShell landmarks alone doesn't discriminate);
+    // AppShell presence is pinned separately and must not be the only assertion.
     expectLoadingScreen();
     await waitFor(() => expect(screen.getByText("New note")).toBeInTheDocument());
   });
 
-  it("案 2：chunk 錯誤（旗標已設）→ 不 reload，B 畫面 chunk 分支文案＋重試按鈕", () => {
+  it("chunk error (flag already set) -> no reload, B screen with the chunk branch text plus a retry button", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     render(
@@ -172,14 +171,12 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: RETRY_TEXT })).toBeInTheDocument();
-    // #115：B 畫面在 layout route 的 AppShell 裡 → 窄視窗要有開抽屜的入口（NarrowTopBar 消費端
-    // 明確清單之一，見 NarrowTopBar.test.tsx 檔頭）。
+    // #115: the B screen sits in the layout route's AppShell, so a narrow window needs an entry to open the drawer (NarrowTopBar).
     expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
-    // 內文卡 640 起有圓角與框，手機貼齊螢幕邊。
     expect(screen.getByText(CHUNK_ERROR_TEXT).closest(".overflow-y-auto")).toHaveClass("rounded-xl", "border", "max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 
-  it("案 3：chunk 錯誤（offline）→ 不 reload、直接 B，且旗標未被設（離線不燒額度）", () => {
+  it("chunk error (offline) -> no reload, straight to B, and the flag isn't set (offline doesn't burn the allowance)", () => {
     setOffline();
     const reload = vi.fn();
     render(
@@ -192,16 +189,15 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
 
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
-    // 離線短路必須在設旗標之前——兩步對調此斷言要紅
+    // The offline short circuit must come before setting the flag: swapping the two turns this assertion red.
     expect(sessionStorage.getItem(FLAG_KEY)).toBeNull();
-    // 離線時重試鈕 disabled：離線 reload＝把 SPA 換成瀏覽器網路錯誤頁，
-    // 文案又正在叫人 check your connection，不能給一顆會炸掉 app 的鈕；
-    // disabled 元素不可聚焦，要有文字說明為何灰掉
+    // Retry is disabled offline: an offline reload swaps the SPA for the browser's network error page, and the text itself tells people to check their connection,
+    // so it must not be a button that kills the app; a disabled element isn't focusable, so text must explain why it is greyed out.
     expect(screen.getByRole("button", { name: RETRY_TEXT })).toBeDisabled();
     expect(screen.getByText(OFFLINE_HINT)).toBeInTheDocument();
   });
 
-  it("案 3b：離線進 B 後恢復連線（online 事件）→ 重試鈕重新啟用", () => {
+  it("after entering B offline, regaining connection (online event) -> the retry button is enabled again", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     setOffline();
     const reload = vi.fn();
@@ -221,7 +217,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.getByRole("button", { name: RETRY_TEXT })).toBeEnabled();
   });
 
-  it("案 4：按重試 → 旗標被清＋reload", () => {
+  it("pressing retry -> the flag is cleared and reload happens", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     render(
@@ -237,12 +233,10 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  // 案 5b/5c（PR #67 補的回歸釘）：真實 bundle 的失敗
-  // 訊息不是裸 import() 那三條——NotePage chunk 帶 CSS dep，走 Vite __vitePreload，
-  // 離線/CSS hash 輪替時 reject 的是 Vite 自己的 CSS 訊息；反代 try_files 部署則是
-  // MIME 型訊息。兩者都必須判為 chunk（旗標已設 → B 的 chunk 分支文案；若被誤判
-  // 成非 chunk 會顯示 CRASH_TEXT，此案即紅）。
-  it("案 5b：Vite CSS preload 失敗訊息 → 判為 chunk 類", () => {
+  // Regression pin: the real bundle's failure messages aren't the three bare import() ones. The NotePage chunk has a CSS dependency and goes through
+  // Vite's __vitePreload, so offline / CSS hash rotation rejects with Vite's own CSS message; a reverse-proxy try_files deployment gives a MIME-type message.
+  // Both must be classed as chunk (flag set -> B's chunk branch text); if misclassed as non-chunk, CRASH_TEXT shows and the case goes red.
+  it("Vite CSS preload failure message -> classed as a chunk error", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     function ViteCssBomb(): ReactNode {
@@ -260,7 +254,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.queryByText(CRASH_TEXT)).not.toBeInTheDocument();
   });
 
-  it("案 5c：MIME 型訊息（try_files 反代把 404 JS 回成 text/html）→ 判為 chunk 類", () => {
+  it("MIME-type message (try_files proxy returns the 404 JS as text/html) -> classed as a chunk error", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     function MimeBomb(): ReactNode {
@@ -280,7 +274,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.queryByText(CRASH_TEXT)).not.toBeInTheDocument();
   });
 
-  it("案 5：非 chunk 錯誤 → 不 reload，B 畫面非 chunk 分支文案", () => {
+  it("non-chunk error -> no reload, B screen with the non-chunk branch text", () => {
     const reload = vi.fn();
     render(
       <Providers>
@@ -295,12 +289,11 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.queryByText(CHUNK_ERROR_TEXT)).not.toBeInTheDocument();
   });
 
-  // 案 6 用 Storage.prototype spy（實例層 spy 在 jsdom 30 靜默無效——配上先種旗標
-  // 會綠得毫無意義；prototype spy 連 localStorage 一起丟錯——ThemeProvider 的
-  // readStoredTheme 也走它，實測會在 boundary 外先炸——所以只對旗標 key 丟錯，
-  // 其餘 key 照常回 null；逐案裝、案末還原）。
-  // 不種旗標：spy 若無效會走「首次」路徑（reload＋載入畫面），下面斷言必紅。
-  it("案 6a：sessionStorage 讀丟錯 → 不 reload、不炸，B 畫面", () => {
+  // Uses a Storage.prototype spy: an instance-level spy is silently ineffective in jsdom 30 (with a pre-set flag it would be green and meaningless).
+  // A prototype spy also throws for localStorage, which ThemeProvider's readStoredTheme goes through and would blow up outside the boundary first,
+  // so throw only for the flag key and return null for the other keys; installed per case and restored at its end.
+  // The flag isn't pre-set: if the spy were ineffective it would take the "first time" path (reload + loading screen) and the assertions below would go red.
+  it("sessionStorage read throws -> no reload, no crash, B screen", () => {
     const reload = vi.fn();
     const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation((key: string) => {
       if (key === FLAG_KEY) throw new Error("denied");
@@ -321,7 +314,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     }
   });
 
-  it("案 6b：sessionStorage 寫丟錯 → 不 reload、不炸，B 畫面", () => {
+  it("sessionStorage write throws -> no reload, no crash, B screen", () => {
     const reload = vi.fn();
     const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation((key: string) => {
       if (key === FLAG_KEY) throw new Error("denied");
@@ -341,7 +334,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     }
   });
 
-  it("案 7：reload 丟錯 → 進 B（不停在 reloading），且剛設的旗標被清回", () => {
+  it("reload throws -> goes to B (doesn't stay in reloading) and the flag just set is cleared back", () => {
     const reload = vi.fn(() => {
       throw new Error("reload blocked");
     });
@@ -355,12 +348,12 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
-    // 實際沒 reload 成，旗標留著會偷走下次真失敗的救援額度
+    // The reload didn't actually happen; a leftover flag would steal the rescue allowance of the next real failure.
     expect(sessionStorage.getItem(FLAG_KEY)).toBeNull();
   });
 
-  it("案 8a：error 態下 resetKey 變化（online）→ reload 且旗標不被清", () => {
-    sessionStorage.setItem(FLAG_KEY, "1"); // 先種：進 B＋「不被清」才不是恆真式
+  it("in error state a resetKey change (online) -> reload and the flag isn't cleared", () => {
+    sessionStorage.setItem(FLAG_KEY, "1"); // pre-set: entering B plus "not cleared" must not be a tautology
     const reload = vi.fn();
     const { rerender } = render(
       <Providers>
@@ -383,7 +376,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(sessionStorage.getItem(FLAG_KEY)).not.toBeNull();
   });
 
-  it("案 8b：error 態下 resetKey 變化（offline）→ 不 reload、維持 B", () => {
+  it("in error state a resetKey change (offline) -> no reload, stays on B", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     setOffline();
     const reload = vi.fn();
@@ -407,7 +400,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
   });
 
-  it("案 8c：導航 reload 丟錯 → 維持 B、不冒泡（componentDidUpdate 的 try/catch）", () => {
+  it("navigation reload throws -> stays on B, doesn't bubble (componentDidUpdate's try/catch)", () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn(() => {
       throw new Error("reload blocked");
@@ -432,7 +425,7 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
     expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument();
   });
 
-  it("案 8d：reloading 態下 resetKey 變化 → 不再 reload", () => {
+  it("in reloading state a resetKey change -> no further reload", () => {
     const reload = vi.fn();
     const { rerender } = render(
       <Providers>
@@ -441,7 +434,6 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
         </NoteRouteErrorBoundary>
       </Providers>,
     );
-    // 首次：進 reloading，reload 一次
     expect(reload).toHaveBeenCalledTimes(1);
     expectLoadingScreen();
 
@@ -457,8 +449,8 @@ describe("NoteRouteErrorBoundary（案 1–8）", () => {
   });
 });
 
-describe("ChunkLoadBeacon（案 9／9a，真實 suspend→reject 時間軸）", () => {
-  it("案 9：成功 commit → 旗標被清（先種；起始為空的話刪掉 beacon 也綠——恆真）", async () => {
+describe("ChunkLoadBeacon (real suspend -> reject timeline)", () => {
+  it("successful commit -> the flag is cleared (pre-set; starting empty would stay green with the beacon deleted, a tautology)", async () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     const Lazy = lazy(() => Promise.resolve({ default: () => <p>lazy-ok</p> }));
@@ -478,10 +470,10 @@ describe("ChunkLoadBeacon（案 9／9a，真實 suspend→reject 時間軸）", 
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it("案 9a：lazy reject → beacon 不執行、旗標仍在 → 判「已 reload 過」→ 不 reload、進 B（beacon 擺放不變量）", async () => {
-    // 先種旗標。起始為空的版本兩種擺放終態相同（都是設旗標＋reload），抓不到錯放；
-    // 先種之後：正確擺放＝beacon 不跑→旗標在→不 reload＋B；錯放到 Suspense 外＝
-    // beacon 在 pending 期清旗標→判首次→reload＋載入畫面——三個觀測量同時分岔。
+  it("lazy rejects -> beacon doesn't run, flag remains -> judged as already reloaded -> no reload, goes to B (beacon placement invariant)", async () => {
+    // Pre-set the flag. Started empty, both placements end the same (set the flag + reload), so a misplacement isn't caught.
+    // Pre-set: correct placement = beacon doesn't run -> flag stays -> no reload + B; misplaced outside Suspense = beacon clears the flag while pending
+    // -> judged first time -> reload + loading screen; the three observables diverge together.
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     const Lazy = lazy(() => Promise.reject(new Error(CHUNK_MSG)));
@@ -497,21 +489,20 @@ describe("ChunkLoadBeacon（案 9／9a，真實 suspend→reject 時間軸）", 
     );
 
     await waitFor(() => expect(screen.getByText(CHUNK_ERROR_TEXT)).toBeInTheDocument());
-    // 守門的是上下兩條（錯放＝reload 1 次＋載入畫面，兩者同時紅）；「旗標仍在」在
-    // 錯放下也成立（beacon 清掉後 componentDidCatch 又設回去）——它是輔助斷言，
-    // 精簡時不得只留它。
+    // The discriminating assertions are the ones above and below (misplacement = one reload + loading screen, both go red); "flag remains" also holds under
+    // misplacement (after the beacon clears it componentDidCatch sets it back), so it is a supporting assertion and must not be the only one kept when trimming.
     expect(reload).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(FLAG_KEY)).not.toBeNull();
   });
 });
 
-// #201：站台管理、設定 modal 各區、登入流程頁也改 lazy，共用同一個 boundary——差別只在
-// `chunk`（自動 reload 額度的 sessionStorage key 別名）與 `frame`（外框）。
-describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
+// #201: site admin, settings modal sections and the login flow pages are lazy too and share this boundary; they differ only in
+// `chunk` (alias of the sessionStorage key for the auto-reload allowance) and `frame` (the outer frame).
+describe("LazyRouteErrorBoundary chunk/frame (#201)", () => {
   const SETTINGS_FLAG_KEY = "knotebook:chunk-reload:settings";
 
-  it("案 A：chunk=settings 有自己的額度——notepage 旗標已設也照樣自動 reload，且只設自己的旗標", () => {
-    // 先種 notepage 旗標：若 key 沒依 chunk 分開，這裡會判「已 reload 過」→ 不 reload。
+  it("chunk=settings has its own allowance: auto-reloads even when the notepage flag is set, and sets only its own flag", () => {
+    // Pre-set the notepage flag: if the key weren't split by chunk this would be judged "already reloaded" -> no reload.
     sessionStorage.setItem(FLAG_KEY, "1");
     const reload = vi.fn();
     render(
@@ -524,7 +515,7 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     expect(sessionStorage.getItem(FLAG_KEY)).toBe("1");
   });
 
-  it("案 B：ChunkLoadBeacon chunk=settings 只清自己的旗標", async () => {
+  it("ChunkLoadBeacon with chunk=settings clears only its own flag", async () => {
     sessionStorage.setItem(FLAG_KEY, "1");
     sessionStorage.setItem(SETTINGS_FLAG_KEY, "1");
     const Lazy = lazy(() => Promise.resolve({ default: () => <p>lazy-ok</p> }));
@@ -541,10 +532,10 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     expect(sessionStorage.getItem(FLAG_KEY)).toBe("1");
   });
 
-  it("案 C：frame=page 的錯誤畫面不包 AppShell（登入流程頁未登入也到得了——不得打 /api/auth/me）", () => {
+  it("frame=page error screen doesn't wrap AppShell (login flow pages are reachable while logged out and must not call /api/auth/me)", () => {
     sessionStorage.setItem("knotebook:chunk-reload:register", "1");
     const reload = vi.fn();
-    // 刻意不包 Providers：AppShell 需要 Router＋QueryClient，誤用它這裡會直接炸。
+    // Deliberately no Providers: AppShell needs Router + QueryClient, so misusing it would blow up right here.
     render(
       <LazyRouteErrorBoundary resetKey={undefined} chunk="register" frame="page" reload={reload}>
         <ChunkBomb />
@@ -558,7 +549,7 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("案 D：frame=inline 的載入畫面（reloading 態）只有載入文案、不包 AppShell", () => {
+  it("frame=inline loading screen (reloading state) shows only the loading text and doesn't wrap AppShell", () => {
     const reload = vi.fn();
     render(
       <LazyRouteErrorBoundary resetKey="/settings/groups" chunk="settings" frame="inline" reload={reload}>
@@ -571,7 +562,7 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("案 E（版本歷史）：frame=inline 給 crashMessageKey／inlineErrorClassName → 非 chunk 錯誤顯示該 key 的文案且包在該 class 裡；不給時與預設逐字相同", () => {
+  it("version history: frame=inline with crashMessageKey/inlineErrorClassName: a non-chunk error shows that key's text wrapped in that class; without them it is identical to the default", () => {
     const { unmount } = render(
       <LazyRouteErrorBoundary
         resetKey={undefined}
@@ -601,8 +592,8 @@ describe("LazyRouteErrorBoundary 的 chunk／frame（#201）", () => {
   });
 });
 
-describe("AppErrorBoundary（案 10）", () => {
-  it("案 10：子元件 render 丟錯 → app 級 fallback（無白屏），按鈕觸發 reload", () => {
+describe("AppErrorBoundary", () => {
+  it("child render throws -> app-level fallback (no white screen), the button triggers reload", () => {
     const reload = vi.fn();
     render(
       <AppErrorBoundary reload={reload}>
@@ -611,16 +602,14 @@ describe("AppErrorBoundary（案 10）", () => {
     );
 
     expect(screen.getByText(APP_CRASH_TITLE)).toBeInTheDocument();
-    // #115 反向斷言：app 級兜底**刻意不掛** NarrowTopBar/SidebarDrawerButton——
-    // 它的不變量是零 context 相依（不用 AppShell；錯誤可能正來自 auth/query），
-    // 掛上去要嘛在兜底畫面裡再拋 context 錯誤、要嘛是死鈕。日後「順手補一致性」
-    // 把它加上來，這條就紅。
+    // #115 reverse assertion: the app-level fallback deliberately doesn't mount NarrowTopBar/SidebarDrawerButton. Its invariant is zero context dependency
+    // (no AppShell; the error may come from auth/query), so mounting them would either throw a context error again inside the fallback or be a dead button.
     expect(screen.queryByRole("button", { name: "Open sidebar" })).not.toBeInTheDocument();
     screen.getByRole("button", { name: RELOAD_TEXT }).click();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("案 10b：離線時重整鈕 disabled（離線 reload＝瀏覽器網路錯誤頁）", () => {
+  it("reload button is disabled offline (offline reload = browser network error page)", () => {
     setOffline();
     render(
       <AppErrorBoundary reload={vi.fn()}>

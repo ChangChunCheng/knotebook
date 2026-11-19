@@ -17,7 +17,7 @@ import { trashList } from "@/test/trash-fixtures";
 import { AppShell } from "./AppShell";
 import { NoteBrowseBar } from "./NoteBrowseBar";
 
-// 手機（< 640）上清單與筆記捲的是文件：外框不鎖高度、換畫面時的捲動位置由 AppShell 自己還原或歸零。640 起照舊。
+// Phone (< 640): list and note scroll the document, so the outer frame doesn't lock height and AppShell restores or zeroes the scroll position itself on screen change. Unchanged from 640 up.
 
 function fakeResponse(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: () => Promise.resolve(body) } as unknown as Response;
@@ -102,7 +102,7 @@ function renderAt(path: string | string[], children: ReactNode) {
   );
 }
 
-/** 使用者把文件捲到 `y`：改 `scrollY` 並發 scroll 事件（AppShell 由事件記下位置）。 */
+/** The user scrolls the document to `y`: sets `scrollY` and dispatches scroll (AppShell records the position from the event). */
 function scrollPage(y: number): void {
   vi.stubGlobal("scrollY", y);
   act(() => {
@@ -111,7 +111,6 @@ function scrollPage(y: number): void {
 }
 
 let scrollTo: ReturnType<typeof vi.spyOn>;
-/** 最後一次 `window.scrollTo(x, y)` 的 y；沒呼叫過是 null。 */
 function lastScrollY(): number | null {
   const calls = scrollTo.mock.calls;
   if (calls.length === 0) return null;
@@ -136,22 +135,22 @@ function useTier(tier: LayoutTier) {
 const frameOf = (container: HTMLElement) => container.querySelector<HTMLElement>(`[${PHONE_PAGE_SCROLL_ATTR}]`)!;
 const asideOf = (container: HTMLElement) => container.querySelector<HTMLElement>("aside[data-sidebar-instance]")!;
 
-describe("AppShell — 手機上文件在捲", () => {
+describe("AppShell - document scrolls on phone", () => {
   useTier("phone");
 
-  it("PS1 外框帶 data-phone-page-scroll：640 起鎖視窗高、裁切（h-dvh、overflow-hidden），手機上不鎖高、縱向不裁切、橫向 clip、底色是卡片色", async () => {
+  it("frame carries data-phone-page-scroll: from 640 up it locks viewport height and clips (h-dvh, overflow-hidden); on phone it doesn't lock height, no vertical clip, horizontal clip, card background color", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/", <LocationProbe />);
     await screen.findByRole("tablist");
     const frame = frameOf(container);
     expect(frame).not.toBeNull();
     expect(frame).toHaveClass("h-dvh", "overflow-hidden", "max-sm:h-auto", "max-sm:overflow-y-visible", "max-sm:overflow-x-clip", "max-sm:bg-card");
-    // hidden 會讓縱向也成為捲動容器，頂列的 sticky 就黏不住。
+    // hidden would also make vertical a scroll container, so the top bar's sticky couldn't stick.
     expect(frame.className).not.toMatch(/max-sm:overflow-(x-)?hidden/);
     expect(frame).toContainElement(asideOf(container));
   });
 
-  it("PS2 清單 → 筆記：文件回頂端；系統返回回清單：回到離開時的位置", async () => {
+  it("list -> note: document returns to top; system back to the list: returns to the position left at", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/",
@@ -166,14 +165,13 @@ describe("AppShell — 手機上文件在捲", () => {
     fireEvent.click(link);
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note"));
     expect(lastScrollY()).toBe(0);
-    // 筆記上的捲動不改清單的記錄。
     scrollPage(2000);
     fireEvent.click(screen.getByRole("button", { name: "history-back", hidden: true }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/));
     expect(lastScrollY()).toBe(420);
   });
 
-  it("PS3 清單上換 tab：新 tab 從頂端開始；之後在新 tab 捲到的位置照常記，進筆記再回來還原它", async () => {
+  it("switching tab on the list: new tab starts at top; a position scrolled to in the new tab is recorded as usual and restored when returning from a note", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/",
@@ -199,7 +197,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(250);
   });
 
-  it("PS3b 在筆記上換 tab（例如點頁首的位置）回到清單：新 tab 從頂端開始，不沿用舊 tab 的位置", async () => {
+  it("switching tab on a note (e.g. tapping the location in the header) back to the list: new tab starts at top, doesn't reuse the old tab's position", async () => {
     stubFetch([NOTE]);
     function ShowRecent() {
       const { showTab } = useSidebarTabActions();
@@ -225,7 +223,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(0);
   });
 
-  it("PS4 筆記上開搜尋層：主內容區藏起來、文件回頂端；Cancel 回到同一篇原本的位置", async () => {
+  it("opening the search layer on a note: main content hidden, document back to top; Cancel returns to the same note's original position", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/n/tester/alpha-note",
@@ -236,7 +234,6 @@ describe("AppShell — 手機上文件在捲", () => {
     );
     const main = container.querySelector("main")!;
     expect(main).not.toHaveClass("max-sm:hidden");
-    // 直接開在筆記上（深連結）：不捲。
     expect(scrollTo).not.toHaveBeenCalled();
     scrollPage(900);
     fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" }));
@@ -248,7 +245,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(900);
   });
 
-  it("PS5 清單上開搜尋層再 Cancel：回到清單原本的位置", async () => {
+  it("opening the search layer on the list, then Cancel: returns to the list's original position", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/", <LocationProbe />);
     await screen.findByRole("tablist");
@@ -261,7 +258,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(510);
   });
 
-  it("PS6 清單或搜尋層在畫面上時 aside 帶 data-phone-list-shown、<html> 帶 data-has-phone-list-shown（index.css 據此擋下拉重新整理）；筆記上沒有", async () => {
+  it("while the list or search layer is on screen the aside has data-phone-list-shown and <html> has data-has-phone-list-shown (index.css uses it to block pull-to-refresh); neither on a note", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/n/tester/alpha-note",
@@ -278,7 +275,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(document.documentElement).toHaveAttribute("data-has-phone-list-shown");
   });
 
-  it("PS8 頂列 sticky 釘在頂端、不透明；清單標題列 sticky 釘在頂列下方；清單容器手機上不自己捲；垃圾桶同樣", async () => {
+  it("top bar is sticky at the top and opaque; list header is sticky under the top bar; list container doesn't scroll itself on phone; same for trash", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/", <LocationProbe />);
     const tablist = await screen.findByRole("tablist");
@@ -292,7 +289,7 @@ describe("AppShell — 手機上文件在捲", () => {
     await waitFor(() => expect(container.querySelector("[data-sidebar-list]")).toHaveClass("max-sm:overflow-y-visible"));
   });
 
-  it("PS7 掛著時瀏覽器自己的捲動還原關掉（manual），卸載時還原", async () => {
+  it("while mounted the browser's own scroll restoration is off (manual), restored on unmount", async () => {
     stubFetch([NOTE]);
     window.history.scrollRestoration = "auto";
     const view = renderAt("/", <LocationProbe />);
@@ -302,7 +299,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(window.history.scrollRestoration).toBe("auto");
   });
 
-  it("PS9 寬度剛越過 640、React 還沒換段時文件被夾回 0 的那次 scroll 不記成清單的位置", async () => {
+  it("a scroll clamped to 0 right after the width crosses 640, before React switches tier, isn't recorded as the list position", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/",
@@ -313,7 +310,7 @@ describe("AppShell — 手機上文件在捲", () => {
     );
     const link = await within(asideOf(container)).findByRole("link", { name: /^Alpha Note/ });
     scrollPage(420);
-    // 媒體查詢已經不是手機、React 還沒收到通知：此刻的 scroll（被夾回 0）不算使用者的位置
+    // The media query is already non-phone but React hasn't been notified: a scroll now (clamped to 0) isn't the user's position.
     vi.stubGlobal("matchMedia", () => ({ matches: false, media: "", addEventListener: () => {}, removeEventListener: () => {} }));
     scrollPage(0);
     stubLayoutTier("phone");
@@ -324,7 +321,7 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(lastScrollY()).toBe(420);
   });
 
-  it("PS10 筆記頁的浮動鈕掛在主內容區外面（主內容區滑入時位移，fixed 的鈕不能跟著被帶走）", async () => {
+  it("note-page floating buttons are mounted outside the main content area (it translates when sliding in; fixed buttons must not be carried along)", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/n/tester/alpha-note",
@@ -339,15 +336,15 @@ describe("AppShell — 手機上文件在捲", () => {
     expect(main).not.toContainElement(bar);
     expect(slot).toContainElement(bar);
     expect(main.contains(slot)).toBe(false);
-    // 不在外框（flex 列）裡：鈕的包層若成了 flex 項目，外框的 gap 會讓主內容區少一截寬度
+    // Not inside the frame (a flex row): if the buttons' wrapper became a flex item, the frame's gap would narrow the main content area.
     expect(frameOf(container).contains(slot)).toBe(false);
   });
 });
 
-describe.each(["overlay", "docked"] as const)("AppShell — %s：頁面本身不捲", (tier) => {
+describe.each(["overlay", "docked"] as const)("AppShell - %s: the page itself does not scroll", (tier) => {
   useTier(tier);
 
-  it("清單 → 筆記 → 返回都不呼叫 window.scrollTo", async () => {
+  it("list -> note -> back never calls window.scrollTo", async () => {
     stubFetch([NOTE]);
     renderAt(
       "/",

@@ -4,7 +4,6 @@ import i18n from "@/i18n";
 import { setNoteWidth } from "@/components/note-width";
 import { NoteWidthToggle } from "./NoteWidthToggle";
 
-/** #297：頁首寬度鈕——按一下循環 標準 → 寬 → 全寬 → 標準，不彈選單。 */
 const ID = "11111111-1111-4111-8111-111111111111";
 
 function widthButton(): HTMLElement {
@@ -15,7 +14,7 @@ function iconOf(button: HTMLElement): string | null {
   return button.querySelector("svg")!.getAttribute("data-icon");
 }
 
-describe("NoteWidthToggle（頁首寬度鈕，#297）", () => {
+describe("NoteWidthToggle (header width button, #297)", () => {
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en");
@@ -25,7 +24,7 @@ describe("NoteWidthToggle（頁首寬度鈕，#297）", () => {
     ["standard", "Width: Standard — click for Wide"],
     ["wide", "Width: Wide — click for Full width"],
     ["full", "Width: Full width — click for Standard"],
-  ] as const)("M1 現值 %s → 按鈕名與 title 同字「%s」、icon 圖樣跟著", (width, name) => {
+  ] as const)("current value %s -> button name and title are the same text (%s), icon follows", (width, name) => {
     setNoteWidth(ID, width);
     render(<NoteWidthToggle noteId={ID} />);
     const button = screen.getByRole("button", { name });
@@ -33,12 +32,12 @@ describe("NoteWidthToggle（頁首寬度鈕，#297）", () => {
     expect(iconOf(button)).toBe(`note-width-${width}`);
   });
 
-  it("M0 寬度鈕用主題色：className 含 text-brand／hover:text-brand（比照分享鈕）", () => {
+  it("width button uses the theme color: className has text-brand / hover:text-brand (same as the share button)", () => {
     render(<NoteWidthToggle noteId={ID} />);
     expect(widthButton()).toHaveClass("text-brand", "hover:text-brand");
   });
 
-  it("M2 連按三下 standard → wide → full → standard；localStorage 標準＝沒有鍵", () => {
+  it("three presses cycle standard -> wide -> full -> standard; for standard localStorage has no key", () => {
     render(<NoteWidthToggle noteId={ID} />);
     const key = `note.width.${ID}`;
     expect(localStorage.getItem(key)).toBeNull();
@@ -59,7 +58,7 @@ describe("NoteWidthToggle（頁首寬度鈕，#297）", () => {
     expect(iconOf(widthButton())).toBe("note-width-standard");
   });
 
-  it("M3 不是選單：沒有 aria-haspopup、aria-expanded，按了也不出現 role=menu", () => {
+  it("not a menu: no aria-haspopup, aria-expanded, and no role=menu after pressing", () => {
     render(<NoteWidthToggle noteId={ID} />);
     expect(widthButton()).not.toHaveAttribute("aria-haspopup");
     expect(widthButton()).not.toHaveAttribute("aria-expanded");
@@ -68,19 +67,19 @@ describe("NoteWidthToggle（頁首寬度鈕，#297）", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("M4 按鈕帶 container query 顯示 class", () => {
+  it("button carries a container-query display class", () => {
     render(<NoteWidthToggle noteId={ID} />);
     expect(widthButton()).toHaveClass("hidden", "@min-[43.5rem]:inline-flex", "shrink-0");
   });
 
-  it("M5 zh-TW：按鈕名「寬度：標準（按一下改為寬）」", async () => {
+  it("zh-TW: button name and title are the Chinese label", async () => {
     await i18n.changeLanguage("zh-TW");
     render(<NoteWidthToggle noteId={ID} />);
     const button = screen.getByRole("button", { name: "寬度：標準（按一下改為寬）" });
     expect(button).toHaveAttribute("title", "寬度：標準（按一下改為寬）");
   });
 
-  it("M6 外部變更（同分頁 setNoteWidth、他分頁 storage 事件）→ 掛著的按鈕即時跟上", () => {
+  it("external change (same-tab setNoteWidth, another tab's storage event) -> the mounted button follows immediately", () => {
     render(<NoteWidthToggle noteId={ID} />);
     act(() => setNoteWidth(ID, "full"));
     expect(widthButton()).toHaveAccessibleName("Width: Full width — click for Standard");

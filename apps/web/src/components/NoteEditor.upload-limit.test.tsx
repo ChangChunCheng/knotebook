@@ -7,8 +7,8 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 上傳前驗的上限經 ref 讀當下值：`uploadFile` 在編輯器建立時就固定成閉包，
-// 掛真 `<NoteEditor>`、拿真編輯器的 `uploadFile`，換 prop 不重掛，下一次上傳就要用新值。
+// The pre-upload limit is read through a ref at call time: `uploadFile` is frozen as a closure when the editor is created.
+// Mounts a real `<NoteEditor>` and takes the real editor's `uploadFile`; changing the prop doesn't remount, and the next upload must use the new value.
 
 const captured = vi.hoisted(() => ({ editor: null as null | { uploadFile?: (file: File, blockId?: string) => Promise<unknown> }, created: 0 }));
 vi.mock("@blocknote/react", async importOriginal => {
@@ -48,7 +48,7 @@ function Host({ children }: { children: ReactNode }) {
   );
 }
 
-describe("NoteEditor：上傳前驗的上限（maxUploadBytes）", () => {
+describe("NoteEditor: pre-upload limit (maxUploadBytes)", () => {
   let uploadCalls: string[];
 
   beforeEach(async () => {
@@ -77,7 +77,7 @@ describe("NoteEditor：上傳前驗的上限（maxUploadBytes）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("上限換了、編輯器沒重掛：同一支 uploadFile 下一次就用新值；沒給值時不前驗", async () => {
+  it("limit changed without remounting the editor: the same uploadFile uses the new value next time; with no value there is no pre-check", async () => {
     const doc = new Y.Doc();
     const base = { doc, provider: { awareness: null } as never, editable: true, user: { id: "u1", name: "Ann" }, noteId: "note-1" };
     const { rerender } = render(
@@ -90,11 +90,9 @@ describe("NoteEditor：上傳前驗的上限（maxUploadBytes）", () => {
     const uploadFile = editor.uploadFile!;
     expect(typeof uploadFile).toBe("function");
 
-    // 1 MiB 上限：1.5 MiB 被擋，沒打上傳端點。
     await uploadFile(fileOfSize(ONE_MIB * 1.5));
     expect(uploadCalls).toHaveLength(0);
 
-    // 調到 2 MiB：同一個編輯器實例、同一支 uploadFile，放行。
     rerender(
       <Host>
         <NoteEditor {...base} maxUploadBytes={ONE_MIB * 2} />
@@ -104,7 +102,7 @@ describe("NoteEditor：上傳前驗的上限（maxUploadBytes）", () => {
     await uploadFile(fileOfSize(ONE_MIB * 1.5));
     expect(uploadCalls).toHaveLength(1);
 
-    // 調回 1 MiB：又被擋（不是只在第一次 render 讀一次，也不是只往寬鬆方向生效）。
+    // Back to 1 MiB: blocked again (the value isn't read once at first render, and doesn't only take effect in the looser direction).
     rerender(
       <Host>
         <NoteEditor {...base} maxUploadBytes={ONE_MIB} />
@@ -113,7 +111,6 @@ describe("NoteEditor：上傳前驗的上限（maxUploadBytes）", () => {
     await uploadFile(fileOfSize(ONE_MIB * 1.5));
     expect(uploadCalls).toHaveLength(1);
 
-    // 設定拿不到（undefined）：不前驗。
     rerender(
       <Host>
         <NoteEditor {...base} maxUploadBytes={undefined} />

@@ -6,10 +6,10 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { noteSchema } from "@/collab/schema";
 import { LinkLongPress } from "./LinkLongPress";
 
-// 外部連結（一般 link mark）的觸控長按 ⇒ BlockNote 原生連結工具列。
-// 真編輯器＋BlockNoteView（預設帶 LinkToolbarController）；長按把游標放進連結，讓 BlockNote 既有的「游標在連結內」路徑開工具列。
+// Touch long-press on an external link (a normal link mark) => BlockNote's native link toolbar.
+// Real editor + BlockNoteView (comes with LinkToolbarController); a long press puts the cursor in the link, so BlockNote's existing "cursor inside a link" path opens the toolbar.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; any by repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 const TOUCH = { pointerType: "touch", clientX: 10, clientY: 10 } as const;
@@ -30,7 +30,7 @@ async function mount(editable = true, linkContent: LinkContent = "Example") {
       { type: "paragraph", content: ["see ", { type: "link", href: "https://example.com/", content: linkContent }, " end"] },
     ]);
   });
-  // `useEditorDOMElement`（BlockNote 的 LinkToolbarController 也用它）在掛載後下一拍才拿到編輯器根節點，監聽才掛上。
+  // `useEditorDOMElement` (also used by BlockNote's LinkToolbarController) only gets the editor root one tick after mount, so the listener is attached then.
   await settle(10);
   const link = document.querySelector<HTMLAnchorElement>('a[data-inline-content-type="link"]')!;
   expect(link).not.toBeNull();
@@ -42,8 +42,8 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe("外部連結觸控長按", () => {
-  it("長按約 500 ms：游標放進連結、BlockNote 原生連結工具列出現；之前不出現", async () => {
+describe("touch long press on an external link", () => {
+  it("long press of about 500 ms: cursor goes into the link and BlockNote's native link toolbar appears; not before", async () => {
     const { editor, link } = await mount();
     fireEvent.pointerDown(link, TOUCH);
     await settle(300);
@@ -57,14 +57,14 @@ describe("外部連結觸控長按", () => {
     expect(linkToolbar()).not.toBeNull();
   });
 
-  it("樣式把連結切成多個 <a>：長按只有一個字的那段也找得到整條連結；整條只有一個字則不開（已知限制）", async () => {
+  it("styles split a link into several <a>: long-pressing a one-character segment still finds the whole link; a whole link of one character doesn't open (known limitation)", async () => {
     const { editor } = await mount(true, [
       { type: "text", text: "Exampl", styles: {} },
       { type: "text", text: "e", styles: { bold: true } },
     ]);
     const segments = [...document.querySelectorAll<HTMLAnchorElement>('a[data-inline-content-type="link"]')];
     expect(segments.map((a) => a.textContent)).toEqual(["Exampl", "e"]);
-    // 尾段只有一個字：「起點後一格」正好是整條連結的終點（不 inclusive，找不到連結）
+    // Tail segment has one character: the position after the start is exactly the link's end (not inclusive, so no link is found).
     fireEvent.pointerDown(segments[1]!, TOUCH);
     await settle(600);
     fireEvent.pointerUp(segments[1]!, TOUCH);
@@ -80,7 +80,7 @@ describe("外部連結觸控長按", () => {
     expect(linkToolbar()).toBeNull();
   });
 
-  it("長按計時中編輯器變唯讀（降級、過期分頁）：成立時不動選取", async () => {
+  it("editor becomes read-only during the long-press timer (downgrade, expired tab): the selection isn't touched when it fires", async () => {
     const { editor, link } = await mount();
     const before = editor._tiptapEditor.state.selection.toJSON();
     fireEvent.pointerDown(link, TOUCH);
@@ -90,7 +90,7 @@ describe("外部連結觸控長按", () => {
     expect(editor._tiptapEditor.state.selection.toJSON()).toEqual(before);
   });
 
-  it("長按成立後補發的 mousedown／mouseup／click 被攔（到不了編輯器的處理器、preventDefault）；下一次短按照常放行", async () => {
+  it("the mousedown/mouseup/click replayed after a long press are swallowed (don't reach the editor's handlers, preventDefault); the next short press passes as usual", async () => {
     const { editor, link } = await mount();
     const seen: string[] = [];
     const root = editor._tiptapEditor.view.dom;
@@ -110,7 +110,7 @@ describe("外部連結觸控長按", () => {
     expect(seen).toEqual(["mouseup", "click"]);
   });
 
-  it("長按成立但沒有補發 click（iOS／Android 常見）：下一次點在連結以外的地方照常放行", async () => {
+  it("long press fires but no click is replayed (common on iOS/Android): the next tap outside the link passes as usual", async () => {
     const { editor, link } = await mount();
     const seen: string[] = [];
     const root = editor._tiptapEditor.view.dom;
@@ -125,7 +125,7 @@ describe("外部連結觸控長按", () => {
     expect(seen).toEqual(["mouseup", "click"]);
   });
 
-  it("短按：不開工具列、不動選取", async () => {
+  it("short press: no toolbar, selection untouched", async () => {
     const { editor, link } = await mount();
     const before = editor._tiptapEditor.state.selection.toJSON();
     fireEvent.pointerDown(link, TOUCH);
@@ -136,7 +136,7 @@ describe("外部連結觸控長按", () => {
     expect(linkToolbar()).toBeNull();
   });
 
-  it("長按中手指移動超過閾值：取消", async () => {
+  it("finger moves beyond the threshold during the long press: cancelled", async () => {
     const { link } = await mount();
     fireEvent.pointerDown(link, TOUCH);
     fireEvent.pointerMove(link, { ...TOUCH, clientY: 40 });
@@ -144,7 +144,7 @@ describe("外部連結觸控長按", () => {
     expect(linkToolbar()).toBeNull();
   });
 
-  it("可編輯：觸控按壓中的 contextmenu 被 preventDefault（並立刻開工具列）；滑鼠右鍵的 contextmenu 不攔", async () => {
+  it("editable: contextmenu during a touch press is preventDefault-ed (and opens the toolbar at once); a mouse right-click contextmenu isn't intercepted", async () => {
     const rendered = await mount();
     const { link } = rendered;
     fireEvent.pointerDown(link, { pointerType: "mouse", button: 2 });
@@ -154,11 +154,11 @@ describe("外部連結觸控長按", () => {
     const { editor } = rendered;
     fireEvent.pointerDown(link, TOUCH);
     expect(fireEvent.contextMenu(link)).toBe(false);
-    expect(editor.getSelectedLinkUrl()).toBe("https://example.com/"); // 立刻成立，不等 500 ms 計時
+    expect(editor.getSelectedLinkUrl()).toBe("https://example.com/"); // holds immediately, without waiting for the 500 ms timer
     await screen.findByRole("button", { name: "Open in new tab" });
   });
 
-  it("唯讀：觸控長按不攔 contextmenu、不攔後續 click（保留系統行為）", async () => {
+  it("read-only: touch long press doesn't intercept contextmenu or the following click (keeps system behaviour)", async () => {
     const { link } = await mount(false);
     fireEvent.pointerDown(link, TOUCH);
     expect(fireEvent.contextMenu(link)).toBe(true);
@@ -167,7 +167,7 @@ describe("外部連結觸控長按", () => {
     expect(fireEvent.click(link)).toBe(true);
   });
 
-  it("index.css：只在可編輯的編輯器裡關掉 iOS 長按連結選單（-webkit-touch-callout），唯讀不關", () => {
+  it("index.css: the iOS long-press link menu (-webkit-touch-callout) is disabled only inside an editable editor, not a read-only one", () => {
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const rules = [...css.matchAll(/([^{}]*)\{([^}]*-webkit-touch-callout[^}]*)\}/g)];
     expect(rules).toHaveLength(1);
@@ -176,7 +176,7 @@ describe("外部連結觸控長按", () => {
     expect(rules[0]![2]).toMatch(/-webkit-touch-callout:\s*none/);
   });
 
-  it("上一條選擇器的前提：可編輯時編輯器根節點就是 `.bn-editor[contenteditable=true]`，唯讀時不是", async () => {
+  it("precondition of the previous selector: when editable the editor root is `.bn-editor[contenteditable=true]`, when read-only it isn't", async () => {
     const { editor } = await mount();
     expect(editor._tiptapEditor.view.dom.matches('.bn-editor[contenteditable="true"]')).toBe(true);
     cleanup();

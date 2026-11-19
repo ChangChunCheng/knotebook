@@ -10,9 +10,9 @@ import { AppErrorBoundary } from "./ErrorBoundary";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 垃圾桶 tab 的 lazy chunk（TrashLazy）載入失敗：只有垃圾桶那塊出錯，側欄其餘與頁面照常，不冒到 AppErrorBoundary。
-// 錯誤訊息照 Chromium 的裸動態 import 失敗措辭（ErrorBoundary.tsx 的 CHUNK_ERROR_PATTERNS）；vitest 把 factory 的 reject 包成
-// 「error when mocking a module」、原錯誤放 `cause`——`isChunkLoadError` 本來就查 cause 一層，所以照樣判成 chunk 錯誤。
+// TrashLazy chunk fails to load: only the trash part errors, the rest of the sidebar and page stay, nothing bubbles to AppErrorBoundary.
+// The message mimics Chromium's bare dynamic-import failure (CHUNK_ERROR_PATTERNS in ErrorBoundary.tsx); vitest wraps the factory's reject as "error when mocking a module" with the original in `cause`,
+// and `isChunkLoadError` already checks one level of cause, so it is still classed as a chunk error.
 
 vi.mock("@/components/sidebar/TrashLazy", () =>
   Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/TrashLazy-abc.js")),
@@ -73,7 +73,7 @@ function renderApp() {
 
 const aside = () => document.querySelector("aside") as HTMLElement;
 
-describe("AppShell — 垃圾桶 chunk 載入失敗", () => {
+describe("AppShell - trash chunk fails to load", () => {
   let reload: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -89,7 +89,7 @@ describe("AppShell — 垃圾桶 chunk 載入失敗", () => {
     localStorage.clear();
   });
 
-  it("TE1 本 session 已自動重整過一次：垃圾桶面板就地顯示 chunk 錯誤＋重試，tab 列、UserMenu、頁面內文照常", async () => {
+  it("auto-reload already used once this session: the trash panel shows the chunk error plus retry in place, tab row, UserMenu and page content work as usual", async () => {
     sessionStorage.setItem(TRASH_FLAG, "1");
     stubFetch();
     renderApp();
@@ -99,10 +99,10 @@ describe("AppShell — 垃圾桶 chunk 載入失敗", () => {
     const alert = await within(panel).findByRole("alert");
     expect(alert).toHaveTextContent(i18n.t("app.chunkLoadError"));
     expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    // 底部那份也接住了，但錯誤內容藏起來（面板那份已顯示）
+    // The footer copy of the alert is hidden: the panel copy already shows the error.
     const footerAlerts = within(aside()).getAllByRole("alert").filter((el) => !panel.contains(el));
     expect(footerAlerts).toHaveLength(1);
-    // 比對整個 className：沒有 errorClassName 時 alert 直接掛在 aside 下，而桌面 aside 自帶 `hidden md:flex`（toHaveClass 會空真）
+    // Match the whole className: without errorClassName the alert hangs directly under the aside, and the desktop aside carries its own `hidden md:flex` (toHaveClass would pass vacuously).
     expect(footerAlerts[0]!.parentElement?.className).toBe("hidden");
 
     expect(screen.queryByText("Something went wrong")).toBeNull();
@@ -111,13 +111,12 @@ describe("AppShell — 垃圾桶 chunk 載入失敗", () => {
     expect(screen.getByTestId("page-body")).toBeInTheDocument();
     expect(reload).not.toHaveBeenCalled();
 
-    // 切回別的 tab：側欄恢復正常
     fireEvent.click(within(aside()).getByRole("tab", { name: "My notes" }));
     expect(within(aside()).getByRole("button", { name: "New note" })).toBeInTheDocument();
     expect(within(aside()).queryByRole("alert")).toBeNull();
   });
 
-  it("TE2 第一次失敗：用 trash 自己的額度自動重整一次（兩個掛載點只重整一次），NotePage 的額度不動、app 不崩", async () => {
+  it("first failure: auto-reloads once using trash's own allowance (two mount points reload once), NotePage allowance untouched, app doesn't crash", async () => {
     stubFetch();
     renderApp();
     fireEvent.click(await within(aside()).findByRole("tab", { name: "Trash" }));

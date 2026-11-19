@@ -32,7 +32,7 @@ const NOTE: NoteDto = {
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", slug: "my-note", slugIsCustom: true,
   prevSlug: null, ownerHandle: "tester", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS,
 };
-/** 側欄別篇用 viewer 權限：同時涵蓋「側欄 ⋮ 的 viewer」。 */
+/** Another note in the sidebar with viewer permission: this also covers the sidebar more menu for a viewer. */
 const OTHER: NoteDto = { ...NOTE, id: "22222222-2222-2222-2222-222222222222", title: "Other", slug: "other", role: "viewer", permissions: VIEWER_PERMS };
 const VIEWER_NOTE: NoteDto = { ...NOTE, role: "viewer", permissions: VIEWER_PERMS };
 const CONNECTED: CollabState = { phase: "connected", role: "owner" };
@@ -66,7 +66,7 @@ async function choosePresent(trigger: HTMLElement) {
   fireEvent.click(await screen.findByRole("menuitem", { name: "Present" }));
 }
 
-describe("⋮「簡報模式」", () => {
+describe("more menu - Presentation mode", () => {
   let fake: FakeFullscreen | null = null;
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -79,7 +79,7 @@ describe("⋮「簡報模式」", () => {
     vi.unstubAllGlobals();
   });
 
-  it("頁首：目前 pathname＋?present、清 hash、push、state 只有旗標；requestFullscreen 早於 navigate", async () => {
+  it("header: current pathname + ?present, hash cleared, push, state has only the flag; requestFullscreen happens before navigate", async () => {
     renderWith(<NoteMenu note={NOTE} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />);
     await choosePresent(screen.getByRole("button", { name: "More" }));
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe('/notes/my-note?present|{"knotebookPresentPushed":true}'));
@@ -88,7 +88,7 @@ describe("⋮「簡報模式」", () => {
     expect(fake!.requestFullscreen.mock.invocationCallOrder[0]).toBeLessThan(nav.fn.mock.invocationCallOrder[0]);
   });
 
-  it("選單項在「複製連結」之後（預設位置）、有 Presentation 圖示", async () => {
+  it("the menu item comes after Copy link (default position) and has a Presentation icon", async () => {
     renderWith(<NoteMenu note={NOTE} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0 });
     const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
@@ -96,13 +96,13 @@ describe("⋮「簡報模式」", () => {
     expect(screen.getByRole("menuitem", { name: "Present" }).querySelector('[data-icon="presentation"]')).not.toBeNull();
   });
 
-  it("viewer 角色也有「簡報模式」且能進入", async () => {
+  it("viewer role also has Presentation mode and can enter it", async () => {
     renderWith(<NoteMenu note={VIEWER_NOTE} state={{ phase: "connected", role: "viewer" }} leavingRef={{ current: false }} onOpenEdits={() => {}} />);
     await choosePresent(screen.getByRole("button", { name: "More" }));
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toMatch(/^\/notes\/my-note\?present\|/));
   });
 
-  it("側欄・開著那篇：與頁首同（旗標）、先關抽屜", async () => {
+  it("sidebar, the open note: same as the header (flag), the drawer is closed first", async () => {
     const leavingRef = { current: false };
     const { setOpen } = renderWith(
       <NotePageControlsContext.Provider value={{ noteId: NOTE.id, state: CONNECTED, leavingRef, openEdits: () => {} }}>
@@ -114,7 +114,7 @@ describe("⋮「簡報模式」", () => {
     expect(setOpen).toHaveBeenCalledWith(false);
   });
 
-  it("側欄・別篇（viewer）：那篇的 canonical＋?present、push、無旗標；先關抽屜", async () => {
+  it("sidebar, another note (viewer): that note's canonical + ?present, push, no flag; the drawer is closed first", async () => {
     const { setOpen } = renderWith(
       <NotePageControlsContext.Provider value={{ noteId: NOTE.id, state: CONNECTED, leavingRef: { current: false }, openEdits: () => {} }}>
         <SidebarNoteMenu note={OTHER} />
@@ -125,7 +125,7 @@ describe("⋮「簡報模式」", () => {
     expect(nav.fn).toHaveBeenCalledWith({ pathname: "/n/tester/other", search: "?present" });
     expect(setOpen).toHaveBeenCalledWith(false);
     expect(within(document.body).getByTestId("loc").textContent).toBe("/n/tester/other?present|null");
-    // 關抽屜 → 要全螢幕 → 導頁（三者都在同一個手勢的同步段，順序固定）
+    // Close the drawer -> request fullscreen -> navigate (all three in the synchronous part of one gesture, in a fixed order)
     const closeDrawerAt = setOpen.mock.invocationCallOrder[0];
     const fullscreenAt = fake!.requestFullscreen.mock.invocationCallOrder[0];
     const navigateAt = nav.fn.mock.invocationCallOrder[0];
@@ -134,7 +134,7 @@ describe("⋮「簡報模式」", () => {
     expect(fullscreenAt).toBeLessThan(navigateAt);
   });
 
-  it("一般關閉選單（Esc，沒選「簡報模式」）：焦點照常還給 ⋮ 觸發鈕（onCloseAutoFocus 只在進簡報那條路徑擋）", async () => {
+  it("ordinary menu close (Esc, Presentation mode not chosen): focus returns to the more menu trigger as usual (onCloseAutoFocus is only blocked on the path into presentation)", async () => {
     renderWith(<NoteMenu note={NOTE} state={CONNECTED} leavingRef={{ current: false }} onOpenEdits={() => {}} />);
     const trigger = screen.getByRole("button", { name: "More" });
     fireEvent.pointerDown(trigger, { button: 0 });

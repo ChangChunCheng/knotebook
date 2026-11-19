@@ -14,8 +14,8 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { AppShell } from "./AppShell";
 
 /**
- * #369：側欄搜尋字住在 App 層（跨首頁／筆記頁換殼保留），所以它屬於某個使用者——登出、換人登入後不能留給下一個人
- * （否則 B 的首頁搜尋框帶著 A 的字、還以 B 的身分送 body search）。AppShell 掛載且 session 有人時 `claim(user.id)`。
+ * The sidebar search text lives at App level (kept across home/note shell swaps), so it belongs to a user: after logout and a different login it must not leak to the next person (B's home search box would carry A's text and send body search as B).
+ * AppShell calls `claim(user.id)` on mount when the session has a user.
  */
 const user = (id: string) => ({ id, email: `${id}@example.com`, handle: id, displayName: id, isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null }) satisfies UserDto;
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -29,7 +29,7 @@ function Harness() {
 }
 const box = () => screen.getAllByRole("textbox", { name: "Search notes" })[0] as HTMLInputElement;
 
-describe("搜尋字的擁有者（#369）", () => {
+describe("search text owner (#369)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -66,19 +66,19 @@ describe("搜尋字的擁有者（#369）", () => {
     return qc;
   }
 
-  it("換人登入（登出 → B 登入，同一個分頁）→ B 的搜尋框是空的", async () => {
+  it("a different user logs in (logout -> B logs in, same tab) -> B's search box is empty", async () => {
     const qc = setup();
     await waitFor(() => expect(qc.getQueryData(SESSION_QUERY_KEY)).toEqual(user("u1")));
     fireEvent.change(box(), { target: { value: "needle" } });
     expect(box().value).toBe("needle");
-    act(() => gate(false)); // 離開有側欄的頁（登出導到 /login）
+    act(() => gate(false)); // leave the sidebar pages (logout goes to /login)
     act(() => void qc.setQueryData(SESSION_QUERY_KEY, null));
-    act(() => void qc.setQueryData(SESSION_QUERY_KEY, user("u2"))); // B 登入
+    act(() => void qc.setQueryData(SESSION_QUERY_KEY, user("u2")));
     act(() => gate(true));
     await waitFor(() => expect(box().value).toBe(""));
   });
 
-  it("同一個人的 session 刷新（新物件、同 id）或回到有側欄的頁 → 搜尋字不清", async () => {
+  it("same user's session refresh (new object, same id) or returning to a sidebar page -> search text is kept", async () => {
     const qc = setup();
     await waitFor(() => expect(qc.getQueryData(SESSION_QUERY_KEY)).toEqual(user("u1")));
     fireEvent.change(box(), { target: { value: "needle" } });

@@ -14,7 +14,7 @@ import { createTestEditor, renderAiHost, selectInBlock, stubAiFetch } from "@/te
 import { installLiveStopInput } from "@/components/tour/live-stops";
 import { NoteEditorView } from "./NoteEditor";
 
-// 表情資料是 JSON 模組，node 端直接 import 會失敗；`:` 選單的測試只看外層定位，所以換掉預設的資料來源（定位選項照實傳進去）。
+// The emoji data is a JSON module and importing it in node fails; the `:` menu tests only look at outer positioning, so the default data source is replaced (positioning options are passed through as is).
 vi.mock("@blocknote/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@blocknote/react")>();
   const Original = actual.GridSuggestionMenuController as (props: Record<string, unknown>) => ReactNode;
@@ -26,26 +26,19 @@ vi.mock("@blocknote/react", async (importOriginal) => {
 });
 
 /**
- * 曾以 mutation 實測（拿掉 `filePanel={false}`、
- * 或把 `useMemo` 換成每 render 新建）能讓 268 個既有測試全綠通過——`NoteEditorView`
- * 這段 JSX 接線在此之前完全零覆蓋。這個檔案直接掛真的 `<BlockNoteView>`
- * （`@blocknote/mantine`，自帶 `MantineProvider`）鎖住兩條核心契約：
+ * This file mounts a real `<BlockNoteView>` (`@blocknote/mantine`, brings its own `MantineProvider`) to pin the two contracts of the `NoteEditorView` JSX wiring:
  *
- * 1. `filePanel={false}` 真的關掉了 BlockNote 內建的 `FilePanelController`
- *    （否則使用者點開檔案類 block 會同時看到兩份面板疊在一起）。
- * 2. `useMemo(() => createFilePanel(noteId), [noteId])` 真的釘住了 `filePanel` 的
- *    元件身分——`noteId` 沒變時，`NoteEditorView` 因任何原因重新 render，
- *    `FilePanelController` 不會把它當成「換了一個元件」卸載重掛（否則使用者在
- *    Embed URL 輸入到一半就會被清空）。
+ * 1. `filePanel={false}` really turns off BlockNote's built-in `FilePanelController` (otherwise opening a file-type block shows two panels stacked).
+ * 2. `useMemo(() => createFilePanel(noteId), [noteId])` really pins the `filePanel` component identity: when `noteId` is unchanged and `NoteEditorView` re-renders for any reason,
+ *    `FilePanelController` doesn't treat it as a different component and remount it (which would clear an Embed URL half typed).
  *
- * jsdom 缺 `ResizeObserver`／`window.matchMedia`（mantine 的 `MantineProvider`／
- * `@blocknote/react` 的 `usePrefersColorScheme` 會摸到）——兩個一行 stub 已經補進
- * `test/setup.ts`，這裡不用再另外處理。
+ * jsdom lacks `ResizeObserver`/`window.matchMedia` (touched by mantine's `MantineProvider` and `@blocknote/react`'s `usePrefersColorScheme`);
+ * one-line stubs for both are in `test/setup.ts`.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.tsx/NoteEditor.test.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; any by repo convention (same as NoteEditor.tsx/NoteEditor.test.ts)
 function mountedEditor(): { editor: BlockNoteEditor<any, any, any>; container: HTMLElement } {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   const editor = BlockNoteEditor.create({ schema: noteSchema }) as BlockNoteEditor<any, any, any>;
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -53,26 +46,26 @@ function mountedEditor(): { editor: BlockNoteEditor<any, any, any>; container: H
   return { editor, container };
 }
 
-/** 插入一個 image block（有 Upload+Embed 兩個 tab，`FilePanel.tsx` 的分頁列在這個型別才會渲染），回傳它的 id。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+/** Inserts an image block (it has Upload + Embed tabs; the tab bar in `FilePanel.tsx` only renders for this type) and returns its id. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 function insertImageBlock(editor: BlockNoteEditor<any, any, any>): string {
   const first = editor.document[0]!;
   return editor.insertBlocks([{ type: "image" } as never], first, "after")[0]!.id;
 }
 
-// SuggestionMenuController 用得到，但這個檔案不測 `[[` 觸發，回空陣列就好。
+// SuggestionMenuController needs it, but this file doesn't test the `[[` trigger, so an empty array is enough.
 async function getItems(): Promise<DefaultReactSuggestionItem[]> {
   return [];
 }
 
-/** 自家 FilePanel 讀 `useAuthConfig()`，需要 QueryClientProvider；config 回不帶 `maxUploadBytes` 的設定（不前驗）。 */
+/** The own FilePanel reads `useAuthConfig()` and needs a QueryClientProvider; config returns settings without `maxUploadBytes` (no pre-check). */
 function QueryWrapper({ children }: { children: ReactNode }) {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+describe("NoteEditorView (filePanel={false} + useMemo wiring)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
@@ -91,7 +84,7 @@ describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
     container.remove();
   });
 
-  it("filePanel={false} 關掉內建面板：開啟 FilePanel 時畫面上只有 1 個 tablist（我們自家那個，不是內建又多一個）", () => {
+  it("filePanel={false} turns off the built-in panel: opening a FilePanel shows exactly 1 tablist (ours, not the built-in one on top)", () => {
     const blockId = insertImageBlock(editor);
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getItems} />, { wrapper: QueryWrapper });
 
@@ -102,7 +95,7 @@ describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
     expect(screen.getAllByRole("tablist")).toHaveLength(1);
   });
 
-  it("useMemo 護欄：noteId 不變、元件因故重 render，Embed 輸入到一半的值不會被清掉", () => {
+  it("useMemo guard: noteId unchanged and the component re-renders for some reason -> a half-typed Embed value isn't cleared", () => {
     const blockId = insertImageBlock(editor);
     const { rerender } = render(
       <NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getItems} />,
@@ -118,33 +111,27 @@ describe("NoteEditorView（filePanel={false} + useMemo 接線）", () => {
     fireEvent.change(input, { target: { value: "https://example.com/half-typed" } });
     expect(input).toHaveValue("https://example.com/half-typed");
 
-    // 同一個 noteId、只是父層重新 render（例如 editable/theme 這類跟 filePanel 無關的
-    // prop 變動、或單純父元件重繪）——`filePanel` 的元件身分如果沒被 `useMemo` 釘住，
-    // `FilePanelController` 會把它當一個新元件掛，底下的 Embed 輸入狀態會被砍掉重練。
+    // Same noteId, only the parent re-renders (e.g. an editable/theme prop unrelated to filePanel changes, or just a parent redraw):
+    // if the `filePanel` component identity weren't pinned by `useMemo`, `FilePanelController` would mount it as a new component and the Embed input state below would be wiped.
     rerender(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getItems} />);
 
     expect(screen.getByPlaceholderText("Paste a link…")).toHaveValue("https://example.com/half-typed");
   });
 });
 
-// ── issue #94：`slashMenu={false}` + 自家 `/` controller 接線 ────────────────────
-//
-// 比照本檔開頭記載的前例：實測把 `slashMenu={false}` 拿掉、或把整條
-// `<SuggestionMenuController triggerCharacter="/">` 刪掉，693 條測試全綠——這段接線在
-// 此之前零覆蓋。`NoteEditor.tsx` 的註解寫著「不明確設 false 會同時掛兩個 `/` 選單
-// controller，按 `/` 會看到兩份選單疊在一起」，這裡就是釘住那句話的地方。
+// issue #94: `slashMenu={false}` + the own `/` controller wiring. The comment in `NoteEditor.tsx` says that not setting it to false explicitly mounts two `/` menu controllers (pressing `/` shows two menus stacked); this is where that statement is pinned.
 
-describe("NoteEditorView（issue #94：/ 選單接管）", () => {
-  /** `[[` 選單的來源，用來確認它也套手機的 floating 選項。 */
+describe("NoteEditorView (issue #94: / menu takeover)", () => {
+  /** Source of the `[[` menu, to check it also gets the phone floating options. */
   async function getWikilinkItems(): Promise<DefaultReactSuggestionItem[]> {
     return [{ title: "Linked note", onItemClick: () => {} }] as DefaultReactSuggestionItem[];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
-  /** 只有一個項目的 `/` 選單來源，用來確認掛上去的是**我們的** controller。 */
+  /** A `/` menu source with a single item, to check that what's mounted is **our** controller. */
   async function getSlashItems(): Promise<DefaultReactSuggestionItem[]> {
     return [{ title: "Diagram", onItemClick: () => {}, group: "Advanced" }] as DefaultReactSuggestionItem[];
   }
@@ -160,7 +147,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     container.remove();
   });
 
-  it("slashMenu={false}：按 / 時畫面上只有一份選單（沒有跟內建的疊在一起）", () => {
+  it("slashMenu={false}: pressing / shows exactly one menu (not stacked on the built-in one)", () => {
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
 
     act(() => {
@@ -170,7 +157,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     expect(document.querySelectorAll(".bn-suggestion-menu")).toHaveLength(1);
   });
 
-  it("那一份選單是我們自己的（getSlashItems 的項目真的渲染出來）", async () => {
+  it("that menu is ours (the getSlashItems item is really rendered)", async () => {
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
 
     act(() => {
@@ -180,7 +167,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     expect(await screen.findByText("Diagram")).toBeInTheDocument();
   });
 
-  /** 選單外層（floating-ui 定位的那一層）的最大高度；等 size middleware 套用後才有值。 */
+  /** Max height of the menu's outer layer (the floating-ui positioned one); only has a value after the size middleware applies. */
   async function floatingMaxHeight(itemText = "Diagram"): Promise<string> {
     await screen.findByText(itemText);
     const floating = document.querySelector(".bn-suggestion-menu")!.closest<HTMLElement>("[style*='z-index']")!;
@@ -188,7 +175,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     return floating.style.maxHeight;
   }
 
-  it("手機：選單最大高度是 min(50vh, 可用高度)", async () => {
+  it("phone: the menu max height is min(50vh, available height)", async () => {
     stubLayoutTier("phone");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
     act(() => {
@@ -197,7 +184,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     expect(await floatingMaxHeight()).toMatch(/^min\(50vh, /);
   });
 
-  it("手機：[[ 選單同樣套 min(50vh, 可用高度)", async () => {
+  it("phone: the [[ menu likewise gets min(50vh, available height)", async () => {
     stubLayoutTier("phone");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
     act(() => {
@@ -206,7 +193,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     expect(await floatingMaxHeight("Linked note")).toMatch(/^min\(50vh, /);
   });
 
-  /** `:` 表情選單：要輸入兩個字才會出現（minQueryLength 2），格子內容是 emoji 不是文字，所以改看外層元素。 */
+  /** The `:` emoji menu: it appears only after typing two characters (minQueryLength 2), and the cells contain emoji rather than text, so look at the outer element instead. */
   async function emojiFloatingMaxHeight(): Promise<string> {
     editor.focus();
     editor.setTextCursorPosition(editor.document[0]!, "end");
@@ -226,19 +213,19 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     return floating.style.maxHeight;
   }
 
-  it("手機：: 表情選單同樣套 min(50vh, 可用高度)", async () => {
+  it("phone: the : emoji menu likewise gets min(50vh, available height)", async () => {
     stubLayoutTier("phone");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
     expect(await emojiFloatingMaxHeight()).toMatch(/^min\(50vh, /);
   });
 
-  it("寬度 >= 640：: 表情選單最大高度維持預設（不套 50vh）", async () => {
+  it("width >= 640: the : emoji menu max height stays at the default (no 50vh)", async () => {
     stubLayoutTier("docked");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
     expect(await emojiFloatingMaxHeight()).not.toContain("50vh");
   });
 
-  it("寬度 >= 640：[[ 選單最大高度維持預設（不套 50vh）", async () => {
+  it("width >= 640: the [[ menu max height stays at the default (no 50vh)", async () => {
     stubLayoutTier("docked");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getSlashItems} />);
     act(() => {
@@ -247,7 +234,7 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
     expect(await floatingMaxHeight("Linked note")).not.toContain("50vh");
   });
 
-  it("寬度 >= 640：選單最大高度維持預設（不套 50vh）", async () => {
+  it("width >= 640: the menu max height stays at the default (no 50vh)", async () => {
     stubLayoutTier("docked");
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getItems} getSlashItems={getSlashItems} />);
     act(() => {
@@ -257,10 +244,10 @@ describe("NoteEditorView（issue #94：/ 選單接管）", () => {
   });
 });
 
-// ── 功能導覽要指到真的 `[[` 選單：外面那層 popover 帶導覽的目標屬性 ──────────────────────────────
+// The feature tour must point at the real `[[` menu: the outer popover carries the tour target attribute.
 
-describe("NoteEditorView（`[[` 選單帶導覽目標屬性）", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+describe("NoteEditorView (the `[[` menu carries the tour target attribute)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
@@ -278,7 +265,7 @@ describe("NoteEditorView（`[[` 選單帶導覽目標屬性）", () => {
     return [{ title: "Some note", onItemClick: () => {} }] as DefaultReactSuggestionItem[];
   }
 
-  it("`[[` 選單的 popover 帶 data-kb-tour-target=wikilinkMenu、`/` 選單的帶 slashMenu，預設的 z-index 還在；兩邊不互帶", async () => {
+  it("the `[[` menu's popover carries data-kb-tour-target=wikilinkMenu and the `/` menu's carries slashMenu, the default z-index remains; neither carries the other's", async () => {
     render(<NoteEditorView editor={editor} editable theme="light" noteId="note-1" getItems={getWikilinkItems} getSlashItems={getItems} />);
 
     act(() => {
@@ -307,8 +294,8 @@ describe("NoteEditorView（`[[` 選單帶導覽目標屬性）", () => {
   });
 });
 
-describe("NoteEditorView（演示站的鍵盤攔截擋在真的 `[[` 選單前面）", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+describe("NoteEditorView (feature-tour keyboard interception sits in front of the real [[ menu)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
   let uninstall: (() => void) | null = null;
@@ -325,7 +312,7 @@ describe("NoteEditorView（演示站的鍵盤攔截擋在真的 `[[` 選單前�
     container.remove();
   });
 
-  /** 開好 `[[` 選單，回傳「選了項目」的 spy 與一個往編輯器送按鍵的函式。 */
+  /** Opens the `[[` menu; returns the spy for "item chosen" and a function that sends keys to the editor. */
   async function openMenu(withInput: boolean) {
     const onItemClick = vi.fn();
     const items = async () => [{ title: "Some note", onItemClick }] as DefaultReactSuggestionItem[];
@@ -343,13 +330,13 @@ describe("NoteEditorView（演示站的鍵盤攔截擋在真的 `[[` 選單前�
     return { onItemClick, press };
   }
 
-  it("沒有攔截時 Ctrl+Enter 會選中選單項目（確認這案量得到差別）", async () => {
+  it("without the interception Ctrl+Enter selects a menu item (confirms this case can measure the difference)", async () => {
     const { onItemClick, press } = await openMenu(false);
     press({ key: "Enter", ctrlKey: true });
     expect(onItemClick).toHaveBeenCalledTimes(1);
   });
 
-  it("攔截開著：Enter、Ctrl／Alt／Meta＋Enter 都不選中項目，選單仍開著；Ctrl+A 不關選單", async () => {
+  it("interception on: Enter and Ctrl/Alt/Meta+Enter don't select an item, the menu stays open; Ctrl+A doesn't close the menu", async () => {
     const { onItemClick, press } = await openMenu(true);
     for (const init of [{ key: "Enter" }, { key: "Enter", ctrlKey: true }, { key: "Enter", altKey: true }, { key: "Enter", metaKey: true }, { key: "a", ctrlKey: true }]) {
       press(init);
@@ -359,15 +346,13 @@ describe("NoteEditorView（演示站的鍵盤攔截擋在真的 `[[` 選單前�
   });
 });
 
-// ── #263：formatting toolbar 由 children 裡的 SelectionAiController 擁有──────────────
-//
-// NoteEditorView 自己只設 `formattingToolbar={false}`、不再掛 FormattingToolbarController；工具列壓制與 AI 項的行為測試在
-// `components/ai/SelectionAiController.test.tsx`。這裡只釘接線：沒有 children 就沒有工具列；children 是 controller 時才有。
+// #263: the formatting toolbar is owned by the SelectionAiController in children. NoteEditorView itself only sets `formattingToolbar={false}` and no longer mounts FormattingToolbarController;
+// toolbar suppression and the AI item's behaviour are tested in `components/ai/SelectionAiController.test.tsx`. This only pins the wiring: no children -> no toolbar; with a controller as children -> toolbar.
 const AI_ACTION: AiActionDto = { id: "action-1", name: "Summarize", applyMode: "preview", kind: "quick" };
 const ONE_PARAGRAPH = [{ id: "p1", type: "paragraph", content: "hello world" }];
 const TWO_PARAGRAPHS = [...ONE_PARAGRAPH, { id: "p2", type: "paragraph", content: "second line" }];
 
-describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiController 擁有）", () => {
+describe("NoteEditorView (#263: children pass through; the toolbar is owned by SelectionAiController)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -376,7 +361,7 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
     vi.unstubAllGlobals();
   });
 
-  it("沒有 children：非空選取也不出現 formatting toolbar；children 換成 SelectionAiController 後出現（預設按鈕＋AI 鈕）", async () => {
+  it("no children: a non-empty selection shows no formatting toolbar; with SelectionAiController as children it appears (default buttons + AI button)", async () => {
     const editor = createTestEditor(ONE_PARAGRAPH);
     stubAiFetch({ actions: [AI_ACTION] });
     const host = renderAiHost({ editor });
@@ -390,7 +375,7 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
     expect(await screen.findByRole("button", { name: "AI" })).toBeInTheDocument();
   });
 
-  it("viewer（editable:false）→ AI 項不渲染", async () => {
+  it("viewer (editable:false) -> the AI item isn't rendered", async () => {
     const editor = createTestEditor(ONE_PARAGRAPH);
     stubAiFetch({ actions: [AI_ACTION] });
     const host = renderAiHost({ editor, editable: false, children: <SelectionAiController /> });
@@ -400,7 +385,7 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
   });
 
-  it("actions 為空陣列（editable:true）→ 預設按鈕照常、AI 項不渲染", async () => {
+  it("actions is an empty array (editable:true) -> default buttons as usual, the AI item isn't rendered", async () => {
     const editor = createTestEditor(ONE_PARAGRAPH);
     stubAiFetch({ actions: [] });
     const host = renderAiHost({ editor, children: <SelectionAiController /> });
@@ -411,7 +396,7 @@ describe("NoteEditorView（#263：children 透傳；工具列由 SelectionAiCont
   });
 });
 
-describe("NoteEditorView（區塊把手：手機不掛側選單）", () => {
+describe("NoteEditorView (block handle: no side menu on phone)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -432,13 +417,13 @@ describe("NoteEditorView（區塊把手：手機不掛側選單）", () => {
     await act(async () => {});
   }
 
-  it("docked：滑過區塊出現拖曳把手", async () => {
+  it("docked: hovering over a block shows the drag handle", async () => {
     stubLayoutTier("docked");
     await hoverFirstParagraph();
     expect(await screen.findByLabelText("Open block menu")).toBeInTheDocument();
   });
 
-  it("phone：滑過區塊也沒有拖曳把手", async () => {
+  it("phone: hovering over a block shows no drag handle either", async () => {
     stubLayoutTier("phone");
     await hoverFirstParagraph();
     expect(screen.queryByLabelText("Open block menu")).not.toBeInTheDocument();
@@ -446,7 +431,7 @@ describe("NoteEditorView（區塊把手：手機不掛側選單）", () => {
   });
 });
 
-describe("NoteEditorView（區塊選單開著時變窄到手機寬度）", () => {
+describe("NoteEditorView (tier narrows to phone width while a block menu is open)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -455,7 +440,7 @@ describe("NoteEditorView（區塊選單開著時變窄到手機寬度）", () =>
     Reflect.deleteProperty(document, "elementsFromPoint");
   });
 
-  it("側選單凍結中切到 phone：解凍、不丟例外；切回 docked 後滑到別的區塊，把手跟過去", async () => {
+  it("side menu frozen then switched to phone: unfreezes, no exception; after switching back to docked, hovering another block moves the handle there", async () => {
     const tier = stubLayoutTier("docked");
     const editor = createTestEditor(TWO_PARAGRAPHS);
     stubAiFetch({ actions: [] });

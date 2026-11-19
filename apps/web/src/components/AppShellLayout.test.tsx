@@ -8,7 +8,7 @@ import { useRegisterNotePage } from "@/lib/note-page-bridge";
 import { useAppShellInert } from "@/lib/app-shell-inert";
 import { AppShellLayout } from "./AppShellLayout";
 
-// 殼本身不在這裡測：換成只渲染 children 的替身，專看 layout 提供給側欄的 context 與 inert。
+// The shell itself isn't tested here: replaced by a stand-in that renders only children, to look at the context and inert the layout provides to the sidebar.
 vi.mock("@/components/AppShell", () => ({
   AppShell: ({ children, inert }: { children: ReactNode; inert?: boolean }) => (
     <div data-testid="shell" data-inert={String(inert === true)}>
@@ -17,7 +17,6 @@ vi.mock("@/components/AppShell", () => ({
   ),
 }));
 
-/** 側欄那一側：只讀 layout 提供的 context。 */
 function SidebarProbe() {
   const controls = useNotePageControls();
   const anchors = useContext(BlockAnchorContext);
@@ -46,7 +45,7 @@ function GoHome() {
 }
 
 describe("AppShellLayout", () => {
-  it("頁面登記的控制、錨點 API 與 inert 到得了殼底下的消費者（側欄）；頁面卸載就清掉", async () => {
+  it("page-registered controls, anchor API and inert reach consumers under the shell (the sidebar); unmounting the page clears them", async () => {
     render(
       <MemoryRouter initialEntries={["/n"]}>
         <Routes>
