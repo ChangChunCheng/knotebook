@@ -20,22 +20,15 @@ import { buildRevealConfig, configMatches, htmlHasPrintClasses, type RevealKeyHa
 import { COVER_ID } from "./slides";
 
 /**
- * #229 reveal 的生命週期與即時更新——React 只負責呼叫 startDeck／dispose。
- *
- * 生命週期（StrictMode 安全）：每次 startDeck 自建 `div.reveal > div.slides`；三個旗標 resolved／disposed／destroyed
- * 外加 announced。**Promise resolve 之前絕不 destroy**（會讓 initialize 永不 resolve、監聽拆不掉）——
- * resolve 時若已 disposed 才拆；只有送過 onRevealReady(true) 的這份才送 false。不用 reveal 的 isReady()（比 Promise 早一拍）。
- * 初始建置排在 queueMicrotask（匯出不得在 effect 本體）；StrictMode 的第一份在 microtask 前已 disposed，
- * 根本不會 new Reveal。
- *
- * 初始化前斷言 `window.location.search === "?present"`、初始化後 getConfig() 逐鍵核對＋下一個 rAF 補查
- * <html> class；任一不符 → shell.onFatal("present.configRefused")，外殼卸載 overlay、cleanup 走拆除。
- * 定位：讀 router hash `#/<id>` → 找到就 slide(h, v)，否則封面；reveal 自己的 readURL 因投影片沒有 id／data-id 而不會命中任何投影片。
- *
- * 更新：已登入＝fragment.observeDeep；公開＝doc prop 換成新的 Y.Doc；兩者另加 title 變動。防抖 500 ms／2 s
- * → 在 timer callback 重切、逐張比對（同 id 沿用元素）→ 結構變了 sync()、只有內容變 syncSlide()；以 repositionAfterUpdate
- * 算位置、無轉場套用；目前那張內容沒變時恢復被 reveal 暫停的媒體；目前那張內容變了才捲回頂端。不重建 reveal、
- * 全螢幕不受影響。
+ * StrictMode safe: each startDeck builds its own `div.reveal > div.slides`. Never destroy before initialize's Promise
+ * resolves (it would never resolve and the listeners could not be removed): if already disposed by then, tear down then;
+ * only the one that sent onRevealReady(true) sends false (reveal's isReady() fires one tick before the Promise, so it is
+ * not used). The initial build is queued in queueMicrotask (the export must not run in an effect body); StrictMode's first
+ * copy is disposed before the microtask, so it never does `new Reveal`.
+ * reveal merges the URL query into its config: `?present` is asserted before init and every getConfig() key (and the
+ * <html> classes, on the next rAF) re-checked after; a mismatch → shell.onFatal("present.configRefused").
+ * Positioning reads the router hash `#/<id>`: reveal's own readURL matches no slide because slides have no id / data-id.
+ * On updates, media paused by reveal is resumed when the current slide's content is unchanged.
  */
 export type PresentationSource =
   | { variant: "member"; doc: Y.Doc; title: string }
@@ -47,28 +40,26 @@ export interface DeckEnv {
   theme: "light" | "dark";
   t: (key: string) => string;
   queryClient: QueryClient;
-  /** router 的 location.hash（初始化定位用）。 */
   hash: string;
 }
 
 export interface DeckController {
-  /** doc 或 title prop 變了（React effect 呼叫）。 */
   sourceChanged(): void;
   themeChanged(): void;
   dispose(): void;
 }
 
-/** keyboard handler 經由它找到「這一次」的 reveal 與外殼；teardown 時清成 null。 */
 interface KeyTargetBox {
   current: { reveal: () => RevealApi | null; shell: () => PresentationShellContextValue } | null;
 }
 
 /**
- * reveal 6.0.2 的 setupScrollPrevention（js/reveal.js:459-467）建的 1 s setInterval 沒存 id、destroy() 也不清，
- * 它的閉包會一直留住該實例的 config，連帶留住我們傳進去的 keyboard handler。handler 若在 startDeck 裡建，V8 共用
- * 閉包 context 會把 startDeck 整個作用域（投影片 DOM、匯出 editor、env → Y.Doc）一起留住。緩解做法：handler 在這裡
- * （startDeck 作用域外）建，只捕獲一個 teardown 時清空的 box；teardown 另清投影片 DOM 與各參照。不攔截全域 setInterval。
- * 這是緩解、不是根治——每次簡報仍會留下 reveal 自己的空殼與一個空 box。升 reveal 版本時重新確認 destroy() 是否已清這支 interval。
+ * reveal 6.0.2's setupScrollPrevention (js/reveal.js:459-467) creates a 1 s setInterval whose id is not stored and which
+ * destroy() does not clear; its closure keeps that instance's config, and with it our keyboard handlers, alive. A handler
+ * created inside startDeck would share V8's closure context and keep the whole startDeck scope (slide DOM, export editor,
+ * Y.Doc) alive too. Mitigation: handlers are created here and capture only a box emptied at teardown (which also clears the
+ * slide DOM and references). Only a mitigation: each presentation still leaves reveal's empty shell and an empty box.
+ * When upgrading reveal, re-check whether destroy() clears this interval.
  */
 function createKeyHandlers(box: KeyTargetBox): RevealKeyHandlers {
   return {
@@ -167,7 +158,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
       else for (const id of changed) deck.syncSlide(dom.els.get(id)!.section);
       deck.slide(position.h, position.v);
     });
-    for (const id of changed) restackSlideBody(dom.els.get(id)!.body); // 並排堆疊：離目前那張太遠的量到 0、不動，換到時由 onSlideChanged 補
+    for (const id of changed) restackSlideBody(dom.els.get(id)!.body); // column stacking: slides too far from the current one measure 0 and are left alone; onSlideChanged fills them in when they become current
     for (const media of playing) if (media.isConnected && media.paused) void media.play().catch(() => {});
     currentId = position.id;
     hashWriter.request(position.id);
@@ -186,7 +177,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
       applyUpdateNow();
     } catch (err) {
       console.error(err);
-      // 匯出在 React 之外，錯誤邊界接不到——出口：外殼顯示錯誤、卸載 overlay → teardown。
+      // The export runs outside React, so an error boundary cannot catch it: the shell shows an error and unmounts the overlay → teardown.
       env().shell.onFatal("app.noteCrash");
     }
   };
@@ -214,7 +205,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
   };
 
   const teardown = () => {
-    if (!resolved || destroyed) return; // resolve 之前絕不 destroy
+    if (!resolved || destroyed) return; // never destroy before resolve
     destroyed = true;
     debouncer.cancel();
     unsubscribeSource?.();
@@ -222,7 +213,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
     reveal?.off("slidechanged", onSlideChanged);
     reveal?.destroy();
     dom.revealEl.remove();
-    // interval 洩漏的緩解（見 createKeyHandlers）：切斷 handler → 本作用域，清掉投影片內容與各參照。
+    // Mitigation for the interval leak (see createKeyHandlers).
     keyTarget.current = null;
     for (const els of dom.els.values()) els.body.replaceChildren();
     dom.slidesEl.replaceChildren();
@@ -252,7 +243,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
       build();
     } catch (err) {
       console.error(err);
-      // 匯出在 React 之外，錯誤邊界接不到——同上的出口。reveal 沒有 resolve 過，不 destroy。
+      // Same exit as above; reveal never resolved, so it is not destroyed.
       keyTarget.current = null;
       dom.revealEl.remove();
       env().shell.onFatal("app.noteCrash");
@@ -275,7 +266,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
           return;
         }
         if (!configMatches(instance.getConfig(), config)) {
-          env().shell.onFatal("present.configRefused"); // 外殼卸載 overlay → dispose → teardown
+          env().shell.onFatal("present.configRefused"); // the shell unmounts the overlay → dispose → teardown
           return;
         }
         instance.on("slidechanged", onSlideChanged);
@@ -287,14 +278,14 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
           instance.slide(position.h, position.v);
           currentId = target;
         } else {
-          // 找不到就回封面：reveal 初始化時的 readURL() 會把數字形 hash（#/1、#/2/0）當索引直接跳頁
-          // （location.js:76-90）——找不到我們的 id 就明確回封面。若因此改了索引，reveal 送
-          // slidechanged、由 onSlideChanged 寫成 #/_title；本來就在 (0,0) 時不送事件、網址不動。
+          // Not found → back to the cover: during initialization reveal's readURL() treats a numeric hash (#/1, #/2/0) as an index and
+          // jumps to that slide (location.js:76-90). If this changes the index reveal sends slidechanged and onSlideChanged writes
+          // #/_title; already at (0,0) no event is sent and the URL stays.
           instance.slide(0, 0);
         }
         swipe.refreshAll();
-        // 並排堆疊：reveal 到 initialize() 才讓 present 與鄰近幾張（viewDistance 內）顯示，之前量到的寬度一律是 0；
-        // 這裡只有 present 那張與鄰近幾張量得到；其餘量不到的張不動，換到時由 onSlideChanged 補量。只在渲染時量，不跟視窗縮放重算。
+        // reveal makes only the present slide and its neighbours (viewDistance) visible during initialize(), so earlier measurements are 0;
+        // only those can be measured here, the rest are measured by onSlideChanged when they become current.
         for (const els of dom.els.values()) restackSlideBody(els.body);
         runMermaid(mermaidJobsIn(dom.slidesEl));
         unsubscribeSource = subscribeSource();

@@ -1,3 +1,4 @@
+// Import only dynamically: the folder strings must stay out of the main bundle (scripts/check-bundle-size.mjs).
 import "@/i18n/folder-strings";
 import type { QueryClient } from "@tanstack/react-query";
 import type { FolderDto, FolderSpaceDto, NoteDto } from "@knotebook/shared";
@@ -16,15 +17,8 @@ import type { Translate } from "@/components/sidebar/destination-level";
 import { stackFolderName } from "@/components/sidebar/drag-zone";
 import { toast } from "@/components/ui/toast";
 
-/**
- * 疊資料夾的三發、補償、復原與兩句 toast。
- * lazy 模組：只准 `import("@/lib/stack-folder")`（useSidebarDrag 在 dragstart 預載、drop 時 await）；字串在 folders.*.json。
- */
-
-/** ① 撞名（409 folder_name_taken）時換下一個編號重送，① 總共最多這麼多發。 */
 export const STACK_CREATE_ATTEMPTS = 5;
 
-/** 被疊的一篇：`from`＝樹上的原位置（null＝根層）。 */
 export interface StackNote {
   noteId: string;
   from: string | null;
@@ -43,7 +37,6 @@ async function place(queryClient: QueryClient, noteId: string, folderId: string 
   queryClient.setQueryData(["note", note.id], note);
 }
 
-/** ① 失敗不建；撞名換號重送，最多 STACK_CREATE_ATTEMPTS 發。成功回 folder，失敗丟最後那一發的錯。 */
 async function createWithRetry(input: {
   parent: { folderId: string } | { space: FolderSpaceDto };
   firstName: string;
@@ -64,25 +57,19 @@ async function createWithRetry(input: {
   }
 }
 
-/**
- * 補償（第 7 步）：b 已放進新資料夾時先把 b 移回 → DELETE 新資料夾 {onlyIfEmpty}。
- * DELETE 回 409 folder_not_empty（別人剛放了東西進去）→ 保留、停；補償結束（成功、保留或任一發失敗）→ 一律重抓清單（不另出 toast）。
- */
+/** If DELETE returns 409 folder_not_empty (someone just put something in), keep the folder and stop. */
 async function compensate(args: { folderId: string; b: StackNote | null; queryClient: QueryClient }): Promise<void> {
   const { folderId, b, queryClient } = args;
   try {
     if (b !== null) await place(queryClient, b.noteId, b.from);
     await deleteFolderRequest(folderId, { onlyIfEmpty: true });
   } catch {
-    // 不論哪種錯誤都重抓：409 folder_not_empty 時資料夾被保留，快取裡還沒有它，不重抓側欄要等重整才看得到。
+    // Refetch whatever the error: on 409 folder_not_empty the folder is kept but not in the cache yet, so without a refetch the sidebar would only show it after a reload.
     invalidateFolderRelated(queryClient);
   }
 }
 
-/**
- * ① POST（撞名換號重送）→ ② PUT B → ③ PUT A；不樂觀（新資料夾的 id 要等 server）。
- * 成功：await ["folders"]、["notes"] 的失效重抓後回 folder。失敗：第 7 步補償、恰一則錯誤 toast（失敗那一步的錯）、回 null。
- */
+/** Not optimistic: the new folder's id comes from the server. */
 export async function runStackFolder(input: {
   a: StackNote;
   b: StackNote;
@@ -97,7 +84,7 @@ export async function runStackFolder(input: {
   try {
     folder = await createWithRetry(input);
   } catch (err) {
-    // server 端沒變，但快取可能已落後（父資料夾被刪、撞名發數用完）：重抓清單。
+    // The cache may be stale (parent folder deleted, name-clash attempts used up).
     invalidateFolderRelated(queryClient);
     errorToast(t, err);
     return null;
@@ -120,10 +107,6 @@ export async function runStackFolder(input: {
   return folder;
 }
 
-/**
- * 第 8 步「復原」：PUT A 回原處 → PUT B 回原處 → DELETE {onlyIfEmpty}（server 判空）→ 重抓。
- * 200 → 不出 toast；409 folder_not_empty → 保留資料夾並提示；404 folder_not_found → 視為完成；任一 PUT 失敗 → 錯誤 toast、不送 DELETE、不重試。
- */
 export async function undoStackFolder(args: { folderId: string; a: StackNote; b: StackNote; queryClient: QueryClient; t: Translate }): Promise<void> {
   const { folderId, a, b, queryClient, t } = args;
   try {
@@ -143,7 +126,6 @@ export async function undoStackFolder(args: { folderId: string; a: StackNote; b:
   invalidateFolderRelated(queryClient);
 }
 
-/** 改名框關閉後：toast「已建立「name」並放入 2 篇筆記」＋「復原」。handler 只用參數捕捉的值。 */
 export function showStackCreatedToast(args: { folderId: string; name: string; a: StackNote; b: StackNote; queryClient: QueryClient; t: Translate }): void {
   const { folderId, name, a, b, queryClient, t } = args;
   toast({

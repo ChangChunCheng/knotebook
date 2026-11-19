@@ -16,26 +16,19 @@ import { SidebarDrawerContext } from "@/lib/sidebar-drawer";
 import { EMPTY_SELECTION, reduceSelection, type SelectionOp, type SidebarSelection } from "@/lib/sidebar-selection";
 
 /**
- * 側欄 tab 的狀態、記憶與兩個 context（`sidebar-drawer.ts` 同理由放 `lib/`，避開循環 import）。
- *
- * - 為什麼拆兩個 context：`AppShell` 以 `children` 渲染筆記頁，筆記頁若消費含 state 的
- *   context，每次切 tab 都會重繪整頁。`SidebarTabActionsContext` 只放穩定的函式（整個生命週期同一個
- *   物件），筆記頁只用它；`SidebarTabStateContext` 放目前 tab 與選取，只有側欄元件消費。
- * - 選取狀態也在這裡：靜態卡與抽屜兩份要看到同一份；actions 只放穩定函式，勾選不讓
- *   `children` 重繪。切 tab、抽屜 Esc（`actionsRef`，`AppShell` 用）與開始搜尋都會結束選取。
- * - `showTab` 讀 ref 而不是把抽屜與手機清單 context 放進依賴：`AppShell` 的 `SidebarDrawerContext.Provider value`
- *   每次 render 都是新物件，進依賴的話 actions 會跟著換物件。
- * - `AppShell` 在 layout route 裡、換路由不重掛；初值仍在每次掛載時讀 storage（重新整理、開新分頁）。
- * - 合法值就是 `SIDEBAR_TABS` 的六個（含 `favorites`、`trash`）；舊版存下的值都還在清單內，照樣讀得回來。
+ * Lives in `lib/` to avoid import cycles (as `sidebar-drawer.ts`).
+ * - Two contexts: the note page is AppShell's `children`, so consuming state there would repaint it on every tab switch;
+ *   `SidebarTabActionsContext` holds only stable functions, `SidebarTabStateContext` is for sidebar components.
+ * - Selection lives here so the static card and the drawer share it; switching tab, drawer Esc and starting a search end it.
+ * - `showTab` reads refs instead of the drawer/phone-list contexts: the `SidebarDrawerContext.Provider` value in
+ *   `AppShell` is a new object every render and would make the actions object change with it.
  */
 export type SidebarTab = "recent" | "favorites" | "myNotes" | "workspace" | "shared" | "trash";
 
-/** tab 列的順序。最愛排在最近之後；預設 tab 仍是我的筆記。 */
 export const SIDEBAR_TABS: readonly SidebarTab[] = ["recent", "favorites", "myNotes", "workspace", "shared", "trash"];
 export const DEFAULT_SIDEBAR_TAB: SidebarTab = "myNotes";
 export const SIDEBAR_TAB_STORAGE_KEY = "sidebar.tab";
 
-/** 缺鍵、不在 `SIDEBAR_TABS` 內、或儲存被封鎖 → 預設。 */
 export function readSidebarTab(): SidebarTab {
   try {
     const raw = window.localStorage.getItem(SIDEBAR_TAB_STORAGE_KEY);
@@ -49,23 +42,20 @@ export function writeSidebarTab(tab: SidebarTab): void {
   try {
     window.localStorage.setItem(SIDEBAR_TAB_STORAGE_KEY, tab);
   } catch {
-    // 寫不進去就只活在本次 session 的 state 裡。
   }
 }
 
 export interface SidebarTabActions {
-  /**
-   * 換到別的 tab 時另外結束選取；點目前那顆不結束。預設會把清單帶到眼前（手機回清單畫面、側欄浮動時開抽屜）；
-   * `reveal: false` 只換 tab，不動畫面（例如功能導覽結束時把 tab 還原成開始前的）。
-   */
+  /** `reveal: false` switches the tab without moving the screen (e.g. restoring the pre-tour tab). */
   showTab: (tab: SidebarTab, options?: { reveal?: boolean }) => void;
   updateSelection: (op: SelectionOp) => void;
-  /** 在選取模式就結束並回 true；否則回 false、不動 state。抽屜 Esc 用。 */
   endSelectionIfActive: () => boolean;
-  /** 目前這一輪選取的序號：每次 `updateSelection({ type: "start" })` 遞增；不在選取模式回 null。穩定函式（讀 ref）。
-   *  批次動作開跑時記下，結束時相同才套用選取結果——與元件是否還掛著無關（抽屜關掉會卸載動作列，但選取還在）。 */
+  /**
+   * Selection round counter. A batch records it at start and applies its result only if unchanged, even when the component
+   * is gone (closing the drawer unmounts the action bar, but the selection remains).
+   */
   getSelectionSession: () => number | null;
-  /** 目前的 tab。穩定函式（讀 ref）：給 `SidebarTabProvider` 外面、拿不到 `useSidebarTabState` 的呼叫端（`AppShell` 交給功能導覽）。 */
+  /** Stable getter for callers outside the provider (`AppShell` hands it to the feature tour). */
   getTab: () => SidebarTab;
 }
 export interface SidebarTabState {
@@ -111,10 +101,9 @@ export function SidebarTabProvider({
     writeSidebarTab(next);
     if (next !== tabRef.current) {
       dispatchSelection({ type: "end" });
-      clearSearchMark(); // 搜尋框已空時切到別的 tab ＝離開搜尋：清掉搜尋跳轉留在筆記裡的標記
+      clearSearchMark(); // switching tab with an empty search box = leaving search: clear the mark a search jump left in the note
     }
     if (options?.reveal === false) return;
-    // 手機：清單本身就是全螢幕畫面，換 tab 後要回到清單；浮動段：開抽屜；固定段：側欄一直在，不做事。
     if (isPhone()) phoneListRef.current?.backToList();
     else if (window.matchMedia(OVERLAY_QUERY).matches) drawerRef.current?.setOpen(true);
   }, []);
@@ -148,7 +137,6 @@ export function SidebarTabProvider({
   );
 }
 
-/** 不在 `AppShell` 底下＝no-op、不 throw（比照 `useCloseSidebarDrawer`）。 */
 export function useSidebarTabActions(): SidebarTabActions {
   return useContext(SidebarTabActionsContext) ?? NOOP_ACTIONS;
 }

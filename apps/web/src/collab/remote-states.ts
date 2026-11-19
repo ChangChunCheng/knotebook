@@ -1,10 +1,7 @@
 import { collabUserColor, parseAwarenessCursor } from "@knotebook/shared";
 
-/**
- * #312：awareness 是 client 自報的資料。交給 BlockNote／y-prosemirror 畫遠端游標之前先清洗——
- * 它們會把 `user.color` 原樣寫進 `style`，遇到格式錯誤的 `cursor` 則直接 throw。
- * server 也會重建一次；這裡是第二道，不信任任何舊版或被入侵的 server 轉來的內容。
- */
+// Awareness is self-reported (#312): sanitize before BlockNote/y-prosemirror draw cursors (they
+// write `user.color` into `style` as-is and throw on a malformed `cursor`). Second layer after the server's own rebuild.
 
 const FALLBACK_COLOR = "#888888";
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -13,10 +10,7 @@ const HSL_COLOR = /^hsl\((\d{1,3}) (\d{1,3})% (\d{1,3})%\)$/;
 const isObject = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null && !Array.isArray(x);
 
-/**
- * `hsl(H S% L%)` 轉 `#rrggbb`。y-prosemirror 會在顏色後面直接接兩位 alpha（`${color}70`）畫選取底色，
- * `hsl(...)70` 不是合法的 CSS，選取會整個看不見，所以交給它的顏色一定要是 6 位 hex。
- */
+// y-prosemirror appends a two-digit alpha to the color (`${color}70`), so it must be 6-digit hex.
 export function hslToHex(hsl: string): string | null {
   const m = HSL_COLOR.exec(hsl);
   if (!m) return null;
@@ -32,7 +26,7 @@ export function hslToHex(hsl: string): string | null {
   return `#${channel(0)}${channel(8)}${channel(4)}`;
 }
 
-/** 有 id 一律用 id 算出的顏色（送來的顏色不採信）；沒有 id 只收合法的 `#rrggbb`（AI 代理）；其餘灰色。 */
+/** A sent color is not trusted when there is an id; without one (AI agents) only a valid `#rrggbb` is accepted. */
 export function safeCursorColor(user: unknown): string {
   if (!isObject(user)) return FALLBACK_COLOR;
   if (typeof user.id === "string" && user.id !== "") {
@@ -41,7 +35,7 @@ export function safeCursorColor(user: unknown): string {
   return typeof user.color === "string" && HEX_COLOR.test(user.color) ? user.color : FALLBACK_COLOR;
 }
 
-// 同一個輸入物件回同一個輸出物件：身分穩定，裝飾每次重建時也不必重新淨化。
+// Stable output identity per input object, so decorations don't re-sanitize on each rebuild.
 const cache = new WeakMap<object, Record<string, unknown>>();
 
 function sanitizeState(state: Record<string, unknown>): Record<string, unknown> {

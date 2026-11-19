@@ -8,13 +8,10 @@ import { sanitizeSlideFragment } from "./sanitize";
 import { postprocessSlide, type MermaidJob, type PostprocessContext } from "./postprocess";
 
 /**
- * #229 匯出管線：Y.Doc → blocks → noteToSlides → 每張 blocksToHTMLLossy（同張一次，清單才正確合成）
- * → `<template>` → 消毒 → 後處理。封面以 textContent 建 `<h1>`。
- *
- * ⚠ **時機**：`createExportEditor`／`renderDeck` 只准在 `setTimeout`／`queueMicrotask` 的 callback 裡
- * 呼叫，**不得**在 render、useMemo、useLayoutEffect、useEffect 本體內——wikilink 的 toExternalHTML 走
- * flushSync，React 19 在 passive effect 裡呼叫 flushSync 不會同步渲染（實測：effect 本體匯出
- * 得 `<p><span></span></p>` 並有 1 則 flushSync 警告；microtask／timeout 得完整 wikilink）。
+ * Timing: `createExportEditor` / `renderDeck` may be called only inside a `setTimeout` / `queueMicrotask` callback, never in
+ * the body of render, useMemo, useLayoutEffect or useEffect: a wikilink's toExternalHTML goes through flushSync, and React 19
+ * does not render synchronously when flushSync is called inside a passive effect (you get `<p><span></span></p>` plus a
+ * flushSync warning).
  */
 export function createExportEditor() {
   return BlockNoteEditor.create({ schema: presentationSchema });
@@ -25,11 +22,9 @@ export type ExportEditor = ReturnType<typeof createExportEditor>;
 export interface RenderedSlide {
   id: string;
   kind: SlideKind;
-  /** 只有標題（heading 張沒有其他 block、或封面沒有非空白內容）→ 垂直置中。 */
   titleOnly: boolean;
-  /** 內容比對鍵（以該張 blocks 的 JSON 字串比；封面另含標題）。 */
   key: string;
-  /** null＝key 與上一版相同，沿用既有 DOM。 */
+  /** null: key unchanged since the previous render; keep the existing DOM. */
   content: { fragment: DocumentFragment; mermaid: MermaidJob[] } | null;
 }
 
@@ -58,6 +53,7 @@ export function renderDeck(input: RenderDeckInput): RenderedSection[] {
       if (input.previousKeys?.get(slide.id) === key) return { id: slide.id, kind: slide.kind, titleOnly, key, content: null };
 
       const template = document.createElement("template");
+      // One blocksToHTMLLossy call per slide, so its list items merge into one list.
       template.innerHTML = slide.blocks.length > 0 ? input.editor.blocksToHTMLLossy(slide.blocks) : "";
       const fragment = sanitizeSlideFragment(template.content);
       const mermaid = postprocessSlide(fragment, input.ctx);

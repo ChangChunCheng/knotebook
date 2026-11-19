@@ -3,18 +3,15 @@ import { CODE_BLOCK_BASE_OPTIONS, mermaidBlockConfig } from "@knotebook/shared";
 import { noteSchema } from "@/collab/schema";
 
 /**
- * #229 簡報專用匯出 schema——只給 headless 匯出用，絕不掛到編輯器上。
- * 與 noteSchema 的差異只有三處（其餘沿用；parity 測試在 schema.test.ts）：
- * 1. mermaid：`toExternalHTML` 換成純 DOM 的 `div[data-kn-mermaid]`＋`textContent = code`（不經 React；
- *    與 shared `createHeadlessNoteSchema` 同手法，`note-schema-config.ts:89-98`）——codeBlock(language=mermaid)
- *    仍是 `<pre><code>`，不靠 data-language 猜。
- * 2. 檔案類四種：在既有 `withGuardedExternalHTML`（`props.url` 先過 safeMediaUrl）外再包一層，把帶網址的那個
- *    元素標上 `data-kn-media=""`——消毒前就存在，消毒白名單放行，後處理靠它分辨檔案連結與文字連結。
- * 3. codeBlock：不上色的 `createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS)`（同 server headless），不經
- *    `lib/code-highlight.ts` 的 highlighter。
+ * Headless export only, never attached to an editor. Differs from noteSchema in three places (parity test in schema.test.ts):
+ * 1. mermaid: `toExternalHTML` is a pure-DOM `div[data-kn-mermaid]` with `textContent = code` (same approach as shared
+ *    `createHeadlessNoteSchema`); codeBlock(language=mermaid) stays `<pre><code>`.
+ * 2. The four file kinds: wrapped around `withGuardedExternalHTML` (`props.url` goes through safeMediaUrl first), marking the
+ *    URL-carrying element `data-kn-media=""` so post-processing can tell file links from text links.
+ * 3. codeBlock: the uncolored `createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS)` (same as the server headless), not the highlighter.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例，同 shared note-schema-config.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention (same as shared note-schema-config.ts)
 type FileBlockSpecLike = { implementation: { toExternalHTML?: (this: any, block: any, ...rest: any[]) => unknown } };
 
 const MEDIA_TARGET = "img, video, audio, a[href]";
@@ -33,7 +30,7 @@ function withMediaMarker<Spec extends FileBlockSpecLike>(spec: Spec): Spec {
     ...spec,
     implementation: {
       ...spec.implementation,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
       toExternalHTML(this: unknown, ...args: any[]) {
         const output = original.apply(this, args as [unknown, ...unknown[]]);
         markMedia(output);
@@ -51,7 +48,7 @@ const presentationMermaidSpec = createBlockSpec(mermaidBlockConfig, {
     div.textContent = block.props.code;
     return { dom: div };
   },
-})(); // createBlockSpec 回 factory（shared note-schema-config.ts:99 同註）
+})(); // createBlockSpec returns a factory
 
 const specs = noteSchema.blockSpecs;
 

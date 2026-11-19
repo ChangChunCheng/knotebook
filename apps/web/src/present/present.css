@@ -1,7 +1,5 @@
-/* #229 簡報層樣式。只被 present/PresentationOverlay.tsx import → 只進簡報 lazy chunk。
-   每條規則都錨在 .kn-present（深色：:root.dark .kn-present）底下——present-css.test.ts 守著。
-   不載 reveal 主題；色彩、字型吃 app 的 token（index.css）。reveal.css 的全域選擇器以 reveal 自己加的 class
-   為閘；.reveal-viewport 寫死的黑字白底在這裡覆寫成 token。 */
+/* Every rule is anchored under .kn-present (dark: :root.dark .kn-present); present-css.test.ts enforces this.
+   The reveal theme is not loaded: colors and fonts come from the app tokens (index.css), and the hard-coded black-on-white of .reveal-viewport is overridden. */
 
 .kn-present .reveal-viewport,
 .kn-present .reveal {
@@ -10,7 +8,7 @@
   font-family: var(--font-sans);
 }
 .kn-present .reveal {
-  /* 總覽中目前那張的外框色（reveal.css：outline: 10px solid var(--r-link-color)）；不載 reveal 主題所以沒人定義它 */
+  /* Outline color of the current slide in the overview (reveal.css: outline: 10px solid var(--r-link-color)); nothing defines it because the reveal theme is not loaded */
   --r-link-color: var(--color-brand);
   width: 100%;
   height: 100%;
@@ -24,7 +22,7 @@
   width: 100%;
   height: 100%;
 }
-/* overscroll-behavior：捲到投影片頭尾時不帶動背後的頁面（手機上筆記是文件在捲）。 */
+/* overscroll-behavior: scrolling to a slide's top or bottom must not drag the page behind it (on phones the document scrolls). */
 .kn-present .reveal .slides section[data-kn-slide-id] {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -32,17 +30,13 @@
   font-size: clamp(1rem, 0.6rem + 1.2vw, 1.75rem);
   line-height: 1.5;
 }
-/* 沒有溢出的投影片關掉瀏覽器手勢（e2e 22-presentation 揭露）：section 是 overflow-y:auto 捲動容器，computed touch-action 是 auto，
-   Chromium 會在第一個 pointermove 之後送 pointercancel；reveal 6.0.2 走 pointer 事件路徑，位移因此停在約 27px、到不了 40px 的滑動門檻，
-   換頁不成。溢出的投影片由 deck.ts 標 data-prevent-swipe，維持瀏覽器捲動（手指用來捲動內容，換頁用畫面箭頭）。
-   不用 pan-y：那會把垂直手勢交給瀏覽器，縱向投影片的上下滑換頁會壞。
-   ⚠ touch-action 沿祖先鏈取交集，但 Chromium 對「本身是捲動容器」的元素會把繼承來的值再加上 pan（StyleAdjuster 的 effective touch-action）：
-   overflow-x:auto 的 <pre> 與 .kn-present-table 即使內容放得下也是捲動容器，手指從它們身上起手仍會被 pointercancel。
-   表格包裝層本來就標 data-prevent-swipe（橫滑捲表格）；<pre> 由 deck.ts 的 updateSwipeGuard 依橫向溢出標記，沒溢出的 <pre> 由下一條規則顯式關掉。 */
+/* touch-action:none on non-overflowing slides: a section is an overflow-y:auto scroll container, so Chromium sends pointercancel after the first pointermove and reveal 6.0.2's pointer swipe stalls (~27px < 40px threshold).
+   Not pan-y: it breaks up/down swipes between vertical slides. Overflowing slides, table wrappers and overflowing <pre> carry data-prevent-swipe and keep native scrolling.
+   Chromium re-adds pan on any element that is itself a scroll container (an overflow-x:auto <pre> even when it fits), hence the next rule. */
 .kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) {
   touch-action: none;
 }
-/* 錨在未溢出的 section 底下：溢出的投影片若讓 <pre> 變 none，從程式碼上起手就捲不動整張。 */
+/* Anchored under a non-overflowing section: if an overflowing slide set <pre> to none, a gesture starting on code could not scroll the slide. */
 .kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe]) {
   touch-action: none;
 }
@@ -68,7 +62,7 @@
 .kn-present .kn-slide-body h1 { font-size: 2.25em; font-weight: 700; line-height: 1.2; margin: 0 0 0.5em; }
 .kn-present .kn-slide-body h2 { font-size: 1.75em; font-weight: 700; line-height: 1.25; margin: 0 0 0.5em; }
 .kn-present .kn-slide-body h3 { font-size: 1.4em; font-weight: 600; margin: 0.8em 0 0.4em; }
-/* 手機：標題縮小，寫在桌面規則之後（同特異性，後者勝）。 */
+/* After the desktop rules: same specificity, so order decides. */
 @media (width < 40rem) {
   .kn-present .kn-slide-body h1 { font-size: 1.75em; }
   .kn-present .kn-slide-body h2 { font-size: 1.5em; }
@@ -95,8 +89,8 @@
 .kn-present .kn-slide-body figcaption { font-size: 0.8em; color: var(--muted-foreground); margin-top: 0.25em; }
 .kn-present .kn-slide-body img,
 .kn-present .kn-slide-body video { max-width: 100%; height: auto; }
-/* 並排：列與欄的 inline style 是正規形（display:flex;gap:16px、flex:N），sanitize.ts 刻意保留，
-   要蓋過它的宣告只能 !important。欄距同編輯器，堆疊由 present/columns.ts 標 data-stacked。欄內圖片吃上面的 max-width。 */
+/* Side by side: the inline style on rows and columns is the canonical form (display:flex;gap:16px, flex:N) and sanitize.ts keeps it on purpose,
+   so overriding declarations need !important. The column gap matches the editor; stacking is marked data-stacked by present/columns.ts. Images in columns use the max-width above. */
 .kn-present .kn-slide-body [data-kb-columns] { gap: 24px !important; align-items: flex-start; }
 .kn-present .kn-slide-body [data-kb-column] { min-width: 0; }
 .kn-present .kn-slide-body [data-kb-columns][data-stacked] { display: block !important; }

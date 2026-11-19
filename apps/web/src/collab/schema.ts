@@ -5,65 +5,31 @@ import { mermaidSpec } from "@/components/mermaid/spec";
 import { wikilinkSpec } from "@/components/wikilink/spec";
 import { withColumnsLayout } from "./columns/layout-extension";
 
-// 早期版本 **不啟用 image
-// block**，並且**攔截並拒絕**圖片的貼上／拖放。理由不是 UI 潔癖而是儲存：BlockNote
-// 沒有 `uploadFile` 時會把貼進來的圖片轉成 data URL 塞進 block props，那份 base64
-// 會直接進 Y.Doc → 經 `onStoreDocument` 灌爆 `note_states` 與分桶備份（設計分桶
-// 正是為了避免這類 bytea 膨脹）。
-//
-// 現在這段已經**不成立**：image block 恢復啟用，`NoteEditor.tsx` 的
-// `buildNoteEditorOptions` 掛了 `uploadFile`（`createUploadFile`），純圖片
-// 檔案的貼上／拖放改走「先上傳、拿到 url 才寫回 block props」這條路，不會再有 base64
-// 進 Y.Doc。
-//
-// 下面 `classifyMediaTransfer` 的媒體 data URL 攔截**依然需要**：它擋的是「來源本身
-// 就是 data URL、沒有真正的 `File`」這種形狀（例如從網頁複製圖片，剪貼簿只給
-// HTML/文字表示法），這種情形完全繞過 `uploadFile` 管線，一旦放行一樣會把 base64 塞進
-// block props。`audio`/`video`/`file` 三個檔案類 block 沒有自家 Upload tab（本專案的
-// FilePanel 只給 image 掛 Upload tab，見 `components/FilePanel.tsx`），只剩「輸入
-// 網址嵌入」一途，同樣不會有位元組進 Y.Doc；下方的 transfer 守衛因此對所有檔案／
-// 媒體 data URL 一視同仁，不分型別。
+// Media data URLs must never reach block props: BlockNote turns pasted images into data URLs
+// when there is no `uploadFile`, and that base64 would bloat the Y.Doc, `note_states` and backups.
+// Plain image files go through `uploadFile` (never base64); `classifyMediaTransfer` blocks the
+// rest (data URLs with no real `File`, e.g. an image copied from a web page).
 
 /**
- * issue #43：檔案類 block 的 `toExternalHTML` 套上與渲染端相同的媒體 URL 守衛。
+ * #43: file-type blocks' `toExternalHTML` (clipboard copy, drag `text/html`, markdown export)
+ * reads the raw `props.url` (`@blocknote/core` 0.52.1: `el.src = props.url` / `a.href = props.url`),
+ * which the render-side `safeMediaUrl` hook on `resolveFileUrl` doesn't cover; a tainted block
+ * copied into another app would carry `javascript:` hrefs out.
+ * `withGuardedExternalHTML` (in shared, also used by the headless schema) swaps only `props.url`
+ * for `safeMediaUrl`.
  *
- * #12 把 `safeMediaUrl` 掛在 `resolveFileUrl` 上，但那個鉤子只在 **render** 路徑；
- * `toExternalHTML`（BlockNote 內建的剪貼簿複製／dragstart 的 `text/html`，以及
- * `blocksToMarkdownLossy` 的 markdown 匯出；送 AI 的選取內容改走 `ai/note-markdown.ts` 的 headless 編輯器，
- * 那顆的 schema 是 shared `createHeadlessNoteSchema`，同一支 `withGuardedExternalHTML`）
- * 拿的是 raw `props.url`，`@blocknote/core` 0.52.1 的 audio／file／image／video 四個
- * `toExternalHTML` 都直接 `el.src = props.url` 或 `a.href = props.url`。複製一個被
- * 污染的 block 貼到別的應用程式，帶過去的就是 `<a href="javascript:…">`——不是本
- * 應用程式頁面上的 XSS（那條 #12 已堵住），但屬於「把惡意內容帶出應用程式」。
+ * Relies on three things, each pinned by a test: the exporter reads the spec from the editor's
+ * schema; the editor receives `noteSchema` itself (`NoteEditor.test.ts`); the file-type blocks
+ * are exactly audio/file/image/video (`meta.fileBlockAccept` parity test). A red one after a BlockNote
+ * upgrade means one of these changed.
  *
- * `withGuardedExternalHTML` 本體與判斷規則見 `@knotebook/shared` 的
- * `note-schema-config.ts`（server 端 headless schema 共用同一份實作，不重寫四個 spec
- * 的 DOM 產生邏輯，只在委派給原實作之前把 `props.url` 換成 `safeMediaUrl`）。
- *
- * ⚠ 這條守衛的失效模式：它依賴三件事，各有一條測試釘著——①匯出器讀的是**編輯器
- * schema 裡的** spec（`editor.blockImplementations` ← `schema.blockSpecs`，0.52.1
- * 核實；`schema.test.ts` 的「issue #43 端到端」那組測試用真編輯器 + `blocksToMarkdownLossy` 釘住）；
- * ②編輯器拿到的是 `noteSchema` 本尊（`NoteEditor.test.ts` 的接線釘，本檔管不到）；
- * ③檔案類 block 恰為那四種（`schema.test.ts` 的 `meta.fileBlockAccept` parity 測試釘住「上游新增
- * 第五種」的靜默缺口）。升級 BlockNote 時哪條測試紅了，就是對應那件事變了。
- *
- * 另註：`blocknote/html` 這個私有剪貼簿格式走 ProseMirror 的 `serializeForClipboard`
- * →tiptap node 的 `renderHTML`（不是 external 匯出器、也不是 BlockNote 的
- * internalHTMLSerializer 模組），仍帶 raw `data-url`——只有另一個 BlockNote 讀得懂，
- * 貼回來會重建 block 再吃一次 #12 的渲染守衛，不升險，刻意不管。
+ * The private `blocknote/html` clipboard format still carries the raw `data-url`; only BlockNote
+ * can read it and pasting back hits the render guard, so it is left alone.
  */
 
 /**
- * 本專案的 BlockNote schema：預設 block **全套**（含 image；
- * audio／file／image／video 四個檔案類 block 的 `toExternalHTML` 套上 #43 的 URL
- * 守衛，見上方 `withGuardedExternalHTML`），inline content 全套**加上** `wikilink`
- * 。並排排版的 `columnList`／`column` 兩型來自 `@knotebook/shared` 的 `columns.ts`（與 headless schema 同一份）。
- *
- * ⚠ `BlockNoteSchema.create` 傳入 `inlineContentSpecs` 是**整組覆寫**，不是「疊加在
- * 預設值上」——`BlockNoteSchema.create` 本體只有在完全不傳這個欄位時才會落回
- * `defaultInlineContentSpecs`。這裡漏了 `...defaultInlineContentSpecs` 的 spread，
- * 會靜默毀掉 `text`/`link` 兩個預設 inline spec（連最基本的文字輸入都會壞掉，且不會
- * 有任何型別錯誤提示）。
+ * `BlockNoteSchema.create` treats `inlineContentSpecs` as a full override: dropping the
+ * `...defaultInlineContentSpecs` spread silently breaks `text`/`link` (even basic typing) with no type error.
  */
 export const noteSchema = BlockNoteSchema.create({
   blockSpecs: {
@@ -72,15 +38,12 @@ export const noteSchema = BlockNoteSchema.create({
     file: withGuardedExternalHTML(defaultBlockSpecs.file, window.location.href),
     image: withGuardedExternalHTML(defaultBlockSpecs.image, window.location.href),
     video: withGuardedExternalHTML(defaultBlockSpecs.video, window.location.href),
-    // issue #94：mermaid 圖表 block。⚠ `createReactBlockSpec` 回傳的是 **factory**
-    // （與 `createReactInlineContentSpec` 不同，後者直接回傳 spec）——這裡的括號不能少。
+    // `createReactBlockSpec` returns a factory (unlike `createReactInlineContentSpec`), so the call parentheses are required.
     mermaid: mermaidSpec(),
-    // issue #96：codeBlock 換成帶語法上色選項的版本。`defaultBlockSpecs.codeBlock` 是
-    // `createCodeBlockSpec()` 不帶參數的產物（supportedLanguages 空物件＝語言下拉沒有
-    // 東西、無 createHighlighter＝不上色）——選項封在 spec 閉包裡，**沒有** editor 層
-    // 的 `codeBlock` 選項可以事後補（已對 0.52.1 dist 核實），唯一接線點就是這裡。
+    // #96: `defaultBlockSpecs.codeBlock` is created with no options (no languages, no highlighter);
+    // they are sealed in the spec closure with no editor-level option (checked on 0.52.1), so this is the only wiring point.
     codeBlock: createCodeBlockSpec(CODE_BLOCK_OPTIONS),
-    // 版面外掛（堆疊、欄內圖片把手）只掛在 web 的 schema；回新物件，shared 的 spec 不變（headless schema 也用它）。
+    // Applied only to web's schema; returns a new object so shared's spec (used by the headless schema) is unchanged.
     columnList: withColumnsLayout(columnListBlockSpec),
     column: columnBlockSpec,
   },
@@ -90,9 +53,8 @@ export const noteSchema = BlockNoteSchema.create({
 export type NoteSchema = typeof noteSchema;
 
 /**
- * 媒體 data URL 偵測。只認 `image`/`video`/`audio` 三種 MIME 大類——一般文字裡出現
- * 「data:」字樣（例如在講解程式碼）不該被誤擋。前綴 `(?:^|[\s"'(=])` 讓它同時吃得到
- * 純文字貼上與 HTML 片段裡的 `src="data:image/png;base64,…"`。
+ * Only image/video/audio families: the text "data:" in ordinary prose must not be blocked. The
+ * prefix matches plain-text pastes and `src="data:…"` inside HTML fragments.
  */
 const MEDIA_DATA_URL_RE = /(?:^|[\s"'(=])data:(?:image|video|audio)\/[a-z0-9.+-]+[;,]/i;
 
@@ -100,26 +62,16 @@ export function containsMediaDataUrl(text: string | null | undefined): boolean {
   return typeof text === "string" && MEDIA_DATA_URL_RE.test(text);
 }
 
-/** {@link classifyMediaTransfer} 攔下這次貼上／拖放的原因；`null`＝放行。 */
 export type BlockedTransferReason = "dataUrl" | "textRepresentation" | "nonImageFile";
 
-/**
- * `containsMediaDataUrl` 掃描的四種文字格式（規則①）。刻意**不含**
- * `vscode-editor-data`——那個管線只用 `text/plain` 造 code block，本身不會帶媒體
- * data URL，掃了也是白掃。
- */
+// `vscode-editor-data` is left out: it only uses `text/plain` to build a code block and never carries a media data URL.
 const MEDIA_DATA_URL_TEXT_FORMATS = ["text/html", "text/plain", "text/markdown", "blocknote/html"] as const;
 
 /**
- * BlockNote 內部 `acceptedMIMETypes`（`@blocknote/core/src/api/clipboard/fromClipboard/acceptedMIMETypes.ts`）
- * 的前五種——該常數未從套件公開匯出，這裡按規則②需要的子集重寫一份（不含殿後的
- * `"Files"`，那個交給下面的 `hasFiles` 另外判斷）。
- *
- * ⚠ 失效模式：這是手抄本，不是 import。BlockNote 升版異動 `acceptedMIMETypes`
- * （增減格式、調整順序）時，這裡不會有任何測試變紅——規則②會靜默跟上游脫節，
- * 直到有人手動比對兩邊才會發現。該常數不在套件的公開 exports map 裡，寫不出
- * import 型的 parity 測試來守住這條同步關係；升級 `@blocknote/core` 版本時記得
- * 回頭比對這份原始碼路徑。
+ * Hand copy of the first five entries of BlockNote's unexported `acceptedMIMETypes`
+ * (`@blocknote/core/src/api/clipboard/fromClipboard/acceptedMIMETypes.ts`), without the trailing
+ * `"Files"`. No test catches upstream drift (not in the package exports map): compare against
+ * that file when upgrading `@blocknote/core`.
  */
 export const TEXT_REPRESENTATION_MIME_TYPES = [
   "vscode-editor-data",
@@ -130,29 +82,16 @@ export const TEXT_REPRESENTATION_MIME_TYPES = [
 ] as const;
 
 /**
- * 這次貼上／拖放該不該被攔下來、為什麼。四條規則依序判斷，第一條命中
- * 就回傳，全部不匹配則放行（`null`）：
- *
- * ① `text/html`／`text/plain`／`text/markdown`／`blocknote/html` 任一含媒體 data
- *    URL → `"dataUrl"`——從別的網頁複製圖片時，剪貼簿常常只有 HTML 而沒有 file
- *    entry；即使有 file entry，內嵌 data URL 一樣會讓 BlockNote 把它塞進 block
- *    props（bytea 膨脹的源頭），所以這條的優先權在檔案判斷之前。
- * ② 帶 `File` 且 `dataTransfer.types` 含 `TEXT_REPRESENTATION_MIME_TYPES` 任一
- *    → `"textRepresentation"`——這種形狀代表來源本身還帶了一份可用的文字/HTML
- *    表示法（例如編輯器內部拖曳、或來源網頁的一般 `<img src="https://…">`），
- *    BlockNote 的 `handleFileInsertion` 一旦偵測到這些格式排在 `"Files"` 前面就會
- *    直接放棄檔案插入路徑；我們沿用同一個判準，統一攔下引導使用者改用檔案本身。
- * ③ `files` 非空且全部 `File.type` 以 `image/` 開頭（空字串＝非 image）→ 放行
- *    （`null`）——純圖片檔案的貼上／拖放本身不會產生 data URL，交給後續
- *    `uploadFile` 管線處理。
- * ④ 其餘含檔案的情形（任一非 image 檔）→ `"nonImageFile"`。
- *
- * 傳 `null`／`undefined`（某些合成事件沒有 dataTransfer）一律放行。
+ * Rules in order, first match wins; `null` = allow:
+ * - A media data URL in any scanned text format → `"dataUrl"`, checked before the file rules:
+ *   even with a file entry, an embedded data URL makes BlockNote put it in block props.
+ * - A `File` plus any `TEXT_REPRESENTATION_MIME_TYPES` type → `"textRepresentation"`:
+ *   BlockNote's `handleFileInsertion` abandons the file path when these rank before `"Files"`;
+ *   same criterion, blocked uniformly.
  */
 export function classifyMediaTransfer(data: DataTransfer | null | undefined): BlockedTransferReason | null {
   if (!data) return null;
 
-  // ①
   for (const format of MEDIA_DATA_URL_TEXT_FORMATS) {
     if (containsMediaDataUrl(data.getData(format))) return "dataUrl";
   }
@@ -161,11 +100,9 @@ export function classifyMediaTransfer(data: DataTransfer | null | undefined): Bl
   const hasFiles = !!files && files.length > 0;
   if (!hasFiles) return null;
 
-  // ②
   const types = Array.from(data.types ?? []);
   if (TEXT_REPRESENTATION_MIME_TYPES.some((mimeType) => types.includes(mimeType))) return "textRepresentation";
 
-  // ③④
   const fileList = Array.from(files as unknown as ArrayLike<File>);
   const allImages = fileList.every((file) => file.type.startsWith("image/"));
   return allImages ? null : "nonImageFile";

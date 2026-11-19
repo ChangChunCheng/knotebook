@@ -5,16 +5,12 @@ import { toast } from "@/components/ui/toast";
 import i18n from "@/i18n";
 import { canEdit, type CollabState } from "./connection";
 
-/** Y.Doc 內容變動（含遠端）後，等這麼久沒有新變動才重算＋提交。 */
 const DEBOUNCE_MS = 2_000;
-/** 409 `not_loaded` 的唯一一次重試延遲。 */
 const NOT_LOADED_RETRY_MS = 1_000;
-/** 5xx（含非 `not_loaded` 的 409，如 `server_busy`）指數退避的起始延遲與上限。 */
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 
-/** `@/api/client` 的 `api()` 最小介面——工廠吃這個型別而非直接 import 該函式本體，
- * 讓測試可以注入 fake fetch/timer 等價物。 */
+// Injected rather than importing `api()` so tests can fake fetch / timers.
 export type LinkSyncApiFn = <T>(path: string, init?: RequestInit) => Promise<T>;
 
 export interface CreateLinkSyncOptions {
@@ -24,74 +20,37 @@ export interface CreateLinkSyncOptions {
 }
 
 export interface LinkSync {
-  /** 掛上 `doc` 的 `update` 監聽，開始追蹤內容變動；呼叫端只在 canEdit 時呼叫（見
-   * `NotePage.tsx` 的掛載邏輯）。本身不觸發提交——第一次提交一律等 `onSynced()`。 */
   start(): void;
-  /** 移除監聽、取消所有排程中的 debounce／重試計時器。冪等。 */
   stop(): void;
-  /** 共編連線狀態變動的觀察窗——目前唯一用途是 403 閂的解閂判定（見檔尾說明）。 */
   onCollabState(state: CollabState): void;
-  /** provider 的 `synced` 事件（false→true 邊緣，只會是唯一輸入）：重置「上次成功
-   * 提交集合」快取並立即重算提交一次，不經過 debounce。 */
   onSynced(): void;
 }
 
-// `UUID_RE` 與 `extractLinkTargets` 住 `@knotebook/shared`；server 的
-// `notes/service.ts:15` 另有一份同 pattern（刻意不共用）。
-
-/** 三態閂：`"none"` 正常運作；`"403"`／`"400"` 各自暫停提交，直到對應的
- * 解閂條件成立（見 `createLinkSync` 內 `onCollabState`／`attemptSubmit` 的判定）。 */
 type Latch = "none" | "403" | "400";
 
-/** 失敗重試的排程狀態，繫在觸發它的那個目標集合（`key`）上——集合一旦因為新的
- * debounce／synced 觸發而換掉，舊排程就作廢（見 `attemptSubmit` 開頭的判定）。 */
 interface RetryState {
   key: string;
-  /** 這個 key 是否已經用掉 409 `not_loaded` 的唯一一次重試機會。 */
   notLoadedUsed: boolean;
-  /** 下一次 5xx／其他 409 退避要等的毫秒數（下一次失敗時的延遲，非本次已排程的延遲）。 */
+  /** Delay for the next failure, not the one already scheduled. */
   backoffMs: number;
 }
 
-/**
- * wikilink 連結索引提交器（client 段）——純 TS 狀態機，不碰 DOM／React。
- *
- * 核心流程：`doc` 的 `update` 事件（含遠端）debounce {@link DEBOUNCE_MS} 後重算目標
- * 集合並嘗試提交；`onSynced()`（provider 的 `synced` 事件，唯一輸入）重置「上次成功
- * 提交集合」快取後立即（不 debounce）重算提交一次。所有實際送出都收斂到單一入口
- * `attemptSubmit`，它同時處理「未變不送」「403/400 閂」「跟現有重試排程搭配」三件事，
- * 避免 debounce／synced／重試三條觸發路徑各自維護一份送出邏輯而彼此漂移。
- *
- * 同一時間至多一個 in-flight 請求：`attemptSubmit` 在請求進行中被再次觸發時只記一個
- * `resubmitPending` 旗標，等目前這個請求落地（成功或失敗處理完）才重算一次——不會有
- * 兩個 POST 同時飛在半空中互相競速覆蓋 `lastSubmittedKey`。
- */
+// At most one request in flight: a trigger while one runs only sets `resubmitPending` and recomputes after it lands, so two POSTs never race over `lastSubmittedKey`.
 export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): LinkSync {
   let started = false;
   let inFlight = false;
   let resubmitPending = false;
-  /** 在收到第一次 `onSynced()` 之前，`doc` 上的 `update` 事件可能只是連線握手期間的
-   * 初始追平（provider 還在把 server 端既有內容灌進這個 `Y.Doc`，尚未確定「這是完整
-   * 同步好的內容」）——這段期間若被 debounce 觸發送出，算出來的 wikilink 集合很可能
-   * 只是**尚未追平完成的半吊子集合**（例如缺了還沒同步下來的段落）。`POST .../links`
-   * 是**整組取代**語意（body 的 `link_target_ids` 是「該筆記目前內容的完整目標集合」，
-   * server 端交易內直接拿它整組覆蓋 `note_links`，不是增量 diff——見
-   * `apps/server/src/notes/links.ts` 的 `attemptOnce`／routes 端 JSDoc）：送出這種半吊子
-   * 集合不是「晚一點才補齊」，而是會把使用者既有、尚未同步完成而暫時「看不見」的連結
-   * 直接刪掉。**最極端的情形**：握手剛開始、`Y.Doc` 幾乎還是空的（追平內容還沒開始
-   * applyUpdate 進來）——這時若被 debounce 搶跑，算出來的集合直接是空陣列，等同一次
-   * `POST` 就把這篇筆記既有的所有連結**全部清空**，而使用者的編輯內容其實根本沒變。
-   * 因此在第一次 `onSynced()` 之前，debounce 觸發的 `attemptSubmit` 一律不送——第一次
-   * 提交必須是由 `onSynced()` 本身觸發的那一次（
-   * `start()` 本身不觸發提交），確保送出的第一筆一定是同步完成後的完整集合。 */
+  /**
+   * Before the first `onSynced()`, `update` events may be the handshake catch-up, so a debounce-computed set can be half-caught-up. `POST .../links` replaces the whole set
+   * (`attemptOnce` in `apps/server/src/notes/links.ts`), so sending it would delete links that merely haven't synced: with an almost-empty `Y.Doc` it clears all of the note's links.
+   * Hence the first submit is always the one `onSynced()` triggers (`start()` doesn't submit).
+   */
   let hasSyncedOnce = false;
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryState: RetryState | null = null;
 
-  /** `null` 代表「還沒有任何成功提交」或「快取剛被 `onSynced()` 重置」——兩種情況下一次
-   * `attemptSubmit` 一律視為「有變動」而送出（`key === null` 恆不等於任何真實 key）。 */
   let lastSubmittedKey: string | null = null;
 
   let latch: Latch = "none";
@@ -111,10 +70,8 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
     }, delayMs);
   }
 
-  /** 409 `not_loaded`／5xx（含非 not_loaded 的 409）／網路失敗的分流處理。403/400 各自
-   * 落地成閂，不進這支重試排程。 */
   function handleFailure(err: unknown, key: string): void {
-    if (!started) return; // stop() 之後才落地的回應：狀態機已經沒有意義了，不做任何事
+    if (!started) return; // a response landing after stop(): the state machine is moot, do nothing
 
     if (err instanceof ApiFail && err.status === 403) {
       latch = "403";
@@ -136,7 +93,6 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
     if (err instanceof ApiFail && err.status === 409 && err.code === "not_loaded") {
       const alreadyUsed = retryState?.key === key && retryState.notLoadedUsed;
       if (alreadyUsed) {
-        // 唯一一次重試機會已經用掉：放棄，等下一次真正的觸發（doc 變動／重新 synced）。
         retryState = null;
         return;
       }
@@ -145,9 +101,7 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
       return;
     }
 
-    // 其餘 ApiFail（5xx、非 not_loaded 的 409 如 server_busy）與非 ApiFail（`api()` 對網路
-    // 失敗／非 JSON 2xx 丟的原生 Error，見 `useCollab.ts` 的 `isRetryableTokenError` 同款
-    // 備忘）一律視為暫時性，走同一套指數退避。
+    // Every other ApiFail (5xx, a 409 other than not_loaded) and non-ApiFail (network failure / non-JSON 2xx; see `isRetryableTokenError` in `useCollab.ts`) is transient: same exponential backoff.
     const previous = retryState?.key === key ? retryState : null;
     const delayMs = previous?.backoffMs ?? INITIAL_BACKOFF_MS;
     retryState = {
@@ -185,20 +139,8 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
   }
 
   /**
-   * 單一送出入口。收斂 debounce／`onSynced`／403 解閂／重試計時器四條觸發路徑的判斷：
-   * 1. 未啟動或 403 閂住 → 不送。
-   * 2. 400 閂住：重算集合與觸發 400 的集合相同 → 維持閂住；不同 → 解閂並繼續往下判斷。
-   * 3. 與「上次成功提交集合」相同 → 不送（未變不送）。
-   * 4. 有請求正在飛 → 記 `resubmitPending`，等它落地再重算（不並發送出）。
-   * 5. 若目前這個 key 剛好等於某個**排程中**重試 timer 的 key → 讓那個 timer 自己觸發，
-   *    不搶著現在送；否則（key 換了）作廢舊排程，改為立即送出這個新集合。
-   *
-   * 注意要特別檢查 `retryTimer`（而非只看 `retryState`）：`retryState` 在重試
-   * timer 觸發後、下一次失敗判定完成前的這段時間仍然留著同一個 key（`handleFailure`
-   * 拿它算下一輪 backoff/notLoadedUsed），若只憑 `retryState.key === key` 判斷，
-   * 重試 timer 自己呼叫的這次 `attemptSubmit()`（此時 `retryTimer` 已被設回 `null`，
-   * 見 `scheduleRetry`）就會被誤判成「已經有排程在等」而直接 return、實際上永遠不會
-   * 真的發出那次重試請求。
+   * Check `retryTimer`, not just `retryState`: after a retry timer fires and before the next failure is processed, `retryState` still holds the same key (`handleFailure` uses it for the next backoff),
+   * so judging by key alone would make the timer's own `attemptSubmit()` (`retryTimer` already null, see `scheduleRetry`) return as "already scheduled" and never send.
    */
   function attemptSubmit(): void {
     if (!started || !hasSyncedOnce || latch === "403") return;
@@ -219,7 +161,7 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
       return;
     }
 
-    if (retryTimer && retryState?.key === key) return; // 已有同一集合的重試排程中，交給它
+    if (retryTimer && retryState?.key === key) return; // a retry for the same set is already scheduled; leave it to that
     if (retryState && retryState.key !== key) {
       clearRetryTimer();
       retryState = null;
@@ -258,9 +200,7 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
     },
 
     onCollabState(state: CollabState) {
-      // 403 閂唯一的解閂路徑：觀察到重新 connected 且角色恢復到 editor+。不看
-      // `state`轉移的「邊緣」（例如是否剛好從別的 phase 轉過來）——重複呼叫在
-      // `latch !== "403"` 時自然是 no-op，不需要額外的邊緣偵測。
+      // Repeated calls are no-ops when `latch !== "403"`, so no edge detection is needed.
       if (latch === "403" && state.phase === "connected" && canEdit(state.role)) {
         latch = "none";
         attemptSubmit();
@@ -270,8 +210,7 @@ export function createLinkSync({ noteId, doc, api }: CreateLinkSyncOptions): Lin
     onSynced() {
       if (!started) return;
       hasSyncedOnce = true;
-      // 每次 synced（含重連）都要重置快取，讓重算後的集合視為「有變動」而重送一次
-      // ——即使跟上次成功提交的內容完全相同（重連必重送一次）。
+      // A reconnect's synced also resets the cache, so the set is resent once even if identical to the last submit.
       lastSubmittedKey = null;
       if (debounceTimer) {
         clearTimeout(debounceTimer);
