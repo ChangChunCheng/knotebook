@@ -4,32 +4,19 @@ import { normalizeHandle } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
 import { handles } from "../db/schema.js";
 
-/**
- * #122 handle 派生與 registry 補登。
- *
- * 配置紀律：handle 的**唯一裁決者是 `handles` registry 的 PK**——這裡的
- * `deriveHandle` 內含 DB 探測（`WHILE EXISTS` 形），但那是**可用性探測、不是唯一性
- * 裁決**：探測後真正寫入時仍可能撞唯一鍵，由各建帳路徑的重試契約處理
- * （bootstrap 不重試 fail-closed／OIDC 整 tx 重投一次／註冊、接受邀請整 tx 重跑 ≤3 後第 4 次
- * 退 user-<uuid8>）。重試時重新探測——這救得了 `handles_pkey` 的真競態；
- * `users_handle_unique` 的窗期形（探測看不見）是確定性再撞，各路徑的出口與收斂
- * 見呼叫點註解（oidc.ts／auth/tx/register.ts〔註冊、接受邀請〕）。
- */
+// The `handles` registry PK is the only arbiter of uniqueness; the DB probe in `deriveHandle` is an availability check, so the
+// write can still collide. Retry contracts: bootstrap doesn't retry (fails closed); OIDC retries the whole tx once; register and
+// accept-invite rerun the tx up to 3 times, then use `user-<uuid8>`. Re-probing on retry fixes a real `handles_pkey` race; the
+// `users_handle_unique` window case is a deterministic re-collision (see the call sites).
 
 const UUID_FORM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** 探測上限：探測是 O(同前綴數) 次索引查詢、建帳路徑無節流，
- * 上界必須有——超限直接退 `user-<uuid8>`。 */
+/** Probe cost is O(same-prefix count) index queries on an unthrottled path, so it must be bounded. */
 const PROBE_LIMIT = 20;
 
-/** db 或 tx 皆可（drizzle 的 transaction 物件有同一個 select 介面）。 */
 type HandleQueryer = Pick<Db, "select">;
 
-/**
- * 單一候選字串 → 基底（純函式段）：ASCII 小寫 → 非 `[a-z0-9]` 段轉 `-` → 去頭尾
- * dash → **空/uuid 形 → null（uuid 形判斷在截斷前**——截 30 後的 uuid 前綴已非
- * uuid 形、判不到）→ 截 30 再 trim 尾 dash。
- */
+/** UUID-shaped bases are rejected before the 30-char truncation (afterwards a uuid prefix no longer looks like one). */
 export function handleCandidateFrom(raw: string): string | null {
   let base = normalizeHandle(raw)
     .replace(/[^a-z0-9]+/g, "-")
@@ -44,11 +31,6 @@ async function isTaken(q: HandleQueryer, handle: string): Promise<boolean> {
   return row !== undefined;
 }
 
-/**
- * 候選序（前者敗退後者；OIDC `preferred_username` → email local-part）＋
- * 探測選尾碼。全候選皆敗（空/非 ASCII 轉完全空/uuid 形）→ `user-<uuid8>`。
- * 探測 registry（只有 live 列），`-2` 遞增、重截基底使總長 ≤32。
- */
 export async function deriveHandle(
   q: HandleQueryer,
   candidates: Array<string | null | undefined>,
@@ -75,20 +57,9 @@ export async function deriveHandle(
   return cand;
 }
 
-/**
- * boot 冪等補登：把回滾窗期由舊碼建立、無 registry 列的 users.handle
- * 補進 registry。**必須在 `app.listen` 之前呼叫**（否則補登與首個改名請求可交錯
- * ——index.ts 的呼叫順序由 handle.test.ts 的結構守衛釘住）。先清 released 列
- * （rollback 窗期舊 server 寫的），恢復 registry 只有 live 列。
- *
- * 補登後 warn 的判準：不能用「衝突（被吞列）數 >0 時
- * log warn」——`DO NOTHING` 對「已補登過的列」也吞（第二次 boot 起每列都吞），照
- * 字面每次重啟都會誤報全員。改為**事後 re-query**：仍缺 live 對應列（`h.handle=u.handle
- * AND h.user_id=u.id AND h.state='live'`）的使用者才 warn——只剩「名字被他人的 live
- * 列占住」一形（released 列已先清）；這些使用者的 handle 未進 registry（live 名仍由
- * `users_handle_unique` 擋重複）。
- */
+/** Must run before `app.listen`, or the backfill can interleave with the first rename (call order is pinned by `handle.test.ts`). Warns only for users still lacking a live row afterwards: the conflict count can't be used because `DO NOTHING` swallows already-backfilled rows on every restart. */
 export async function backfillHandleRegistry(db: Db, logger: pino.Logger): Promise<void> {
+  // Released rows are leftovers an old server wrote during a rollback window; the registry must hold only live rows.
   const purged = await db.execute(sql`DELETE FROM handles WHERE state = 'released'`);
   if ((purged.rowCount ?? 0) > 0) {
     logger.info({ purged: purged.rowCount }, "handle registry 補登前清掉 released 列（rollback 到舊版 server 的窗期內改名留下的）");

@@ -1,8 +1,3 @@
-/**
- * #181 垃圾桶的服務層：REST 與 MCP 共用的唯一入口。
- * 每支的形一律是「共編閘門／預判 → 交易（`notes/tx/trash.ts`，S14：callback 整段一個 `xInTx`）→ commit 後的 hook／刪檔」；
- * 交易本體只收 `tx` 與純資料，閘門、刪檔、`onNotesRestored` 都在這裡、在交易之外。
- */
 import { and, inArray, isNotNull } from "drizzle-orm";
 import type { TrashSkipDto } from "@knotebook/shared";
 import type { CollabHooks } from "../collab/hooks.js";
@@ -25,21 +20,14 @@ import { deleteUploadFiles, type UploadDeleteLogger } from "../uploads/service.j
 export interface TrashServiceDeps {
   db: Db;
   collabHooks: CollabHooks;
-  /** 永久刪除 commit 後刪附件檔用；移入不刪檔。 */
   uploadsDir: string;
-  /** 還原照路徑重建取結構鎖的等待上限（ms），透傳自 `AppDeps.storageLockTimeoutMs`。 */
   storageLockTimeoutMs: number;
   groupTestHook?: GroupTestHook;
 }
 
 export type TrashNoteOutcome = "trashed" | "not_found" | "forbidden";
 
-/**
- * 單篇移入：`beforeNoteDeleted`（交易外）→ `trashNotesInTx` → 結果不是 trashed、或交易 throw，一律 `gate.release()`（throw 時 release 後原樣再丟）。
- * 呼叫端先做自己的授權與錯誤形（REST：`resolveNoteAccess` none → 404、無刪除權 → 403；MCP：not_found／forbidden）；本函式在交易內再判一次（TOCTOU）。
- * `noteId` 須已過 UUID；這裡一律轉小寫（交易本體的結果陣列是小寫 id，大寫輸入不轉會在移入成功後誤判成 not_found 並收門）。
- * release 在回傳之前同步呼叫（不延到呼叫端回應之後）。
- */
+/** `noteId` must already pass UUID_RE and is lowercased here because the transaction's result ids are lowercase (an uppercase input would read as not_found after a successful trash). The caller authorizes; the transaction re-checks (TOCTOU). The gate is released synchronously. */
 export async function trashNote(deps: TrashServiceDeps, input: { noteId: string; by: string }): Promise<TrashNoteOutcome> {
   const noteId = input.noteId.toLowerCase();
   const gate = await deps.collabHooks.beforeNoteDeleted(noteId);
@@ -52,17 +40,14 @@ export async function trashNote(deps: TrashServiceDeps, input: { noteId: string;
     throw err;
   }
   if (out.trashed.includes(noteId)) return "trashed";
-  // 交易內重判沒過（授權之後被降權、被別人先移入或刪掉）：閘門收回去，否則接下來兩分鐘新連線都會被告知「已刪除」。
+  // The in-tx recheck failed: release the gate, or new connections are told "deleted" for two minutes.
   gate.release();
   return out.forbidden.includes(noteId) ? "forbidden" : "not_found";
 }
 
 export interface TrashBatchResult { done: string[]; skipped: TrashSkipDto[] }
 
-/**
- * 預判：逐 id `resolveTrashedNoteAccess`，false（不存在、活筆記、沒有垃圾桶權）→ 不進交易、記
- * `not_found`。**這是承重點**：交易本體的分類順序對任意 id 是存在性 oracle，只能收這裡放行的 id。
- */
+/** Load-bearing: the transaction's classification order is an existence oracle for arbitrary ids, so only ids that pass here may enter it. */
 async function prejudge(db: Db, input: { ids: readonly string[]; by: string }): Promise<{ ok: string[]; denied: Set<string> }> {
   const ok: string[] = [];
   const denied = new Set<string>();
@@ -73,7 +58,6 @@ async function prejudge(db: Db, input: { ids: readonly string[]; by: string }): 
   return { ok, denied };
 }
 
-/** 預判略過與交易內略過依**原輸入索引**合併（不是兩段串接）。 */
 function mergeSkipped(ids: readonly string[], denied: ReadonlySet<string>, inTx: readonly TrashSkipDto[]): TrashSkipDto[] {
   const byId = new Map(inTx.map(s => [s.id, s]));
   const out: TrashSkipDto[] = [];
@@ -87,13 +71,7 @@ function mergeSkipped(ids: readonly string[], denied: ReadonlySet<string>, inTx:
   return out;
 }
 
-/**
- * 還原。ids：已過 UUID_RE、已轉小寫、已去重（呼叫端負責）。預判 → `restoreNotesInTx`（鎖內重判）→ commit 後
- * **同步** `onNotesRestored(done)`（只傳實際還原的 id、中間不 await；done 為空不呼叫）。`done`、`skipped` 照輸入順序。
- * 不檢查容量。預判全數略過 → 不開交易。
- * 資料夾：交易外不持鎖預讀這批筆記的群組與空間，交給交易照序取 groups KS 與結構鎖；預讀之後歸屬才變的
- * 那篇在交易內不重建。
- */
+/** `ids` must already be UUID_RE-valid, lowercase and deduplicated. No capacity check (trashed notes still count toward the quota). Groups and spaces are pre-read outside the transaction without locks; a note whose ownership changes after the pre-read isn't rebuilt. `onNotesRestored` is called synchronously after commit with the restored ids only. */
 export async function restoreTrashed(deps: TrashServiceDeps, input: { ids: readonly string[]; by: string }): Promise<TrashBatchResult> {
   const { ok, denied } = await prejudge(deps.db, input);
   let out: TrashBatchOutcome = { done: [], skipped: [] };
@@ -118,10 +96,7 @@ export async function restoreTrashed(deps: TrashServiceDeps, input: { ids: reado
   return { done: out.done, skipped: mergeSkipped(input.ids, denied, out.skipped) };
 }
 
-/**
- * 永久刪除。ids 的前提同 `restoreTrashed`。預判 → `purgeTrashedNotesInTx`（活筆記一律不刪）→ commit 後
- * `deleteUploadFiles`（best-effort；交易 throw 時一個檔都不刪）。不開共編閘門。預判全數略過 → 不開交易。
- */
+/** `ids` have the same precondition as `restoreTrashed`. Files are deleted only after commit (best-effort; none if the transaction throws); no collab gate. */
 export async function purgeTrashed(
   deps: TrashServiceDeps,
   input: { ids: readonly string[]; by: string },

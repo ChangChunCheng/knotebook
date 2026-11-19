@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-/** #187：通用靜態加密的密文格式。與 `ai/crypto.ts` 的 `EncryptedApiKey` v2 **逐欄相同**（不得改 AI 密文格式）。 */
+/** Field for field identical to `EncryptedApiKey` v2 (`ai/crypto.ts`); don't change the AI ciphertext format. */
 export interface EncryptedSecret {
   v: 2;
   keyId: string;
@@ -9,24 +9,18 @@ export interface EncryptedSecret {
   ct: string;
 }
 
-/** 解不開（格式不對、版本不認得、金鑰指紋不符、GCM 認證失敗）一律拋這個。訊息不含明文。 */
 export class SecretDecryptError extends Error {}
 
-/** 與 `ai/crypto.ts` 同一條 namespace 紀律：同一把 APP_SECRET 依用途衍生互不相通的金鑰。 */
 function deriveKey(appSecret: string, namespace: string): Buffer {
   return createHash("sha256").update(`${appSecret}:${namespace}`).digest();
 }
 
-/** 衍生金鑰的雜湊指紋（前 8 hex），與 `ai/crypto.ts` 的 `deriveKeyId` 同算法。 */
+/** Same algorithm as `deriveKeyId` in `ai/crypto.ts`. */
 function keyIdOf(key: Buffer): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 8);
 }
 
-/**
- * #187：通用靜態加密。輸出格式＝`EncryptedApiKey` v2（`ai/crypto.ts`）——`encryptApiKey` 就是
- * `sealSecret(appSecret, "ai-key", plaintext, "ai-key:v2:<providerId>")`。`aad` 綁「這份密文屬於哪一列」：
- * 搬到別列解不開（issue #14 的同一個理由）。
- */
+/** `encryptApiKey` is `sealSecret(appSecret, "ai-key", plaintext, "ai-key:v2:<providerId>")`. `aad` binds the ciphertext to its row: moved to another row it can't be decrypted. */
 export function sealSecret(appSecret: string, namespace: string, plaintext: string, aad: string): EncryptedSecret {
   const key = deriveKey(appSecret, namespace);
   const iv = randomBytes(12);
@@ -36,7 +30,6 @@ export function sealSecret(appSecret: string, namespace: string, plaintext: stri
   return { v: 2, keyId: keyIdOf(key), iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ct: ct.toString("base64") };
 }
 
-/** `payload` 是 DB jsonb 讀出來的 `unknown`——這裡做形狀檢查，壞資料不會變成裸 TypeError。 */
 export function openSecret(appSecret: string, namespace: string, payload: unknown, aad: string): string {
   if (payload === null || typeof payload !== "object") throw new SecretDecryptError("密文格式不是物件");
   const p = payload as Partial<EncryptedSecret>;

@@ -1,7 +1,3 @@
-/**
- * #181：保留期清理。每輪最多 `maxBatches` 批，每批 `purgeExpiredBatchInTx`（SKIP LOCKED，到期判斷全在 DB 端）→ commit 後才刪磁碟檔。
- * 保留天數 NULL＝不自動刪。進行中再呼叫、或 `stop()` 之後，一律回 0。
- */
 import type { FastifyBaseLogger } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/index.js";
@@ -56,7 +52,6 @@ export function createTrashPurger(deps: TrashPurgerDeps): TrashPurger {
         if (out.noteIds.length < batchSize) break;
       }
     } finally {
-      // 第 k 批失敗時前 k-1 批已 commit：仍記下實際刪了幾篇。
       deps.log.info({ purged: total }, "垃圾桶清理：永久刪除到期筆記");
     }
     return total;

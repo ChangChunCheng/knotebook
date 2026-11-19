@@ -3,10 +3,11 @@ import type pino from "pino";
 import type { Db } from "../db/index.js";
 
 /**
- * #187：舊欄冪等補登。回滾到 v0.5 或滾動部署時舊碼會寫 `users.oidc_*`（含 verified-email 自動合併與建帳）；0014 不會重跑，
- * 所以每次開機收斂一次。不鎖 users；事後回查「舊欄指向的身分屬別人」→ warn、不改資料（也可能產生同一帳號在同一 issuer 下有兩個 sub 的列）。
- * 解除連結會同交易清掉吻合的舊欄，所以補登不會讓已解除的身分復活。
- */
+  * Old code (after a rollback or during a rolling deploy) writes `users.oidc_*` and migration 0014 doesn't rerun, so every
+  * boot converges them. Locks no `users` rows. Warns without changing anything when a legacy column points at an identity owned
+  * by someone else (this can also leave one account with two subs under one issuer). Unlinking clears the matching legacy
+  * columns, so the backfill can't revive an unlinked identity.
+  */
 export async function backfillLegacyOidcIdentities(db: Db, logger: pino.Logger): Promise<{ inserted: number; conflicts: number }> {
   const inserted = await db.execute(sql`
     insert into user_identities (user_id, issuer, sub)

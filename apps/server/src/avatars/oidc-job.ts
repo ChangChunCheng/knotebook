@@ -1,16 +1,12 @@
 /**
- * 登入後的 IdP 頭貼背景工作：把 `picture` 下載成這個身分的 OIDC 候選（新增，或原地更新）。
- *
- * - 登入流程只呼叫 `scheduleOidcAvatarJob`：它同步回傳、不等下載，任何失敗都不影響登入（下載、解碼、配額都可能失敗，
- *   結果只是沒有頭貼）。
- * - `runOidcAvatarJob` 是實際流程，匯出供測試直接 await。同一使用者同一身分同時只跑一個（行程內去重）；後來的略過。
- * - 順序：查身分列 → 記下 `last_picture_url`（先於去重判斷，被略過的呼叫也會記）→ 沒有 `picture` 就結束 → 已有候選且網址相同就結束；沒有候選但這個網址是使用者
- *   刪掉過的（`picture_dismissed_url`）就結束 → 個人空間已滿就結束 → 下載 → 先落檔（`.tmp` 再 rename）→ 交易
- *   （`replaceOidcAvatarInTx`；交易內也會重查「刪掉過的網址」，下載期間才刪掉的不會被補回來）→ commit 後刪不再需要的檔（被換掉的舊原圖，或位元組相同時剛寫的新檔）。任何失敗都刪新檔。
- * - 記錄只寫 `{ userId, identityId, reason }`：圖片網址可能帶 token，連同底層錯誤的訊息都不進 log、不進回傳值；
- *   資料庫錯誤只留 `name` 與 SQLSTATE（原始錯誤會帶 SQL 參數）。
- * - 檢查之後、下載之前與之後使用者都可能解除連結：交易內重讀身分列，不在就丟棄（`unlinked`），不留候選也不留檔。
- */
+  * Login never waits on this; any failure only means no avatar (download, decode or quota can fail). One job per (user, identity) at a time
+  * (in-process dedupe, later duplicates are skipped); `last_picture_url` is recorded before the dedupe check. A full personal space stops
+  * the job. The file is written as `.tmp`, then renamed; the transaction re-checks the dismissed URL, so one deleted during the download
+  * isn't restored. The user may unlink before or after the download: the identity row is re-read in the transaction (`unlinked`),
+  * leaving no candidate or file. After commit the files no longer needed are removed (the replaced original, or the new file when the
+  * bytes are identical); on any failure the new file is removed. Logs carry only `{ userId, identityId, reason }`: the picture URL
+  * may carry a token, and DB errors keep only `name` and SQLSTATE (the raw error has SQL params).
+  */
 import { createHash, randomUUID } from "node:crypto";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
@@ -43,20 +39,16 @@ export interface OidcAvatarJobResult {
 }
 
 export interface OidcAvatarJobHooks {
-  /** 工作結束（成功、略過或失敗）時呼叫；只給測試等待用，生產不注入。 */
   onSettled?: (result: OidcAvatarJobResult) => void;
 }
 
 export interface OidcAvatarJobDeps {
   db: Db;
-  /** commit 後讓 `UserDto.avatar` 的快取失效。 */
   gate: Pick<UserGate, "invalidate">;
   uploadsDir: string;
   storageLockTimeoutMs: number;
-  /** 預設 `PRODUCTION_AVATAR_FETCH_POLICY`；只有測試會換。 */
   avatarFetchPolicy?: AvatarFetchPolicy;
   avatarJobHooks?: OidcAvatarJobHooks;
-  /** 交易交錯縫；生產不注入。 */
   avatarTestHooks?: AvatarTestHooks;
   log: { info(obj: object, msg: string): void };
 }
@@ -65,18 +57,16 @@ export interface OidcAvatarJobArgs {
   userId: string;
   issuer: string;
   sub: string;
-  /** 已過 `parsePictureClaim` 的網址；沒有就 `null`。 */
+  /** Already through `parsePictureClaim`; null when absent. */
   picture: string | null;
 }
 
-/** 行程內進行中的工作，鍵＝`${userId}:${identityId}`。 */
 const inFlight = new Map<string, Promise<OidcAvatarJobResult>>();
 
-/** 登入流程用：只排程、不 await；失敗與例外都不外洩。 */
 export function scheduleOidcAvatarJob(deps: OidcAvatarJobDeps, args: OidcAvatarJobArgs): void {
   setImmediate(() => {
     runOidcAvatarJob(deps, args).catch(() => {
-      // 內部已把所有失敗收成結果並記錄；這裡只擋住 `onSettled` 之類測試縫丟出的例外。
+      // Failures are already collected into results and logged inside; this only stops a throwing test hook such as `onSettled`.
     });
   });
 }
@@ -93,7 +83,6 @@ export async function runOidcAvatarJob(deps: OidcAvatarJobDeps, args: OidcAvatar
       result = { userId: args.userId, identityId: null, outcome: "skipped", reason: "no_identity" };
     } else {
       identityId = identity.id;
-      // 每次登入都記，連同被去重略過的那次：進行中的工作與後到的各寫一次，最後寫的就是最新的值。
       await deps.db
         .update(userIdentities)
         .set({ lastPictureUrl: args.picture })
@@ -102,7 +91,7 @@ export async function runOidcAvatarJob(deps: OidcAvatarJobDeps, args: OidcAvatar
       if (inFlight.has(key)) {
         result = { userId: args.userId, identityId, outcome: "skipped", reason: "in_flight" };
       } else {
-        // `has` 與 `set` 之間沒有 await：後到的呼叫一定看得到這一筆。
+        // No await between `has` and `set`, so a later call always sees this entry.
         const running = processJob(deps, args, identity.id, identity.pictureDismissedUrl);
         inFlight.set(key, running);
         try {
@@ -177,7 +166,6 @@ async function processJob(deps: OidcAvatarJobDeps, args: OidcAvatarJobArgs, iden
     return fail(deps, userId, identityId, "error", err);
   }
 
-  // commit 之後：位元組相同就丟掉剛寫的新檔；原地替換就刪被換掉的舊檔。刪不掉只是多一個孤兒檔。
   if (outcome.outcome === "dismissed") {
     await removeNewFile();
     return skipped("dismissed");

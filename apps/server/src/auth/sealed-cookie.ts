@@ -1,8 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-// #187：短效 cookie 的 AES-256-GCM 封章（state cookie `:oidc-state`、pending-link cookie `:oidc-pending-link`）。格式與
-// `sealOidcState` 逐位元組相同：`base64url(iv).base64url(ct).base64url(tag)`，金鑰 sha256(`<APP_SECRET>:<namespace>`)。
-// 只管加解密與 JSON；欄位驗證由各用途自己做（拿到的是 unknown）。
+// Same format as `sealOidcState`: base64url(iv).base64url(ct).base64url(tag). Callers validate the fields (the result is `unknown`).
 
 function deriveKey(appSecret: string, namespace: string): Buffer {
   return createHash("sha256").update(`${appSecret}:${namespace}`).digest();
@@ -15,7 +13,6 @@ export function sealCookieJson(appSecret: string, namespace: string, value: unkn
   return `${iv.toString("base64url")}.${ct.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}`;
 }
 
-/** 格式不對、密文被竄改、金鑰／namespace 不符、JSON 壞 → null（不 throw）。 */
 export function unsealCookieJson(appSecret: string, namespace: string, sealed: string): unknown {
   const parts = sealed.split(".");
   if (parts.length !== 3) return null;

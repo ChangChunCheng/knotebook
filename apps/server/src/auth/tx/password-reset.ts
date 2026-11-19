@@ -5,18 +5,11 @@ import { TxAbort } from "../../http/tx-abort.js";
 import { activeOneTimeLink, pendingPasswordResetsOf } from "../one-time-link.js";
 import { replaceUserSessionsInTx } from "./sessions.js";
 
-/** 410 `reset_link_invalid` 的訊息：無登入端點與完成交易共用，不區分原因。 */
 export const RESET_LINK_INVALID_MESSAGE = "This password reset link is invalid, already used or expired.";
 
-/**
- * #286 重設密碼連結的交易本體。
- *
- * ⚠ 鎖序：一律先鎖 `users` 列（`FOR NO KEY UPDATE`），再動連結列——產生、取消、完成、停用
- * （`disable-user.ts`）四條路徑同序，不會 40P01。`NO KEY UPDATE` 彼此互斥、也與停用的 UPDATE 互斥，但不擋 FK 的
- * `KEY SHARE`（該使用者同時建筆記之類的交易不必排隊）。
- */
+// Lock order: `users` row (`FOR NO KEY UPDATE`) first, then the link row; generate, cancel, complete and disable all follow it (no 40P01). NO KEY UPDATE excludes itself and disable's UPDATE but not the FK's `KEY SHARE`.
 
-/** 把某人所有「未用、未撤銷」的重設連結標為撤銷（含已過期者）。回撤銷的列數。呼叫端須已鎖 `users` 列。 */
+/** Includes expired rows. The caller must already hold the `users` row lock (lock order). */
 export async function revokePendingPasswordResetsInTx(tx: Tx, targetUserId: string): Promise<number> {
   const rows = await tx
     .update(oneTimeLinks)
@@ -36,7 +29,6 @@ async function lockTargetUser(tx: Tx, targetUserId: string): Promise<{ disabledA
   return row;
 }
 
-/** 產生：鎖 `users` → 停用 409 → 沒有密碼 409 → 撤掉前一支（`replaced`）→ INSERT。 */
 export async function issuePasswordResetInTx(
   tx: Tx,
   input: { targetUserId: string; createdById: string; tokenHash: string; expiresInHours: number },
@@ -58,17 +50,11 @@ export async function issuePasswordResetInTx(
   return { linkId: row!.id, expiresAt: row!.expiresAt, replaced };
 }
 
-/** 取消：鎖 `users`（查無 404）→ 撤銷。不看帳密開關、不看停用。 */
 export async function cancelPasswordResetsInTx(tx: Tx, input: { targetUserId: string }): Promise<{ revoked: number }> {
   await lockTargetUser(tx, input.targetUserId);
   return { revoked: await revokePendingPasswordResetsInTx(tx, input.targetUserId) };
 }
 
-/**
- * 完成：鎖 `users` → 連結列 `FOR UPDATE` 重判有效且屬於此人 → 防禦性看停用 → 寫新密碼、
- * `token_version + 1`、清 `must_change_password` → 標 `used_at`。三種拒絕都是 410（都只在並發下可達）。
- * 只動 `users` 與 `one_time_links`：PAT、OAuth、transfer token 一律不碰。
- */
 export async function completePasswordResetInTx(
   tx: Tx,
   input: { linkId: string; targetUserId: string; passwordHash: string; ttlSeconds: number },
@@ -101,6 +87,5 @@ export async function completePasswordResetInTx(
       tokenVersion: users.tokenVersion,
     });
   await tx.update(oneTimeLinks).set({ usedAt: sql`now()` }).where(eq(oneTimeLinks.id, input.linkId));
-  // #388：同一交易裡刪光這個使用者的 session 列（其他瀏覽器）、為這台裝置建新的一列；`sessionId` 簽進回應的 cookie。
   return { ...updated!, sessionId: await replaceUserSessionsInTx(tx, input.targetUserId, input.ttlSeconds) };
 }

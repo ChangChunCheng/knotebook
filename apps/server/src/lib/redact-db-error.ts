@@ -1,16 +1,11 @@
 import { pgErrorSummary } from "../db/pg-errors.js";
 
 /**
- * 寫入密文欄時遇到**非預期**的 DB 錯誤（#187）。
- *
- * drizzle-orm 0.44 的 `DrizzleQueryError` 把整條 SQL 與 `params` 串進 `message`、也把 `params` 掛成可列舉屬性；全域 error
- * handler（`app.ts` 的 `setErrorHandler`）會把整個 err 交給 pino——寫 `client_secret_encrypted` 的那一句一旦非預期失敗，log 就帶走
- * jsonb 的 `ct`／`iv`／`tag`。pg 原生錯誤的 `detail`（例如 CHECK 的「Failing row contains (…)」）同理。
- *
- * 用法：呼叫端先處理自己認得的錯誤（`TxAbort`、已知 constraint 名），**其餘一律** `throw redactDbError(request.log, err, 情境)`；
- * `context` 是呼叫端的動作描述（例如「修改登入服務」），log 訊息寫成「<context>時發生非預期的資料庫錯誤」。
- * 這裡只記 `{ code, constraint, context }`（不含 message／detail／params／cause）；不是 pg 錯誤（沒有 SQLSTATE）時另記錯誤的
- * `name` 方便除錯——仍不記 message（非 pg 錯誤也可能是包了 params 的 drizzle 錯誤）。回一個不帶 cause 的新錯誤，讓全域 handler 照舊回 500。
+ * For unexpected DB errors on ciphertext writes. drizzle's `DrizzleQueryError` puts the SQL and `params` in `message`, and the global
+ * handler hands the whole err to pino, so they would be logged; a pg error's `detail` ("Failing row contains ...") likewise. Callers handle
+ * errors they know (`TxAbort`, known constraint names) and `throw redactDbError(...)` for the rest. Only `{ code, constraint, context }` is
+ * logged, plus `name` for non-pg errors (no SQLSTATE), never the message. The returned Error has no `cause` (the global handler would log it
+ * with the params) and still gives a 500.
  */
 export function redactDbError(log: { error(obj: object, msg: string): void }, err: unknown, context: string): Error {
   const { code, constraint } = pgErrorSummary(err);

@@ -6,34 +6,24 @@ import { deriveHandle } from "./handle.js";
 import { hashPassword } from "./password.js";
 import { redactDbError } from "../lib/redact-db-error.js";
 
-/** 未初始化且沒給 envAdmin 時丟出的錯誤的 `name`：訊息不帶任何值，開機失敗時可原樣記 log（見 `logInitFailure`）。 */
 export const INSTANCE_NOT_INITIALIZED = "InstanceNotInitializedError";
 
-/**
- * 開機 `initializeInstance` 失敗的 log。drizzle 把**任何**驅動錯誤包成 DrizzleQueryError，其 message 與 `params` 帶管理員 email
- * 與 argon2 雜湊——連線中斷這類沒有 SQLSTATE 的錯誤也一樣。所以只有已知、不帶值的「尚未初始化」原樣記，其餘一律走 `redactDbError`。
- */
+/** drizzle wraps any driver error with the admin email and argon2 hash in `message`/`params`, so only the known value-free "not initialized" error is logged raw. */
 export function logInitFailure(log: { error(obj: object, msg: string): void }, err: unknown): void {
   if (err instanceof Error && err.name === INSTANCE_NOT_INITIALIZED) log.error({ err }, "instance initialization failed");
   else redactDbError(log, err, "實例初始化");
 }
 
-/** `ADMIN_EMAIL`/`ADMIN_PASSWORD` env bootstrap 的輸入——config.ts 的 loadConfig 已保證
- * 成對且格式/長度合法，這裡不重複驗證。 */
+/** `loadConfig` already guarantees the pair and its format/length, so nothing is re-validated here. */
 export interface EnvAdminBootstrap {
   email: string;
   password: string;
 }
 
 /**
- * 實例初始化的唯一路徑（setup token 已退役）：
- * - 已初始化（instance_setup 有列）→ no-op（envAdmin 被忽略——「僅首次初始化生效」）。
- * - 未初始化＋envAdmin → 原子建立 admin：INSERT instance_setup ON CONFLICT DO NOTHING
- *   當並發/重試 guard（拿不到列＝別人已完成，靜默返回）；mustChangePassword: false
- *   （#187：env 管理員不強制首登改密碼——密碼是部署者自己設在 .env 的，不是別人代設的暫時密碼）。
- * - 未初始化＋無 envAdmin → throw（可行動訊息）。**這裡 throw、不 process.exit**——
- *   exit 會殺掉 vitest runner；production 的「印錯 + exit」由 index.ts 呼叫端承擔
- *   （與 migration 失敗處置同形）。
+ * Already initialized: no-op (`envAdmin` only applies on first init). `INSERT instance_setup ON CONFLICT DO NOTHING` is the
+ * concurrency/retry guard (no row means someone else finished). `mustChangePassword` is false: the deployer set the password in .env themselves.
+ * Throws instead of `process.exit` (exit would kill the vitest runner); production prints and exits in `index.ts`.
  */
 export async function initializeInstance(db: Db, envAdmin?: EnvAdminBootstrap): Promise<void> {
   const rows = await db.select().from(instanceSetup).limit(1);
@@ -47,20 +37,17 @@ export async function initializeInstance(db: Db, envAdmin?: EnvAdminBootstrap): 
     throw notInitialized;
   }
 
-  // 寫入端正規化（單一漏斗）：與 routes/account.ts（註冊、接受邀請）、routes/auth.ts 讀取
-  // 比對共用同一套正規化規則，displayName 亦從正規化後的值切，避免大寫 env
-  // 造成同一帳號在「查詢比對用小寫、顯示用原始大小寫殘留」兩套來源不一致。
+  // Same normalization as routes/account.ts and routes/auth.ts, and displayName derives from it.
   const email = normalizeEmail(envAdmin.email);
   const passwordHash = await hashPassword(envAdmin.password);
   const displayName = email.split("@")[0] || email;
   const id = randomUUID();
   await db.transaction(async tx => {
     const [setupRow] = await tx.insert(instanceSetup).values({ singleton: true }).onConflictDoNothing().returning();
-    if (!setupRow) return; // 已有人完成——不重複建立
-    // #122 registry-first：**必須在上面的 setupRow 早退之後**——早退是正常
-    // COMMIT，若 registry INSERT 先於守衛，並發敗方會 commit 一列指向不存在使用者的
-    // live 列、燒掉該名字並讓下次 boot 撞 PK。tx 內**不做裸重試**（aborted
-    // transaction）：探測後仍撞 PK＝真競態→整個啟動 fail-closed（重啟重試）。
+    if (!setupRow) return;
+    // The registry insert must come AFTER the setupRow early return: that return is a normal COMMIT, so a concurrent loser
+    // would commit a live row for a nonexistent user, burning the name and making the next boot hit the PK. No bare retry in the tx (aborted
+    // transaction): a PK collision after probing is a real race, so startup fails closed (a restart retries).
     const handle = await deriveHandle(tx, [email.split("@")[0]], id);
     await tx.insert(handles).values({ handle, userId: id, state: "live" });
     await tx.insert(users).values({ id, email, passwordHash, displayName, isAdmin: true, mustChangePassword: false, handle });

@@ -1,20 +1,12 @@
 /**
- * 儲存配額的唯一判定點。S14：只收 `tx`／純資料／型別明示測試縫。
- * 呼叫它的交易**恰為**白名單五個檔（`insertUploadInTx` 上傳、`moveNoteToGroupInTx` 移動、`copyNoteInTx` 複製、`transferGroupInTx` 轉移、
- * 頭貼檔的 `insertAvatarInTx` 上傳與登入帶入新增、`replaceOidcAvatarInTx` 換原圖、`updateAvatarDisplayInTx` 重新裁切），頭貼檔呼叫三次、其餘四檔各恰一次，每次位置都在該交易全部 notes／groups／users 列鎖之後、該空間 slug 範圍的任何寫入之前——這個位置保證不成環。
- * 每一步是**獨立的一句 SQL**：
- *   1. incoming ≤ 0 → return（不取鎖：只擋新增）
- *   2. set_config('lock_timeout', '<n>ms', true)——`SET` 不收綁定參數；is_local＝SET LOCAL
- *   3. pg_advisory_xact_lock(hashtextextended(key, 0))——**單獨一句**；等太久 → 55P03，路由映射 409 server_busy
- *   4. SET LOCAL lock_timeout TO DEFAULT——回到 role／database／設定檔層的值（不硬寫 0）：只有空間鎖這一句受限，
- *      交易之後的列鎖等待行為與今天相同（有測試守）
- *   4a. 測試縫 `storage-space-locked`
- *   5. 讀配額（users／groups JOIN storage_plans）；NULL → return
- *   6. SUM（個人空間：附件總和＋該使用者的頭貼總和，同一句內的子查詢）——**必須是取鎖之後的另一句**：READ COMMITTED 每句取新快照，才看得到前一位持鎖者已 commit 的列；併成一句時快照在
- *      取鎖之前，SUM 是舊值（確定性版測試守）。advisory xact lock 在 commit 可見之後才釋放。
- *   7. used + incoming > quota → throw（等於上限放行）
- * 呼叫它的交易一律 READ COMMITTED（REPEATABLE READ 下第 6 步看不到他人的新 commit）——結構性守衛 storage-quota-structure ⑥。
- */
+  * The only place a quota is decided; called after the transaction's row locks and before any write in the space's scope (keeps lock
+  * order acyclic). Each step is its own statement: `incoming <= 0` returns without locking (only additions are blocked); `lock_timeout`
+  * is set via `set_config` (`SET` takes no bind parameters), the advisory lock is alone (55P03 maps to 409 server_busy), then
+  * `lock_timeout` goes back TO DEFAULT (not 0: that restores the role/database/config value, so only the space-lock statement is bounded).
+  * The SUM must be a separate statement after the lock: READ COMMITTED snapshots per statement, which is what sees the previous holder's
+  * commit (the advisory xact lock is released only once the commit is visible). A NULL quota means unlimited; used + incoming equal to the
+  * quota passes. Callers must run READ COMMITTED.
+  */
 import { eq, sql } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
 import { groups, notes, storagePlans, uploads, users } from "../../db/schema.js";
@@ -22,19 +14,14 @@ import type { GroupTestHook } from "../../groups/test-hook.js";
 import { TxAbort } from "../../http/tx-abort.js";
 import { STORAGE_QUOTA_EXCEEDED_MESSAGE, spaceLockKey, spaceNotesWhere, sumAvatarBytesSql, sumUploadSizeSql, type StorageSpace } from "../space.js";
 
-/** 空間鎖等待上限的預設值（ms）。`AppDeps.storageLockTimeoutMs` 只給測試注入，不開 env。 */
 export const DEFAULT_STORAGE_LOCK_TIMEOUT_MS = 5000;
 
 export interface SpaceRoomOpts {
-  /** 空間鎖那一句的等待上限（ms）；正整數。由路由從 deps 帶入（純資料）。 */
   lockTimeoutMs: number;
-  /** 測試縫（生產不注入）；第 4a 步以 `"storage-space-locked"` 觸發。 */
   hook?: GroupTestHook;
-  /** 縫的 ctx（純資料，呼叫端帶）。 */
   hookCtx?: { noteId?: string; groupId?: string };
 }
 
-/** 交易內的配額拒絕：繼承 `TxAbort`（漏接細節也回對的碼），另帶 `space` 與三個數字供路由在交易外決定可見性。 */
 export class StorageQuotaExceeded extends TxAbort {
   constructor(
     readonly space: StorageSpace,

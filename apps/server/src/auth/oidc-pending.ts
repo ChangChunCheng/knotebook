@@ -4,29 +4,22 @@ import type { AppConfig } from "../config.js";
 import { sealCookieJson, unsealCookieJson } from "./sealed-cookie.js";
 import { OIDC_STATE_COOKIE_PATH } from "./oidc-state.js";
 
-// #187：「詢問是否連結」的待連結身分。callback 遇到 confirm_link 時封章、`/link-account` 頁經
-// `GET/POST /api/auth/oidc/pending*` 讀。一個瀏覽器同時只有一顆（新的 confirm_link 覆蓋舊的；兩分頁形靠 pendingId）。
+// One per browser: a new confirm_link overwrites the old one (the two-tab case relies on `pendingId`).
 
 export const OIDC_PENDING_COOKIE = "knotebook_oidc_link";
-/** 15 分鐘：要容得下一段 600 秒的 OIDC 往返（SSO 證明）。 */
 export const OIDC_PENDING_TTL_SECONDS = 900;
-/** 瀏覽器每顆約 4096，超過會被**靜默丟掉**；3800 留餘裕。量的是 `name=value`。 */
+/** Browsers silently DROP cookies over about 4096 bytes; measured on `name=value`, 3800 leaves margin. */
 export const OIDC_PENDING_MAX_COOKIE_BYTES = 3800;
 const NAMESPACE = "oidc-pending-link";
 
 export interface PendingLinkPayload {
-  /** 每次封章新產的 128-bit 隨機值：把「這一次待連結」綁到頁面送出與第二段 OIDC 往返。 */
   pendingId: string;
-  /** 等待連結的新身分（＝IdP 的 serverMetadata().issuer）與 provider。 */
   issuer: string;
   sub: string;
   providerId: string;
-  /** 要連到的既有帳號與封章當下它的 email（已正規化；鎖內以 lower(email) 再比一次）。 */
   userId: string;
   email: string;
-  /** epoch 秒，server 端驗。 */
   exp: number;
-  /** 已過 safeNextPath；使用前再過一次。 */
   next?: string;
 }
 
@@ -56,9 +49,9 @@ export function pendingCookieBytes(sealed: string): number {
 }
 
 /**
- * 大小規則：封章後 `name=value` 超過 3800 就捨棄 `next` 重封（連結完落 `/`）；其餘欄位都有上限（issuer ≤512、sub ≤255、
- * email ≤254——callback 拒收超長的），捨棄後最壞約 1671 bytes。仍超過（防禦縱深；
- * 例如 JSON 逸出把非 ASCII 字元撐大）→ null，呼叫端不封章、log.warn、導 oidc_claim_too_long。
+ * Over 3800 bytes after sealing, `next` is dropped and the cookie resealed (linking then lands on `/`). Every other field is capped
+ * (issuer <= 512, sub <= 255, email <= 254; the callback rejects longer), worst case about 1671 bytes. Still over (defence in depth:
+ * JSON escaping can inflate non-ASCII) gives null: the caller doesn't seal, warns and redirects to `oidc_claim_too_long`.
  */
 export function sealPendingLinkWithinLimit(appSecret: string, payload: PendingLinkPayload): { sealed: string; droppedNext: boolean } | null {
   const full = sealPendingLink(appSecret, payload);
@@ -70,14 +63,13 @@ export function sealPendingLinkWithinLimit(appSecret: string, payload: PendingLi
   return null;
 }
 
-/** 同 state cookie：`Path=/api/auth/oidc`、HttpOnly、Lax、Secure 同 session。 */
 export function setPendingCookie(reply: FastifyReply, config: Pick<AppConfig, "cookieSecure">, sealed: string): void {
   reply.setCookie(OIDC_PENDING_COOKIE, sealed, {
     httpOnly: true, sameSite: "lax", secure: config.cookieSecure, path: OIDC_STATE_COOKIE_PATH, maxAge: OIDC_PENDING_TTL_SECONDS,
   });
 }
 
-/** clearCookie 必須帶與 setCookie 相同的 path／sameSite／secure，否則瀏覽器不認得是同一顆。 */
+/** Needs the same path/sameSite/secure as `setCookie`, or the browser doesn't treat it as the same cookie. */
 export function clearPendingCookie(reply: FastifyReply, config: Pick<AppConfig, "cookieSecure">): void {
   reply.clearCookie(OIDC_PENDING_COOKIE, { path: OIDC_STATE_COOKIE_PATH, sameSite: "lax", secure: config.cookieSecure });
 }

@@ -1,7 +1,4 @@
-/**
- * 儲存配額的非交易讀。收 `Db`／`DbOrTx`、會借 pool——**只准在交易外呼叫**（S14）。
- * 不在 `tx/` 目錄：它們不是交易本體。
- */
+// Non-transactional reads that may borrow a pool connection: call them only outside a transaction (when given a `Db`).
 import { eq, sql } from "drizzle-orm";
 import { emptyStorageByKind, kindOfMime, type GroupStorageMemberUsageDto, type StorageByKind, type StorageQuotaErrorDetail } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
@@ -18,10 +15,7 @@ export interface SpaceUsage {
   planName: string;
 }
 
-/**
- * 空間的方案與用量；空間不存在 → null。兩句（方案、SUM），不持鎖——只給預檢與顯示用，權威判定在 `assertSpaceRoomInTx`。
- * 個人空間的用量＝附件＋該使用者的頭貼（同一句 SUM 內以子查詢取得）；群組空間只有附件。
- */
+/** No lock: for prechecks and display; the authoritative check is `assertSpaceRoomInTx`. */
 export async function readSpaceUsage(db: DbOrTx, space: StorageSpace): Promise<SpaceUsage | null> {
   const cols = { planId: storagePlans.id, planName: storagePlans.name, quotaBytes: storagePlans.quotaBytes };
   const [plan] = space.kind === "user"
@@ -33,11 +27,7 @@ export async function readSpaceUsage(db: DbOrTx, space: StorageSpace): Promise<S
   return { usedBytes: (row?.used ?? 0) + (row?.avatar ?? 0), quotaBytes: plan.quotaBytes, planId: plan.planId, planName: plan.planName };
 }
 
-/**
- * #247：空間內上傳依 mime 分組加總，JS 端以 shared 的 `kindOfMime` 歸類（分類規則只有一份）。只給兩支用量 GET 用——
- * **不得**搬進 `readSpaceUsage`：那句也是上傳 preHandler 與複製的「已滿」預檢（熱路徑），不加 GROUP BY。
- * 個人空間另以一句取頭貼總和併入 `image`（群組沒有頭貼）。
- */
+/** Not folded into `readSpaceUsage`: that statement is the hot-path "full" precheck and must not GROUP BY. */
 export async function readSpaceUsageByKind(db: DbOrTx, space: StorageSpace): Promise<StorageByKind> {
   const rows = await db
     .select({ mime: uploads.mime, bytes: sumUploadSizeSql() })
@@ -54,12 +44,7 @@ export async function readSpaceUsageByKind(db: DbOrTx, space: StorageSpace): Pro
   return out;
 }
 
-/**
- * #247：群組筆記的附件依**佔用者**（`uploads.charged_to_id`：把位元組帶進群組空間的人——直接上傳＝上傳者，
- * 移入／複製進群組＝執行者）分組。佔用者帳號已刪除（on delete set null）或回滾到 v0.9 期間新建的列（NULL）彙總成
- * `userId: null` 一列——**不**用 `COALESCE(charged_to_id, uploader_id)`：佔用者已刪而上傳者仍在時會錯算給上傳者。
- * 不看是否仍是成員（已離開的人照列）。只回 bytes > 0；bytes 降冪，同 bytes 依 charged_to_id 升冪、null 最後。
- */
+/** Grouped by `charged_to_id`, not `COALESCE(charged_to_id, uploader_id)`: that would credit the uploader when the charged account is deleted (those and NULL rows aggregate into `userId: null`). Members who left are still listed; only bytes > 0, ordered by bytes desc, then `charged_to_id` asc with null last. */
 export async function readGroupUsageByMember(db: DbOrTx, groupId: string): Promise<GroupStorageMemberUsageDto[]> {
   const rows = await db
     .select({ userId: uploads.chargedToId, handle: users.handle, displayName: users.displayName, bytes: sumUploadSizeSql() })
@@ -73,39 +58,29 @@ export async function readGroupUsageByMember(db: DbOrTx, groupId: string): Promi
   return rows.map(r => ({ userId: r.userId, handle: r.handle, displayName: r.displayName, bytes: r.bytes }));
 }
 
-/**
- * 能否檢視該空間的用量數字：個人＝本人或站台 admin；群組＝`groupAccess(...).manageGroup`（已含非成員的站台 admin）。
- * 刪群組・轉移的「接收者本人或站台 admin」就是個人空間這條（轉移那格）。
- * `user.id` 來自 DB（恆小寫）；`space.id` 可能是路由傳入的原值，故以小寫比。
- */
+/** `user.id` comes from the DB (always lowercase); `space.id` may be the route's raw value, hence only it is lowercased for the comparison. */
 export async function canViewSpaceUsage(db: Db, user: { id: string; isAdmin: boolean }, space: StorageSpace): Promise<boolean> {
   if (space.kind === "user") return user.id === space.id.toLowerCase() || user.isAdmin;
   return (await groupAccess(db, space.id, user))?.manageGroup === true;
 }
 
-/** 交易內判定被拒後（rollback 之後、交易外）組 409 的 `storage` 欄。可見性判定的 TOCTOU 可接受。 */
 export async function quotaErrorDetail(db: Db, user: { id: string; isAdmin: boolean }, err: StorageQuotaExceeded): Promise<StorageQuotaErrorDetail> {
   return (await canViewSpaceUsage(db, user, err.space))
     ? { incomingBytes: err.incomingBytes, usedBytes: err.usedBytes, quotaBytes: err.quotaBytes }
     : { incomingBytes: err.incomingBytes };
 }
 
-/** 交易前「已滿」預檢被拒時的 `storage` 欄：`incomingBytes` 為 null（尚未量測；上傳 preHandler、複製 3a）。 */
 export async function precheckDetail(db: Db, user: { id: string; isAdmin: boolean }, space: StorageSpace, usage: SpaceUsage): Promise<StorageQuotaErrorDetail> {
   return (await canViewSpaceUsage(db, user, space))
     ? { incomingBytes: null, usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes }
     : { incomingBytes: null };
 }
 
-/** 「已滿」：有上限且 used ≥ quota（上傳 preHandler、複製 3a 的同一判準）。 */
 export function isSpaceFull(usage: SpaceUsage | null): usage is SpaceUsage & { quotaBytes: number } {
   return usage !== null && usage.quotaBytes !== null && usage.usedBytes >= usage.quotaBytes;
 }
 
-/**
- * 站台管理列表用：「空間 id → 用量」；沒有附件（個人空間另加：也沒有頭貼）的空間不在 Map 裡（呼叫端以 0 補）。
- * 附件一次 GROUP BY；個人空間再以一句 `GROUP BY user_id` 取頭貼，在 JS 相加——只有頭貼、沒有附件的使用者也要進 Map。
- */
+/** Avatar bytes come from a second GROUP BY summed in JS, so avatar-only users must still get an entry. */
 export async function listSpaceUsage(db: DbOrTx, kind: "user" | "group"): Promise<Map<string, number>> {
   const key = kind === "user" ? notes.ownerId : notes.groupId;
   const rows = await db.select({ id: key, used: sumUploadSizeSql() }).from(uploads).innerJoin(notes, eq(notes.id, uploads.noteId)).groupBy(key);

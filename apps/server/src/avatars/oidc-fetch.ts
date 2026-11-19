@@ -1,26 +1,15 @@
 /**
- * 下載 IdP 的 `picture` 網址（不受信任的輸入，連線目標由 IdP 的使用者資料決定）。
- *
- * 威脅與界線：
- * - 伺服器端請求偽造：網址可以指向內網、本機、雲端中繼資料位址。每一跳（起始網址與每個重導）
- *   都先驗 scheme、埠，再把主機解析成位址，**任一**位址落在特殊用途範圍就拒絕。
- * - 重導：手動跟，最多 3 跳；每一跳重新套用全部檢查。
- * - 帳密：網址含 userinfo 的任何一跳在連線前拒絕。
- * - 資源耗盡：同一個逾時涵蓋解析、每一跳與讀 body；body 邊讀邊計數，超過上限立刻中止；
- *   content-type 不是三種點陣圖就不讀 body。
- * - 格式：最後仍以 magic bytes 判斷，GIF 與其他格式一律拒絕。
- * - 不帶 cookie、Authorization。
- * - 失敗原因是固定字串；底層錯誤（內建 fetch 的 TypeError 會帶完整網址，含密碼與 query）
- *   的訊息不回傳、不記錄。
- *
- * 豁免：圖片網址的主機名與 issuer 的主機名逐字相同（URL 已轉小寫）時，略過位址檢查——
- * 自架 IdP 常把頭貼放在自己的內網位址上。只比主機字串：不比子網域、後綴，也不比「解析到同一個
- * IP」。scheme 與埠仍照常檢查；重導到別的主機則回到位址檢查。
- *
- * 已知殘留：
- * - DNS rebinding：解析與連線是兩次查詢，攻擊者控制的 DNS 可在兩者之間換答案。
- * - 豁免主機的 80／443（以及 issuer 的埠）上的任何服務都可被探測。
- */
+  * Downloads an IdP `picture` URL (untrusted: the target comes from the IdP's profile). SSRF: every hop (start URL and each redirect,
+  * followed manually, max 3, all checks repeated) checks scheme and port, resolves the host and refuses if ANY address is special-use;
+  * userinfo is refused before connecting; no cookies or Authorization are sent. One timeout covers resolution, every hop and the
+  * body read; the body is counted while read and aborted at the cap; a content-type other than the three bitmap types is never
+  * read; the final check is by magic bytes (GIF refused). Failure reasons are fixed strings: the built-in fetch's TypeError
+  * carries the full URL (password and query), so underlying errors are neither returned nor logged.
+  * Exemption: a host equal to the issuer's (URL already lowercased) skips the address check, since self-hosted IdPs serve avatars
+  * from internal addresses; only the host string is compared (no subdomain, suffix or same-IP matching), scheme and port are still
+  * checked, and a redirect to another host is address-checked again.
+  * Known residual risk: DNS rebinding (resolve and connect are separate lookups), and probing of services on the exempt host's 80/443/issuer port.
+  */
 import { BlockList, isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { MAX_OIDC_AVATAR_BYTES } from "@knotebook/shared";
@@ -75,11 +64,10 @@ for (const [net, prefix] of [
   ["240.0.0.0", 4],
 ] as const) {
   blocked.addSubnet(net, prefix, "ipv4");
-  // NAT64（64:ff9b::/96）內嵌的 IPv4 走同一份清單。
   blocked.addSubnet("64:ff9b::" + net, 96 + prefix, "ipv6");
 }
 for (const [net, prefix] of [
-  ["::", 96], // 未指定、迴路與已廢止的 IPv4 相容形
+  ["::", 96], // unspecified, loopback and deprecated IPv4-compatible forms
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],
@@ -90,8 +78,9 @@ for (const [net, prefix] of [
 function productionAddressBlocked(ip: string): boolean {
   const family = isIP(ip);
   if (family === 4) return blocked.check(ip, "ipv4");
-  if (family === 6) return blocked.check(ip, "ipv6"); // IPv4-mapped 形由 BlockList 依 IPv4 規則比對
-  return true; // 認不得的形一律當作擋
+  if (family === 6) return blocked.check(ip, "ipv6"); // BlockList matches IPv4-mapped forms by the IPv4 rules
+  // Unrecognized address form: block (fail closed).
+  return true;
 }
 
 export const PRODUCTION_AVATAR_FETCH_POLICY: AvatarFetchPolicy = {
@@ -110,14 +99,11 @@ class Fail extends Error {
   }
 }
 
-/** 去掉 IPv6 字面值的方括號。 */
 function bareHost(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
-/**
- * `dns.lookup` 不收 signal：與 abort 賽跑。被丟下的 lookup 仍佔著 threadpool 直到自己結束。
- */
+/** `dns.lookup` ignores `signal`, so race it against abort; an abandoned lookup still holds a threadpool slot until it finishes. */
 function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   p.catch(() => undefined);
   if (signal.aborted) return Promise.reject(new Fail("timeout"));
@@ -203,8 +189,8 @@ export async function fetchOidcAvatar(
     const iu = new URL(opts.issuer);
     issuerHost = iu.hostname;
     issuerPort = effectivePort(iu);
+    // The issuer isn't a URL: no exemption.
   } catch {
-    // issuer 不是網址：沒有豁免。
   }
   try {
     let current: URL;
