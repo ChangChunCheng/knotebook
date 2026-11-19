@@ -13,12 +13,12 @@ async function scene(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
   const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
   const note = await ctx.createNote(u.id);
   const session = await ctx.loginAs("a@example.com", PASSWORD);
-  // ⚠ heading 同級（Global Constraints）：`## B` 會被 sectionize 併進 A 段，outline[2] 變 undefined
+  // Headings are at the same level: `## B` would be merged into A's section by sectionize and outline[2] would be undefined
   const client = await seedContent(ctx, session, note.id, "# A\n\n第一段內容\n\n# B\n\n第二段內容");
   const { token, tokenId } = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write", "Claude Code");
   const id = presenceClientId(note.id, tokenId);
-  // ⚠ handle 不是 email 的 local part：users.handle 的 DB default 是 'user-<8hex>'，ctx.createUser 不設它。
-  //    寫死 "a" 會紅；放寬成 expect.any(String) 會把「名牌指向正確的人」整條守衛拿掉（#137）。
+  // handle isn't the email local part: the `users.handle` DB default is 'user-<8hex>' and ctx.createUser doesn't set it.
+  // Hardcoding "a" fails; loosening to expect.any(String) drops the whole guard that the name tag points at the right person (#137).
   const ownerHandle = (await ctx.app.inject({ method: "GET", url: `/api/notes/${note.id}`, headers: bearer(token) })).json().ownerHandle as string;
   const expectedName = `${ownerHandle} (claude)`;
   const remote = () => client.provider.awareness!.getStates().get(id) as { user?: { name: string; color: string }; cursor?: { anchor: unknown } } | undefined;
@@ -33,8 +33,8 @@ async function scene(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
   return { ctx, u, note, session, client, token, tokenId, id, ownerHandle, expectedName, remote, remoteClock, cursorText, outline };
 }
 
-describe("presence：並排", () => {
-  it("_top 的第一顆是列 → 游標落在第一欄第一顆的文字（不是該欄最後一顆、不是最後一欄）", async () => {
+describe("presence: side by side", () => {
+  it("first item of _top is a columns row -> cursor lands on the first column's first block text (not that column's last block, not the last column)", async () => {
     const s = await scene();
     const ses = await EditorSession.open(testEditingRuntime, s.client.doc);
     try {
@@ -57,14 +57,14 @@ describe("presence：並排", () => {
 });
 
 describe("presence", () => {
-  it("token 讀 → provider 出現 `handle (label)` 與顏色、游標在文件開頭；?section= → 該段第一顆；_top → 文件開頭", async () => {
+  it("token read -> provider shows `handle (label)` and color, cursor at document start; ?section= -> that section's first block; _top -> document start", async () => {
     const s = await scene();
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
     expect(s.remote()!.user!.color).toBe("#7c3aed");
     expect(s.cursorText()).toContain("A");
     const o = await s.outline();
-    expect(o).toHaveLength(3); // _top / A / B——同級 heading 的前提，斷掉這一行下面兩段就沒有意義
+    expect(o).toHaveLength(3); // _top / A / B; same-level headings are a premise, without this the two parts below mean nothing
     await getContent(s.ctx.app, s.note.id, s.token, o[2]!.sectionId); await tick();
     await waitFor("游標到 B", 2_000, () => (s.cursorText() ?? "").includes("B"));
     await getContent(s.ctx.app, s.note.id, s.token, "_top"); await tick();
@@ -72,18 +72,17 @@ describe("presence", () => {
     s.client.disconnect();
   });
 
-  it("cookie **寫入**與 cookie 讀取都不設 presence；GET /edits 不刷新（用 clock 判斷，不用 sleep）", async () => {
+  it("cookie writes and cookie reads set no presence; GET /edits doesn't refresh it (judged by clock, not sleep)", async () => {
     const s = await scene();
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
-    // 三個「不該 touch」的動作依序先跑，之後才跑「該 touch」的那一發。awareness 更新走同一條 socket
-    // 依序抵達，所以等到最後那發到了，前三發若偷偷 touch 過就一定已經反映在 clock 上。
+    // The three "must not touch" actions run first, then the one that should touch. Awareness updates arrive in order over the same
+    // socket, so once the last one arrived, any stray touch by the first three is already reflected in the clock.
     //
-    // ⚠ 第一發是「**用瀏覽器登入的寫入**不設 presence」，它守住的是「cookie
-    //   寫入照樣 201、而且不會讓 token 那組 clock 跑掉」。**誠實記下：把 `request.tokenId &&`
-    //   拿掉不會讓這一案變紅**——cookie ⇒ agentLabel 為 null，第二個條件恰好也擋住；就算兩個
-    //   條件都拿掉，cookie 這條路 touch 用的 tokenId 不同 ⇒ clientId 不同 ⇒ 下面那行 clock
-    //   斷言看不到（已用突變實測）。真正擋住它的是 `tsc`，見 routes/notes.ts 該處註解。
-    //   下面的 `toBe(1)` 實際守住的是第三發（GET /edits 帶 token）——那一發突變確實會變成 2。
+    // The first request (a write via browser login) guards that a cookie write still gives 201 and doesn't shift the token's clock.
+    // Removing `request.tokenId &&` does not make this case fail: cookie implies agentLabel null, which the second condition also
+    // blocks; even with both conditions removed the cookie path touches with a different tokenId, hence a different clientId, which
+    // the clock assertion below can't see. What really blocks it is `tsc`, see the comment at that spot in routes/notes.ts. The
+    // `toBe(1)` below actually guards the third request (GET /edits with a token), which a stray touch would turn into 2.
     expect((await s.ctx.app.inject({
       method: "POST", url: `/api/notes/${s.note.id}/edits`, headers: { cookie },
       payload: { op: "append", markdown: "使用者自己在編輯器外用 cookie 寫的一行" },
@@ -92,42 +91,39 @@ describe("presence", () => {
     expect((await s.ctx.app.inject({ method: "GET", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token) })).statusCode).toBe(200);
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
-    // 本檔第一次 touch 這組 (noteId, tokenId)，clock 必為 1。上面三發只要有一發 touch 過，
-    // 這裡就會是 2。
+    // This file's first touch of this (noteId, tokenId): the clock must be 1; if any of the three above touched, it would be 2.
     expect(s.remoteClock()).toBe(1);
-    // ⚠ 上面那條 clock 斷言在結構上看不到「兩個條件都拿掉」這種突變：cookie 路徑 touch 用的
-    //   tokenId 跟這裡的 `s.tokenId` 不同，clientId 自然不同，clock 斷言完全不會注意到多了一個
-    //   陌生 client。真正的鑑別力在這裡：awareness 上出現的用戶端識別**集合**必須恰好是
-    //   「瀏覽器自己（本地 doc 的 clientID，Awareness 建構時就以空物件登記自己）＋這一組權杖」
-    //   兩個，一個都不能多。任何本該不 touch 的路徑偷偷 touch 了，都會在這裡多冒出一個 id。
+    // The clock assertion above structurally can't see "both conditions removed": the cookie path touches with a tokenId different
+    // from `s.tokenId`, hence a different clientId, so the clock never notices an extra stranger client. The real discriminating
+    // power is here: the **set** of client ids in awareness must be exactly two: the browser itself (the local doc's clientID,
+    // registered by Awareness's constructor with an empty state) plus this token. Any path that should not touch but does would add an id here.
     const clientIds = [...s.client.provider.awareness!.getStates().keys()].sort((a, b) => a - b);
     expect(clientIds).toEqual([s.client.provider.awareness!.clientID, s.id].sort((a, b) => a - b));
     s.client.disconnect();
   });
 
-  it("寫入後文件仍載入才出現，游標落在**這次寫下去的第一顆**；append 同理；沒人在線寫入不出現且文件不留在記憶體", async () => {
+  it("write -> presence appears only if the document is still loaded, cursor on the first block written this time; append likewise; with nobody online a write sets no presence and leaves no document in memory", async () => {
     const s = await scene();
-    // ⚠ 三個鑑別力設計，缺一個就變假綠：
-    //   (1) 這份 fixture 的 doc-start 與 A 段第一顆是**同一顆**（文件以 `# A` 開頭），
-    //       所以寫入一律挑 **B 段**——寫 A 段區分不出「正確目標」與「退回文件開頭」。
-    //   (2) 替換的 heading 用 **`# B2`**（與原標題 `# B` **不同字串**）。這樣「拿舊 section_id
-    //       去查、查不到就退回文件開頭」與「正確落在新寫下的 heading」兩種結果，在斷言上
-    //       是 `A` vs `B2` 兩個互斥的字串；沿用 `# B` 的話，只要哪天實作改成用舊 id 卻碰巧
-    //       解到同位置的舊文字，就分不出來了。
-    //   (3) append 之前先把游標拉回文件開頭，否則 append 那條斷言在游標沒動時也會過。
-    const o = await s.outline();                 // 讀整篇 → 游標在文件開頭（heading「A」）
-    const b = o[2]!;                             // outline 每列自帶 fingerprint，不必再讀一次 ?section=
+    // Three discriminating designs; missing any gives a false green:
+    //   (1) In this fixture doc-start and A's first block are the same block (the document starts with `# A`), so writes target
+    //       section B: writing A can't tell "correct target" from "fell back to doc start".
+    //   (2) The replaced heading is `# B2`, a different string from the original `# B`. So "looked up the old section_id, not found,
+    //       fell back to doc start" and "correctly landed on the newly written heading" are two exclusive strings, `A` vs `B2`;
+    //       keeping `# B` couldn't tell them apart if the implementation used the old id and happened to resolve old text at the same position.
+    //   (3) Before append, move the cursor back to doc start, otherwise the append assertion passes even if the cursor didn't move.
+    const o = await s.outline();                 // reading the whole note puts the cursor at document start (heading "A")
+    const b = o[2]!;                             // every outline row carries its fingerprint, no need to read ?section= again
     expect((await s.ctx.app.inject({
       method: "POST", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token),
       payload: { op: "replace_section", section_id: b.sectionId, markdown: "# B2\n\nAI 改過的第二段", if_match: b.fingerprint },
     })).statusCode).toBe(201);
     await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
-    // replace_section 把 heading 一起換掉了 → 舊 section_id 已不存在。目標若還用它，cursorFor
-    // 找不到就退回文件開頭（＝「A」），這條就紅。
+    // replace_section replaced the heading too, so the old section_id no longer exists; if the target still used it, cursorFor
+    // wouldn't find it and would fall back to doc start (= "A"), failing this.
     await waitFor("游標落在新寫下的 B2 heading", 2_000, () => (s.cursorText() ?? "").includes("B2"));
     expect(s.cursorText()).not.toContain("A");
-    // 先把游標拉回文件開頭，append 的落點才有鑑別力
+    // Move the cursor back to doc start first so the append landing point discriminates
     await getContent(s.ctx.app, s.note.id, s.token, "_top"); await tick();
     await waitFor("游標回文件開頭", 2_000, () => (s.cursorText() ?? "").includes("A"));
     expect((await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token), payload: { op: "append", markdown: "追加一行" } })).statusCode).toBe(201);
@@ -136,7 +132,7 @@ describe("presence", () => {
     s.client.disconnect();
     await waitFor("落盤並卸載", 10_000, () => s.ctx.collab.hocuspocus.documents.size === 0);
 
-    // 沒人在線：寫入不建立 presence，也不把文件留在記憶體
+    // Nobody online: a write creates no presence and leaves no document in memory
     const t = await scene();
     t.client.disconnect();
     await waitFor("落盤並卸載", 10_000, () => t.ctx.collab.hocuspocus.documents.size === 0);
@@ -144,7 +140,7 @@ describe("presence", () => {
     await waitFor("落盤並卸載", 10_000, () => t.ctx.collab.hocuspocus.documents.size === 0);
   });
 
-  it("撤回後游標退回文件開頭，不再停在被撤回的那行（撤回是三個對外動作之一，先前零覆蓋）", async () => {
+  it("after undo the cursor falls back to document start and no longer rests on the undone line (undo is one of three outward actions)", async () => {
     const s = await scene();
     const created = await s.ctx.app.inject({
       method: "POST", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token),
@@ -153,7 +149,7 @@ describe("presence", () => {
     expect(created.statusCode).toBe(201);
     const editId = (created.json() as { editId: string }).editId;
     await tick();
-    // 先把游標推到這次追加的那一行——之後才有「停在原地」與「退回文件開頭」兩個互斥字串可比。
+    // Push the cursor to the appended line first, so "stays put" and "falls back to doc start" are two exclusive strings
     await waitFor("游標先落在剛追加的那一行", 2_000, () => (s.cursorText() ?? "").includes("即將被撤回的一行"));
     expect((await s.ctx.app.inject({
       method: "POST", url: `/api/notes/${s.note.id}/edits/${editId}/revert`, headers: bearer(s.token),
@@ -164,7 +160,7 @@ describe("presence", () => {
     s.client.disconnect();
   });
 
-  it("閒置停止後同一 provider 仍連著時 re-touch → 名牌重現（clock 未重設，注入 idleMs）", async () => {
+  it("after idle stop, re-touch on the same connected provider makes the name tag reappear (clock not reset, idleMs injected)", async () => {
     const s = await scene({ presence: { idleMs: 200 } });
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
@@ -172,27 +168,27 @@ describe("presence", () => {
     const afterStop = s.remoteClock()!;
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("重現", 2_000, () => s.remote()?.user?.name === s.expectedName);
-    expect(s.remoteClock()!).toBeGreaterThan(afterStop); // 重新起算的 clock 會被 provider 靜默丟棄
+    expect(s.remoteClock()!).toBeGreaterThan(afterStop); // a restarted clock would be silently dropped by the provider
     s.client.disconnect();
   });
 
-  it("35 s 後瀏覽器側仍含該 clientID（heartbeat 撐過 outdatedTimeout 30 s）", async () => {
+  it("after 35 s the browser side still contains that clientID (heartbeat outlasts outdatedTimeout 30 s)", async () => {
     const s = await scene();
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
     await new Promise(r => setTimeout(r, 35_000));
     expect(s.remote()?.user?.name).toBe(s.expectedName);
     s.client.disconnect();
-  }); // 不另設 per-test 逾時、沿用全域 120 s：固定等 35 s，60 s 只留給建場景約 25 s，機器忙時太貼
+  }); // no per-test timeout, the global 120 s applies: it waits a fixed 35 s and 60 s would leave only about 25 s for scene setup, too tight on a busy machine
 
-  it("#240 Bearer 以大寫 id 讀 → presence 以小寫 id 現身、名牌正確", async () => {
+  it("#240 Bearer read with an uppercase id -> presence appears under the lowercase id with the right name tag", async () => {
     const s = await scene();
     await getContent(s.ctx.app, s.note.id.toUpperCase(), s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);
     s.client.disconnect();
   });
 
-  it("瀏覽器收到的 AI state 帶 `knotebook` agent 標記（#293），`user` 只有 name／color", async () => {
+  it("AI state seen by the browser carries the `knotebook` agent marker (#293), and `user` has only name/color", async () => {
     const s = await scene();
     await getContent(s.ctx.app, s.note.id, s.token); await tick();
     await waitFor("名字到達", 2_000, () => s.remote()?.user?.name === s.expectedName);

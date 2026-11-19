@@ -1,25 +1,18 @@
-/**
- * #132：兩個 RFC 形 prefix plugin 的骨架與元資料端點。
- *
- * 這一族守的是：①元資料由 `PUBLIC_URL` origin 派生、不宣告 CIMD；②`/oauth` 與
- * `/.well-known` 兩個前綴下的錯誤 body 是 RFC 形（全站唯一例外），連 404／415 都是；
- * ③根形 PRM 與未知 well-known 路徑即使帶 `Accept: text/html` 也不回 index.html。
- */
 import { describe, expect, it } from "vitest";
 import { buildTestApp, testConfig } from "./helpers.js";
 
-describe("OAuth 元資料端點", () => {
-  it("PRM：resource 與 authorization_servers 由 PUBLIC_URL origin 派生", async () => {
+describe("OAuth metadata endpoints", () => {
+  it("PRM: resource and authorization_servers are derived from the PUBLIC_URL origin", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({ method: "GET", url: "/.well-known/oauth-protected-resource/api/mcp" });
       expect(res.statusCode).toBe(200);
       expect(res.headers["cache-control"]).toBe("public, max-age=3600");
       const body = res.json();
-      // 絕對值：自我參照的斷言擋不住 `.href` 突變（尾斜線會一路傳遞而處處自洽）
+      // Absolute values: a self-referential assertion can't catch a `.href` mutation (a trailing slash would propagate and be consistent everywhere)
       expect(body.resource).toBe(`${testConfig.publicUrl.origin}/api/mcp`);
       expect(body.authorization_servers).toEqual([testConfig.publicUrl.origin]);
-      // #181：順序 read、write、move、delete
+      // order: read, write, move, delete (#181)
       expect(body.scopes_supported).toEqual(["notes:read", "notes:write", "notes:move", "notes:delete"]);
       expect(body.bearer_methods_supported).toEqual(["header"]);
       expect(body.resource_name).toBe("Knotebook");
@@ -28,14 +21,14 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  it("AS metadata：端點齊全且不宣告 CIMD", async () => {
+  it("AS metadata: endpoints complete and CIMD not declared", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({ method: "GET", url: "/.well-known/oauth-authorization-server" });
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(res.headers["cache-control"]).toBe("public, max-age=3600");
-      // 絕對值，理由同 PRM 案
+      // Absolute values, same reason as the PRM case
       expect(body.issuer).toBe(testConfig.publicUrl.origin);
       expect(body.scopes_supported).toEqual(["notes:read", "notes:write", "notes:move", "notes:delete"]);
       expect(body.authorization_endpoint).toBe(`${body.issuer}/oauth/authorize`);
@@ -46,15 +39,15 @@ describe("OAuth 元資料端點", () => {
       expect(body.code_challenge_methods_supported).toEqual(["S256"]);
       expect(body.token_endpoint_auth_methods_supported).toEqual(["none"]);
       expect(body.authorization_response_iss_parameter_supported).toBe(true);
-      // 不宣告 CIMD，client 才會退回 registration_endpoint
+      // CIMD isn't declared so that clients fall back to registration_endpoint
       expect(body).not.toHaveProperty("client_id_metadata_document_supported");
     } finally {
       await close();
     }
   });
 
-  // 根形 PRM 與任何未註冊的 /.well-known 路徑都不得回 index.html
-  it("根形 PRM 與未知 well-known 路徑回 RFC 形 404，即使 Accept: text/html", async () => {
+  // Root-form PRM and any unregistered /.well-known path must not return index.html
+  it("root-form PRM and unknown well-known paths get an RFC-shaped 404, even with Accept: text/html", async () => {
     const { app, close } = await buildTestApp();
     try {
       for (const url of ["/.well-known/oauth-protected-resource", "/.well-known/bogus"]) {
@@ -69,7 +62,7 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  it("/oauth 前綴下未匹配的路徑回 RFC 形 404，裸路徑亦然", async () => {
+  it("unmatched paths under the /oauth prefix get an RFC-shaped 404, bare path too", async () => {
     const { app, close } = await buildTestApp();
     try {
       for (const url of ["/oauth/bogus", "/oauth"]) {
@@ -82,8 +75,8 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  // 全域守衛對 /oauth 前綴的 415 也要走 RFC 形（含裸路徑）
-  it("/oauth 前綴送 form body 且非豁免路由 → 415 RFC 形", async () => {
+  // The global guard's 415 under the /oauth prefix must also be RFC-shaped (bare path included)
+  it("/oauth prefix with a form body on a non-exempt route -> 415 RFC-shaped", async () => {
     const { app, close } = await buildTestApp();
     try {
       for (const url of ["/oauth/bogus", "/oauth"]) {
@@ -101,9 +94,9 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  // 反向鑑別：守衛不是「OAuth 前綴一律 415」——正確的 JSON 要過得去（過了才 404）。
-  // 少了這一案，把判斷改成恆真仍然全綠。
-  it("/oauth 前綴送正確的 JSON → 過得了守衛（落 404 而不是 415）", async () => {
+  // Reverse discrimination: the guard isn't "always 415 under the OAuth prefix": correct JSON must get through (then 404).
+  // Without this case, making the check always true would stay green.
+  it("/oauth prefix with correct JSON passes the guard (lands on 404, not 415)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({
@@ -119,9 +112,9 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  // segment 邊界的接線守衛：/oauthx 不是 OAuth 前綴，該走站內形。GET 進不了
-  // CHANGE_METHODS 守衛，所以這一案必須是帶 body 的 POST。
-  it("POST /oauthx 送 form body → 站內 415 形（守衛用 segment 邊界，不是裸 startsWith）", async () => {
+  // Wiring guard for the segment boundary: /oauthx isn't an OAuth prefix and gets the in-site shape. GET never reaches the
+  // CHANGE_METHODS guard, so this case must be a POST with a body.
+  it("POST /oauthx with a form body -> in-site 415 shape (the guard uses a segment boundary, not a bare startsWith)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({
@@ -137,7 +130,7 @@ describe("OAuth 元資料端點", () => {
     }
   });
 
-  it("站內路由送 form body 仍是我們自己的 415 形", async () => {
+  it("in-site route with a form body still gets our own 415 shape", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({

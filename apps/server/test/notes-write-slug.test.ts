@@ -1,7 +1,3 @@
-/**
- * #175：`writeSlugInTx`（交易內寫 slug 的 savepoint helper）與 `insertNoteWithAutoSlug` 的 `inTx` 模式。
- * 「搶先寫入」以 `beforeWrite`／`beforeInsert` 縫在探測後、寫入前用**另一條連線**（`db`，已 commit）插同名列造出。
- */
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { uniqueViolationConstraint } from "../src/db/pg-errors.js";
@@ -11,13 +7,15 @@ import { insertNoteWithAutoSlug } from "../src/notes/create.js";
 import { buildTestApp } from "./helpers.js";
 import { seedGroup, seedNote, seedUser } from "./group-helpers.js";
 
-describe("#175 writeSlugInTx", () => {
-  it("群組 scope 撞名 → -2、寫入後該列屬於目標群組", async () => {
+// "Racing" writes are produced by inserting a same-name row (`db`, already committed) over a separate connection, via the
+// `beforeWrite`/`beforeInsert` hooks between the probe and the write.
+describe("writeSlugInTx", () => {
+  it("group-scope collision -> -2, the row belongs to the target group after writing", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
     await seedNote(db, { groupId: g.id }, { slug: "dup" });
-    const mine = await seedNote(db, { ownerId: u.id }, { slug: "dup" }); // 本列原本在個人範圍、同名 dup；scope 判定由下一案守
+    const mine = await seedNote(db, { ownerId: u.id }, { slug: "dup" }); // this row was in the personal scope with the same name dup; scope determination is guarded by the next case
     const slug = await db.transaction(tx =>
       writeSlugInTx(tx, { groupId: g.id }, { base: "dup" }, async s => {
         await tx.update(notes).set({ ownerId: null, groupId: g.id, slug: s }).where(eq(notes.id, mine.id));
@@ -28,11 +26,11 @@ describe("#175 writeSlugInTx", () => {
     expect(row).toMatchObject({ groupId: g.id, ownerId: null, slug: "dup-2" });
   });
 
-  it("scope 只看目標群組：別的 owner 的個人筆記同名不算撞 → 回基底本身", async () => {
+  it("scope only looks at the target group: another owner's personal note of the same name is not a collision -> returns the base itself", async () => {
     const { db } = await buildTestApp();
     const [u, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
-    await seedNote(db, { ownerId: other.id }, { slug: "solo" }); // 群組外、別人的個人範圍
+    await seedNote(db, { ownerId: other.id }, { slug: "solo" }); // outside the group, someone else's personal scope
     const mine = await seedNote(db, { ownerId: u.id });
     const slug = await db.transaction(tx =>
       writeSlugInTx(tx, { groupId: g.id }, { base: "solo" }, async s => {
@@ -42,7 +40,7 @@ describe("#175 writeSlugInTx", () => {
     expect(slug).toBe("solo");
   });
 
-  it("本列已在目標 scope、slug 同基底 → 排除本列、回原 slug（不把自己判成占用）", async () => {
+  it("row already in the target scope with the same base slug -> excluded, returns the original slug (doesn't count itself as taken)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -55,7 +53,7 @@ describe("#175 writeSlugInTx", () => {
     expect(slug).toBe("same");
   });
 
-  it("探測後被別人搶先寫入同名（beforeWrite 縫）→ savepoint 回滾、重探測成功，外層交易之後的語句仍可用（不是 25P02）", async () => {
+  it("same name written first by someone else after the probe (beforeWrite hook) -> savepoint rolls back, re-probe succeeds, and later statements in the outer transaction still work (not 25P02)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -68,17 +66,17 @@ describe("#175 writeSlugInTx", () => {
         excludeNoteId: n.id,
         beforeWrite: async c => {
           seen.push(c);
-          if (seen.length === 1) await seedNote(db, { groupId: g.id }, { slug: c }); // 另一條連線、已 commit
+          if (seen.length === 1) await seedNote(db, { groupId: g.id }, { slug: c }); // another connection, already committed
         },
       });
-      const [again] = await tx.select({ slug: notes.slug }).from(notes).where(eq(notes.id, n.id)); // 外層交易仍可用
+      const [again] = await tx.select({ slug: notes.slug }).from(notes).where(eq(notes.id, n.id)); // the outer transaction is still usable
       return { s, again: again!.slug };
     });
     expect(seen).toEqual(["race", "race-2"]);
     expect(out).toEqual({ s: "race-2", again: "race-2" });
   });
 
-  it("重試耗盡 → fallbackAutoSlug（untitled-<8 hex>）", async () => {
+  it("retries exhausted -> fallbackAutoSlug (untitled-<8 hex>)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -90,18 +88,18 @@ describe("#175 writeSlugInTx", () => {
       }, { excludeNoteId: n.id, beforeWrite: async c => { seen.push(c); if (!c.startsWith("untitled-")) await seedNote(db, { groupId: g.id }, { slug: c }); } }),
     );
     expect(s).toMatch(/^untitled-[0-9a-f]{8}$/);
-    // 重試輪數釘死：5 輪探測（x、x-2…x-5）全被搶先，第 6 輪才退位 fallback（門檻 `>` 改 `>=` 會少一輪）
+    // The retry round count is pinned: 5 probe rounds (x, x-2 ... x-5) are all raced and the 6th falls back (changing the threshold `>` to `>=` would lose a round)
     expect(seen.slice(0, 5)).toEqual(["x", "x-2", "x-3", "x-4", "x-5"]);
     expect(seen).toHaveLength(6);
     expect(seen[5]).toMatch(/^untitled-/);
   });
 
-  it("非 slug 的 23505 原樣拋出、不重試（constraint 名分流）", async () => {
+  it("a non-slug 23505 is rethrown as is, no retry (split by constraint name)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
     let calls = 0;
-    // drizzle 0.44 把 pg 錯誤包成 DrizzleQueryError（原始錯誤在 `.cause`）——以 `db/pg-errors.ts` 的判定取 constraint 名。
+    // drizzle 0.44 wraps pg errors in DrizzleQueryError (the original is in `.cause`): take the constraint name via the check in `db/pg-errors.ts`.
     const err = await db
       .transaction(tx =>
         writeSlugInTx(tx, { ownerId: u.id }, { base: "y" }, async () => {
@@ -118,8 +116,8 @@ describe("#175 writeSlugInTx", () => {
   });
 });
 
-describe("#175 insertNoteWithAutoSlug 的 inTx 模式（(4)）", () => {
-  it("交易內撞名 → savepoint 重試成功、同交易之後還能寫；回傳的列屬於該群組", async () => {
+describe("insertNoteWithAutoSlug inTx mode", () => {
+  it("collision inside the transaction -> savepoint retry succeeds, later writes in the same transaction still work; the returned row belongs to that group", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -133,7 +131,7 @@ describe("#175 insertNoteWithAutoSlug 的 inTx 模式（(4)）", () => {
       return created;
     });
     expect(row.groupId).toBe(g.id);
-    expect(row.slug).toBe("plan-3"); // plan 被 seed、plan-2 被 beforeInsert 搶走
+    expect(row.slug).toBe("plan-3"); // plan was seeded, plan-2 was taken by beforeInsert
     const [after] = await db.select({ title: notes.title }).from(notes).where(and(eq(notes.id, row.id)));
     expect(after!.title).toBe("Plan!");
   });

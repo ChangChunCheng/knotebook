@@ -12,7 +12,7 @@ const ISS = "https://idp.example";
 const claims = (over: Partial<OidcClaims> = {}): OidcClaims => ({ issuer: ISS, sub: "s1", email: "u@example.com", name: "U", preferredUsername: null, ...over });
 const run = (db: Db, c: OidcClaims, p: { id: string; configVersion: number }) =>
   db.transaction(tx => resolveOidcLoginInTx(tx, { claims: c, providerId: p.id, configVersion: p.configVersion }));
-/** 登入用服務（issuer＝ISS；helper 預設開自動建帳）。 */
+/** Login service (issuer = ISS); the helper defaults to auto-create on. */
 const seedRunProvider = (db: Db, over: { autoCreateEnabled?: boolean; configVersion?: number } = {}) =>
   seedAuthProvider(db, { issuerUrl: ISS, displayName: "Run", ...over });
 
@@ -21,8 +21,8 @@ async function seedUser(db: Db, over: Partial<typeof users.$inferInsert> = {}) {
   return u!;
 }
 
-describe("resolveOidcLoginInTx（#187 執行層）", () => {
-  it("身分命中 → login：只寫 last_login_at；users 列逐欄不變（含 must_change_password=true）", async () => {
+describe("resolveOidcLoginInTx (execution layer, #187)", () => {
+  it("identity hit -> login: writes only last_login_at; the users row is unchanged column by column (including must_change_password=true)", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     const u = await seedUser(db, { mustChangePassword: true });
@@ -35,7 +35,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(i!.lastLoginAt).not.toBeNull();
   });
 
-  it("身分命中但停用 → reject account_disabled、不寫 last_login_at", async () => {
+  it("identity hit but disabled -> reject account_disabled, last_login_at not written", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     const u = await seedUser(db, { disabledAt: new Date() });
@@ -45,7 +45,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(i!.lastLoginAt).toBeNull();
   });
 
-  it("新 email、服務開了自動建帳 → created：registry-first、無密碼、must_change_password=false、**不寫舊欄**、identity 帶 last_login_at", async () => {
+  it("new email with auto-create on -> created: registry-first, no password, must_change_password=false, **old columns not written**, identity carries last_login_at", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     const r = await run(db, claims({ email: "new@example.com", preferredUsername: "Cool.Person" }), p);
@@ -58,7 +58,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(h).toMatchObject({ userId: id, state: "live" });
   });
 
-  it("T1 服務沒開自動建帳 → registration_disabled、零寫入；與站台開關無關", async () => {
+  it("service without auto-create -> registration_disabled, zero writes; independent of the site switch", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db, { autoCreateEnabled: false });
     expect(await run(db, claims({ email: "new@example.com" }), p)).toEqual({
@@ -67,27 +67,27 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
       providerStale: false,
     });
     expect(await db.select().from(users)).toHaveLength(0);
-    // 站台 registration_enabled=false＋服務開 → 照樣建帳。
+    // Site registration_enabled=false with the service on -> still creates the account.
     const b = await buildTestApp();
     await b.db.update(siteSettings).set({ registrationEnabled: false });
     const q = await seedRunProvider(b.db);
     expect((await run(b.db, claims({ email: "new@example.com" }), q)).outcome.kind).toBe("created");
   });
 
-  it("T2 site_settings 沒有列 → registration_disabled＋settingsMissing；服務列再刪掉仍是 registration_disabled、providerStale=false", async () => {
+  it("site_settings has no row -> registration_disabled + settingsMissing; deleting the service row too is still registration_disabled, providerStale=false", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     await db.delete(siteSettings);
     const expected = { outcome: { kind: "reject", code: "registration_disabled" }, settingsMissing: true, providerStale: false };
-    // `.resolves`：誤走建帳時（缺列＝沒有預設方案）交易會拋錯，要讓它落成斷言失敗。
+    // `.resolves`: if it wrongly goes to account creation (a missing row means no default plan) the transaction throws, which must land as an assertion failure.
     await expect(run(db, claims({ email: "new@example.com" }), p)).resolves.toEqual(expected);
-    // providerStale 只在 site_settings 列在時成立。
+    // providerStale only holds when the site_settings row exists.
     await db.delete(authProviders).where(eq(authProviders.id, p.id));
     await expect(run(db, claims({ email: "new@example.com" }), p)).resolves.toEqual(expected);
     expect(await db.select().from(users)).toHaveLength(0);
   });
 
-  it("T3 服務開著但列已刪 → oidc_unavailable＋providerStale、零寫入", async () => {
+  it("service on but its row deleted -> oidc_unavailable + providerStale, zero writes", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     await db.delete(authProviders).where(eq(authProviders.id, p.id));
@@ -99,7 +99,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(await db.select().from(users)).toHaveLength(0);
   });
 
-  it("T4 服務開著但 config_version 已變 → oidc_unavailable＋providerStale、零寫入；版本相符 → created", async () => {
+  it("service on but config_version changed -> oidc_unavailable + providerStale, zero writes; version matches -> created", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db, { configVersion: 3 });
     expect(await run(db, claims({ email: "new@example.com" }), { id: p.id, configVersion: 2 })).toEqual({
@@ -111,7 +111,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect((await run(db, claims({ email: "new@example.com" }), p)).outcome.kind).toBe("created");
   });
 
-  it("T5 服務沒開自動建帳、或版本已變：已連結身分照常 login、email 有帳號照常 confirm_link（只影響建帳那步）", async () => {
+  it("service without auto-create, or version changed: a linked identity still logs in and an email with an existing account still gets confirm_link (only the account-creation step is affected)", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db, { autoCreateEnabled: false, configVersion: 2 });
     const cases = [
@@ -136,7 +136,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     }
   });
 
-  it("email 已有帳號（大小寫混合舊列也算）→ confirm_link，零寫入；B14：停用或已有同 issuer 身分的帳號也是 confirm_link", async () => {
+  it("email already has an account (a mixed-case old row counts) -> confirm_link, zero writes; a disabled account or one with a same-issuer identity is also confirm_link", async () => {
     for (const over of [{ email: "U@Example.com" }, { disabledAt: new Date() }]) {
       const { db } = await buildTestApp();
       const p = await seedRunProvider(db);
@@ -152,9 +152,9 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([{ issuer: ISS, sub: "older-sub" }]);
   });
 
-  // outcome 不帶 methods，所以這層看得到的是「同 issuer 的 provider 有沒有被算成證明方法」的後果——
-  // 無密碼帳號只剩它時是 no_proof_method、還有別的 provider 時是 confirm_link。providers 清單的內容由單元案斷言。
-  it("B14：純 SSO 帳號已有 ISS 身分（不同 sub）＋另一個 issuer 的已啟用 provider → confirm_link；ISS 的 provider 不算證明方法", async () => {
+  // The outcome carries no methods, so what this layer can see is the consequence of whether a same-issuer provider is counted as a proof
+  // method: no_proof_method when it's all a password-less account has, confirm_link when another provider exists. The contents of the providers list are asserted by the unit cases.
+  it("SSO-only account already has an ISS identity (different sub) + an enabled provider of another issuer -> confirm_link; the ISS provider doesn't count as a proof method", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db, { passwordHash: null });
     const p = await seedAuthProvider(db, { issuerUrl: ISS, displayName: "IdP" });
@@ -164,13 +164,13 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
       { userId: u.id, issuer: "https://b.example", sub: "bx" },
     ]);
     expect((await run(db, claims(), p)).outcome).toEqual({ kind: "confirm_link", userId: u.id, email: "u@example.com" });
-    // 停掉 B 之後只剩 ISS：若 ISS 被算進 methods，這裡會是 confirm_link。
+    // After B is disabled only ISS remains: if ISS were counted into methods this would be confirm_link.
     await db.update(authProviders).set({ enabled: false }).where(eq(authProviders.id, b.id));
     expect((await run(db, claims(), p)).outcome).toEqual({ kind: "reject", code: "oidc_link_no_proof_method" });
     expect(await identitiesOf(db, u.id)).toEqual([{ issuer: "https://b.example", sub: "bx" }, { issuer: ISS, sub: "older-sub" }]);
   });
 
-  it("B14：目標帳號只有 ISS 身分、無密碼（ISS provider 啟用中，resolved_issuer 帶尾斜線形）→ oidc_link_no_proof_method", async () => {
+  it("target account has only an ISS identity, no password (ISS provider enabled, resolved_issuer with a trailing slash) -> oidc_link_no_proof_method", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db, { passwordHash: null });
     const p = await seedAuthProvider(db, { issuerUrl: `${ISS}/`, resolvedIssuer: `${ISS}/`, displayName: "IdP" });
@@ -178,7 +178,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect((await run(db, claims(), p)).outcome).toEqual({ kind: "reject", code: "oidc_link_no_proof_method" });
   });
 
-  it("縱深防禦：claims.email 大小寫混合（未正規化）→ 比對到既有小寫帳號 → confirm_link（email 回正規化形），不建帳", async () => {
+  it("defence in depth: claims.email in mixed case (not normalized) -> matches the existing lowercase account -> confirm_link (email returned normalized), no account created", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     const u = await seedUser(db);
@@ -186,7 +186,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect(await db.select().from(users)).toHaveLength(1);
   });
 
-  it("純 SSO 帳號：連結的 provider 啟用中 → confirm_link；provider 停用 → oidc_link_no_proof_method", async () => {
+  it("SSO-only account: linked provider enabled -> confirm_link; provider disabled -> oidc_link_no_proof_method", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db, { passwordHash: null });
     const p = await seedRunProvider(db);
@@ -197,7 +197,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect((await run(db, claims(), p)).outcome).toEqual({ kind: "reject", code: "oidc_link_no_proof_method" });
   });
 
-  it("lower(email) 多列 → oidc_conflict；email 缺 → oidc_email_missing", async () => {
+  it("lower(email) matching multiple rows -> oidc_conflict; email missing -> oidc_email_missing", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     await seedUser(db, { email: "u@example.com" });
@@ -206,7 +206,7 @@ describe("resolveOidcLoginInTx（#187 執行層）", () => {
     expect((await run(db, claims({ email: null, sub: "zz" }), p)).outcome).toEqual({ kind: "reject", code: "oidc_email_missing" });
   });
 
-  it("持站台設定列鎖把服務開關改成 false 的交易未 commit 時，首登交易卡在 site_settings FOR SHARE；commit 後得 registration_disabled", async () => {
+  it("while a transaction holding the site_settings row lock has switched the service flag to false but not committed, the first-login transaction is stuck on site_settings FOR SHARE; after commit it gets registration_disabled", async () => {
     const { db } = await buildTestApp();
     const p = await seedRunProvider(db);
     const pool = db.$client;

@@ -20,21 +20,21 @@ async function insertUser(db: Db, overrides: Partial<{ email: string; displayNam
   return u;
 }
 
-// 測試裡的 session 一律直接簽發（不走 /api/auth/login），tokenVersion 一律用 DB 預設值
-// 0（insertUser 不改它），與 UserGate.check 比對的 tv 一致。
+// Sessions in these tests are always signed directly (not through /api/auth/login) and tokenVersion uses the DB default 0 (insertUser
+// doesn't change it), matching the tv that UserGate.check compares.
 async function cookieFor(userId: string): Promise<string> {
   return signTestSession({ userId, tv: 0 });
 }
 
 describe("resolveRole", () => {
-  it("owner → 'owner'", async () => {
+  it("owner -> 'owner'", async () => {
     const { db } = await buildTestApp();
     const owner = await insertUser(db);
     const [note] = await db.insert(notes).values({ ownerId: owner.id }).returning();
     await expect(resolveRole(db, owner.id, note.id)).resolves.toBe("owner");
   });
 
-  it("有 note_shares 'editor' 列 → 'editor'", async () => {
+  it("a note_shares 'editor' row -> 'editor'", async () => {
     const { db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-editor@example.com" });
     const editor = await insertUser(db, { email: "editor@example.com" });
@@ -43,7 +43,7 @@ describe("resolveRole", () => {
     await expect(resolveRole(db, editor.id, note.id)).resolves.toBe("editor");
   });
 
-  it("有 note_shares 'viewer' 列 → 'viewer'", async () => {
+  it("a note_shares 'viewer' row -> 'viewer'", async () => {
     const { db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-viewer@example.com" });
     const viewer = await insertUser(db, { email: "viewer@example.com" });
@@ -52,7 +52,7 @@ describe("resolveRole", () => {
     await expect(resolveRole(db, viewer.id, note.id)).resolves.toBe("viewer");
   });
 
-  it("note 存在但未分享 → 'none'", async () => {
+  it("note exists but is not shared -> 'none'", async () => {
     const { db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-none@example.com" });
     const stranger = await insertUser(db, { email: "stranger@example.com" });
@@ -60,13 +60,13 @@ describe("resolveRole", () => {
     await expect(resolveRole(db, stranger.id, note.id)).resolves.toBe("none");
   });
 
-  it("note 不存在（合法 UUID 格式）→ 'none'", async () => {
+  it("note doesn't exist (valid UUID format) -> 'none'", async () => {
     const { db } = await buildTestApp();
     const user = await insertUser(db);
     await expect(resolveRole(db, user.id, "00000000-0000-0000-0000-000000000000")).resolves.toBe("none");
   });
 
-  it("noteId 非 UUID 格式 → 'none'（不 throw invalid input syntax）", async () => {
+  it("noteId not in UUID format -> 'none' (doesn't throw invalid input syntax)", async () => {
     const { db } = await buildTestApp();
     const user = await insertUser(db);
     await expect(resolveRole(db, user.id, "not-a-uuid")).resolves.toBe("none");
@@ -74,7 +74,7 @@ describe("resolveRole", () => {
 });
 
 describe("POST /api/notes", () => {
-  it("未帶 title → 201，title 預設 Untitled，形狀正確", async () => {
+  it("no title -> 201, title defaults to Untitled, correct shape", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db);
     const cookie = await cookieFor(u.id);
@@ -87,9 +87,8 @@ describe("POST /api/notes", () => {
     expect(typeof body.createdAt).toBe("string");
     expect(typeof body.updatedAt).toBe("string");
 
-    // 精確鎖住 DTO 的欄位集合（而非只用 toMatchObject 驗子集）——notes 表
-    // 實際還有 linksClock、deletedAt 兩個內部欄位，NoteDto 组裝必須明確排除，不能讓
-    // 未來有人不小心把 `...note` 展開進回應而洩漏出去。
+    // Pin the exact field set of the DTO (not just a toMatchObject subset): the notes table also has the internal columns linksClock
+    // and deletedAt, which NoteDto assembly must exclude explicitly so nobody later spreads `...note` into the response and leaks them.
     expect(Object.keys(body).sort()).toEqual([
       "createdAt", "folderId", "group", "groupId", "id", "lastEdited", "ownerHandle", "ownerId", "permissions", "prevSlug", "role", "slug", "slugIsCustom", "title", "updatedAt",
     ]);
@@ -98,7 +97,7 @@ describe("POST /api/notes", () => {
     expect(body.permissions.moveToGroup).toBe(true);
   });
 
-  it("帶 title → 201 使用該 title", async () => {
+  it("with title -> 201 uses that title", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db);
     const cookie = await cookieFor(u.id);
@@ -108,9 +107,8 @@ describe("POST /api/notes", () => {
     expect(res.json()).toMatchObject({ title: "My Note" });
   });
 
-  // #108：`createBodySchema.title` 的 `.min(1)` 在這之前沒有任何守衛（`:270` 的空 title 案打的
-  // 是 PATCH，走 `updateBodySchema`）。schema 抽到 `notes/schemas.ts` 之前先補上。
-  it("空 title → 400（守 createBodySchema 的 .min(1)）", async () => {
+  // `createBodySchema.title`'s `.min(1)`: the empty-title case for PATCH goes through `updateBodySchema`, so create needs its own case.
+  it("empty title -> 400 (guards createBodySchema's .min(1))", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db);
     const cookie = await cookieFor(u.id);
@@ -120,10 +118,10 @@ describe("POST /api/notes", () => {
     expect(res.json().error.code).toBe("invalid_body");
   });
 
-  // #108：`createBodySchema.title` 的 `.refine(noNul)` 同樣沒有守衛。沒有它，含 U+0000 的
-  // title 會一路寫進 pg 的 text 欄位、pg 回 22021，例外逃到全域 errorHandler 變 500——所以
-  // 「零新增」那一半也要斷言（只驗狀態碼的話，500 之外的漏寫路徑看不出來）。
-  it("含 NUL 的 title → 400 且 notes 表零新增（守 .refine(noNul)）", async () => {
+  // `createBodySchema.title`'s `.refine(noNul)`: without it a title containing U+0000 would be written to pg's
+  // text column, pg answers 22021 and the exception escapes to the global errorHandler as a 500, so the "zero new rows" half is
+  // asserted too (a status-code-only check can't see write paths other than 500).
+  it("title containing NUL -> 400 and zero new rows in notes (guards .refine(noNul))", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db);
     const cookie = await cookieFor(u.id);
@@ -139,7 +137,7 @@ describe("POST /api/notes", () => {
     expect(rows).toHaveLength(0);
   });
 
-  it("未登入 → 401", async () => {
+  it("not logged in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "POST", url: "/api/notes", payload: {} });
     expect(res.statusCode).toBe(401);
@@ -147,7 +145,7 @@ describe("POST /api/notes", () => {
 });
 
 describe("GET /api/notes", () => {
-  it("含自有與被分享（role 正確），依 updatedAt desc 排序", async () => {
+  it("includes owned and shared (correct role), sorted by updatedAt desc", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-list@example.com" });
     const viewer = await insertUser(db, { email: "viewer-list@example.com" });
@@ -161,7 +159,7 @@ describe("GET /api/notes", () => {
 
     await db.insert(noteShares).values({ noteId: note1.id, userId: viewer.id, role: "viewer" });
 
-    // 讓 note1 的 updatedAt 晚於 note2：透過 PATCH 更新一次 note1（owner 打）。
+    // Make note1's updatedAt later than note2's: PATCH note1 once (as the owner).
     const patchRes = await app.inject({
       method: "PATCH",
       url: `/api/notes/${note1.id}`,
@@ -183,7 +181,7 @@ describe("GET /api/notes", () => {
     expect(viewerList[0]).toMatchObject({ id: note1.id, role: "viewer" });
   });
 
-  it("未登入 → 401", async () => {
+  it("not logged in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/notes" });
     expect(res.statusCode).toBe(401);
@@ -191,7 +189,7 @@ describe("GET /api/notes", () => {
 });
 
 describe("GET /api/notes/:id", () => {
-  it("未分享者 → 404 not_found（不是 403）", async () => {
+  it("unshared user -> 404 not_found (not 403)", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-get@example.com" });
     const stranger = await insertUser(db, { email: "stranger-get@example.com" });
@@ -206,7 +204,7 @@ describe("GET /api/notes/:id", () => {
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("viewer → 200", async () => {
+  it("viewer -> 200", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-get2@example.com" });
     const viewer = await insertUser(db, { email: "viewer-get2@example.com" });
@@ -222,7 +220,7 @@ describe("GET /api/notes/:id", () => {
     expect(res.json()).toMatchObject({ id: note.id, role: "viewer" });
   });
 
-  it("不存在的 noteId → 404", async () => {
+  it("nonexistent noteId -> 404", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -234,7 +232,7 @@ describe("GET /api/notes/:id", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("noteId 非 UUID 格式 → 404（route 層驗證 resolveRole 的 UUID guard 真的接上，不 500）", async () => {
+  it("non-UUID noteId -> 404 (the route-layer validation really wires up resolveRole's UUID guard, no 500)", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -243,7 +241,7 @@ describe("GET /api/notes/:id", () => {
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("未登入 → 401", async () => {
+  it("not logged in -> 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const ownerCookie = await cookieFor(owner.id);
@@ -256,7 +254,7 @@ describe("GET /api/notes/:id", () => {
 });
 
 describe("PATCH /api/notes/:id", () => {
-  it("viewer → 403 forbidden", async () => {
+  it("viewer -> 403 forbidden", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-patch@example.com" });
     const viewer = await insertUser(db, { email: "viewer-patch@example.com" });
@@ -277,7 +275,7 @@ describe("PATCH /api/notes/:id", () => {
     expect(res.json()).toMatchObject({ error: { code: "forbidden" } });
   });
 
-  it("editor → 200，updatedAt 變大", async () => {
+  it("editor -> 200, updatedAt increases", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-patch2@example.com" });
     const editor = await insertUser(db, { email: "editor-patch2@example.com" });
@@ -300,7 +298,7 @@ describe("PATCH /api/notes/:id", () => {
     expect(Date.parse(body.updatedAt)).toBeGreaterThan(Date.parse(note.updatedAt));
   });
 
-  it("空 title → 400", async () => {
+  it("empty title -> 400", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const ownerCookie = await cookieFor(owner.id);
@@ -316,7 +314,7 @@ describe("PATCH /api/notes/:id", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it("無權限者 → 404", async () => {
+  it("user without permission -> 404", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-patch3@example.com" });
     const stranger = await insertUser(db, { email: "stranger-patch3@example.com" });
@@ -337,7 +335,7 @@ describe("PATCH /api/notes/:id", () => {
 });
 
 describe("DELETE /api/notes/:id", () => {
-  it("editor → 403 forbidden；beforeNoteDeleted 未被呼叫（授權失敗須早於 collab teardown，不能被當成 DoS 面利用）", async () => {
+  it("editor -> 403 forbidden; beforeNoteDeleted not called (authorization must fail before collab teardown so it can't be used as a DoS surface)", async () => {
     const beforeNoteDeleted = vi.fn(async () => ({ release: () => {} }));
     const collabHooks: CollabHooks = {
       onShareChanged: vi.fn(),
@@ -364,7 +362,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("非相關者 → 404；beforeNoteDeleted 未被呼叫（同上，無權限者不該觸發任何 collab teardown 副作用）", async () => {
+  it("unrelated user -> 404; beforeNoteDeleted not called (same: someone without permission must not trigger any collab teardown side effect)", async () => {
     const beforeNoteDeleted = vi.fn(async () => ({ release: () => {} }));
     const collabHooks: CollabHooks = {
       onShareChanged: vi.fn(),
@@ -389,7 +387,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(beforeNoteDeleted).not.toHaveBeenCalled();
   });
 
-  it("owner → 204：移到垃圾桶（#181）——notes 列與關聯表（note_states/note_state_backups/note_shares/note_links/uploads）都在、deleted_at 非 NULL；再 GET 404 in_trash", async () => {
+  it("owner -> 204: moved to trash (#181): the notes row and related tables (note_states/note_state_backups/note_shares/note_links/uploads) all remain, deleted_at is non-NULL; GET afterwards 404 in_trash", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del3@example.com" });
     const linkedUser = await insertUser(db, { email: "linked-del3@example.com" });
@@ -400,7 +398,7 @@ describe("DELETE /api/notes/:id", () => {
     const otherRes = await app.inject({ method: "POST", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie }, payload: {} });
     const otherNote = otherRes.json();
 
-    // 手動塞好每個關聯表至少一列：移入垃圾桶不動子表（還原後一切回到移入前；永久刪除才清，見 trash-tx.test.ts）。
+    // Seed at least one row in every related table: trashing doesn't touch child tables (everything returns to the pre-trash state on restore; only permanent deletion clears them, see trash-tx.test.ts).
     await db.insert(noteStates).values({ noteId: note.id, ydoc: Buffer.from("state") });
     await db.insert(noteStateBackups).values({ noteId: note.id, ydoc: Buffer.from("backup") });
     await db.insert(noteShares).values({ noteId: note.id, userId: linkedUser.id, role: "viewer" });
@@ -427,15 +425,15 @@ describe("DELETE /api/notes/:id", () => {
     expect(getRes.json().error.code).toBe("in_trash");
   });
 
-  it("beforeNoteDeleted 於交易前被 await：hook 內查 DB 時 notes 列仍存在、還沒進垃圾桶", async () => {
-    // dbRef 是個可變的 box：beforeNoteDeleted 這個 vi.fn 在 buildTestApp() 回傳「真正
-    // 要用的 db」之前就已經被定義（它要作為 overrides 傳進 buildTestApp），只能靠這個
-    // box 延遲取得 db——box 本身用 const（只指派一次），box.current 才是可變欄位。
+  it("beforeNoteDeleted is awaited before the transaction: when the hook queries the DB the notes row still exists and isn't in trash yet", async () => {
+    // dbRef is a mutable box: the beforeNoteDeleted vi.fn is defined before buildTestApp() returns the db it really needs (it is
+    // passed to buildTestApp as an override), so the db can only be obtained lazily through this box; the box itself is a const
+    // (assigned once), box.current is the mutable field.
     const dbRef: { current: Db | undefined } = { current: undefined };
     const beforeNoteDeleted = vi.fn(async (noteId: string) => {
       const rows = await dbRef.current!.select().from(notes).where(eq(notes.id, noteId));
       expect(rows).toHaveLength(1);
-      expect(rows[0]!.deletedAt).toBeNull(); // #181：移入後列也還在，只有 deleted_at 分得出「交易前」
+      expect(rows[0]!.deletedAt).toBeNull(); // since #181 the row still exists after trashing, only deleted_at tells "before the transaction" apart
       return { release: () => {} };
     });
     const collabHooks: CollabHooks = {
@@ -463,7 +461,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(beforeNoteDeleted).toHaveBeenCalledWith(note.id);
   });
 
-  it("beforeNoteDeleted throw → 交易不執行（notes 仍存在且不在垃圾桶）", async () => {
+  it("beforeNoteDeleted throws -> the transaction doesn't run (notes still exists and isn't in trash)", async () => {
     const collabHooks: CollabHooks = {
       onShareChanged: vi.fn(),
       onUserRevoked: vi.fn(),
@@ -490,7 +488,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(rows[0]!.deletedAt).toBeNull();
   });
 
-  it("未登入 → 401", async () => {
+  it("not logged in -> 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const ownerCookie = await cookieFor(owner.id);
@@ -501,7 +499,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("owner → 204：移到垃圾桶不刪附件（#181）——uploads 列與磁碟檔都在（永久刪除才刪，見 trash 的 purge）", async () => {
+  it("owner -> 204: trashing doesn't delete attachments (#181): the uploads rows and files on disk remain (only permanent deletion deletes them, see the trash purge)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del6@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -524,7 +522,7 @@ describe("DELETE /api/notes/:id", () => {
     expect(existsSync(filePath)).toBe(true);
   });
 
-  it("移入交易 commit 前失敗（模擬用強制 rollback）→ 500、筆記不在垃圾桶、附件列與磁碟檔都在（#181：DELETE 本來就不刪檔；原本「刪檔只在 commit 後」契約移到永久刪除）", async () => {
+  it("failure before the trashing transaction commits (simulated with a forced rollback) -> 500, note not in trash, attachment rows and disk files remain (#181: DELETE never deletes files; the old \"files deleted only after commit\" contract moved to permanent deletion)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-del8@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -539,17 +537,15 @@ describe("DELETE /api/notes/:id", () => {
     const filePath = path.join(uploadsDir, upload.id);
     writeFileSync(filePath, Buffer.from([1, 2, 3, 4]));
 
-    // 強制交易在 callback（DELETE 交易本體）跑完之後 rollback，模擬「commit 前的任何
-    // 失敗」（例如 DB 連線在 commit 那一刻斷線）——不是真的走到我們自己程式碼裡任何
-    // 已知分支，純粹是測試替身逼出「callback 已跑完、但整個交易最終沒有 commit」這個
-    // 狀態，藉此檢驗「callback 跑完但沒 commit 時，移入不生效、附件也不被動到」，而不是檢驗
-    // 某個特定的錯誤處理分支。
+    // Force the transaction to roll back after its callback (the DELETE transaction body) has run, simulating any failure before
+    // commit (e.g. the DB connection dropping at the commit moment): this doesn't reach any known branch in our code; the test double
+    // merely produces the state "callback finished but the transaction never committed", checking that trashing doesn't take effect
+    // and attachments aren't touched, rather than checking a specific error-handling branch.
     //
-    // db.transaction 是 drizzle 的泛型 overload（回呼型別與具體 schema/query 型別綁定），
-    // 這裡只是包一層「跑完 callback 後強制 throw」的測試替身，逐字對齊完整泛型簽章在這裡
-    // 沒有實質好處（同 repo 既有測試替身走 any 的慣例，見
-    // apps/web/src/components/wikilink/spec.tsx 等處）。
-    /* eslint-disable @typescript-eslint/no-explicit-any -- 見上方註解 */
+    // db.transaction is a drizzle generic overload (callback type bound to the concrete schema/query types); this is only a wrapper
+    // that throws after the callback, and matching the full generic signature has no real benefit here (same as existing test doubles
+    // in the repo that use any, e.g. apps/web/src/components/wikilink/spec.tsx).
+    /* eslint-disable @typescript-eslint/no-explicit-any -- see the comment above */
     const orig = db.transaction.bind(db);
     const transactionSpy = vi.spyOn(db, "transaction").mockImplementation((cb: any, cfg?: any) =>
       orig(async (tx: any) => {
@@ -563,7 +559,6 @@ describe("DELETE /api/notes/:id", () => {
       const delRes = await app.inject({ method: "DELETE", url: `/api/notes/${note.id}`, cookies: { [SESSION_COOKIE]: ownerCookie } });
       expect(delRes.statusCode).toBe(500);
 
-      // rollback 生效：deleted_at 仍是 NULL。
       const [row] = await db.select({ deletedAt: notes.deletedAt }).from(notes).where(eq(notes.id, note.id));
       expect(row?.deletedAt).toBeNull();
       expect(await db.select().from(uploads).where(eq(uploads.id, upload.id))).toHaveLength(1);
