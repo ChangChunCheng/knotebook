@@ -1,8 +1,7 @@
 /** #398：解析太複雜（`too_complex`）與解析排隊逾時的訊息——REST、批次寫回、MCP 三處的字面。 */
 import { describe, expect, it } from "vitest";
-import { PARSER_BUSY_MESSAGE, TOO_COMPLEX_MESSAGE } from "../../src/http/parse-errors.js";
+import { parseErrorMessage, PARSER_BUSY_MESSAGE, TOO_COMPLEX_MESSAGE } from "../../src/http/parse-errors.js";
 import { PARSER_BUSY_TOOL_MESSAGE, writeFailureMessage } from "../../src/mcp/write-messages.js";
-import { parseErrorMessage } from "../../src/routes/notes.js";
 import { transferParseMessage } from "../../src/routes/transfer.js";
 
 describe("too_complex／parser busy 訊息", () => {

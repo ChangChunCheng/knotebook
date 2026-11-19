@@ -129,12 +129,14 @@ const REGISTRY: Record<string, Disposition> = {
   "notes/tx/versions.ts": { excludes: 1, includes: 3, write: 3, why: "版本清除照常、轉移 reset 不分狀態" },
   "notes/tx/write-links.ts": { includes: 4, why: "目標在垃圾桶照記、CAS 不加條件" },
   "routes/admin-storage.ts": { includes: 2, why: "容量照算" },
+  // excludes：GET public-link；write：公開連結五支（token PUT/DELETE、width PUT、別名 PUT/DELETE）。
+  // GET public-link 與 routes/notes.ts 的格 4 pre-read 同是「授權後、本句不帶條件」：前者是純讀，TOCTOU 下等同「先讀後移入」，歸 excludes；
+  // 後者登記為 includes。
+  "routes/note-sharing.ts": { excludes: 1, write: 5 },
   // excludes：withCurrentBase（授權後讀）；includes：DELETE 版本的基底子查詢。
   "routes/note-versions.ts": { excludes: 1, includes: 1, why: "刪版本：授權後子表單句寫入不加條件" },
-  // excludes：ownershipChanged、selectNotesWhere、GET public-link；includes：格 4 pre-read；write：公開連結五支。
-  // GET public-link 與格 4 pre-read 同是「授權後、本句不帶條件」：前者是純讀，TOCTOU 下等同「先讀後移入」，歸 excludes；
-  // 後者登記為 includes。
-  "routes/notes.ts": { excludes: 3, includes: 1, write: 5, why: "格 4 pre-read 不加條件，後面的 CTE 會擋" },
+  // excludes：ownershipChanged、selectNotesWhere；includes：格 4 pre-read（授權後、本句不帶條件；與 routes/note-sharing.ts 的 GET public-link 對照）。
+  "routes/notes.ts": { excludes: 2, includes: 1, why: "格 4 pre-read 不加條件，後面的 CTE 會擋" },
   "routes/public.ts": { excludes: 2 },
   // 「認識的人」建議：我擁有的活筆記的分享對象（帶 deleted_at IS NULL）。
   "routes/users.ts": { excludes: 1 },
