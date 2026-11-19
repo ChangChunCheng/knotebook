@@ -29,26 +29,22 @@ import { SiteLimits, type SiteLimitsLog } from "../src/site-limits/store.js";
 export interface FreshDb {
   db: Db;
   pool: Pool;
-  /** 這顆測試資料庫的連線字串（#175：S14 小 pool 案要對同一顆資料庫另開 pool）。 */
+  /** For opening a second pool on the same database. */
   url: string;
-  /** 手動關閉 pool（非測試情境用）。在 test 內呼叫 freshDb() 不必自己叫這個——已用 onTestFinished 自動掛好。 */
+  /** Manual close for non-test use; inside a test, onTestFinished already does it. */
   close: () => Promise<void>;
 }
 
 /**
- * 建一個全新的 database（隨機名），**不跑任何 migration**（#122-H harness 的入口：
- * migration 資料案例需要「先建到第 N 支的 schema、塞舊資料、再跑目標 migration」，
- * `freshDb()` 無條件跑完全部做不到）。一般測試請用 `freshDb()`。
+ * Creates a fresh database (random name) WITHOUT running any migration: the entry point of the migration harness, which needs to build the schema up to
+ * migration N, insert old data, and then run the target migration (`freshDb()` always runs them all). Use `freshDb()` for ordinary tests.
  *
- * 刻意不用「DROP SCHEMA public CASCADE; CREATE SCHEMA public」——drizzle 的 migration
- * journal 存在 `drizzle` schema，砍掉 public 後 drizzle 仍以為所有 migration 都跑過，
- * 第二次 migrate 會靜默跳過建表（journal 與實際表結構不同步）。用隨機名 CREATE DATABASE
- * 保證每個測試都是全新、乾淨、journal 與表結構一致的資料庫。
+ * Deliberately not `DROP SCHEMA public CASCADE; CREATE SCHEMA public`: drizzle's migration journal lives in the `drizzle` schema, so after dropping public
+ * drizzle would still think every migration ran and a second migrate would silently skip creating the tables. A random-name CREATE DATABASE guarantees
+ * a clean database whose journal matches its tables.
  *
- * Teardown 契約：在 vitest test 內呼叫時，用 `onTestFinished` 自動清理——先關掉 pool、
- * 再 DROP 掉這個資料庫（見下方 `close`），即使斷言失敗（test 拋出）也會執行，不會洩漏
- * 連線或殘留資料庫。同時回傳 `close()` 供非 test context（例如手動除錯腳本）自行呼叫。
- * 兩者皆冪等（多次呼叫安全）。
+ * Inside a vitest test, cleanup runs through `onTestFinished` (close the pool, then DROP the database, see `close`) even when an assertion throws,
+ * so no connection or database leaks; `close()` is also returned for non-test contexts. Both are idempotent.
  *
  * @param opts.cLocale When `true`, create the database from template0 with `LC_COLLATE` and `LC_CTYPE` set to `C`
  *   (by default it inherits the cluster's locale).
@@ -79,22 +75,17 @@ export async function freshEmptyDb(opts: { cLocale?: boolean } = {}): Promise<Fr
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
-    // 建了就要收：不 DROP 的話，單一 run 內 400+ 條測試會在同一顆容器裡單調累積出
-    // 數百個 test_<random> 資料庫，最終在 CREATE DATABASE 那一行撞牆（issue #51，
-    // 實際踩過整份整合測試一次全紅、重跑全綠）。先 pool.end() 收掉自己的
-    // 連線，再另開一條到 base（不能在自己身上 DROP）把它刪掉。
-    // - `pool.end()` 放進 try/finally 的 try：即使它拋，DROP 仍會執行（否則那個 db 永久洩漏）；
-    // - WITH (FORCE)（PG 13+）踢掉殘留連線，免得某條測試沒關乾淨就 DROP 失敗；
-    // - DROP 失敗一律只記錄不拋——清理不該把一條原本綠的測試弄紅。
+    // Must be dropped: otherwise 400+ tests in one run accumulate hundreds of test_<random> databases in the same container until CREATE DATABASE fails
+    // (issue #51: a whole integration run went red once and was green on rerun). End our own pool first, then connect to base separately (a database can't be dropped from itself).
+    // - `pool.end()` sits in the try of a try/finally so the DROP still runs if it throws (otherwise that db leaks forever);
+    // - WITH (FORCE) (PG 13+) kicks leftover connections so a test that didn't close cleanly doesn't make the DROP fail;
+    // - a failing DROP is only logged, never thrown: cleanup must not turn a green test red.
     //
-    // ⚠ close 一開始就給 pool 掛 error 吞噬：WITH (FORCE) 會對「`pool.end()` 已 resolve
-    // 但 socket 還沒完全關」的殘留連線發 FATAL 57P01（terminating connection due to
-    // administrator command），那個 client 的 error 會 bubble 到 pool——pool 沒有
-    // error listener 的話就是 process 級 uncaught，vitest 記一筆 unhandled error 把
-    // **全綠的 run 判紅**（CI 實測命中一次；本機三跑未中，是時序窗）。close 開始後的
-    // pool error 實務上都是清理自身的預期 fallout，吞掉；測試進行中的 pool error 不受
-    // 影響（這個 listener 到 close 才掛上）。helpers.test.ts 有一條測試釘住這行——
-    // 拿掉它整份套件照樣綠（時序窗），只有那條會紅。
+    // Attach a swallowing error listener to the pool as soon as close starts: WITH (FORCE) sends FATAL 57P01 (terminating connection due to administrator command)
+    // to leftover connections whose `pool.end()` has resolved but whose socket isn't fully closed; that client's error bubbles to the pool, and without an error
+    // listener it is a process-level uncaught error, which vitest records as an unhandled error that fails an otherwise green run (hit once in CI; a timing window).
+    // Pool errors after close starts are expected fallout of the cleanup itself; pool errors during the test are unaffected (the listener is only attached at close).
+    // helpers.test.ts has a test pinning this line: without it the suite stays green (timing window) and only that test fails.
     pool.on("error", () => {});
     try {
       await pool.end();
@@ -110,20 +101,15 @@ export async function freshEmptyDb(opts: { cLocale?: boolean } = {}): Promise<Fr
     }
   };
 
-  // onTestFinished 只能在 vitest test 執行context 內呼叫（否則 throw）；freshDb() 也可能被
-  // 手動情境（例如除錯用的一次性腳本）呼叫，此時就退回「呼叫方自己叫 close()」。
+  // onTestFinished only works inside a vitest test (it throws otherwise); freshDb() can also be called from manual contexts (e.g. debugging scripts), where the caller must call close() itself.
   try {
     onTestFinished(close);
   } catch {
-    // 不在 test context 內——呼叫方需自行呼叫回傳的 close()。
   }
 
   return { db, pool, url: dbUrl.toString(), close };
 }
 
-/** 建一個全新的 database（隨機名）並跑完整 migration——一般整合測試的標準入口。
- * 行為與 teardown 契約（onTestFinished 自動清理、DROP DATABASE 的理由、issue #51）
- * 見 {@link freshEmptyDb}——本函式只是它＋`runMigrations` 的組合。 */
 export async function freshDb(): Promise<FreshDb> {
   const fresh = await freshEmptyDb();
   await runMigrations(fresh.db);
@@ -132,15 +118,14 @@ export async function freshDb(): Promise<FreshDb> {
 }
 
 /**
- * #388：session JWT 現在要對得上 `sessions` 的一列。既有測試大量「不經登入、直接簽一張 cookie」
- * （各檔的 `cookieFor`／`cookieOf`、`signTestSession`），為了不把幾百個呼叫點都改成要帶 db，`freshDb()`
- * 裝一支**測試專用**的 trigger：每新增一個使用者就自動有一列「測試預設 session」，id＝`testSessionId(userId)`
- * （`md5(user_id::text)::uuid`，Node 端同一個算式），到期在 100 年後。`signTestSession` 簽的就是這一列。
+ * #388: a session JWT must match a row in `sessions`. Many tests sign a cookie directly without logging in (`cookieFor`/`cookieOf`/`signTestSession` in each file);
+ * so that hundreds of call sites needn't take a db, `freshDb()` installs a **test-only** trigger: every new user automatically gets a "test default session" row
+ * with id = `testSessionId(userId)` (`md5(user_id::text)::uuid`, the same formula in Node) that expires in 100 years. `signTestSession` signs exactly that row.
  *
- * ⚠ 只有 `freshDb()` 有（`freshEmptyDb()`／migration harness 沒有）；正式 migration 沒有這支 trigger。
- * 名字一律帶 `public.`：有測試在 search_path 不含 public 的連線上插使用者（`migrate.test.ts` 的儲存配額 DEFAULT 案）。
- * 要測 session 列本身的行為（登出、改密碼換列、過期）一律走真的登入（`POST /api/auth/login`）或
- * `insertSession`——那些列的 id 是隨機的，跟這一列無關；數列數的斷言記得這一列也在。
+ * Only `freshDb()` has it (not `freshEmptyDb()`/the migration harness); real migrations don't contain the trigger. Names carry `public.` because some tests
+ * insert users on a connection whose search_path excludes public (the storage-quota DEFAULT case in `migrate.test.ts`). To test session-row behaviour itself
+ * (logout, password change replacing the row, expiry) use a real login (`POST /api/auth/login`) or `insertSession` - those rows have random ids unrelated
+ * to this one; assertions that count rows must remember this one exists.
  */
 async function installTestDefaultSessions(pool: Pool): Promise<void> {
   await pool.query(`
@@ -153,16 +138,15 @@ async function installTestDefaultSessions(pool: Pool): Promise<void> {
   `);
 }
 
-/** #388：`freshDb()` 的 trigger 替每個使用者建的「測試預設 session」的 id（見 `installTestDefaultSessions`）。 */
+/** Must match the trigger's `md5(user_id::text)::uuid`. */
 export function testSessionId(userId: string): string {
   const h = createHash("md5").update(userId.toLowerCase()).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-/** #397：測試直接簽 session JWT、直接建 session 列時用的有效期＝註冊表的預設（7 天）。 */
+/** Lifetime for test-signed session JWTs and directly created session rows = the registry default (7 days). */
 export const TEST_SESSION_TTL = SITE_LIMITS.sessionTtlSeconds.default;
 
-/** #388：簽一張綁「測試預設 session」的 session JWT（cookie 值）——取代以前各測試檔的 `signSession(testConfig.appSecret, { userId, tv })`。 */
 export function signTestSession(payload: { userId: string; tv: number }): Promise<string> {
   return signSession(testConfig.appSecret, { ...payload, sid: testSessionId(payload.userId) }, TEST_SESSION_TTL);
 }
@@ -175,7 +159,6 @@ export interface JournalEntry {
   tag: string;
 }
 
-/** 讀 drizzle journal（依序）。migration 測試共用。 */
 export function journalEntries(): JournalEntry[] {
   const journal = JSON.parse(readFileSync(path.join(drizzleDir, "meta", "_journal.json"), "utf8")) as {
     entries: JournalEntry[];
@@ -183,8 +166,7 @@ export function journalEntries(): JournalEntry[] {
   return journal.entries;
 }
 
-/** tag 尋址：以 migration 名取 idx——位置索引（`entries.length - 2` 類）在每次新增
- * migration 後語意都會漂移（一半測試變紅、另一半**靜默恆真**），tag 釘死永久穩定。 */
+/** Address by tag: positional indexes (`entries.length - 2` style) drift in meaning with every new migration (half the tests go red, the other half silently stay true); a tag is permanently stable. */
 export function idxOfTag(tag: string): number {
   const entry = journalEntries().find((candidate) => candidate.tag === tag);
   if (!entry) throw new Error(`journal 裡沒有 tag=${tag}`);
@@ -192,34 +174,28 @@ export function idxOfTag(tag: string): number {
 }
 
 /**
- * #122-H harness：以 committed SQL 檔把 migration 逐支重放到 journal `idx <= upToIdx`
- * 為止（`--> statement-breakpoint` 切分——與 drizzle migrator 同一套、不 parse SQL，
- * DO `$$` 塊安全），**全部語句包在單一 transaction** 內執行並寫 `drizzle.__drizzle_migrations`
- * 記帳。之後對同一顆 DB 呼叫既有 `runMigrations` 就只會跑剩餘 pending——migration
- * 資料案例的目標支由它執行（drizzle 天然把 pending 包成單一 tx，`CONCURRENTLY` 自然紅）。
+ * Replays migrations from the committed SQL files up to journal `idx <= upToIdx` (split on `--> statement-breakpoint` like the drizzle migrator; no SQL parsing,
+ * so DO `$$` blocks are safe), all statements in a single transaction, and records bookkeeping in `drizzle.__drizzle_migrations`. A later `runMigrations` on
+ * the same database then only runs the remaining pending ones (drizzle wraps pending migrations in one transaction, so `CONCURRENTLY` fails naturally).
  *
- * ⚠ 記帳形承重（對 drizzle-orm 0.44.7 pg-core/dialect.js 核實）：drizzle 的
- * 跳過判準只看「`order by created_at desc limit 1` 那一列的 created_at < folderMillis」——
- * **`created_at` 必須寫 journal entry 的 `when`**。寫 `Date.now()` 的失效模式是**靜默**：
- * Date.now() 比所有 journal when 都大，之後每一支 pending migration 都被跳過、不炸不紅
- * ——守住這行的是 migration-harness.test.ts 的「applyThrough 之後 runMigrations
- * 真的把剩餘 pending 跑完」記帳筆數黑箱案（只有它殺得掉這刀）。`hash`
- * ＝整份 .sql 檔文字的 sha256 hex（NOT NULL 必填，但不參與跳過判準）。
+ * The bookkeeping shape is load-bearing (checked against drizzle-orm 0.44.7 pg-core/dialect.js): drizzle's skip rule only looks at the row from
+ * `order by created_at desc limit 1` and `created_at < folderMillis`, so `created_at` must be the journal entry's `when`. Writing `Date.now()` fails
+ * silently: it is larger than every journal `when`, so every later pending migration is skipped with no error. migration-harness.test.ts guards this line
+ * (its bookkeeping row-count test after applyThrough + runMigrations is the only one that catches it). `hash` = sha256 hex of the whole .sql text
+ * (NOT NULL, but not part of the skip rule).
  *
- * ⚠ 執行協定比 drizzle 寬鬆一格：這裡逐段走 pg 的 simple protocol（一段可含多語句），
- * drizzle 走 extended protocol（一段一語句）——「harness 綠」不保證「drizzle 綠」，
- * 但每支 migration 最終都會被 freshDb/runMigrations 走過 drizzle 那條路，缺口有蓋。
+ * The execution protocol is looser than drizzle's: this runs pg's simple protocol per segment (a segment may hold several statements) while drizzle uses the
+ * extended protocol (one statement per segment), so a green harness doesn't guarantee a green drizzle; every migration still goes through drizzle's path
+ * in freshDb/runMigrations, so the gap is covered.
  *
- * `fromIdx`（#175）：只重放 `fromIdx..upToIdx` 這一段——「先建到第 N-1 支、塞資料、再只跑第 N 支」用
- * （`runMigrations` 會一路跑到最末支，停不在中間；對同一顆 DB 再從 0 重放會撞 `already exists`）。
- * 預設 0＝從頭重放（既有呼叫端行為不變）。
+ * `fromIdx` (#175): replays only `fromIdx..upToIdx` - for "build up to N-1, insert data, then run only N" (`runMigrations` runs to the last one and can't stop
+ * in the middle; replaying from 0 on the same database would fail with `already exists`). Default 0 = from the start, so existing callers are unchanged.
  */
 export async function applyMigrationsThrough(pool: Pool, upToIdx: number, fromIdx = 0): Promise<void> {
   const journal = JSON.parse(readFileSync(path.join(drizzleDir, "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; when: number; tag: string }>;
   };
-  // upToIdx 必須精確存在：超出範圍若靜默全跑，「舊 schema fixture」
-  // 會被建在新 schema 上、資料案例整組錯位——fail loud。
+  // upToIdx must exist: running everything silently when it is out of range would build the "old schema fixture" on the new schema and misalign the whole data case - fail loudly.
   if (!journal.entries.some((entry) => entry.idx === upToIdx)) {
     const available = journal.entries.map((entry) => entry.idx).join(", ");
     throw new Error(`applyMigrationsThrough: upToIdx=${upToIdx} 不存在於 journal（可用：${available}）`);
@@ -232,7 +208,7 @@ export async function applyMigrationsThrough(pool: Pool, upToIdx: number, fromId
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // 記帳表形狀照抄 drizzle migrator（schema 名/欄位名/型別都承重——差一點 runMigrations 就讀不到）
+    // The bookkeeping table shape copies the drizzle migrator (schema/column names and types are load-bearing: otherwise runMigrations can't read it).
     await client.query("CREATE SCHEMA IF NOT EXISTS drizzle");
     await client.query(
       "CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)",
@@ -257,15 +233,9 @@ export async function applyMigrationsThrough(pool: Pool, upToIdx: number, fromId
 }
 
 /**
- * 建一個全新的 uploads 測試目錄（per-test 唯一、真實存在——`AppDeps.uploadsDir` 是
- * 必填欄位，`buildApp` 啟動時會對它做真實的可寫性探測（見 `app.ts` 的
- * `assertUploadsDirWritable`），只給路徑字串不建目錄的話，每一支整合測試都會在
- * `buildApp()` 那一步就同步 throw、當場全紅）。
- *
- * Teardown 契約比照 `freshDb()`：在 vitest test 內呼叫時用 `onTestFinished`
- * 自動遞迴刪除；不在 test context 內呼叫（理論上不會發生，本檔內部呼叫點皆在
- * `buildTestApp`/`buildCollabTestApp` 內，一律是 test 執行中）則靜默略過，
- * 呼叫方需自行清理。
+ * `AppDeps.uploadsDir` is required and `buildApp` probes it for writability at startup (`assertUploadsDirWritable` in app.ts); passing a path without creating
+ * the directory would make every integration test throw synchronously at `buildApp()`. Cleanup follows `freshDb()`: `onTestFinished` deletes it recursively;
+ * outside a test context (not expected, all internal callers run inside tests) it is skipped and the caller must clean up.
  */
 export function freshUploadsDir(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "knotebook-uploads-"));
@@ -274,15 +244,13 @@ export function freshUploadsDir(): string {
       rmSync(dir, { recursive: true, force: true });
     });
   } catch {
-    // 不在 test context 內——呼叫方需自行清理。
   }
   return dir;
 }
 
-// buildTestApp 用的固定測試設定：databaseUrl 只是通過 loadConfig 的格式驗證，實際的
-// db 連線一律走 freshDb()（每個測試獨立、全新的資料庫），與這裡的 DATABASE_URL 無關。
-// 匯出供需要簽發「真的能通過 buildTestApp() 那個 app 驗證」的 session cookie 的測試
-// （例如 app.test.ts 的認證鏈測試）取用同一把 appSecret。
+// Fixed test config for buildTestApp: databaseUrl only has to pass loadConfig's format validation; the real DB connection always comes from freshDb()
+// (a fresh database per test) and is unrelated to this DATABASE_URL. Exported so tests that need session cookies the buildTestApp() app accepts
+// (e.g. the auth chain test in app.test.ts) can use the same appSecret.
 export const testConfig: AppConfig = loadConfig({
   DATABASE_URL: "postgres://u:p@localhost:5432/test",
   APP_SECRET: "a".repeat(64),
@@ -292,26 +260,15 @@ export const testConfig: AppConfig = loadConfig({
 export interface TestApp {
   app: FastifyInstance;
   db: Db;
-  /** 實際掛進 app 的 uploadsDir——測試用它直接檢查磁碟狀態（例如 413 不落檔、GET 磁碟無檔 404 的 fixture）。 */
   uploadsDir: string;
-  /** #397：app 實際在用的 `SiteLimits`（綁這個 app 的 `db` 與 `config.limitEnv`，見 `buildTestApp`）。 */
   siteLimits: SiteLimits;
-  /**
-   * 手動關閉底層 pool（非測試情境用）。在 test 內呼叫 buildTestApp() 不必自己叫這個——已用 onTestFinished 自動掛好（見 freshDb）。
-   * 覆寫了 `db` 時 harness 不建 DB，這支是 no-op（覆寫的 DB 由建它的呼叫端自己關）。
-   */
+  /** Manual close; a no-op when `db` is overridden (its creator closes it). Inside a test it is already hooked via onTestFinished. */
   close: () => Promise<void>;
 }
 
-/** #397：harness `SiteLimits.load` 用的 logger（不合格的列只 warn，測試輸出降噪）。 */
 const silentLog: SiteLimitsLog = { warn: () => {}, error: () => {} };
 
-/**
- * 掛幾條只給測試用的探針路由，供需要驗證 `authenticate`/`requireAdmin` decorator
- * 實際生效（例如登入後憑 session cookie 通過）的整合測試共用——不屬於任何 production
- * 路由模組。`/__test/protected` 回傳 `request.user`；供各整合測試驗證登入簽發的
- * session cookie 真的能通過 `authenticate`。
- */
+/** Test-only probe routes, not part of any production route module; `/__test/protected` returns `request.user`. */
 export function withTestRoutes(app: FastifyInstance): FastifyInstance {
   app.get("/__test/protected", { preHandler: app.authenticate }, async req => req.user);
   app.get("/__test/admin", { preHandler: app.requireAdmin }, async () => ({ ok: true }));
@@ -322,54 +279,45 @@ export function withTestRoutes(app: FastifyInstance): FastifyInstance {
   return app;
 }
 
-// AppDeps.limiters 的測試預設：**每次呼叫都建全新實例**（`FixedWindowLimiter` 內部狀態
-// 是 in-memory Map，若在此改成 module-level 常數並跨測試共用，不同測試檔案／不同
-// buildTestApp() 呼叫之間的請求計數會互相汙染——例如「61 次觸發 429」
-// 測試會被同一份 map 上其他測試先前已消耗掉的計數影響，導致隨執行順序隨機紅綠。
-// 只含 22 顆固定的桶（`buildFixedLimiters()`，數值同生產）加上 overrides；9 顆站台可調的桶不在這裡，
-// 由 `buildApp` 用該 app 的 `deps.siteLimits` 補（#397），讓測試環境的節流行為與生產一致。
+// Test default for AppDeps.limiters: builds a brand-new instance on every call (`FixedWindowLimiter` state is an in-memory Map; a module-level constant shared across
+// tests would leak request counts between files / buildTestApp() calls, e.g. a "429 after 61 requests" test would depend on counts consumed by earlier tests and go red or green by run order).
+// Only the 22 fixed limiters (`buildFixedLimiters()`, same values as production) plus overrides; the 9 site-tunable ones are filled in by `buildApp` from the app's
+// `deps.siteLimits` (#397), so throttling in tests matches production.
 //
-// `overrides` 讓單一測試只換掉它要驗的那一顆桶（例如
-// `{ bearerMiss: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) }`），不必手打
-// 全部鍵——鍵數會隨 #132 再長，逐檔複製全鍵字面值就是下一次改桶時的多處漏改。
+// `overrides` lets one test replace just the limiter it checks (e.g. `{ bearerMiss: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) }`) without spelling out every key:
+// the key count keeps growing (#132), and copying all keys per file means missed edits the next time a limiter changes.
 //
-// ⚠ 呼叫端要傳「自己也是選配的」桶時**直接轉傳整包 overrides**，不要逐鍵展開成
-// `{ publicMiss: overrides.publicMiss, … }`：沒被指定的鍵會拿到 explicit `undefined`
-// 蓋掉這裡的預設值（tsconfig 沒開 `exactOptionalPropertyTypes`，TS 不擋），執行時是
-// `undefined.consume`。
+// Callers that take an optional limiter set themselves should forward the whole overrides object, not expand it key by key (`{ publicMiss: overrides.publicMiss, ... }`):
+// unspecified keys would get an explicit `undefined` that overwrites the defaults here (tsconfig doesn't enable `exactOptionalPropertyTypes`, so TS doesn't catch it),
+// and at runtime it is `undefined.consume`.
+/** The tunable limiters are filled in only when not overridden. */
 export function freshLimiters(overrides: Partial<Limiters> = {}): Partial<Limiters> {
-  // #397：只含 22 顆固定的桶＋覆寫；9 顆可調的由 `buildApp` 用該 app 的 `deps.siteLimits` 補（沒被覆寫的才補）。
   return { ...buildFixedLimiters(), ...overrides };
 }
 
 /**
- * #106：整合測試共用的 jsdom 編輯 runtime（`AppDeps.editing` 與 `editing-helpers.ts` 的
- * `seedContent` 都注入這一份）。**module 層單例是刻意的**，與 `freshLimiters` 的「每次全新」
- * 相反：runtime 沒有跨測試會互相汙染的計數語意，而每個測試各建一份 jsdom 就是每次
- * `installGlobals()` 重掛全域 window／document——同檔案內先前建好的 editor 會被抽掉腳下的
- * window，且每份殘留約 0.53 MB。
+ * #106: the jsdom editing runtime shared by integration tests (both `AppDeps.editing` and `seedContent` in `editing-helpers.ts` inject this one). The **module-level
+ * singleton is deliberate**, unlike `freshLimiters`' "new each time": the runtime has no counting state that could leak between tests, whereas building a jsdom per test
+ * would re-run `installGlobals()` and re-mount the global window/document, pulling the window out from under editors built earlier in the same file, and each leftover costs about 0.53 MB.
  *
- * #397：pool 的設定取站台預設（在任何 DB 之前建，所以用 `SiteLimits.defaults`），而且**永遠不跟著任何 app 的 `siteLimits` 改**——
- * 它跨多個 app 共用，一個 app 的 PATCH 不能改到別的測試的 pool。`buildTestApp`／`buildCollabTestApp` 在 `editing` 是它（含沒給、
- * 預設用它）時拒絕 `editingFollowsSiteLimits: true`；要測 pool 跟著改的測試自己建 runtime。
+ * #397: the pool config takes the site defaults (it is built before any DB exists, so it uses `SiteLimits.defaults`) and **never follows any app's `siteLimits`**:
+ * it is shared by many apps, and one app's PATCH must not change another test's pool. `buildTestApp`/`buildCollabTestApp` reject `editingFollowsSiteLimits: true`
+ * when `editing` is this one (including when it is omitted and defaults to it); tests that need a pool that follows changes build their own runtime.
  */
 export const testEditingRuntime = createEditingRuntime(testConfig, SiteLimits.defaults({ machine: testConfig.machine }).parseLimits());
 
 const SHARED_RUNTIME_FOLLOW_ERROR = "testEditingRuntime is shared; pass your own editing runtime to follow site limits";
 
 /**
- * 建一個掛好預設 deps（freshDb + 真 UserGate/LoginThrottle + noop collab hooks）的
- * FastifyInstance，供整合測試使用。任何 deps 都可用 `overrides` 覆寫。
+ * FastifyInstance with default deps (freshDb + real UserGate/LoginThrottle + noop collab hooks) for integration tests; any dep can be replaced via `overrides`.
  *
- * **不呼叫 `initializeInstance`**——app 建構不需要初始化判斷，fail-fast 只在
- * `index.ts` 呼叫（production 啟動路徑）。整合測試一律直接 `db.insert(users)` 建帳
- * （既有慣例，見 `buildCollabTestApp` 的 `createUser`）。
+ * Does **not** call `initializeInstance`: app construction doesn't need the initialization check, the fail-fast only runs from `index.ts` (production start).
+ * Integration tests create accounts with `db.insert(users)` directly (see `createUser` in `buildCollabTestApp`).
  *
- * logger 預設關閉（測試輸出降噪），可用 `options.logger` 覆寫回開（例如要除錯某個
- * 測試的實際請求日誌時）。
+ * The logger is off by default (quiet output); `options.logger` turns it back on (e.g. to debug one test's request log).
  *
- * #397：先決定 app 實際用的 `config`、`db`，再用這兩樣 `SiteLimits.load` 一份（`overrides.siteLimits` 有給就照用）；
- * 這三樣在其餘 `overrides` 之後才放，不會再被蓋掉——鎖定狀態（`config.limitEnv`）與 DB 都只有一個來源。
+ * #397: decide the `config` and `db` the app actually uses first, then `SiteLimits.load` once with them (`overrides.siteLimits` wins if given); these three are placed
+ * after the remaining `overrides`, so they can't be overwritten - the lock state (`config.limitEnv`) and the DB each have a single source.
  */
 export async function buildTestApp(overrides: Partial<AppDeps> = {}, options: BuildAppOptions = {}): Promise<TestApp> {
   if (overrides.editing === testEditingRuntime && overrides.editingFollowsSiteLimits === true) throw new Error(SHARED_RUNTIME_FOLLOW_ERROR);
@@ -392,50 +340,41 @@ export async function buildTestApp(overrides: Partial<AppDeps> = {}, options: Bu
     siteLimits,
   };
   const app = buildApp(deps, { logger: false, ...options });
-  // 回傳 deps.uploadsDir（而非預設值）——若呼叫方透過 overrides 換掉了它，回傳值必須與 app 實際在用的一致，
-  // 否則呼叫方用回傳值操作會跟 app 內部狀態不同步。`db`／`siteLimits` 上面已決定、就是 app 在用的那份。
+  // Return deps.uploadsDir (not the default): if the caller replaced it via overrides, the returned value must match what the app really uses.
   return { app, db, uploadsDir: deps.uploadsDir, siteLimits, close };
 }
 
-// ───────────────────────────── 共編（Hocuspocus）測試 harness ─────────────────────────────
+// Collab (Hocuspocus) test harness: the only one for all collab integration tests; others consume this interface instead of rolling their own
+// (user creation, login, provider building and teardown live only here).
 //
-// 所有共編整合測試唯一的 harness。其他共編測試一律「消費」以下這組介面，不得各自
-// 再 roll 一套（造使用者、登入、建 provider、拆除的細節只在這裡有一份）。
-//
-// 與 `buildTestApp` 的差異：共編需要**真的 HTTP + WebSocket**（`app.inject` 不會真的
-// listen，也沒有可 upgrade 的 socket），所以這裡一律 `app.listen({ port: 0 })` 起一個
-// ephemeral port 的真 server，cookie 與 WS 同源。
+// Unlike `buildTestApp`, collab needs a **real HTTP + WebSocket** server (`app.inject` doesn't listen and offers no upgradable socket), so this always starts
+// a real server on an ephemeral port via `app.listen({ port: 0 })`, with cookies and WS on the same origin.
 
-/** 等待 provider 連上並完成首次 sync 的上限。逾時視為連線失敗（測試失敗，不靜默）。 */
+/** Timing out is a connection failure (the test fails), never a silent pass. */
 const COLLAB_CONNECT_TIMEOUT_MS = 5_000;
 
 export interface TestClient {
   provider: HocuspocusProvider;
   doc: Y.Doc;
-  /** 收到的應用層 CLOSE 事件記錄（server 端 `handle.close(reason)` 送出的 reason）。 */
   closes: Array<{ reason: string }>;
-  /** 斷開這個 client（provider + 底層 socket 一起拆），server 端隨即走 onDisconnect。 */
   disconnect(): void;
 }
 
 export interface HttpSession {
-  /** 自帶 cookie 與 `application/json` content-type 的 fetch（path 為 `/api/...`）。 */
+  /** `path` is relative (`/api/...`). */
   fetch(path: string, init?: RequestInit): Promise<Response>;
   /**
-   * 連上 `/collab` 的某份 note，resolve 時已完成首次 sync。
+   * Connects to a note on `/collab`; resolves after the first sync.
+   * The token comes from `POST /api/notes/:id/collab-token` (body `{ token, role }`) by default.
+   * - `tokenOverride`: skip that endpoint and use the given string (for "reconnect with an old token" tests).
+   * - `tokenFn`: replaces the default logic entirely (simulates a failing token endpoint, for "token endpoint 5xx doesn't kill the connection").
    *
-   * 預設的取 token 邏輯是 `POST /api/notes/:id/collab-token`（回應 body
-   * `{ token, role }`）。
-   * - `tokenOverride`：跳過該 endpoint 直接用指定字串當 token。「舊 token 重連」測試用它。
-   * - `tokenFn`：完全取代預設邏輯（「token endpoint 5xx 不誤殺」以此模擬失敗）。
-   *
-   * **拒連即 reject**（onAuthenticate throw、或逾時未 sync），錯誤訊息含被拒原因；
-   * reject 前會把 provider 拆掉，不會在測試剩餘時間裡持續重連。
+   * **A refused connection rejects** (onAuthenticate throws, or timeout without sync) with the refusal reason in the message; the provider is torn down
+   * before rejecting so it doesn't keep reconnecting for the rest of the test.
    */
   connect(noteId: string, opts?: { tokenOverride?: string; tokenFn?: () => Promise<string> }): Promise<TestClient>;
 }
 
-/** `buildCollabTestApp` 收下來的一行 CollabServer 日誌。 */
 export interface CollabLogLine {
   level: "debug" | "info" | "warn" | "error";
   obj: Record<string, unknown>;
@@ -443,115 +382,89 @@ export interface CollabLogLine {
 }
 
 /**
- * #269：取 collab token 的 RequestInit——帶 `noteSchemaVersion`。閘門上線後沒帶 body 的 token 一律 sv=0、
- * 握手以 client-outdated 拒（經這支 helper 的整合套件會全紅）。直接 POST collab-token 的測試一律用它。
+ * #269: RequestInit for fetching a collab token, carrying `noteSchemaVersion`. Since the gate went live, a token request without a body gets sv=0 and the
+ * handshake is refused as client-outdated (every suite going through this helper would go red). Tests that POST collab-token directly must use it.
  */
 export const COLLAB_TOKEN_INIT = { method: "POST", body: JSON.stringify({ noteSchemaVersion: NOTE_SCHEMA_VERSION }) } as const;
 
 export interface CollabTestCtx {
-  /** `http://127.0.0.1:<ephemeral port>` */
   baseUrl: string;
   app: FastifyInstance;
   collab: CollabServer;
-  /**
-   * CollabServer 寫出的日誌（issue #37 的握手拒絕訊號即在此）。注入自己的 logger 也順便
-   * 讓拒連測試不再往 stdout 噴 `consoleCollabLogger` 的那一行。
-   */
+  /** Logs written by CollabServer (the handshake-refusal signal of issue #37 is here); injecting our own logger also stops refusal tests from printing `consoleCollabLogger`'s line to stdout. */
   collabLogs: CollabLogLine[];
   /**
-   * 讓之後每一次 `gate.check` 都丟出這個錯——用來重現「onAuthenticate 撞到未預期例外」
-   * （DB 抖動）那條路徑。⚠ `authenticate` 也走同一個 gate，破壞之後所有 REST 請求都會 500，
-   * 所以一律在測試的最後一步才呼叫。
+   * Makes every later `gate.check` throw this error, to reproduce the path where onAuthenticate hits an unexpected exception (DB hiccup).
+   * `authenticate` uses the same gate, so after breaking it every REST request returns 500; call it as the last step of a test.
    */
   breakGate(err: Error): void;
-  /** bulk transfer：app 用的同一個 `UserGate`（停權後要 `invalidate` 才即時生效，同生產的停權路徑）。 */
+  /** The same `UserGate` the app uses (after disabling a user, call `invalidate` for it to take effect immediately, like the production disable path). */
   gate: UserGate;
   db: Db;
-  /** #397：app 實際在用的 `SiteLimits`（綁這個 app 的 `db` 與 `config.limitEnv`）。共用 DB 的兩個 app 各自一份。 */
   siteLimits: SiteLimits;
-  /** #180：實際掛進 app 的 uploadsDir（磁碟斷言用）。 */
   uploadsDir: string;
   createUser(opts: { email: string; password: string; isAdmin?: boolean }): Promise<{ id: string }>;
   createNote(ownerId: string, title?: string): Promise<{ id: string }>;
   share(noteId: string, userId: string, role: "editor" | "viewer"): Promise<void>;
   loginAs(email: string, password: string): Promise<HttpSession>;
-  /** provider 全斷 → `collab.destroy()` → `app.close()`。冪等；已用 onTestFinished 自動掛好。 */
+  /** Idempotent; already registered with onTestFinished. */
   destroy(): Promise<void>;
 }
 
 /**
- * 建一個掛上真 `CollabServer` 並實際 listen 的 app，供共編整合測試使用。
+ * App with a real `CollabServer` that actually listens, for collab integration tests.
  *
- * `collabHooks` 是注入縫：預設 `noopCollabHooks`（比照 `buildTestApp`），撤權
- * 測試必須傳 `collabHooks: (server, log) => createCollabHooks(server, log)` 接真實作
- * （第二個參數是本 harness 的錄音 logger，`collabLogs` 才收得到 hooks 那邊的訊號）——否則
- * shares/disable/DELETE 那些呼叫點全是 no-op，撤權路徑永遠不會被觸發，測試會綠得毫無意義。
+ * `collabHooks` is the injection seam: the default is `noopCollabHooks` (like `buildTestApp`); revocation tests must pass
+ * `collabHooks: (server, log) => createCollabHooks(server, log)` to wire the real implementation (the second argument is this harness's recording logger, so
+ * `collabLogs` receives the hooks' signals) - otherwise every shares/disable/DELETE call site is a no-op, revocation never triggers, and the tests are meaninglessly green.
  */
 export async function buildCollabTestApp(
   opts: {
     collabHooks?: (server: CollabServer, log: CollabHooksLogger) => CollabHooks;
-    /** 只換掉要驗的那一顆桶（其餘走 `freshLimiters` 預設）——⚠ 整包轉傳，別逐鍵展開，理由見 `freshLimiters`。 */
+    /** Replaces only the limiter under test (the rest use the `freshLimiters` defaults); forward the whole object, don't expand it key by key (see `freshLimiters`). */
     limiters?: Partial<Limiters>;
-    /** #180：PATCH／MCP rename 的 slug 候選縫，語意見 `AppDeps.slugUpdateTestHook`。 */
     slugUpdateTestHook?: AppDeps["slugUpdateTestHook"];
-    /** #180：建立／複製路徑的 slug 縫，語意見 `AppDeps.noteCreateHooks`。 */
     noteCreateHooks?: AppDeps["noteCreateHooks"];
-    /** #180：全文索引交易縫，語意見 `AppDeps.searchIndexHooks`。 */
     searchIndexHooks?: AppDeps["searchIndexHooks"];
-    /** #180：空間鎖等待上限（ms），語意見 `AppDeps.storageLockTimeoutMs`。 */
     storageLockTimeoutMs?: number;
-    /** #106（#137）寫入路徑的注入縫，語意見 `AppDeps.editingTestHooks`。 */
     editingTestHooks?: AppDeps["editingTestHooks"];
-    /** #387：連結文字表的注入縫，語意見 `AppDeps.shownLinks`。 */
     shownLinks?: AppDeps["shownLinks"];
-    /** #108 `/api/mcp` 的注入縫，語意見 `AppDeps.mcpTestHooks`。 */
     mcpTestHooks?: AppDeps["mcpTestHooks"];
-    /** #175：群組測試注入縫（`"membership-checked"` 等），語意見 `AppDeps.groupTestHook`；帶 content 的 MCP `create_note {groupId}` 要 collab app 才寫得出。 */
+    /** #175: group test hook (`"membership-checked"` etc.); MCP `create_note {groupId}` with content needs a collab app to be writable. */
     groupTestHook?: AppDeps["groupTestHook"];
-    /** #106（#137）per-note 佇列等待上限（毫秒），語意見 `AppDeps.editingQueueWaitMs`。 */
     editingQueueWaitMs?: number;
-    /** #138 presence 的參數（`idleMs`／`heartbeatMs`／`capacity`／`now`），透傳成 `AppDeps.presenceOptions`。 */
     presence?: AppDeps["presenceOptions"];
-    /** #93：全文索引測試縫，語意見 `CollabDeps.storeSearchHooks`。 */
     storeSearchHooks?: CollabDeps["storeSearchHooks"];
-    /** #272：自動切版等待 X 的測試覆寫（毫秒），語意見 `CollabDeps.versionAutoWaitMs`。整合測試多半給 0，再直接呼叫 `collab.versions.scanDue()`。 */
+    /** #272: auto-version wait override in ms; integration tests mostly pass 0 and then call `collab.versions.scanDue()` directly. */
     versionAutoWaitMs?: number;
-    /** #272：換掉 `testConfig`（例：開 e2e 測試縫）。 */
     config?: AppConfig;
-    /** #388：同帳號重登後延遲重驗的等待（毫秒），語意見 `AppDeps.reloginReverifyDelayMs`。 */
     reloginReverifyDelayMs?: number;
-    /** #267：「最後活動」節流表的測試縫（時鐘），語意見 `CollabDeps.lastActiveOptions`。 */
     lastActiveOptions?: CollabDeps["lastActiveOptions"];
-    /** bulk transfer：`/api/transfer/*` 的測試縫，語意見 `AppDeps.transferTestHooks`。 */
     transferTestHooks?: AppDeps["transferTestHooks"];
-    /** bulk transfer：log 測試用（預設 `false`）；傳 `{ level, stream }` 收 pino 原文。 */
+    /** Defaults to `false`; pass `{ level, stream }` to capture raw pino output. */
     logger?: BuildAppOptions["logger"];
     /**
-     * bulk transfer：共用 DB——給了就不 `freshDb()`（DB 的清理照舊由建它的那次 `freshDb()` 的
-     * `onTestFinished` 負責），collab server 各自建。⚠ 收尾順序：**先 `destroy()` 第一個 app 再建第二個**，避免兩個 collab
-     * server 同時持有同一篇 live doc。
+     * Shared DB: when given, no `freshDb()` runs (cleanup stays with the `onTestFinished` of the `freshDb()` that created it); each collab server is built separately.
+     * Teardown order: `destroy()` the first app before building the second, so two collab servers never hold the same live doc.
      */
     db?: Db;
-    /** #398：換掉共用的 `testEditingRuntime`（例：小時限、小排隊上限的 parse pool）。由呼叫端自己 `close()`。 */
+    /** #398: replaces the shared `testEditingRuntime` (e.g. a small time limit / small queue for the parse pool); the caller `close()`s it. */
     editing?: EditingRuntime;
     /**
-     * #397：`editing` 跟著這個 app 的 `siteLimits` 改（語意見 `AppDeps.editingFollowsSiteLimits`）。只能配自己建的 runtime：
-     * `editing` 沒給或就是 `testEditingRuntime` 時給 `true` 直接丟錯（共用的 runtime 不能被任何一個 app 改設定）。
+     * #397: `editing` follows this app's `siteLimits` changes. Only valid with a self-built runtime: `true` throws when `editing` is omitted or is
+     * `testEditingRuntime` (the shared runtime must not be reconfigured by any app).
      */
     editingFollowsSiteLimits?: boolean;
-    /** #397：換掉 harness 自己 `load` 的那份（預設用本 app 的 `config`／`db` 載入，見 `buildTestApp`）。 */
     siteLimits?: SiteLimits;
   } = {}
 ): Promise<CollabTestCtx> {
   const editing = opts.editing ?? testEditingRuntime;
   if (editing === testEditingRuntime && opts.editingFollowsSiteLimits === true) throw new Error(SHARED_RUNTIME_FOLLOW_ERROR);
-  // #397：先決定 app 實際用的 `config`、`db`，再用這兩樣 `load`（同 `buildTestApp`）。
   const config = opts.config ?? testConfig;
   const { db } = opts.db ? { db: opts.db } : await freshDb();
   const siteLimits = opts.siteLimits ?? (await SiteLimits.load(db, { limitEnv: config.limitEnv, machine: config.machine, log: silentLog }));
   const gate = new UserGate(db);
-  // 測試注入縫：見 `CollabTestCtx.breakGate`。包在 harness 裡（而不是每個測試各自 monkey-patch）
-  // 是為了讓「怎麼弄壞 gate」只有一份定義。
+  // Test injection seam, see `CollabTestCtx.breakGate`: defined in the harness (not monkey-patched per test) so there is a single definition of how the gate gets broken.
   let gateError: Error | null = null;
   const realCheck = gate.check.bind(gate);
   gate.check = async (userId: string, tv: number, sessionId: string) => {
@@ -607,8 +520,7 @@ export async function buildCollabTestApp(
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const collabUrl = `ws://127.0.0.1:${address.port}${COLLAB_PATH}`;
 
-  // 追蹤所有建出來的 client：destroy() 必須先把 provider 全數拆掉，否則它們會在
-  // server 關閉後持續嘗試重連，讓 vitest 卡在「還有未結束的 handle」。
+  // Track every client: destroy() must tear down all providers first, otherwise they keep trying to reconnect after the server closes and vitest hangs on open handles.
   const clients = new Set<TestClient>();
 
   let destroyed = false;
@@ -621,11 +533,10 @@ export async function buildCollabTestApp(
     await app.close();
   };
 
-  // 比照 freshDb()：即使斷言失敗（test 拋出）也要拆掉，不洩漏 listening socket。
+  // Like freshDb(): tear down even if an assertion throws, so the listening socket doesn't leak.
   try {
     onTestFinished(destroy);
   } catch {
-    // 不在 test context 內——呼叫方需自行呼叫回傳的 destroy()。
   }
 
   async function createUser(o: { email: string; password: string; isAdmin?: boolean }): Promise<{ id: string }> {
@@ -642,10 +553,9 @@ export async function buildCollabTestApp(
   }
 
   async function createNote(ownerId: string, title?: string): Promise<{ id: string }> {
-    // title 未帶時完全不放進 values，讓 schema 的 default "Untitled" 生效。
-    // ⚠ 這支是**刻意直插**，**不**經 `POST /api/notes` 的建列點（`notes/create.ts`）——所以帶
-    // title 時 slug 一律吃 DB default（`untitled-<uuid8>`），不從標題派生（#145）。需要派生形
-    // 的測試請打 API。
+    // When no title is passed, leave it out of values so the schema default "Untitled" applies.
+    // Deliberately a direct insert, **not** through the `POST /api/notes` creation point (`notes/create.ts`), so with a title the slug always takes the DB default
+    // (`untitled-<uuid8>`) and is not derived from the title (#145); tests that need the derived shape must call the API.
     const values = title === undefined ? { ownerId } : { ownerId, title };
     const [row] = await db.insert(notes).values(values).returning({ id: notes.id });
     return row;
@@ -667,7 +577,7 @@ export async function buildCollabTestApp(
     if (!res.ok) {
       throw new Error(`登入失敗（${res.status}）：${await res.text()}`);
     }
-    // getSetCookie() 才拿得到多筆 Set-Cookie（headers.get 會把它們併成一個字串）。
+    // getSetCookie() is the only way to get multiple Set-Cookie headers (headers.get joins them into one string).
     const cookie = res.headers
       .getSetCookie()
       .map(one => one.split(";")[0])
@@ -677,11 +587,9 @@ export async function buildCollabTestApp(
       async fetch(path: string, init: RequestInit = {}): Promise<Response> {
         const headers = new Headers(init.headers);
         headers.set("cookie", cookie);
-        // 只在真的帶 body 時預設 content-type：Fastify 對「Content-Type: application/json
-        // 但 body 是空字串」的請求會直接回 400（FST_ERR_CTP_EMPTY_JSON_BODY，Fastify 內建
-        // 行為，非 app.ts 的 415 守衛）——`POST /api/notes/:id/collab-token`、
-        // `DELETE /api/notes/:id/shares/:userId` 這類無 body 的路由若被硬塞這個 header
-        // 會在還沒進到 app.ts 的路由處理常式前就被 Fastify 自己的 JSON body parser 擋下。
+        // Default the content-type only when a body is really sent: Fastify answers 400 (FST_ERR_CTP_EMPTY_JSON_BODY, built-in behaviour, not app.ts's 415 guard) to
+        // `Content-Type: application/json` with an empty body, so body-less routes like `POST /api/notes/:id/collab-token` or `DELETE /api/notes/:id/shares/:userId`
+        // would be rejected by Fastify's own JSON parser before reaching their handlers.
         if (init.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
         return fetch(`${baseUrl}${path}`, { ...init, headers });
       },
@@ -703,19 +611,17 @@ export async function buildCollabTestApp(
         const doc = new Y.Doc();
         const closes: Array<{ reason: string }> = [];
 
-        // 每個 client 一條自己的 socket（而非共用一條做 multiplex）：如此
-        // socketId 與 client 一對一，`connectionsOf`／`connectionsOfNote` 的增減斷言
-        // 才對得上「幾個 client 在線」這個直覺。
+        // One socket per client (not one multiplexed socket) so socketId maps one-to-one to clients and the connectionsOf/connectionsOfNote count assertions
+        // match the intuitive "how many clients are online".
         const socket = new HocuspocusProviderWebsocket({ url: collabUrl, WebSocketPolyfill: WsWebSocket });
         const provider = new HocuspocusProvider({
           websocketProvider: socket,
           name: noteId,
           document: doc,
           token,
-          // onClose 同時接到兩種事件：server 端 `handle.close(reason)` 送來的「應用層
-          // CLOSE 訊息」（帶我們指定的 reason），以及底層 socket 真的關閉。只記錄前者
-          // ——socket 層的關閉 reason 一律是空字串（唯一例外是 harness 自己在 destroy()
-          // 送的 "server shutdown"，那已在斷言之後）。
+          // onClose receives two kinds of events: the application-level CLOSE message sent by the server's `handle.close(reason)` (carrying our reason) and the underlying
+          // socket really closing. Only the former is recorded: a socket-level close reason is always an empty string (the one exception, the "server shutdown"
+          // sent by the harness's own destroy(), comes after the assertions).
           onClose: ({ event }) => {
             if (event.reason) closes.push({ reason: event.reason });
           },
@@ -728,8 +634,7 @@ export async function buildCollabTestApp(
           disconnect(): void {
             clients.delete(client);
             provider.destroy();
-            // 明確傳了 websocketProvider 時 provider.destroy() 不會連 socket 一起收，
-            // 得自己拆掉，否則它會持續依 reconnect 策略重連。
+            // With an explicit websocketProvider, provider.destroy() doesn't close the socket too; tear it down explicitly or it keeps reconnecting per the reconnect strategy.
             socket.destroy();
           },
         };
@@ -750,10 +655,8 @@ export async function buildCollabTestApp(
           });
         });
 
-        // ⚠ 明確傳 `websocketProvider` 時 HocuspocusProvider 不會自己 attach（建構子只在
-        // 「自己建 socket」的情境呼叫 attach）——少了這行，provider 永遠不會送出 auth
-        // 訊息，連線就只是靜靜地卡在未同步狀態。這是 v4 多工（一條 socket 掛多個
-        // provider）API 的既定用法。
+        // With an explicit `websocketProvider`, HocuspocusProvider doesn't attach itself (the constructor only calls attach when it creates its own socket); without this line
+        // the provider never sends the auth message and the connection just sits unsynced. This is the intended v4 multiplexing usage (several providers on one socket).
         provider.attach();
 
         try {
@@ -774,11 +677,9 @@ export async function buildCollabTestApp(
 }
 
 /**
- * 建一個**能用密碼登入**的使用者。各測試檔既有的 `cookieFor` 慣例是自己
- * `signTestSession({ userId, tv: 0 })`——那對「只要一個能過
- * authenticate 的 cookie」很夠用；這支補的是另一半：需要真的跑一次
- * `POST /api/auth/login` 或 `POST /api/auth/password` 的情境（例如驗「改密碼之後
- * API token 仍然有效」）。
+ * Creates a user who **can log in with a password**. The per-file `cookieFor` convention (`signTestSession({ userId, tv: 0 })`) is enough when only a cookie that
+ * passes authenticate is needed; this covers the other half: tests that really run `POST /api/auth/login` or `POST /api/auth/password`
+ * (e.g. verifying API tokens stay valid after a password change).
  */
 export async function insertPasswordUser(
   db: Db,
@@ -799,9 +700,8 @@ export async function insertPasswordUser(
 }
 
 /**
- * #132：建一個有密碼的使用者並簽好 session cookie（**header 形**，可直接
- * `inject({ headers: { cookie } })`）。不跑 `POST /api/auth/login`——那條路徑在
- * `mustChangePassword` 時會卡在首登強改密流程。
+ * #132: creates a user with a password and signs the session cookie (**header form**, usable directly as `inject({ headers: { cookie } })`).
+ * Doesn't run `POST /api/auth/login`, which would get stuck in the forced first-login password change when `mustChangePassword` is set.
  */
 export async function createUserAndLogin(
   db: Db,

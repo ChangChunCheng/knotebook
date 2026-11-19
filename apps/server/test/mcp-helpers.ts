@@ -1,38 +1,30 @@
 /**
- * #108：`/api/mcp` 整合測試共用的請求 helper。
+ * Two reasons for this file, both traps that waste hours if not centralized:
  *
- * 這個檔案存在的理由只有兩個，兩個都是「不集中就會空轉半天」的雷：
- *
- * 1. **`Accept` 只有一份真相**（整個測試集的紀律）。SDK 的 transport 要求 `Accept`
- *    同時含 `application/json` 與 `text/event-stream`；少了它——包括完全不帶、只帶
- *    `application/json`、以及只帶通配符（星號／星號）——一律 `406`，通配符不算數，
- *    而且錯誤訊息與被測行為完全無關。
- * 2. **`origin` 一旦給了就必須連 `host` 一起給**。`app.inject` 的預設 Host 是
- *    `localhost:80`，而 `testConfig.PUBLIC_URL` 是 `http://localhost:3000`——只設 `origin`
- *    的測試會恆得 403（落在案 7b 那一格），症狀同樣與被測行為無關。
+ * 1. **One truth for `Accept`**. The SDK transport requires `Accept` to contain both `application/json` and `text/event-stream`; without that - including none at all,
+ *    `application/json` only, or only a wildcard (star/star) - the answer is always `406` (wildcards don't count), with an error message unrelated to the behaviour under test.
+ * 2. **If `origin` is given, `host` must be given with it**. `app.inject`'s default Host is `localhost:80` while `testConfig.PUBLIC_URL` is `http://localhost:3000`;
+ *    a test that sets only `origin` always gets 403 (the Origin-mismatch guard), again unrelated to the behaviour under test.
  */
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import { SESSION_COOKIE } from "@knotebook/shared";
 
-/** transport 唯一收得下的 `Accept`（通配符不算數）。 */
 export const MCP_ACCEPT = "application/json, text/event-stream";
 
-/** `testConfig.PUBLIC_URL` 的 host——帶 `Origin` 的正向案要用它當 `host`。 */
+/** Host of `testConfig.PUBLIC_URL`: positive cases carrying `Origin` use it as `host`. */
 export const PUBLIC_HOST = "localhost:3000";
 
 export interface McpRequestOpts {
-  /** PAT 明文；不給就不帶 `Authorization`（＝走未認證那一側）。 */
   token?: string;
-  /** session cookie 值。 */
+  /** Session cookie value; the helper adds SESSION_COOKIE= itself. */
   cookie?: string;
-  /** `null` ＝ 完全不帶 `Accept`；不傳 ＝ 帶 {@link MCP_ACCEPT}。 */
+  /** `null` = no `Accept` at all; omitted = {@link MCP_ACCEPT}. */
   accept?: string | null;
-  /** `null` ＝ 完全不帶 `Content-Type`；不傳 ＝ `application/json`。 */
+  /** `null` = no `Content-Type` at all; omitted = `application/json`. */
   contentType?: string | null;
-  /** 帶 `Origin` 時**務必**一起給 `host`（見檔頭說明）。 */
   origin?: string;
   host?: string;
-  /** 原樣送出的 body 字串（壞 JSON／空 body 兩案用），優先於 `body`。 */
+  /** Body string sent as is (bad JSON / empty body cases); takes precedence over `body`. */
   raw?: string;
 }
 
@@ -51,8 +43,8 @@ function buildHeaders(opts: McpRequestOpts, withContentType: boolean): Record<st
 }
 
 /**
- * `POST /api/mcp`。`body` 為 `undefined` 且沒給 `raw` ＝**完全不送 body**。
- * body 一律由這裡序列化，不交給 `inject` 自動處理——否則它會擅自補 `content-type`。
+ * `POST /api/mcp`. `body` undefined with no `raw` = **no body at all**.
+ * The body is always serialized here rather than left to `inject`, which would add a `content-type` on its own.
  */
 export function mcpPost(app: FastifyInstance, body: unknown, opts: McpRequestOpts = {}): Promise<LightMyRequestResponse> {
   const payload = opts.raw !== undefined ? opts.raw : body === undefined ? undefined : JSON.stringify(body);
@@ -66,7 +58,7 @@ export function mcpPost(app: FastifyInstance, body: unknown, opts: McpRequestOpt
   return app.inject(inject);
 }
 
-/** `GET`／`DELETE /api/mcp`（兩者都不帶 body，所以不帶 `Content-Type`）。 */
+/** `GET`/`DELETE /api/mcp` (neither carries a body, so no `Content-Type`). */
 export function mcpRequest(
   app: FastifyInstance,
   method: "GET" | "DELETE",
@@ -81,7 +73,6 @@ export function mcpRequest(
   return app.inject(inject);
 }
 
-/** JSON-RPC 請求信封。 */
 export const rpc = (method: string, params?: unknown, id: number | string = 1): Record<string, unknown> => ({
   jsonrpc: "2.0",
   id,
@@ -89,7 +80,7 @@ export const rpc = (method: string, params?: unknown, id: number | string = 1): 
   ...(params === undefined ? {} : { params }),
 });
 
-/** 每個 MCP session 的第一發。`protocolVersion` 用 SDK 支援的最新版。 */
+/** `protocolVersion` is the newest the SDK supports. */
 export const INITIALIZE = rpc("initialize", {
   protocolVersion: "2025-11-25",
   capabilities: {},

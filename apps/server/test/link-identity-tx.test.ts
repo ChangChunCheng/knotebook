@@ -28,8 +28,8 @@ async function rejected(p: Promise<unknown>): Promise<{ status: number; code: st
   throw new Error("expected TxAbort");
 }
 
-describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
-  it("密碼證明成功：INSERT identity（帶 last_login_at）、must_change_password 不清、回 LinkedUser", async () => {
+describe("linkPendingIdentityInTx (#187, SSO proof)", () => {
+  it("password proof succeeds: INSERT identity (with last_login_at), must_change_password not cleared, returns LinkedUser", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db);
     const r = await link(db, input(u.id));
@@ -41,7 +41,7 @@ describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
     expect(after!.m).toBe(true);
   });
 
-  it("鎖內重驗：帳號不在／email 已改 → 409 oidc_link_expired；hash 已變→ 401 invalid_credentials；皆不寫入", async () => {
+  it("re-check under the lock: account missing / email changed -> 409 oidc_link_expired; hash changed -> 401 invalid_credentials; nothing written in either case", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db);
     expect(await rejected(link(db, input("00000000-0000-0000-0000-000000000000")))).toEqual({ status: 409, code: "oidc_link_expired" });
@@ -50,21 +50,21 @@ describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([]);
   });
 
-  it("先驗證明、再判停用——停用＋hash 已變 → 401；停用＋證明有效 → 403 account_disabled", async () => {
+  it("proof is verified first, then disabled is judged: disabled + hash changed -> 401; disabled + valid proof -> 403 account_disabled", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db, { disabledAt: new Date() });
     expect(await rejected(link(db, input(u.id, { proof: { kind: "password", passwordHash: "x" } })))).toEqual({ status: 401, code: "invalid_credentials" });
     expect(await rejected(link(db, input(u.id)))).toEqual({ status: 403, code: "account_disabled" });
   });
 
-  it("已有同 issuer 的另一個 sub → 409 identity_already_linked（證明之後才揭露）", async () => {
+  it("another sub of the same issuer already linked -> 409 identity_already_linked (revealed only after the proof)", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db);
     await db.insert(userIdentities).values({ userId: u.id, issuer: ISS, sub: "older" });
     expect(await rejected(link(db, input(u.id)))).toEqual({ status: 409, code: "identity_already_linked" });
   });
 
-  it("身分已屬別人 → 409 identity_taken；已屬本人 → 冪等成功、不重複", async () => {
+  it("identity belongs to someone else -> 409 identity_taken; already the user's own -> idempotent success, no duplicate", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db);
     const [v] = await db.insert(users).values({ email: "v@example.com", displayName: "V" }).returning();
@@ -77,7 +77,7 @@ describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
     expect(await identitiesOf(db2, w.id)).toEqual([{ issuer: ISS, sub: "new-sub" }]);
   });
 
-  it("SSO 證明：證明身分屬目標 → 成功並更新證明身分的 last_login_at；屬別人或不存在 → 409 oidc_link_proof_mismatch（不寫入）", async () => {
+  it("SSO proof: the proving identity belongs to the target -> success and the proving identity's last_login_at is updated; belongs to someone else or doesn't exist -> 409 oidc_link_proof_mismatch (nothing written)", async () => {
     const { db } = await buildTestApp();
     const u = await seedTarget(db, { passwordHash: null });
     const [v] = await db.insert(users).values({ email: "v@example.com", displayName: "V" }).returning();
@@ -95,7 +95,7 @@ describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
     expect(proof!.lastLoginAt).not.toBeNull();
   });
 
-  it("C22：同帳號、同 issuer、兩個 sub 並發 → 後到者卡在 users 列鎖；放行後恰一條成功、另一條 identity_already_linked", async () => {
+  it("same account, same issuer, two subs concurrently -> the latecomer blocks on the users row lock; after release exactly one succeeds and the other gets identity_already_linked", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedTarget(db);
@@ -124,7 +124,7 @@ describe("linkPendingIdentityInTx（#187，SSO 證明）", () => {
     expect(await identitiesOf(db, u.id)).toEqual([{ issuer: ISS, sub: "sub-a" }]);
   });
 
-  it("C11：別人的未 commit 交易已插入同一個 (issuer, sub) → 連結的 INSERT 等它；它 commit 後連結得 identity_taken", async () => {
+  it("someone else's uncommitted transaction already inserted the same (issuer, sub) -> the link's INSERT waits for it; after it commits the link gets identity_taken", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const u = await seedTarget(db);

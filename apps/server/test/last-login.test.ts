@@ -1,4 +1,4 @@
-/** #247：五個「新簽一張登入 session」的點寫 users.last_login_at；同一次登入換 token、已登入時連結身分都不寫。時間一律以 DB 時鐘比。 */
+/** Times are always compared on the DB clock. */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { SESSION_COOKIE } from "@knotebook/shared";
@@ -20,8 +20,8 @@ async function touchedSince(db: Db, userId: string, t0: string): Promise<boolean
   return (await db.execute<{ ok: boolean }>(sql`select coalesce(last_login_at >= ${t0}::timestamptz, false) as ok from users where id = ${userId}`)).rows[0]!.ok;
 }
 
-describe("users.last_login_at（#247）", () => {
-  it("帳密登入 → 寫入（≥ 登入前的 DB 時間）；錯密碼、停用帳號的對密碼都不寫", async () => {
+describe("users.last_login_at (#247)", () => {
+  it("password login writes (>= the DB time before the login); a wrong password and a password check against a disabled account don't", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { password: PW });
     const t0 = await dbNow(db);
@@ -35,7 +35,7 @@ describe("users.last_login_at（#247）", () => {
     expect(await lastLoginText(db, v.id)).toBeNull();
   });
 
-  it("改密碼後重簽（同一次登入換 token）不改值", async () => {
+  it("re-signing after a password change (token swap within the same login) doesn't change the value", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { password: PW });
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: u.email, password: PW } });
@@ -47,15 +47,15 @@ describe("users.last_login_at（#247）", () => {
     expect(await lastLoginText(db, u.id)).toBe(before);
   });
 
-  it("加上密碼後重簽不寫", async () => {
+  it("re-signing after adding a password doesn't write", async () => {
     const { app, db } = await buildTestApp();
-    const u = await seedUser(db); // 無密碼
+    const u = await seedUser(db);
     const r = await app.inject({ method: "POST", url: "/api/auth/password/set", cookies: await cookieOf(u.id), payload: { newPassword: "a-brand-new-password" } });
     expect(r.statusCode).toBe(204);
     expect(await lastLoginText(db, u.id)).toBeNull();
   });
 
-  it("OIDC：首登建帳寫入；之後再以同一身分登入也寫入", async () => {
+  it("OIDC: first login creating the account writes; a later login with the same identity writes too", async () => {
     const t = await buildOidcApp({ providers: [{ key: "a", issuerUrl: A, displayName: "A" }] });
     const t0 = await dbNow(t.db);
     const first = await ssoRoundTrip(t.app, t.idp("a"), { loginUrl: `/api/auth/oidc/login/${t.provider("a").id}`, claims: { sub: "s-1", email: "sso-new@x.example" } });
@@ -69,7 +69,7 @@ describe("users.last_login_at（#247）", () => {
     expect(await touchedSince(t.db, id, t1)).toBe(true);
   });
 
-  it("GET /api/admin/users 帶 lastLoginAt：登入過的是 ISO 字串、從未登入的是 null", async () => {
+  it("GET /api/admin/users carries lastLoginAt: an ISO string for users who logged in, null for those who never did", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const never = await seedUser(db);

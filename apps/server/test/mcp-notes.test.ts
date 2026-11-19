@@ -1,9 +1,6 @@
 /**
- * #108：`list_notes`／`search_notes` 兩支唯讀工具。
- *
- * 這一族預設用 `buildCollabTestApp`（＝生產形態）；**只有 29d 那一案走 `buildTestApp`**
- * ——只有它收得到 `options.logger`（`buildCollabTestApp` 建 app 時寫死 `{ logger: false }`），
- * 而依註冊規則這兩支工具在無 collab 的 app 上仍然註冊。
+ * This family defaults to `buildCollabTestApp` (the production shape); **only the sentinel-scan test uses `buildTestApp`**, because only it accepts `options.logger`
+ * (`buildCollabTestApp` hard-codes `{ logger: false }`), and by the registration rules these two tools still register on an app without collab.
  */
 import { Writable } from "node:stream";
 import { randomUUID } from "node:crypto";
@@ -22,7 +19,7 @@ import type { FastifyInstance } from "fastify";
 const PASSWORD = "correct-horse-battery";
 const NUL = String.fromCharCode(0);
 
-/** 一列 `NoteSummary`。索引簽章是刻意的——key 集合斷言要看得到多出來的欄位。 */
+/** The index signature is deliberate: key-set assertions must see extra fields. */
 type Summary = Record<string, unknown> & {
   id: string;
   title: string;
@@ -31,7 +28,7 @@ type Summary = Record<string, unknown> & {
   url: string;
 };
 
-/** `tools/call` 的 `result`；SDK 自產錯誤時 `structuredContent` 會缺席。 */
+/** `result` of `tools/call`; `structuredContent` is absent when the SDK produces the error itself. */
 interface ToolResultBody {
   isError?: true;
   content: { type: string; text: string }[];
@@ -48,7 +45,7 @@ interface ToolPayload extends Record<string, unknown> {
 interface ToolCall {
   status: number;
   result: ToolResultBody;
-  /** 整個 wire body 的字串（29d 的哨兵掃描用）。 */
+  /** The whole wire body as a string (for the sentinel scan). */
   raw: string;
 }
 
@@ -57,7 +54,7 @@ async function callTool(app: FastifyInstance, token: string, name: string, args:
   return { status: res.statusCode, result: res.json().result, raw: res.body };
 }
 
-/** 成功呼叫的 `structuredContent`（順手守住鏡像等式）。 */
+/** `structuredContent` of a successful call; also guards the mirror equality. */
 function payloadOf(call: ToolCall): ToolPayload {
   expect(call.status).toBe(200);
   expect(call.result.isError).toBeUndefined();
@@ -65,16 +62,15 @@ function payloadOf(call: ToolCall): ToolPayload {
   return call.result.structuredContent as unknown as ToolPayload;
 }
 
-/** 排序斷言要決定性的 `updated_at`，所以逐篇明寫，不靠 `defaultNow()` 的相鄰時間戳。 */
+/** Ranking assertions need a deterministic `updated_at`, so it is written per note instead of relying on `defaultNow()`'s adjacent timestamps. */
 async function setUpdatedAt(db: Db, noteId: string, iso: string): Promise<void> {
   await db.update(notes).set({ updatedAt: new Date(iso) }).where(eq(notes.id, noteId));
 }
 
 /**
- * 微秒精度的 `updated_at`。**不能走 drizzle 的 `.set({ updatedAt: new Date(...) })`**——JS 的
- * `Date` 只有毫秒，那樣寫出去的值本身就已經沒有微秒了，測不到要測的東西。
- * ⚠ 這才是**生產的常態**：生產程式碼的每一個寫入點都走 pg 的 `now()`（微秒精度）
- * ——也就是**所有筆記的 `updated_at` 都是微秒**。
+ * `updated_at` with microsecond precision. **Don't use drizzle's `.set({ updatedAt: new Date(...) })`**: a JS `Date` has only milliseconds, so the written value
+ * has already lost its microseconds and the test would measure nothing. Microseconds are **the production norm**: every production write point goes through pg's `now()`,
+ * so **all notes' `updated_at` are microsecond values**.
  */
 async function setUpdatedAtMicros(db: Db, noteId: string, literal: string): Promise<void> {
   await db.execute(sql`update notes set updated_at = ${literal}::timestamptz where id = ${noteId}::uuid`);
@@ -90,7 +86,6 @@ async function slugOf(db: Db, noteId: string): Promise<string> {
   return row!.slug;
 }
 
-/** owner ＋ 一位被分享者 ＋ 一位無關者的標準場景。 */
 async function scenario(ctx: CollabTestCtx): Promise<{
   ownerId: string;
   otherId: string;
@@ -105,7 +100,7 @@ async function scenario(ctx: CollabTestCtx): Promise<{
 }
 
 describe("#108 list_notes", () => {
-  it("回自有 ＋ 被分享的筆記，決定性排序，每列帶 url／role／owner", async () => {
+  it("returns own + shared notes in a deterministic order, each row with url/role/owner", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, otherId, token } = await scenario(ctx);
     const mine = await ctx.createNote(ownerId, "Mine");
@@ -132,7 +127,7 @@ describe("#108 list_notes", () => {
     );
   });
 
-  it("同一個 updatedAt 之下以 id desc 決勝（次要排序鍵）", async () => {
+  it("ties on the same updatedAt are broken by id desc (secondary sort key)", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const ids: string[] = [];
@@ -145,7 +140,7 @@ describe("#108 list_notes", () => {
     expect(out.notes.map(n => n.id)).toEqual([...ids].sort().reverse());
   });
 
-  it("limit／cursor 分頁接得上：三頁湊回全集、無重複無遺漏、最後一頁 nextCursor 為 null", async () => {
+  it("limit/cursor paging joins up: three pages make the full set with no duplicates or omissions, the last page's nextCursor is null", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const all: string[] = [];
@@ -171,17 +166,16 @@ describe("#108 list_notes", () => {
     expect(new Set(seen).size).toBe(5);
   });
 
-  // ⚠ 這一案守的是一個**靜默漏列**：`notes.updated_at` 是 `timestamptz`（微秒），而 cursor 走
-  // JS `Date` → `toISOString()`（毫秒）。若排序鍵留在微秒而 cursor 只有毫秒，`(updated_at, id)
-  // < (cursor.ts, cursor.id)` 會把「同一毫秒內、微秒較小」的列整批切掉——**不報錯、不重複，
-  // 就是不見**。修法是把排序鍵與 keyset 都 `date_trunc('milliseconds', …)` 降到與 cursor 同精度。
-  // 曝險比直覺高：所有筆記的 `updated_at` 全部來自 pg 的 `now()`＝微秒。
-  it("cursor 不因 updated_at 的微秒精度漏列（排序鍵與 cursor 同精度）", async () => {
+  // Guards a **silent omission**: `notes.updated_at` is a `timestamptz` (microseconds) while the cursor goes through JS `Date` -> `toISOString()` (milliseconds). If the sort key
+  // stays at microseconds while the cursor only has milliseconds, `(updated_at, id) < (cursor.ts, cursor.id)` cuts off in bulk the rows that are in the same millisecond with a smaller
+  // microsecond value - **no error, no duplicates, just missing**. The fix is to `date_trunc('milliseconds', ...)` both the sort key and the keyset to the cursor's precision.
+  // The exposure is higher than it looks: all notes' `updated_at` come from pg's `now()` = microseconds.
+  it("the cursor doesn't drop rows because of updated_at's microsecond precision (sort key and cursor share one precision)", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const a = await ctx.createNote(ownerId, "Micro A");
     const b = await ctx.createNote(ownerId, "Micro B");
-    // 同一毫秒（.123）內的兩個不同微秒值——cursor 編碼會把兩者都寫成 `…00.123Z`。
+    // Two different microsecond values inside the same millisecond (.123): the cursor encoding writes both as `...00.123Z`.
     await setUpdatedAtMicros(ctx.db, a.id, "2026-04-01T00:00:00.123456Z");
     await setUpdatedAtMicros(ctx.db, b.id, "2026-04-01T00:00:00.123200Z");
 
@@ -189,32 +183,28 @@ describe("#108 list_notes", () => {
     expect(p1.notes).toHaveLength(1);
     expect(typeof p1.nextCursor).toBe("string");
     const p2 = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 1, cursor: p1.nextCursor! }));
-    // 兩頁的聯集必須等於全集：漏列時第二頁是空的，而且沒有任何錯誤訊號。
+    // The union of the two pages must equal the full set: when rows are lost the second page is empty, with no error signal.
     expect([...p1.notes, ...p2.notes].map(n => n.id)).toEqual([a.id, b.id].sort().reverse());
     expect(p2.nextCursor).toBeNull();
   });
 
-  it("壞 cursor 四發（亂碼／解出來不是 uuid／不是日期／時間戳後接 NUL）→ 工具錯誤 invalid_body", async () => {
+  it("four bad cursors (garbage / decodes to a non-uuid / not a date / NUL after the timestamp) -> tool error invalid_body", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "One");
-    await ctx.createNote(ownerId, "Two"); // 兩篇才發得出 nextCursor，下面的對照面才成立
+    await ctx.createNote(ownerId, "Two"); // two notes are needed to get a nextCursor, so the control below holds
     const encode = (s: string): string => Buffer.from(s, "utf8").toString("base64url");
     const bad = [
       "not-a-cursor!!",
       encode("2026-01-01T00:00:00.000Z|not-a-uuid"),
       encode(`not-a-date|${randomUUID()}`),
-      // ⚠ **NUL 必須接在時間戳後面，不能落在 id 欄**——這一發是 `decodeCursor` 的 `noNul`
-      // 唯一的守衛，而落點決定它有沒有鑑別力：
-      //   - 落 id 欄（`…000Z|<NUL>`）→ 殺掉它的是 `UUID_RE`，拿掉 `noNul` 照樣綠（舊寫法，
-      //     本檔一度據此宣稱「結構上做不出守衛」——**那句是錯的**）。
-      //   - 落時間戳後面 → `new Date("2099-01-01T00:00:00.000Z" + NUL)` **仍然有效**
-      //     （實測 `toISOString()` 回 `2099-01-01T00:00:00.000Z`），`UUID_RE` 也管不到 id 欄，
-      //     所以三關只剩 `noNul` 擋得住它。
-      // 突變實測：拿掉 `if (!noNul(decoded))` → **只有這一發紅**
-      // （`isError` 變 `undefined`、回了一整頁筆記——日期取未來值，keyset 述詞會放行全部）。
-      // ⚠ 資料夾功能加入後時間段改走 `parseCursorTimestamp`（格式＋往返），這一發也會被它擋下：
-      // 拿掉 `noNul` 不再讓這一發變綠，`noNul` 對這個落點已不是唯一守衛（`list-notes.ts` 的 decodeCursor 註解同步）。
+      // **The NUL must follow the timestamp, not sit in the id field**: this call is the only guard for `decodeCursor`'s `noNul`, and where it lands decides whether it discriminates:
+      //   - in the id field (`...000Z|<NUL>`) -> `UUID_RE` rejects it, so removing `noNul` stays green;
+      //   - after the timestamp -> `new Date("2099-01-01T00:00:00.000Z" + NUL)` is **still valid** (`toISOString()` returns `2099-01-01T00:00:00.000Z`) and `UUID_RE` doesn't
+      //     cover the id field, so `noNul` is the only one of the three checks that stops it. Without `if (!noNul(decoded))` it returns a whole page of notes (the date is in the future,
+      //     so the keyset predicate lets everything through).
+      // Since the folders feature, the timestamp part goes through `parseCursorTimestamp` (format + round trip), which also rejects this call, so `noNul` is no longer the only guard
+      // for this landing point (the comment on `decodeCursor` in `list-notes.ts` says the same).
       encode(`2099-01-01T00:00:00.000Z${NUL}|${randomUUID()}`),
     ];
     for (const cursor of bad) {
@@ -223,13 +213,13 @@ describe("#108 list_notes", () => {
       expect(call.result.isError).toBe(true);
       expect(call.result.structuredContent!.code).toBe("invalid_body");
     }
-    // 對照面：合法 cursor 仍然成功——上面四發不是「任何 cursor 都被拒」。
+    // Control: a valid cursor still succeeds - the four calls above aren't "every cursor is rejected".
     const first = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 1 }));
     expect(payloadOf(await callTool(ctx.app, token, "list_notes", { cursor: first.nextCursor! }))).toBeTruthy();
   });
 
-  // 資料夾：JS `new Date` 收、pg `::timestamptz` 解析不了的時間段，原本落成 internal。
-  it("時間段不是本站發的形（+275760-…、-000001-…、0000-…、寬鬆的 2026）→ invalid_body，不是 internal", async () => {
+  // A timestamp part that JS `new Date` accepts but pg's `::timestamptz` can't parse must be invalid_body, not internal.
+  it("timestamp parts not in the site's issued shape (+275760-..., -000001-..., 0000-..., a loose 2026) -> invalid_body, not internal", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "One");
@@ -242,14 +232,14 @@ describe("#108 list_notes", () => {
     }
   });
 
-  // `Buffer.from(…, "base64url")` 靜默略過字元集外的字元，真游標接 `!!` 原本照樣翻頁；list_trash／list_folders 都拒。
-  it("真游標後面接 !! → invalid_body，與 list_trash 收到同一串的錯誤結果逐欄相同；真游標本身照常翻頁", async () => {
+  // `Buffer.from(..., "base64url")` silently skips characters outside the alphabet, so a real cursor followed by `!!` would still page; list_trash and list_folders reject it.
+  it("a real cursor followed by !! -> invalid_body, field-for-field identical to the error list_trash returns for the same string; the real cursor itself still pages", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "One");
     await ctx.createNote(ownerId, "Two");
     const first = payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 1 }));
-    expect(typeof first.nextCursor).toBe("string"); // 前提：真的拿到一個游標
+    expect(typeof first.nextCursor).toBe("string"); // precondition: a cursor was really obtained
     expect(payloadOf(await callTool(ctx.app, token, "list_notes", { limit: 1, cursor: first.nextCursor! })).notes).toHaveLength(1);
     const cursor = `${first.nextCursor!}!!`;
     const notesCall = await callTool(ctx.app, token, "list_notes", { limit: 1, cursor });
@@ -260,7 +250,7 @@ describe("#108 list_notes", () => {
     expect(notesCall.result.structuredContent).toEqual({ code: "invalid_body", message: "The `cursor` value is not one this server issued. Omit it to start over." });
   });
 
-  it("title 截到逃脫後 200 並附 titleTruncated", async () => {
+  it("title is cut to 200 after escaping and carries titleTruncated", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const title = "T".repeat(260_000);
@@ -271,7 +261,7 @@ describe("#108 list_notes", () => {
     expect(out.notes[0].titleTruncated).toBe(true);
   });
 
-  it("頂層與每一列的 key 集合逐字相符（殺「照抄 NoteDto」）", async () => {
+  it("key sets of the top level and of every row match exactly (kills \"copy NoteDto\")", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "K");
@@ -280,7 +270,7 @@ describe("#108 list_notes", () => {
     expect(Object.keys(out.notes[0]).sort()).toEqual(
       ["folder", "id", "lastEdited", "owner", "role", "slug", "title", "updatedAt", "url"].sort()
     );
-    // 未被截斷時**沒有** `titleTruncated` 這把 key（不是 `undefined`）。
+    // When not truncated the `titleTruncated` key is **absent** (not `undefined`).
     expect("titleTruncated" in out.notes[0]!).toBe(false);
     expect(out.notes[0]!.lastEdited).toBeNull();
     expect(out.notes[0]!.updatedAt).toBe(new Date(String(out.notes[0]!.updatedAt)).toISOString());
@@ -288,7 +278,7 @@ describe("#108 list_notes", () => {
 });
 
 describe("#108 search_notes", () => {
-  it("query 的 %／_／NUL 三發：前兩者當字面字元，NUL 在 handler 之外就被擋下", async () => {
+  it("query inputs %, _ and NUL: the first two are literal characters, NUL is blocked outside the handler", async () => {
     const seenTools: string[] = [];
     const ctx = await buildCollabTestApp({ mcpTestHooks: { beforeTool: name => void seenTools.push(name) } });
     const { ownerId, token } = await scenario(ctx);
@@ -297,30 +287,28 @@ describe("#108 search_notes", () => {
     await ctx.createNote(ownerId, "a_b config");
     await ctx.createNote(ownerId, "axb config");
 
-    // `%` 是字面字元：只命中標題真的有 `50%` 的那一列。用 `LIKE` 而不跳脫會多命中另一列。
+    // `%` is a literal character: it only matches the row whose title really contains `50%`; using `LIKE` without escaping would match another row too.
     const pct = payloadOf(await callTool(ctx.app, token, "search_notes", { query: "50%" }));
     expect(pct.notes.map(n => n.title)).toEqual(["Q3 50% growth"]);
-    // 單一個 `%` 同理：`LIKE '%'` 會命中全部四列，非 pattern 判定只命中含字面 `%` 的一列。
+    // A lone `%` likewise: `LIKE '%'` would match all four rows, while non-pattern matching only matches the one with a literal `%`.
     const onlyPct = payloadOf(await callTool(ctx.app, token, "search_notes", { query: "%" }));
     expect(onlyPct.notes.map(n => n.title)).toEqual(["Q3 50% growth"]);
-    // `_` 是字面字元：`LIKE 'a_b%'` 會連 `axb` 一起命中。
+    // `_` is literal: `LIKE 'a_b%'` would also match `axb`.
     const underscore = payloadOf(await callTool(ctx.app, token, "search_notes", { query: "a_b" }));
     expect(underscore.notes.map(n => n.title)).toEqual(["a_b config"]);
 
-    // 正向對照（上面三發）已證明 `search_notes` 真的經過 `runTool()`；NUL 這一發之後
-    // 計數**不變**，才證明它是在 handler **之外**（zod 輸入 schema）被擋掉的。
+    // The positive controls (the three calls above) already prove `search_notes` really goes through `runTool()`; the count being **unchanged** after the NUL call proves it was blocked **outside** the handler (zod input schema).
     const before = seenTools.filter(n => n === "search_notes").length;
     expect(before).toBe(3);
     const nul = await callTool(ctx.app, token, "search_notes", { query: `a${NUL}b` });
     expect(nul.status).toBe(200);
     expect(nul.result.isError).toBe(true);
-    // ⚠ `.refine(noNul)` 在 JSON Schema 裡**看不見**（zod 的 refine 沒有對應的關鍵字），
-    // 但 SDK 的 `validateToolInput` 真的會跑它——所以擋下 NUL 的是 zod 不是 JSON Schema。
+    // `.refine(noNul)` is **invisible** in the JSON Schema (zod's refine has no matching keyword), but the SDK's `validateToolInput` does run it - so it's zod, not the JSON Schema, that blocks NUL.
     expect(nul.result.content[0]!.text).toContain("Input validation error");
     expect(seenTools.filter(n => n === "search_notes").length).toBe(3);
   });
 
-  it("回應沒有 nextCursor／cursor，只有 truncated", async () => {
+  it("response has no nextCursor/cursor, only truncated", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     for (let i = 0; i < 3; i += 1) await ctx.createNote(ownerId, `dup ${i}`);
@@ -337,7 +325,7 @@ describe("#108 search_notes", () => {
     expect(JSON.stringify(capped)).not.toMatch(/"(next)?[cC]ursor"/);
   });
 
-  it("排序：完全相等 → 前綴 → 子字串，同組內 updatedAt desc, id desc", async () => {
+  it("ranking: exact -> prefix -> substring, within a group updatedAt desc, id desc", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const exact = await ctx.createNote(ownerId, "report");
@@ -353,7 +341,7 @@ describe("#108 search_notes", () => {
     expect(out.notes.map(n => n.id)).toEqual([exact.id, prefix.id, substrNew.id, substrOld.id]);
   });
 
-  it("大小寫不敏感；內文命中排在標題命中之後（#93）", async () => {
+  it("case-insensitive; body matches rank after title matches (#93)", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     const owner = await ctx.db.select({ email: users.email }).from(users).where(eq(users.id, ownerId));
@@ -370,7 +358,7 @@ describe("#108 search_notes", () => {
     expect((out.notes[1]!.matches as Array<{ snippet: string }>)[0]!.snippet.toLowerCase()).toContain("quarterly plan");
   });
 
-  it("搜尋範圍＝呼叫者看得見的筆記（別人的私有筆記不出現）", async () => {
+  it("search scope = notes the caller can see (other people's private notes don't appear)", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, otherId, token, otherToken } = await scenario(ctx);
     const secret = await ctx.createNote(otherId, "secret roadmap");
@@ -384,26 +372,22 @@ describe("#108 search_notes", () => {
     const list = payloadOf(await callTool(ctx.app, token, "list_notes"));
     expect(list.notes.map(n => n.id)).not.toContain(secret.id);
 
-    // 對照面：secret 的主人自己看得到——上面不是「這篇筆記查不到」。
+    // Control: the secret's owner can see it, so the above isn't "that note can't be found".
     const theirs = payloadOf(await callTool(ctx.app, otherToken, "search_notes", { query: "roadmap" }));
     expect(theirs.notes.map(n => n.id).sort()).toEqual([secret.id, shared.id].sort());
   });
 });
 
-describe("#108 兩支工具的共同接線", () => {
-  // 這兩句是規格逐字要求、且是某個「模型會踩但不會報錯」的形**唯一**的處置：
-  // - `list_notes`：keyset 分頁不是快照，分頁期間有人新建／改名會靜默漏列（處置 (b)）。
-  //   ⚠ #146 換過措辭：舊句說「邊列邊改會漏列」，而 `edit_note` 根本不動 `notes.updated_at`
-  //   （成因與查證在 `tools/list-notes.ts` 檔頭）。斷言仍是**整句逐字**、仍打 wire，只是換成
-  //   新那句的核心；連同下一行的「Editing a note's content does not move it.」一起釘，
-  //   把「真正的成因」與「刻意否定掉的假成因」兩半都守住。
-  //   #175 再換一次主詞（「renaming it」涵蓋標題與網址代稱兩種 PATCH），
-  //   並把**第三成因句**（翻頁期間被分享、或加入群組而看得到的筆記以原位置加入）也整句釘上：
-  //   `list-notes.ts` 檔頭一直宣稱它由這一案守，#175 之前其實沒釘。
-  // - `search_notes`：#93：只搜標題的句子已刪；改釘排序句，並釘住舊句不在（被否定掉的假敘述加回去也要紅）。
-  // 沒有這一案，刪掉它們不會有任何東西變紅。斷言的是**送到 wire 上的 `tools/list`**，
-  // 不是原始碼常數——改對了常數卻沒接上 `registerTool` 的形也要抓得到。
-  it("tools/list 的三句逐字文案在 wire 上出現（分頁警告與第三成因、#93 的排序句）", async () => {
+describe("#108 shared wiring of the two tools", () => {
+  // These sentences are the **only** disposition for a shape the model would hit without any error:
+  // - `list_notes`: keyset paging isn't a snapshot, so a note created or renamed during paging is silently missed. The old wording said "editing while listing drops rows", but
+  //   `edit_note` never touches `notes.updated_at` (cause and verification are in the header of `tools/list-notes.ts`), so the assertion is the **whole new sentence verbatim** on the wire; it also pins
+  //   "Editing a note's content does not move it." on the next line, so both the real cause and the deliberately negated false cause are guarded. "renaming it" covers both PATCH kinds (title and URL alias).
+  //   The **third cause sentence** is pinned whole as well (a note that becomes visible during paging because it was shared, moved into one of your groups, or a group was joined, appears at its own position):
+  //   the header of `list-notes.ts` claims this test guards it.
+  // - `search_notes` (#93): the sentence about searching titles only was removed; the ranking sentence is pinned instead, and the old sentence is pinned absent (re-adding the negated false statement must go red).
+  // Without this test, deleting them turns nothing red. It asserts the `tools/list` **sent on the wire**, not the source constant, so a corrected constant that isn't wired into `registerTool` is also caught.
+  it("tools/list's three sentences appear verbatim on the wire (paging warning and the third cause, the ranking sentence of #93)", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const res = await mcpPost(ctx.app, rpc("tools/list"), { token });
@@ -415,7 +399,6 @@ describe("#108 兩支工具的共同接線", () => {
         "so no later page shows it."
     );
     expect(byName("list_notes")).toContain("Editing a note's content does not move it.");
-    // #175 補回移動
     expect(byName("list_notes")).toContain(
       "While you page, a note shared with you, a note moved into one of your groups, or the notes of a group you join appear at their own unchanged positions, which may already be above your cursor."
     );
@@ -425,7 +408,7 @@ describe("#108 兩支工具的共同接線", () => {
     expect(byName("search_notes")).not.toContain("Searches note titles only");
   });
 
-  it("#175：list_notes 的可見性說法涵蓋群組，且不再只說「other people shared with you」", async () => {
+  it("#175: list_notes' visibility wording covers groups and no longer only says \"other people shared with you\"", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const res = await mcpPost(ctx.app, rpc("tools/list"), { token });
@@ -437,7 +420,7 @@ describe("#108 兩支工具的共同接線", () => {
     expect(listNotes).not.toContain("the ones other people shared with you");
   });
 
-  it("不吃 contentRead 桶", async () => {
+  it("doesn't charge the contentRead limiter", async () => {
     const ctx = await buildCollabTestApp({ limiters: { contentRead: new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }) } });
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "bucket");
@@ -447,7 +430,7 @@ describe("#108 兩支工具的共同接線", () => {
     }
   });
 
-  it("#93：search_notes 吃自己的 search 桶（60/min）；耗盡 → too_many_requests 與逐字訊息；list_notes 不受影響；桶以使用者為 key", async () => {
+  it("#93: search_notes charges its own search limiter (60/min); exhausted -> too_many_requests with the verbatim message; list_notes is unaffected; the limiter is keyed per user", async () => {
     const ctx = await buildCollabTestApp({ limiters: { search: new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }) } });
     const { ownerId, otherId, token, otherToken } = await scenario(ctx);
     await ctx.createNote(ownerId, "bucket");
@@ -461,26 +444,26 @@ describe("#108 兩支工具的共同接線", () => {
       message: "Too many searches right now. Wait a moment before searching again.",
     });
     expect(payloadOf(await callTool(ctx.app, token, "list_notes")).notes).toHaveLength(1);
-    // 第一位的桶已耗盡；第二位使用者的第一次搜尋照常成功（key＝userId，不是全站共用一桶）。
+    // The first user's limiter is exhausted; the second user's first search still succeeds (key = userId, not one limiter site-wide).
     const otherFirst = payloadOf(await callTool(ctx.app, otherToken, "search_notes", { query: "bucket" }));
     expect(otherFirst.notes.map(n => n.title)).toEqual(["bucket other"]);
     const otherSecond = await callTool(ctx.app, otherToken, "search_notes", { query: "bucket" });
     expect(otherSecond.result.structuredContent?.code).toBe("too_many_requests");
   });
 
-  it("runTool() 涵蓋率：beforeTool 看到的名字集合逐字等於 {list_notes, search_notes}", async () => {
+  it("runTool() coverage: the names beforeTool sees are exactly {list_notes, search_notes}", async () => {
     const seen: string[] = [];
     const ctx = await buildCollabTestApp({ mcpTestHooks: { beforeTool: name => void seen.push(name) } });
     const { ownerId, token } = await scenario(ctx);
     await ctx.createNote(ownerId, "coverage");
     payloadOf(await callTool(ctx.app, token, "list_notes"));
     payloadOf(await callTool(ctx.app, token, "search_notes", { query: "coverage" }));
-    // 漏把某一支包進 `runTool()` 就沒有 try/catch，未捕捉例外會被 SDK 原樣
-    // 送進模型脈絡（29d 守的正是那條）——所以「每一支都經過 runTool」必須自己有守衛。
+    // A tool not wrapped in `runTool()` has no try/catch, and an uncaught exception would be sent into the model's context by the SDK as is (the sentinel test guards exactly that),
+    // so "every tool goes through runTool" needs a guard of its own.
     expect([...new Set(seen)].sort()).toEqual(["list_notes", "search_notes"]);
   });
 
-  it("案 29b：我們自產的兩種錯誤都帶 ERROR_CODES 的碼，且 content 與 structuredContent 等價", async () => {
+  it("both kinds of errors we produce carry an ERROR_CODES code, and content and structuredContent are equivalent", async () => {
     const ctx = await buildCollabTestApp({
       mcpTestHooks: {
         beforeTool: name => {
@@ -503,9 +486,7 @@ describe("#108 兩支工具的共同接線", () => {
     }
   });
 
-  it("案 29d：handler 丟含哨兵字串的例外 → code internal、body 不含哨兵、log.error 有被呼叫", async () => {
-    // ⚠ 走 `buildTestApp`：只有它收得到 `options.logger`（`buildCollabTestApp` 寫死
-    // `logger: false`）。依註冊規則，這兩支工具在無 collab 的 app 上仍然註冊。
+  it("handler throws an exception containing a sentinel string -> code internal, the body doesn't contain the sentinel, log.error was called", async () => {
     const sentinel = `SENTINEL-${randomUUID()}`;
     const lines: string[] = [];
     const stream = new Writable({
@@ -531,21 +512,18 @@ describe("#108 兩支工具的共同接線", () => {
     expect(call.status).toBe(200);
     expect(call.result.isError).toBe(true);
     expect(call.result.structuredContent!.code).toBe("internal");
-    // 殺「不包 try/catch，讓例外冒到 SDK」——實測那樣寫時原始 error.message 會原樣進
-    // `content[0].text`。
+    // Kills "no try/catch, letting the exception bubble to the SDK": written that way the original error.message goes into `content[0].text` as is.
     expect(call.raw).not.toContain(sentinel);
     expect(lines.join("")).toContain(sentinel);
     expect(lines.some(l => l.includes(`"tool":"list_notes"`))).toBe(true);
   });
 
-  // ⚠ 下面三條是 **SDK 特徵化測試，對我們的實作零鑑別力**（同案 6b 一族）：斷言的是 SDK
-  // 自己組出來的固定字串。它們的存在理由是把 (3) 協定層 error 信封與 (4a) SDK 自產
-  // 工具錯誤的分界釘死——兩者在 HTTP 上都是 200，只有 body 形狀不同。用 `toContain` 只釘短語，
-  // 版本由 lockfile 釘死；SDK 升版後這三條若紅，是 SDK 換了字串，不是我們寫壞了。
-  // ⚠ 實測記錄：**29(c) 在零工具形之下就已經是綠的**——`resources/list` 不論
-  // 有沒有註冊工具都回 `-32601`。它守的是分界（29(a)／29(b) 在同一個 200 上長得不一樣），
-  // 不是我們的實作；29(a)／29(b) 則要「至少註冊一支工具」才寫得出來，所以三條同在這一棒。
-  it("案 29(a)：tools/call 一個沒註冊的名字 → 200、isError、structuredContent 缺席", async () => {
+  // The next three are **SDK characterization tests with zero discrimination against our implementation**: they assert fixed strings the SDK builds itself. They exist to pin the boundary between
+  // the protocol-level error envelope and an SDK-produced tool error - both are 200 over HTTP, only the body shape differs. `toContain` pins only the phrase and the version is pinned by the lockfile;
+  // if one goes red after an SDK upgrade, the SDK changed a string, we didn't break anything.
+  // The unknown-JSON-RPC-method case is green even with zero tools registered (`resources/list` returns `-32601` either way): it guards the boundary, not our implementation;
+  // the other two need at least one registered tool.
+  it("tools/call on an unregistered name -> 200, isError, structuredContent absent", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const call = await callTool(ctx.app, token, "nope");
@@ -556,7 +534,7 @@ describe("#108 兩支工具的共同接線", () => {
     expect(call.result.content[0]!.text).toContain(" not found");
   });
 
-  it("案 29(b)：輸入 schema 不符（limit 給字串）→ 200、isError、structuredContent 缺席", async () => {
+  it("input schema mismatch (limit as a string) -> 200, isError, structuredContent absent", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const call = await callTool(ctx.app, token, "list_notes", { limit: "50" });
@@ -566,7 +544,7 @@ describe("#108 兩支工具的共同接線", () => {
     expect(call.result.content[0]!.text).toContain("Input validation error");
   });
 
-  it("案 29(c)：未知的 JSON-RPC method → 200 ＋ 真正的 error 信封（有 error、沒有 result）", async () => {
+  it("unknown JSON-RPC method -> 200 + a real error envelope (error present, no result)", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const res = await mcpPost(ctx.app, rpc("resources/list", undefined, 7), { token });
@@ -577,14 +555,14 @@ describe("#108 兩支工具的共同接線", () => {
   });
 });
 
-describe("資料夾：list_notes 依大小截頁（pageCutShort）", () => {
+describe("folders: list_notes pages by size (pageCutShort)", () => {
   const seedPlain = (db: Db, ownerId: string, n: number) =>
     db.$client.query(
       `insert into notes (owner_id, title, slug) select $1::uuid, 'ln ' || g, 'ln-' || g || '-' || substr(md5(random()::text), 1, 8) from generate_series(1, $2::int) g`,
       [ownerId, n],
     );
 
-  it("LN1 一般資料 100 篇、limit 100 → 一頁收完、沒有 pageCutShort 鍵（key 集合逐字）", async () => {
+  it("100 ordinary notes, limit 100 -> one page, no pageCutShort key (key set verbatim)", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await seedPlain(ctx.db, ownerId, 100);
@@ -594,7 +572,7 @@ describe("資料夾：list_notes 依大小截頁（pageCutShort）", () => {
     expect(out.nextCursor).toBeNull();
   });
 
-  it("LN3 一般資料、limit 30 → 30 篇、沒有 pageCutShort 鍵、nextCursor 非 null", async () => {
+  it("ordinary data, limit 30 -> 30 notes, no pageCutShort key, nextCursor non-null", async () => {
     const ctx = await buildCollabTestApp();
     const { ownerId, token } = await scenario(ctx);
     await seedPlain(ctx.db, ownerId, 40);
@@ -604,7 +582,7 @@ describe("資料夾：list_notes 依大小截頁（pageCutShort）", () => {
     expect(out.nextCursor).not.toBeNull();
   });
 
-  it("LN2 tools/list：description 帶短頁句（LN+）；pageCutShort 的說明逐字", async () => {
+  it("tools/list: the description carries the short-page sentence; the pageCutShort description is verbatim", async () => {
     const ctx = await buildCollabTestApp();
     const { token } = await scenario(ctx);
     const res = await mcpPost(ctx.app, rpc("tools/list"), { token });

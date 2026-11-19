@@ -6,10 +6,10 @@ import type { Db } from "../../src/db/index.js";
 import { authProviders } from "../../src/db/schema.js";
 import { seedAuthProvider } from "./oidc-provider.js";
 
-/** 嵌在測試圖檔裡的可辨識字串：任何清單回應出現它＝圖檔本體出線。 */
+/** Recognizable string embedded in the test image: its presence in any list response means the image body leaked. */
 export const ICON_MARKER = "KNB-ICON-MARKER";
 
-/** PNG 簽章＋標記＋填充，總長 `size`（server 只看檔頭、不解碼）。`size` 至少 8＋標記長。 */
+/** PNG signature + marker + padding of total length `size` (the server only checks the header, never decodes); `size` must be at least 8 + marker length. */
 export function pngBytes(size = 64): Buffer {
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const body = Buffer.alloc(size - sig.length, 0x20);
@@ -30,7 +30,7 @@ export interface IconCase {
   version: number;
 }
 
-/** provider 圖示對照表的**手寫**形——刻意不呼叫 `resolveProviderIcon`（那是被測物，呼叫它＝套套邏輯）。 */
+/** Hand-written provider icon lookup table - deliberately not calling `resolveProviderIcon` (the code under test; calling it would be circular). */
 export function expectedIcon(c: Pick<IconCase, "id" | "template" | "kind" | "version">): ProviderIconDto {
   switch (c.kind) {
     case "template":
@@ -46,7 +46,7 @@ export function expectedIcon(c: Pick<IconCase, "id" | "template" | "kind" | "ver
   }
 }
 
-/** 15 個啟用中服務（三範本 × 五種 kind），sortOrder 0–14 依序；upload 列寫 `pngBytes()`、`image/png`、`icon_version = 3`（直寫 DB——本 fixture 不是被測方）。 */
+/** 15 enabled services (three templates x five kinds), sortOrder 0-14; written directly to the DB because this fixture is not under test. */
 export async function seedIconMatrix(db: Db): Promise<IconCase[]> {
   const out: IconCase[] = [];
   let order = 0;
@@ -66,7 +66,7 @@ export async function seedIconMatrix(db: Db): Promise<IconCase[]> {
   return out;
 }
 
-/** 回應本體不得含圖檔位元組或內部欄名（清單 SELECT 不選 icon_data／icon_mime）。 */
+/** The response body must not contain image bytes or internal column names (the list SELECT doesn't select icon_data/icon_mime). */
 export function expectNoIconBytes(body: string): void {
   expect(body).not.toContain(ICON_MARKER);
   expect(body).not.toContain('"Buffer"');
@@ -82,7 +82,7 @@ export interface IconPart {
   data: Buffer | string;
 }
 
-/** 手組 multipart/form-data（不可字串往返——圖檔是二進位；寫法同 `test/uploads.test.ts:54`，該函式檔內私有）。 */
+/** Hand-built multipart/form-data (no string round trip - the image is binary; like the file-private helper in test/uploads.test.ts). */
 export function multipartBody(parts: IconPart[]): Buffer {
   const chunks: Buffer[] = [];
   for (const part of parts) {
@@ -112,7 +112,7 @@ export function putIcon(app: FastifyInstance, id: string, body: Buffer, opts: { 
   });
 }
 
-/** 檔頭樣本（`uploads/magic-bytes.ts`：GIF＝`GIF8`＋`9`/`7`＋`a`；JPEG＝FF D8 FF；WebP＝`RIFF`＋4 位元組＋`WEBP`）。 */
+/** Header samples (`uploads/magic-bytes.ts`: GIF = `GIF8` + `9`/`7` + `a`; JPEG = FF D8 FF; WebP = `RIFF` + 4 bytes + `WEBP`). */
 export const GIF_BYTES = Buffer.concat([Buffer.from("GIF89a", "latin1"), Buffer.alloc(16)]);
 export const JPEG_BYTES = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]);
 export const WEBP_BYTES = Buffer.concat([Buffer.from("RIFF", "latin1"), Buffer.alloc(4), Buffer.from("WEBPVP8 ", "latin1"), Buffer.alloc(8)]);

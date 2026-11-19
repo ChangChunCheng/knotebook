@@ -1,7 +1,3 @@
-/**
- * #175：`POST /api/groups/:id/roles`（閱讀恆真；旗標不蘊含）。
- * 回讀一律走 `GET /api/groups/:id/roles`。
- */
 import { describe, expect, it } from "vitest";
 import type { GroupRoleDto } from "@knotebook/shared";
 import { buildTestApp } from "./helpers.js";
@@ -33,7 +29,7 @@ async function setup() {
 }
 
 describe("#175 POST /api/groups/:id/roles", () => {
-  it("授權矩陣：401／404×3（逐位元組相同）／403／201／站台 admin 201", async () => {
+  it("authorization matrix: 401 / 404 x3 (byte-identical) / 403 / 201 / site admin 201", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "POST",
@@ -43,7 +39,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     });
   });
 
-  it("201 形：name 正規化、permissions 七鍵且 read 恆 true、memberCount 0；GET 回讀排在兩個內建角色之後，其餘依 lower(name)", async () => {
+  it("201 shape: name normalized, permissions has seven keys with read always true, memberCount 0; the GET read-back lists custom roles after the two built-ins, ordered by lower(name)", async () => {
     const { post, roles } = await setup();
     const res = await post({ name: "  Reviewers ", permissions: { ...NONE, edit: true } });
     expect(res.statusCode).toBe(201);
@@ -58,13 +54,12 @@ describe("#175 POST /api/groups/:id/roles", () => {
     const list = await roles();
     expect(list.map(r => r.builtin ?? r.name)).toEqual(["admin", "member", "Reviewers"]);
     expect(list[2]).toEqual(body);
-    // 排序：自訂角色依 lower(name)，不依建立順序
     expect((await post({ name: "alpha", permissions: NONE })).statusCode).toBe(201);
     expect((await post({ name: "Beta", permissions: NONE })).statusCode).toBe(201);
     expect((await roles()).map(r => r.builtin ?? r.name)).toEqual(["admin", "member", "alpha", "Beta", "Reviewers"]);
   });
 
-  it("六旗標全關 → 201，存成「只能閱讀」（read true、其餘 false）", async () => {
+  it("all six flags off -> 201, stored as read-only (read true, the rest false)", async () => {
     const { post, roles } = await setup();
     const res = await post({ name: "Readers", permissions: NONE });
     expect(res.statusCode).toBe(201);
@@ -74,7 +69,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(row?.permissions).toEqual(READ_ONLY);
   });
 
-  it("body 帶 read 鍵（true／false 兩形）→ 400 invalid_body 且沒寫進 DB；create-only（能新建不能編輯）→ 201", async () => {
+  it("body with a read key (true and false) -> 400 invalid_body and nothing written to the DB; create-only (can create, cannot edit) -> 201", async () => {
     const { post, roles } = await setup();
     for (const read of [true, false]) {
       const res = await post({ name: "WithRead", permissions: { ...NONE, read } });
@@ -89,7 +84,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect((await roles()).find(r => r.id === res.json().id)?.permissions).toEqual(CREATE_ONLY);
   });
 
-  it("兩個管理旗標獨立：只開 manageGroup → 201；只開 manageMembers → 201", async () => {
+  it("the two management flags are independent: only manageGroup -> 201; only manageMembers -> 201", async () => {
     const { post, roles } = await setup();
     const g1 = await post({ name: "GroupOnly", permissions: { ...NONE, manageGroup: true } });
     expect(g1.statusCode).toBe(201);
@@ -102,7 +97,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(list.find(r => r.id === m1.json().id)?.permissions).toMatchObject({ manageGroup: false, manageMembers: true });
   });
 
-  it("名稱：trim／大小寫／NFC 撞名與保留名 → 409 role_name_taken；'Admins' 可以建", async () => {
+  it("name: trim / case / NFC collisions and reserved names -> 409 role_name_taken; 'Admins' is allowed", async () => {
     const { post, roles } = await setup();
     const reader = await post({ name: " Reader ", permissions: NONE });
     expect(reader.statusCode).toBe(201);
@@ -119,7 +114,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect((await roles()).map(r => r.builtin ?? r.name)).toEqual(["admin", "member", "Admins", "Café", "Reader"]);
   });
 
-  it("名稱邊界：空字串／全空白／41 字元／含 NUL／落單代理 → 400 invalid_name（不是 500）；40 個 emoji → 201", async () => {
+  it("name boundaries: empty / whitespace only / 41 chars / NUL / lone surrogate -> 400 invalid_name (not 500); 40 emoji -> 201", async () => {
     const { post, roles } = await setup();
     for (const name of ["", "   ", "a".repeat(41), `a${NUL}b`, "\uD800"]) {
       const res = await post({ name, permissions: NONE });
@@ -132,7 +127,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(emoji.json().name).toBe("\u{1F600}".repeat(40));
   });
 
-  it("body 形狀：缺一個旗標／多 builtin 鍵／name 非字串 → 400 invalid_body", async () => {
+  it("body shape: one flag missing / extra builtin key / non-string name -> 400 invalid_body", async () => {
     const { post, roles } = await setup();
     const { manageGroup: _omit, ...missingOne } = NONE;
     for (const payload of [
@@ -147,7 +142,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(await roles()).toHaveLength(2);
   });
 
-  it("授權看的是呼叫者的 manageGroup（不是 manageMembers）：只有 manageMembers 的自訂角色成員 → 403、沒寫入；只有 manageGroup 的 → 201", async () => {
+  it("authorization checks the caller's manageGroup (not manageMembers): a custom-role member with only manageMembers -> 403 and nothing written; with only manageGroup -> 201", async () => {
     const { db, g, member, post, roles } = await setup();
     const doorman = await seedRole(db, g.id, "Doorman", { canRead: true, canManageMembers: true });
     const renamer = await seedRole(db, g.id, "Renamer", { canRead: true, canManageGroup: true });
@@ -162,14 +157,14 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(ok.statusCode).toBe(201);
   });
 
-  it("授權先於 body：一般成員送壞 body（{}）→ 403，不是 400", async () => {
+  it("authorization comes before the body: a plain member sending a bad body ({}) gets 403, not 400", async () => {
     const { post, member } = await setup();
     const res = await post({}, await cookieOf(member.id));
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("forbidden");
   });
 
-  it("身為內建一般成員的站台 admin → 201", async () => {
+  it("site admin who is a built-in plain member -> 201", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const owner = await seedUser(db);
     const siteAdmin = await seedUser(db, { isAdmin: true });
@@ -181,7 +176,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(res.json()).toMatchObject({ builtin: null, name: "ByAdmin", memberCount: 0 });
   });
 
-  it("不踢線：連建數個角色後 onGroupAccessChanged 呼叫 0 次（建立角色沒有人掛它）", async () => {
+  it("no revocation: creating several roles calls onGroupAccessChanged 0 times (nobody holds a new role)", async () => {
     const { post, spy } = await setup();
     expect((await post({ name: "A", permissions: NONE })).statusCode).toBe(201);
     expect((await post({ name: "B", permissions: { ...NONE, edit: true, create: true } })).statusCode).toBe(201);
@@ -191,7 +186,7 @@ describe("#175 POST /api/groups/:id/roles", () => {
     expect(spy.onUserRevoked).toHaveBeenCalledTimes(0);
   });
 
-  it("create-only 持有者建群組筆記：201、role viewer（先看 canEdit 再看 canRead）、GET 也是 viewer；掛全關角色 → 403", async () => {
+  it("create-only holder creates a group note: 201, role viewer (canEdit is checked before canRead), GET also viewer; holding an all-off role -> 403", async () => {
     const { app, db, post, member, g } = await setup();
     const createOnly = await post({ name: "Creators", permissions: { ...NONE, create: true } });
     expect(createOnly.statusCode).toBe(201);

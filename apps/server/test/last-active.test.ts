@@ -1,4 +1,4 @@
-/** #267：帶 session cookie 的已驗證請求、共編連線與人的共編變更順手寫 users.last_active_at（行程內節流＋SQL 條件，同一使用者至多每分鐘一次）；bearer token 不寫；登入時寫。時間一律以 DB 時鐘比。 */
+/** Times are always compared on the DB clock. */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -21,14 +21,13 @@ async function lastActiveText(db: Db, userId: string): Promise<string | null> {
 async function activeSince(db: Db, userId: string, t0: string): Promise<boolean> {
   return (await db.execute<{ ok: boolean }>(sql`select coalesce(last_active_at >= ${t0}::timestamptz, false) as ok from users where id = ${userId}`)).rows[0]!.ok;
 }
-/** 把 last_active_at 設成 DB 時鐘往前 `seconds` 秒，回傳設下去的值（text）。 */
 async function setActiveSecondsAgo(db: Db, userId: string, seconds: number): Promise<string> {
   return (await db.execute<{ t: string }>(
     sql`update users set last_active_at = now() - make_interval(secs => ${seconds}) where id = ${userId} returning last_active_at::text as t`,
   )).rows[0]!.t;
 }
 
-/** 共編的 touch 不 await（fire-and-forget），斷言一律在期限內輪詢 DB。 */
+// The collab touch isn't awaited (fire-and-forget), so assertions always poll the DB within a deadline.
 async function waitUntil(label: string, timeoutMs: number, check: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -38,8 +37,8 @@ async function waitUntil(label: string, timeoutMs: number, check: () => Promise<
   throw new Error(`等待逾時（${timeoutMs}ms）：${label}`);
 }
 
-describe("users.last_active_at（#267）", () => {
-  it("session cookie 的請求（authenticate 與 authenticateAny 的 session 路徑）寫入；沒 session 的請求不寫", async () => {
+describe("users.last_active_at (#267)", () => {
+  it("session-cookie requests (the session paths of authenticate and authenticateAny) write; requests without a session don't", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const v = await seedUser(db);
@@ -48,12 +47,11 @@ describe("users.last_active_at（#267）", () => {
     const t0 = await dbNow(db);
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies: await cookieOf(u.id) })).statusCode).toBe(200);
     expect(await activeSince(db, u.id, t0)).toBe(true);
-    // authenticateAny（收 Bearer 的路由）沒帶 Authorization 時走 session：一樣算
     expect((await app.inject({ method: "GET", url: "/api/notes", cookies: await cookieOf(v.id) })).statusCode).toBe(200);
     expect(await activeSince(db, v.id, t0)).toBe(true);
   });
 
-  it("bearer token（PAT）的請求不寫", async () => {
+  it("bearer token (PAT) requests don't write", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const { token } = await seedTokenForUser(db, u.id);
@@ -61,7 +59,7 @@ describe("users.last_active_at（#267）", () => {
     expect(await lastActiveText(db, u.id)).toBeNull();
   });
 
-  it("行程內節流：同一 app 寫入間隔（1 分鐘）內第二次請求不再寫（即使 DB 值已舊到 SQL 條件會放行）", async () => {
+  it("in-process throttle: a second request from the same app within the write interval (1 minute) doesn't write, even though the DB value is old enough for the SQL condition to allow it", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const cookies = await cookieOf(u.id);
@@ -72,7 +70,7 @@ describe("users.last_active_at（#267）", () => {
     expect(await lastActiveText(db, u.id)).toBe(old);
   });
 
-  it("SQL 條件保底：另一個行程（新 app、空節流表）見到 30 秒前的值不寫；2 分鐘前的值才寫", async () => {
+  it("SQL condition as backstop: another process (new app, empty throttle table) seeing a 30-second-old value doesn't write; a 2-minute-old value does", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const recent = await setActiveSecondsAgo(db, u.id, 30);
@@ -87,7 +85,7 @@ describe("users.last_active_at（#267）", () => {
     expect(await activeSince(db, u.id, t0)).toBe(true);
   });
 
-  it("帳密登入同時寫 last_login_at 與 last_active_at", async () => {
+  it("password login writes both last_login_at and last_active_at", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertPasswordUser(db, { password: PW });
     const t0 = await dbNow(db);
@@ -96,7 +94,7 @@ describe("users.last_active_at（#267）", () => {
     expect((await db.execute<{ same: boolean }>(sql`select last_active_at = last_login_at as same from users where id = ${u.id}`)).rows[0]!.same).toBe(true);
   });
 
-  it("GET /api/admin/users 帶 lastActiveAt：有值是 ISO 字串（＝DB 值）、從無紀錄是 null；lastLoginAt 仍在", async () => {
+  it("GET /api/admin/users carries lastActiveAt: an ISO string (= DB value) when set, null when never recorded; lastLoginAt is still there", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const never = await seedUser(db);
@@ -107,24 +105,24 @@ describe("users.last_active_at（#267）", () => {
     const rows = res.json() as Array<{ id: string; lastActiveAt: string | null; lastLoginAt: string | null }>;
     expect(rows.find(r => r.id === never.id)).toMatchObject({ lastActiveAt: null, lastLoginAt: null });
     expect(rows.find(r => r.id === seen.id)!.lastActiveAt).toBe("2026-10-01T09:12:00.123Z");
-    // 管理員自己這發請求就是一次 session 活動
+    // The admin's own request is a session activity, so lastActiveAt is a timestamp string.
     const self = rows.find(r => r.id === admin.id)!.lastActiveAt;
     expect(typeof self).toBe("string");
     expect(new Date(self!).toISOString()).toBe(self);
   });
 });
 
-describe("users.last_active_at × 共編（#267）", () => {
-  it("共編連線建立時寫入；之後這條連線送來的文件變更也寫入（同一份節流表，滿間隔才再寫）", async () => {
+describe("users.last_active_at x collab (#267)", () => {
+  it("creating a collab connection writes; later document changes from that connection write too (same throttle table, only after the full interval)", async () => {
     let now = 0;
     const ctx = await buildCollabTestApp({ lastActiveOptions: { now: () => now } });
     const alice = await ctx.createUser({ email: "alice@example.com", password: PW });
     const note = await ctx.createNote(alice.id);
     const session = await ctx.loginAs("alice@example.com", PW);
-    // 登入本身會寫（touchLastLogin）；清掉，並把節流時鐘推過一個間隔，讓下面只量得到共編那一下。
+    // Login itself writes (touchLastLogin): clear it and move the throttle clock past one interval, so the assertions below only measure the collab touch.
     await ctx.db.execute(sql`update users set last_active_at = null where id = ${alice.id}`);
     now += LAST_ACTIVE_WRITE_INTERVAL_MS;
-    // 不經 REST 取 token（那是一次 session 請求，會自己寫）：直接簽一張共編 token。
+    // Don't fetch the token through REST (that is a session request and would write by itself): sign a collab token directly.
     const token = await signCollabToken(testConfig.appSecret, { noteId: note.id, userId: alice.id, role: "owner", tv: 0, sid: testSessionId(alice.id), sv: NOTE_SCHEMA_VERSION });
     const client = await session.connect(note.id, { tokenOverride: token });
     await waitUntil("連線建立後 last_active_at 有值", 3_000, async () => (await lastActiveText(ctx.db, alice.id)) !== null);
@@ -135,7 +133,7 @@ describe("users.last_active_at × 共編（#267）", () => {
       element.insert(0, [new Y.XmlText(text)]);
       client.doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
     };
-    // 節流間隔內的變更不寫。時鐘往前推一點（仍在間隔內）：若節流被繞過，節流表的時間戳就會變成新的 now。
+    // A change inside the throttle interval doesn't write. Move the clock forward a little (still inside the interval): if throttling were bypassed, the throttle table's timestamp would become the new now.
     const stamp = ctx.collab.lastActive.lastAttemptAt(alice.id);
     expect(stamp).toBeDefined();
     now += 1_000;
@@ -143,20 +141,19 @@ describe("users.last_active_at × 共編（#267）", () => {
     const serverHas = (text: string) => async () => ctx.collab.hocuspocus.documents.get(note.id)?.getXmlFragment(YDOC_FRAGMENT).toString().includes(text) ?? false;
     await waitUntil("server 收到間隔內的那筆變更", 3_000, serverHas("within interval"));
     expect(ctx.collab.lastActive.lastAttemptAt(alice.id)).toBe(stamp);
-    // touch 不 await：給遲到的寫入一段沉澱時間，期間每次輪詢都必須仍是舊值
+    // The touch isn't awaited: give a late write time to settle; every poll in the meantime must still see the old value.
     const settleUntil = Date.now() + 500;
     while (Date.now() < settleUntil) {
       expect(await lastActiveText(ctx.db, alice.id)).toBe(old);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    // 滿間隔後的變更寫入
     now += LAST_ACTIVE_WRITE_INTERVAL_MS;
     const t0 = await dbNow(ctx.db);
     edit("after interval");
     await waitUntil("文件變更後 last_active_at 更新", 3_000, () => activeSince(ctx.db, alice.id, t0));
   });
 
-  it("bearer token 的 AI 寫入（直連，onChange 的 context 帶 source）不算活動：節流表仍空、last_active_at 仍 NULL", async () => {
+  it("bearer-token AI writes (direct connection, onChange context carries source) don't count as activity: the throttle table stays empty, last_active_at stays NULL", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "bot-owner@example.com", password: PW });
     const note = await ctx.createNote(u.id);

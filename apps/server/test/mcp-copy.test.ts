@@ -1,8 +1,4 @@
-/**
- * #180：MCP `copy_note`（C1–C13）＋ M-G2（copy 半）。
- * 無 collab 的案用 `buildTestApp`（它回 `uploadsDir`，可數磁碟檔）；C3 要 live doc，用 `buildCollabTestApp`。
- * 模型面字串一律寫字面值。
- */
+/** Cases without collab use `buildTestApp` (it returns `uploadsDir`, so disk files can be counted); the live-doc case needs `buildCollabTestApp`. Model-facing strings are written as literals. */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -20,12 +16,12 @@ import { searchDoc } from "./search-doc.js";
 import { COPY_NEEDS_MOVE_MESSAGE } from "../src/mcp/tools/copy-note.js";
 
 const RW = "notes:read notes:write" as const;
-/** #239：帶 `group_id` 的 copy_note（成功與失敗皆是）要 notes:move——這些案改用讀寫搬移憑證，期望值不動。 */
+/** #239: copy_note with `group_id` (success or failure) needs notes:move, so these tests use a read-write-move token; expected values are unchanged. */
 const RWM = "notes:read notes:write notes:move" as const;
 const GROUP_NO_CREATE = "No group with that id among your groups where your role can create notes.";
 const WRITE_RATE = "Too many note writes right now. Wait a moment before writing again.";
 const TOKEN_RATE = "Too many writes with this credential right now. Wait a few minutes before writing again.";
-// #397：訊息說的是擋下這次請求的那顆桶的當下上限；C8 注入的桶 limit 是 1。
+// #397: the message names the current limit of the limiter that blocked the request; the upload limiter injected in its test has limit 1.
 const UPLOAD_LIMIT_MSG =
   "Copying this note's images would go over your upload limit (1 files per 10 minutes, copies included), so nothing was copied. Wait a few minutes and try again.";
 const BUSY = "The server was busy, so no copy was made. Try again in a moment.";
@@ -51,7 +47,7 @@ async function listUrl(app: FastifyInstance, token: string, id: string): Promise
 }
 
 describe("#180 copy_note", () => {
-  it("C1 個人：分享 viewer 複製別人的筆記 → owner＝呼叫者、role owner、title 同來源、url 與 list_notes 同字", async () => {
+  it("personal: a viewer share copies someone else's note -> owner = caller, role owner, same title as the source, url the same text as list_notes", async () => {
     const { app, db } = await buildTestApp();
     const [owner, me] = await Promise.all([seedUser(db), seedUser(db)]);
     const src = await seedNote(db, { ownerId: owner.id }, { title: "Shared source" });
@@ -65,7 +61,7 @@ describe("#180 copy_note", () => {
     expect(await listUrl(app, token, note.id)).toBe(note.url);
   });
 
-  it("C2 群組：create-only 角色複製進群組 → role viewer、owner 是群組", async () => {
+  it("group: a create-only role copies into the group -> role viewer, owner is the group", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -77,7 +73,7 @@ describe("#180 copy_note", () => {
     expect(note.owner).toEqual({ kind: "group", id: g.id, name: "Team" });
   });
 
-  it("C3 內容：live doc 比 note_states 新——小寫、大寫 note_id 各複製一次，副本都有 MARK；之後改副本，來源不變", async () => {
+  it("content: live doc newer than note_states - copying with lowercase and uppercase note_id once each, both copies contain MARK; editing the copy afterwards leaves the source unchanged", async () => {
     const PASSWORD = "correct-horse-battery";
     const ctx = await buildCollabTestApp();
     const email = `c3-${randomUUID()}@example.com`;
@@ -85,14 +81,14 @@ describe("#180 copy_note", () => {
     const src = await ctx.createNote(u.id, "Live source");
     const session = await ctx.loginAs(email, PASSWORD);
     const MARK = `MARK-${randomUUID()}`;
-    const client = await seedContent(ctx, session, src.id, `# Head\n\n${MARK}`); // 保持連線：onStoreDocument 的 2 秒 debounce 內 note_states 還沒有 MARK
+    const client = await seedContent(ctx, session, src.id, `# Head\n\n${MARK}`); // keep the connection: within onStoreDocument's 2-second debounce note_states doesn't have MARK yet
     const stateHasMark = async () => { const d = await loadDoc(ctx.db, src.id); return d !== null && xmlOf(d).includes(MARK); };
-    expect(await stateHasMark()).toBe(false); // 前提
+    expect(await stateHasMark()).toBe(false); // precondition
     const { token } = await seedTokenForUser(ctx.db, u.id, RW);
     const lower = await copied(ctx.app, token, { note_id: src.id });
     const upper = await copied(ctx.app, token, { note_id: src.id.toUpperCase() });
     for (const c of [lower, upper]) expect(xmlOf((await loadDoc(ctx.db, c.id))!)).toContain(MARK);
-    expect(await stateHasMark()).toBe(false); // 前提仍成立（只會由真變假——2 秒內完成，前例 groups-v2-revocation.test.ts:226-237）
+    expect(await stateHasMark()).toBe(false); // precondition still holds: note_states can only gain MARK once the 2-second store debounce fires, and the copies finish before that
     const Y = `Y-${randomUUID()}`;
     const ap = await call(ctx.app, token, "edit_note", { note_id: lower.id, op: "append", markdown: Y });
     expect(ap.isError).toBeUndefined();
@@ -100,7 +96,7 @@ describe("#180 copy_note", () => {
     client.disconnect();
   });
 
-  it("C4 圖片：兩張自己的上傳＋一張引用別篇的 → 副本兩張新 uploads 列（屬副本、檔在磁碟），別篇那張網址不變", async () => {
+  it("images: two own uploads + one referencing another note -> the copy gets two new uploads rows (belonging to the copy, files on disk), the other note's URL is unchanged", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const me = await seedUser(db);
     const other = await seedNote(db, { ownerId: me.id }, { title: "Other" });
@@ -123,7 +119,7 @@ describe("#180 copy_note", () => {
     expect(xml).not.toContain(`/api/uploads/${a}`);
   });
 
-  it("C5 group_not_found：不存在、非成員、成員無 can_create 三形逐位元組相同且＝GROUP_NO_CREATE", async () => {
+  it("group_not_found: nonexistent, non-member and member without can_create are byte-identical and equal GROUP_NO_CREATE", async () => {
     const { app, db } = await buildTestApp();
     const [me, other] = await Promise.all([seedUser(db), seedUser(db)]);
     const foreign = await seedGroup(db, "Foreign", [{ userId: other.id, role: "admin" }]);
@@ -142,7 +138,7 @@ describe("#180 copy_note", () => {
     expect(await noteCount(db)).toBe(before);
   });
 
-  it("C6 不帶過去：分享、公開連結、AI 編輯 → 副本 0 shares、public_token NULL、0 AI 紀錄、lastEdited null；來源的 AI 紀錄數不變", async () => {
+  it("not carried over: shares, public link, AI edits -> copy has 0 shares, public_token NULL, 0 AI records, lastEdited null; the source's AI record count is unchanged", async () => {
     const { app, db } = await buildTestApp();
     const [me, friend] = await Promise.all([seedUser(db), seedUser(db)]);
     const src = await seedNote(db, { ownerId: me.id }, { publicToken: "q".repeat(43), publicSlug: "alias" });
@@ -159,8 +155,8 @@ describe("#180 copy_note", () => {
     expect(note.lastEdited).toBeNull();
   });
 
-  describe("C7 配額四案（照 storage-copy-move.test.ts:29／:48／:61／:107）", () => {
-    it("已滿個人空間預檢 → 可見全文（無 they need）＋extra 兩數、無新筆記、upload 桶未扣", async () => {
+  describe("quota (four cases, mirroring storage-copy-move.test.ts)", () => {
+    it("full personal space pre-check -> full text visible (no \"they need\") + two extra numbers, no new note, upload limiter not charged", async () => {
       const upload = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
       const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload }) });
       const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
@@ -184,7 +180,7 @@ describe("#180 copy_note", () => {
       expect(upload.consume(b.id)).toBe(true);
     });
 
-    it("未滿但放不下 → 交易內、含 incomingBytes、已複製檔清掉、無新筆記", async () => {
+    it("not full but doesn't fit -> inside the transaction, includes incomingBytes, copied files cleaned up, no new note", async () => {
       const { app, db, uploadsDir } = await buildTestApp();
       const a = await seedUser(db);
       await giveUserQuota(db, a.id, 1000);
@@ -205,7 +201,7 @@ describe("#180 copy_note", () => {
       expect(await filesIn(uploadsDir)).toEqual(files);
     });
 
-    it("已滿群組：manageGroup 成員 → 帶數字與 extra；一般成員 → 不帶數字、無 extra", async () => {
+    it("full group: manageGroup member -> numbers and extra; plain member -> no numbers, no extra", async () => {
       const { app, db, uploadsDir } = await buildTestApp();
       const [gAdmin, gMember] = await Promise.all([seedUser(db), seedUser(db)]);
       const g = await seedGroup(db, "G", [{ userId: gAdmin.id, role: "admin" }, { userId: gMember.id, role: "member" }]);
@@ -233,7 +229,7 @@ describe("#180 copy_note", () => {
       });
     });
 
-    it("無附件的複製到已滿（配額 0）的空間 → 成功", async () => {
+    it("copy without attachments into a full (quota 0) space -> succeeds", async () => {
       const { app, db } = await buildTestApp();
       const z = await seedUser(db);
       await giveUserQuota(db, z.id, 0);
@@ -243,14 +239,14 @@ describe("#180 copy_note", () => {
     });
   });
 
-  it("C8 upload 桶不足（limit 1、已用 1；來源兩張圖）→ COPY_UPLOAD_LIMIT、無新筆記、磁碟無新檔", async () => {
+  it("upload limiter short (limit 1, 1 used; the source has two images) -> COPY_UPLOAD_LIMIT, no new note, no new file on disk", async () => {
     const upload = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ upload }) });
     const me = await seedUser(db);
     const src = await seedNote(db, { ownerId: me.id });
     const ids = [await seedAttachment(db, uploadsDir, src.id, me.id, 10), await seedAttachment(db, uploadsDir, src.id, me.id, 10)];
     await seedDoc(db, src.id, imageDoc(ids.map(id => `/api/uploads/${id}`)));
-    expect(upload.consume(me.id)).toBe(true); // ⚠ 必須先用掉：consumeMany 夾在整窗額度（n>limit 時空窗放行，rate-limit.ts:119-127）
+    expect(upload.consume(me.id)).toBe(true); // must be used up first: consumeMany clamps to the whole-window limit (an empty window lets n > limit through)
     const [before, files] = [await noteCount(db), await filesIn(uploadsDir)];
     const { token } = await seedTokenForUser(db, me.id, RW);
     expect((await call(app, token, "copy_note", { note_id: src.id })).structuredContent).toEqual({ code: "too_many_requests", message: UPLOAD_LIMIT_MSG });
@@ -258,7 +254,7 @@ describe("#180 copy_note", () => {
     expect(await filesIn(uploadsDir)).toEqual(files);
   });
 
-  it("C9 edit 桶已用盡 → WRITE_RATE；tokenWrite 已用盡 → TOKEN_RATE", async () => {
+  it("edit limiter used up -> WRITE_RATE; tokenWrite used up -> TOKEN_RATE", async () => {
     const edit = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ edit, tokenWrite }) });
@@ -267,12 +263,12 @@ describe("#180 copy_note", () => {
     const { token } = await seedTokenForUser(db, me.id, RW);
     expect(edit.consume(me.id)).toBe(true);
     expect((await call(app, token, "copy_note", { note_id: src.id })).structuredContent).toEqual({ code: "too_many_requests", message: WRITE_RATE });
-    // tokenWrite 已被上一發扣掉 1（requireWriteScope 在 edit 之前）
+    // tokenWrite was already charged 1 by the previous call (requireWriteScope runs before edit).
     expect((await call(app, token, "copy_note", { note_id: src.id })).structuredContent).toEqual({ code: "too_many_requests", message: TOKEN_RATE });
   });
 
   for (const code of ["55P03", "40P01", "40001"]) {
-    it(`C10 server_busy（storage-space-locked 縫拋 ${code}）→ COPY_BUSY、無新筆記、已複製檔清掉`, async () => {
+    it(`server_busy (storage-space-locked seam throws ${code}) -> COPY_BUSY, no new note, copied files cleaned up`, async () => {
       const { app, db, uploadsDir } = await buildTestApp({
         groupTestHook: async point => { if (point === "storage-space-locked") throw Object.assign(new Error(code), { code }); },
       });
@@ -288,7 +284,7 @@ describe("#180 copy_note", () => {
     });
   }
 
-  it("C11 無 collab 的 app：copy_note 有註冊且成功（讀 note_states）", async () => {
+  it("app without collab: copy_note is registered and succeeds (reads note_states)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const src = await seedNote(db, { ownerId: me.id }, { title: "Stored" });
@@ -301,7 +297,7 @@ describe("#180 copy_note", () => {
     expect(xmlOf((await loadDoc(db, note.id))!)).toContain(MARK);
   });
 
-  it("C12 全文索引：以來源內文的獨特字串 search_notes → 副本命中且 matchedOn body", async () => {
+  it("full-text index: search_notes with a distinctive string from the source body -> the copy matches with matchedOn body", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const src = await seedNote(db, { ownerId: me.id }, { title: "Indexed" });
@@ -313,7 +309,7 @@ describe("#180 copy_note", () => {
     expect(hits.find(h => h.id === note.id)?.matchedOn).toBe("body");
   });
 
-  it("M-G2-copy 用舊鍵 groupId（來源帶附件）→ 先斷零新增筆記與磁碟無新檔，再斷 SDK 驗證錯誤（無 code、訊息含 groupId）", async () => {
+  it("old key groupId (source with attachments) -> first assert zero new notes and no new file on disk, then the SDK validation error (no code, message contains groupId)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -330,7 +326,7 @@ describe("#180 copy_note", () => {
     expect(r.content[0]!.text).toContain("groupId");
   });
 
-  it("大寫 group_id → 成功；owner.id、url、DB group_id 都是小寫", async () => {
+  it("uppercase group_id -> succeeds; owner.id, url and DB group_id are all lowercase", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -343,7 +339,7 @@ describe("#180 copy_note", () => {
     expect(row!.groupId).toBe(g.id);
   });
 
-  it("同群組內複製：群組筆記 → 同群組 → 新群組筆記、slug 去重 -2、原篇不動", async () => {
+  it("copy within the same group: group note -> same group -> new group note, slug deduplicated -2, original untouched", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "member" }]);
@@ -357,8 +353,8 @@ describe("#180 copy_note", () => {
     expect(orig).toMatchObject({ slug: "plan", groupId: g.id, title: "Plan" });
   });
 
-  // #239：(a) 這一版只在 canMove 時出現——改用讀寫搬移憑證，字串期望值不動；讀寫版的 (b)(c) 由 mcp-tools-list 釘。
-  it("C13 模型面字串 wire 斷言（全部）", async () => {
+  // This variant of the text only appears with canMove, so this test uses a read-write-move token; the read-write variants are pinned by mcp-tools-list.
+  it("model-facing strings asserted on the wire (all)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const { token } = await seedTokenForUser(db, me.id, RWM);
@@ -378,14 +374,14 @@ describe("#180 copy_note", () => {
     expect(tool.inputSchema.properties.group_id!.description).toBe(GID);
     expect(tool.inputSchema.properties.note_id!.description).toBe(NID);
     expect(tool.outputSchema.properties.note!.description).toBe(OUT);
-    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "note_id"]); // 資料夾：多 folder_id
+    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "note_id"]); // folders: one more key, folder_id
     for (const s of [DESC, GID, OUT]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
   });
 
-  // #239 M3：copy_note 帶 group_id 的 move 檢查在 HTTP 上**到得了**（讀寫憑證的清單上有 copy_note）。
-  // 檢查在 copyNote 之前 ⇒ 不建任何東西、不扣 tokenWrite；也在查筆記之前 ⇒ 不存在的 note_id 同樣先回 insufficient_scope。
-  it("#239 M3：讀寫憑證帶 group_id → insufficient_scope、訊息逐字 (d)、什麼都沒建、tokenWrite 不扣", async () => {
-    const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }); // 同本檔 C9 的注入法
+  // copy_note with group_id has its move check **reachable** over HTTP (copy_note is on the read-write token's list). The check runs before copyNote => nothing is created
+  // and tokenWrite isn't charged; it also runs before the note lookup => a nonexistent note_id gets insufficient_scope first.
+  it("read-write token with group_id -> insufficient_scope, message verbatim, nothing created, tokenWrite not charged", async () => {
+    const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }); // injected like the tokenWrite limiter in the rate-limit test above
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ tokenWrite }) });
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "admin" }]);
@@ -395,13 +391,12 @@ describe("#180 copy_note", () => {
     const r = await call(app, token, "copy_note", { note_id: src.id, group_id: g.id });
     expect(r.structuredContent).toEqual({ code: "insufficient_scope", message: COPY_NEEDS_MOVE_MESSAGE });
     expect(await noteCount(db)).toBe(before);
-    // tokenWrite 那唯一一格還在：不帶 group_id 的複製成功
+    // The single tokenWrite slot is still free: a copy without group_id succeeds.
     await copied(app, token, { note_id: src.id });
   });
 
-  // 本案守的是「在 scope 檢查之前先查筆記、not_found 就提早 return」那類；「檢查移到 copyNote 之後」由上一案的列數守
-  // （對那類突變，不存在的筆記在任何副作用之前就回 not_found，再被改回 insufficient_scope，回應相同）。
-  it("#239 M3：不存在的 note_id 帶 group_id 同樣 insufficient_scope（檢查在查筆記之前）", async () => {
+  // Guards against looking up the note before the scope check and returning not_found early. The opposite regression (check moved after copyNote) is caught by the previous test's row count.
+  it("a nonexistent note_id with group_id also gets insufficient_scope (the check is before the note lookup)", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "Team", [{ userId: me.id, role: "admin" }]);

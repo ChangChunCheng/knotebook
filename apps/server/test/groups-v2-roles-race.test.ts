@@ -1,10 +1,10 @@
 /**
- * #175：角色變動與成員異動的交錯（鎖序「成員／角色變動＝
- * groups 一把」）。照 `groups-members.test.ts` 的形：先發的請求在測試縫（鎖已取得、寫入之前）發出第二個請求，並以
- * `waitForBlockedOrSettled`（`pg_stat_activity` 的 Lock 等待）證明第二個請求確實在等鎖（有連線處於 Lock 等待；不靠時序）。當時唯一被持有的列鎖是 groups 列，但 helper 只數 Lock 等待、分不出是哪一把。
+ * Lock order: member and role changes all take the groups row lock. The first request pauses in a test hook (lock held, before the write), fires the second request,
+ * and `waitForBlockedOrSettled` (Lock waits in `pg_stat_activity`) proves the second really waits - no timing assumptions. The helper only counts Lock waits and
+ * can't tell which lock; the only row lock held at that point is the groups row.
  *
- * 末段「groups FOR KEY SHARE」一案釘的是跨功能前提：移動路徑讀成員資格前只對 groups 列取 `FOR KEY SHARE`，
- * 它的正確性靠「所有改 `group_members` 或角色旗標的寫入都先 `lockGroup`（groups FOR UPDATE，與 KEY SHARE 互斥）」。
+ * The last test ("groups FOR KEY SHARE") pins a cross-feature premise: the move path takes only `FOR KEY SHARE` on the groups row before reading membership, so its
+ * correctness relies on every write to `group_members` or role flags doing `lockGroup` first (groups FOR UPDATE, which conflicts with KEY SHARE).
  */
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -27,10 +27,6 @@ async function roleIdsOf(app: FastifyInstance, groupId: string, cookies: Record<
   return (res.json() as GroupRoleDto[]).map(r => r.id);
 }
 
-/**
- * 管理員 A、成員 B（內建一般成員）、非成員 D、自訂角色 X（可讀＋編輯，沒有人掛）。`at` 是先發請求停下來的點；
- * 到了那裡就呼叫 `race.fire()` 發第二個請求並等它卡住（或結束）。
- */
 async function raceScene(at: GroupRacePoint) {
   let groupId = "";
   const race: { fire?: () => Promise<LightMyRequestResponse> } = {};
@@ -50,8 +46,8 @@ async function raceScene(at: GroupRacePoint) {
   return { app: built.app, a, b, d, g, x, race, state, cookies: await cookieOf(a.id) };
 }
 
-describe("#175：刪自訂角色 vs 把人掛上該角色（同一把 groups 列鎖序列化）", () => {
-  it("R1（換角色先）：換 B 到 X 停在寫入前時發出 DELETE X → PATCH 200、DELETE 204；B 最後被改掛內建一般成員，X 不在了", async () => {
+describe("#175: deleting a custom role vs assigning someone to it (serialized by the same groups row lock)", () => {
+  it("changing B to X first: DELETE X fired while the change is paused before its write -> PATCH 200, DELETE 204; B ends up on the built-in plain member role and X is gone", async () => {
     const { app, b, g, x, race, state, cookies } = await raceScene("group-members-checked");
     race.fire = () => app.inject({ method: "DELETE", url: `/api/groups/${g.id}/roles/${x}`, cookies });
     const first = await app.inject({ method: "PATCH", url: `/api/groups/${g.id}/members/${b.id}`, cookies, payload: { roleId: x } });
@@ -64,7 +60,7 @@ describe("#175：刪自訂角色 vs 把人掛上該角色（同一把 groups 列
     expect(state.interleave).toBe("blocked");
   });
 
-  it("R2（刪角色先）：刪 X 停在寫入前時發出「換 B 到 X」→ DELETE 204、PATCH 404 role_not_found；B 仍掛內建一般成員", async () => {
+  it("deleting X first: \"change B to X\" fired while the delete is paused before its write -> DELETE 204, PATCH 404 role_not_found; B stays on the built-in plain member role", async () => {
     const { app, b, g, x, race, state, cookies } = await raceScene("group-roles-checked");
     race.fire = () => app.inject({ method: "PATCH", url: `/api/groups/${g.id}/members/${b.id}`, cookies, payload: { roleId: x } });
     const first = await app.inject({ method: "DELETE", url: `/api/groups/${g.id}/roles/${x}`, cookies });
@@ -77,7 +73,7 @@ describe("#175：刪自訂角色 vs 把人掛上該角色（同一把 groups 列
     expect(state.interleave).toBe("blocked");
   });
 
-  it("R3（刪角色先 vs 加人）：刪 X 停在寫入前時發出「加 D 並掛 X」→ DELETE 204、PUT 404 role_not_found；D 不是成員", async () => {
+  it("deleting X first vs add member: \"add D with X\" fired while the delete is paused before its write -> DELETE 204, PUT 404 role_not_found; D is not a member", async () => {
     const { app, d, g, x, race, state, cookies } = await raceScene("group-roles-checked");
     race.fire = () => app.inject({ method: "PUT", url: `/api/groups/${g.id}/members`, cookies, payload: { email: d.email, roleId: x } });
     const first = await app.inject({ method: "DELETE", url: `/api/groups/${g.id}/roles/${x}`, cookies });
@@ -90,8 +86,8 @@ describe("#175：刪自訂角色 vs 把人掛上該角色（同一把 groups 列
   });
 });
 
-describe("#175 跨 PR 前提：改角色／成員的寫入都先 lockGroup（groups FOR UPDATE）", () => {
-  it("另一條交易對 groups 列持 FOR KEY SHARE 時，PATCH／DELETE 角色與 PUT／PATCH／DELETE 成員都卡住，對方 commit 後才完成", async () => {
+describe("#175 cross-feature premise: role and member writes all take lockGroup first (groups FOR UPDATE)", () => {
+  it("while another transaction holds FOR KEY SHARE on the groups row, PATCH/DELETE role and PUT/PATCH/DELETE member all block and complete only after the other commits", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const pool = db.$client;
     const a = await seedUser(db);

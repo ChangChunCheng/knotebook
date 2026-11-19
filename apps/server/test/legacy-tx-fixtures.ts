@@ -1,10 +1,9 @@
 /**
- * 舊碼複本：回滾到 0034 之前的版本時，舊碼的
- * 移入群組、刪群組轉移與全刪、還原在新 schema 上必須照跑、不 500（trigger 只走自癒分支）。`folders-groups.test.ts` FG-OLD 用。
- * 出處：0034 之前的舊版（git 歷史）——
- *   `apps/server/src/notes/tx/move.ts` `moveNoteToGroupInTx`、`apps/server/src/groups/tx/delete-group.ts` `transferGroupInTx`／
- *   `deleteGroupWithNotesInTx`、`apps/server/src/notes/tx/trash.ts` `restoreNotesInTx`（與它用的 `lockNotes`／`classifyTrashed`）。
- * 函式本體逐句照抄，只改名（加 `legacy` 前綴）、import 指回 src、輸入型別就地宣告；註解從略。不得為了配合新 schema 改語句。
+ * Copies of the old code: after rolling back to a version before migration 0034, the old move-into-group, delete-group transfer / delete-all and restore code must still run
+ * on the new schema without a 500 (the trigger only takes its self-healing branch). Used by the old-version case in `folders-groups.test.ts`.
+ * Source: the pre-0034 versions (git history) of `moveNoteToGroupInTx` (`apps/server/src/notes/tx/move.ts`), `transferGroupInTx` / `deleteGroupWithNotesInTx`
+ * (`apps/server/src/groups/tx/delete-group.ts`) and `restoreNotesInTx` (`apps/server/src/notes/tx/trash.ts`, with the `lockNotes`/`classifyTrashed` it uses).
+ * The bodies are copied statement for statement; only renamed (`legacy` prefix), imports point back at src, input types are declared in place, comments are omitted. Don't change statements to fit the new schema.
  */
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { TrashSkipDto } from "@knotebook/shared";
@@ -21,8 +20,6 @@ import { resetNoteVersionsInTx } from "../src/notes/tx/versions.js";
 import { writeSlugInTx } from "../src/notes/tx/write-slug.js";
 import { sumUploadSizeSql } from "../src/storage/space.js";
 import { assertSpaceRoomInTx } from "../src/storage/tx/quota.js";
-
-// ---- notes/tx/move.ts（舊版）----
 
 export interface LegacyMoveNoteInput {
   noteId: string;
@@ -77,8 +74,6 @@ export async function legacyMoveNoteToGroupInTx(tx: Tx, input: LegacyMoveNoteInp
   await resetNoteVersionsInTx(tx, { noteId: input.noteId });
   return { removedShareUserIds: removed.map(r => r.userId) };
 }
-
-// ---- groups/tx/delete-group.ts（舊版）----
 
 export interface LegacyTransferGroupInput {
   groupId: string;
@@ -158,8 +153,6 @@ export async function legacyDeleteGroupWithNotesInTx(
   await tx.delete(groups).where(eq(groups.id, input.groupId));
   return { noteIds, memberIds: members.map(m => m.userId), uploadIds };
 }
-
-// ---- notes/tx/trash.ts（舊版）----
 
 export interface LegacyTrashIdsInput { ids: readonly string[]; by: string }
 export interface LegacyTrashBatchOutcome { done: string[]; skipped: TrashSkipDto[] }

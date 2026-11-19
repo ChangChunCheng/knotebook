@@ -1,19 +1,12 @@
 /**
- * #108：`tools/list` 的內容（案 8～10、案 2 的
- * `listChanged` 那半）與批次（案 33）。
+ * Two harnesses, each with its own subject, **not interchangeable** (division of labour of the deployment gate):
+ * - `buildCollabTestApp` = the production shape (collab + editing both present): which tools each credential sees is asserted by the tests below.
+ *   `move_note_to_group` registers only with `notes:move`; `delete_note`/`restore_note` and `delete_folder` only with `notes:delete` (and write); the folder write tools and `move_note_to_folder` with notes:write;
+ *   `list_folders` for any credential in any deployment shape.
+ * - `buildTestApp` = no collab -> only tools that query the DB (read-write credentials also get `create_note`, which is outside the deployment gate; the token path also has `create_transfer_token`).
  *
- * 兩種 harness 各有被測對象，**不可互換**（部署形態閘門的分工表）：
- * - `buildCollabTestApp` ＝生產形態（collab ＋ editing 都在）→ 讀寫搬移憑證上十一支工具全在（#180 起含 copy_note、move_note_to_group；#200 起含 read_note_image；
- *   #181 起含 list_trash）；#239 起讀寫（無 notes:move）憑證少一支——`move_note_to_group` 只在 `notes:move` 時註冊。
- *   #181：`delete_note`／`restore_note` 只在 `notes:delete`（且有 write）時註冊——讀寫搬移刪除憑證十三支、讀寫刪除與 session 十二支。
- *   資料夾（另有三支資料夾寫入工具，notes:write 時註冊）起每種憑證各多一支 `list_folders`（任何憑證、任何部署形態都註冊）：上面的支數各加一（讀寫搬移十二、讀寫搬移刪除十四、讀寫刪除與 session 十三）；再加三支資料夾寫入工具（讀寫搬移十五、讀寫搬移刪除十七、讀寫刪除與 session 十六）；再加 `move_note_to_folder`（讀寫搬移十六、讀寫搬移刪除十八、讀寫刪除與 session 十七）；再加 `delete_folder`（notes:delete 時註冊：讀寫搬移刪除十九、讀寫刪除與 session 十八，讀寫搬移不變）。
- * - `buildTestApp` ＝無 collab → 只有查得動 DB 的工具（讀寫憑證上多 `create_note`，它不進部署形態閘門；token 路徑上另有
- *   `create_transfer_token`，#200）。
- *
- * ⚠ **案 8 要有寫入工具才是守衛**：只有讀取工具時 `edit_note`／`create_note` 還不存在，那兩行
- * `not.toContain` 是同義反覆，不得宣稱它守住了 scope 過濾。
- * 案 9／9b／10（讀寫憑證的完整工具清單、寫死的有序名字清單、跳過清單直接呼叫 `edit_note`）與 P13 的
- * `runTool()` 涵蓋率也在這個檔。
+ * **The scope-filtering test needs write tools to be a guard**: with read tools only, the two `not.toContain` lines for `edit_note`/`create_note` are tautologies and can't claim to guard scope filtering.
+ * The read-write credential's full tool list, the hard-coded ordered name list, calling `edit_note` directly while skipping the list, and the `runTool()` coverage also live in this file.
  */
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -30,31 +23,31 @@ import type { Db } from "../src/db/index.js";
 import type { FastifyInstance } from "fastify";
 
 const PASSWORD = "correct-horse-battery";
-/** #239：讀寫搬移憑證——清單上才有 move_note_to_group。 */
+/** #239: read-write-move credentials: only their list has move_note_to_group. */
 const RWM = "notes:read notes:write notes:move" as const;
-/** #181：含 notes:delete 的兩形——清單上才有 delete_note／restore_note。 */
+/** #181: the two forms that include notes:delete: only their lists have delete_note/restore_note. */
 const RWD = "notes:read notes:write notes:delete" as const;
 const RWMD = "notes:read notes:write notes:move notes:delete" as const;
-/** #181：只在 notes:delete 時註冊的兩支；資料夾功能加 delete_folder。 */
+/** Tools registered only with notes:delete. */
 const DELETE_TOOLS = ["delete_note", "restore_note", "delete_folder"];
 const sessionCookie = async (userId: string) => (await cookieOf(userId))[SESSION_COOKIE]!;
 
-/** 只查 DB（read_note_image 另讀磁碟）的五支——任何部署形態、任何憑證都在（#200；#181 list_trash；資料夾 list_folders）。 */
+/** The five tools that only query the DB (read_note_image also reads disk): present in any deployment shape, for any credential. */
 const DB_ONLY_TOOLS = ["list_folders", "list_notes", "list_trash", "read_note_image", "search_notes"];
-/** 讀 live doc 的兩支——只在 `collab && editing` 都在時才宣告。 */
+/** The two tools that read the live doc: advertised only when `collab && editing` both exist. */
 const LIVE_DOC_TOOLS = ["read_note_outline", "read_note_section"];
-/** #200：只在 token 路徑註冊（session 沒有），在部署形態閘門外。 */
+/** #200: registered only on the token path (sessions don't have it), outside the deployment gate. */
 const TOKEN_ONLY_TOOLS = ["create_transfer_token"];
-/** bulk transfer：也只在 token 路徑，但在部署形態閘門**內**（簽的權杖拿去匯出要 mount；判準同 LIVE_DOC_TOOLS）。 */
+/** Bulk transfer: also token-only but **inside** the deployment gate (the signed token is used to export, which needs a mount; same criterion as LIVE_DOC_TOOLS). */
 const BULK_TOOLS = ["open_notes_as_files"];
-/** 資料夾：三支資料夾寫入工具與 move_note_to_folder——notes:write 時註冊，collab 閘門外。 */
+/** The three folder write tools and move_note_to_folder: registered with notes:write, outside the collab gate. */
 const FOLDER_WRITE_TOOLS = ["create_folder", "rename_folder", "move_folder", "move_note_to_folder"];
-/** `register.ts` 的**註冊順序**：list_notes → search_notes → 兩支讀取 → edit_note →
- *  （閘門外）create_note → move_note_to_group → copy_note（#180）→（閘門外、token 限定）create_transfer_token →（閘門內、token 限定）open_notes_as_files（bulk transfer）→（閘門外、全憑證）list_trash（#181）
- *  →（閘門外、notes:delete）delete_note → restore_note（#181）→（閘門外、全憑證）list_folders
- *  →（閘門外、notes:write）create_folder → rename_folder → move_folder → move_note_to_folder →（閘門外、notes:delete）delete_folder → read_note_image。案 9b 逐字釘住這個順序，不排序。
- *  #239：`move_note_to_group` 只在 `notes:move` 時註冊（讀寫搬移憑證與 session）；#181：兩支垃圾桶寫入工具只在 `notes:delete` 時；
- *  其餘的相對順序不變。 */
+/**
+ * The **registration order** in `register.ts`: list_notes, search_notes, the two read tools, edit_note, (outside the gate) create_note, move_note_to_group, copy_note, (outside the gate, token only) create_transfer_token,
+ * (inside the gate, token only) open_notes_as_files, (outside the gate, all credentials) list_trash, (outside the gate, notes:delete) delete_note, restore_note, (outside the gate, all credentials) list_folders,
+ * (outside the gate, notes:write) create_folder, rename_folder, move_folder, move_note_to_folder, (outside the gate, notes:delete) delete_folder, read_note_image. The hard-coded-order test pins this order verbatim, unsorted.
+ * `move_note_to_group` registers only with `notes:move` (read-write-move credentials and sessions); the two trash write tools only with `notes:delete`; the relative order of the rest is unchanged.
+ */
 const RWMD_TOOLS_IN_ORDER = [
   "list_notes",
   "search_notes",
@@ -79,8 +72,7 @@ const RWMD_TOOLS_IN_ORDER = [
 ];
 const RWM_TOOLS_IN_ORDER = RWMD_TOOLS_IN_ORDER.filter(n => !DELETE_TOOLS.includes(n));
 
-/** `{ sort: false }` 走一條不排序的取名路徑——**既有呼叫端全部不傳，行為不變**（default true）。
- *  ⚠ 走 `.sort()` 的版本永遠測不到順序：案 9b 必須用 `{ sort: false }`。 */
+/** `{ sort: false }` takes an unsorted name path - **existing callers all omit it, behaviour unchanged** (default true). A `.sort()` version can never observe order: the hard-coded-order test must use `{ sort: false }`. */
 async function toolNames(app: FastifyInstance, token: string, opts: { sort?: boolean } = {}): Promise<string[]> {
   const res = await mcpPost(app, rpc("tools/list"), { token });
   expect(res.statusCode).toBe(200);
@@ -90,7 +82,7 @@ async function toolNames(app: FastifyInstance, token: string, opts: { sort?: boo
   return opts.sort === false ? names : names.sort();
 }
 
-/** 無 collab 的 app 不需要密碼登入，直接塞一列 user（省掉 argon2；同 `mcp-endpoint.test.ts`）。 */
+/** An app without collab needs no password login: insert a user row directly (skips argon2; same as `mcp-endpoint.test.ts`). */
 async function seedUser(db: Db): Promise<string> {
   const [user] = await db
     .insert(users)
@@ -100,29 +92,14 @@ async function seedUser(db: Db): Promise<string> {
 }
 
 describe("#108 tools/list", () => {
-  // 案 8。⚠ **它要守的那件事在只有讀取工具時零鑑別力**：下面兩行 `not.toContain` 當時是**同義反覆**
-  // ——`edit_note`／`create_note` 還不存在，怎麼寫實作都綠。
-  // **兩支寫入工具都已註冊，這一案才是真正的守衛**：它擋得住「唯讀憑證上
-  // 漏了 scope 過濾就把寫入工具列出來」。
-  // 突變實測（把 `register.ts` 的 `const canWrite = canWriteNotes(ctx)` 換成
-  // `const canWrite = true`）：**本案與案 10 紅**（唯讀憑證此時也拿到 `edit_note`／
-  // `create_note`：`insufficient_scope` 那條死碼反而消失，本案 `toEqual` 少了兩支多兩支、
-  // 案 10 從「Tool edit_note not found」退化成 `insufficient_scope`）。
-  // ⚠ **推翻先前的預期**：原本預期「案 8 與案 9b 紅、案 9 紅」——實測**案 9／9b 兩案在這條
-  //   突變下維持全綠**。理由：案 9／9b 用的是**讀寫**憑證，這條突變只影響「唯讀憑證還看不看得
-  //   到過濾」，讀寫憑證原本就看得到全部工具，`canWrite` 對它而言本來就是 `true`——把判斷式换成
-  //   恆真對它的可見清單一個字都不改。**scope 過濾唯一的守衛是本案（唯讀憑證的四支集合）與
-  //   案 10（唯讀憑證跳過清單直接呼叫）**；案 9／9b 守的是完全不同的東西（讀寫憑證完整清單的集合／順序），
-  //   對「唯讀憑證是否被過濾」這件事**確定**零鑑別力。已依實測結果改掉本檔內每一處相關註解，
-  //   不回頭把測試遷就那個推翻掉的預期。
-  //   （上句「唯一的守衛」「四支集合」已過時：現在本案斷言六支（#181 起七支，多 list_trash）；
-  //   且 `create_transfer_token` 的描述與 purpose enum 也依 `canWrite` 二選一，`mcp-transfer.test.ts` M1 的唯讀憑證案
-  //   同樣守 scope 過濾——同一條突變實測見 #200 回報。）
-  // 今天有鑑別力的除了 scope 過濾本身，還有 `toEqual` 那一行（**生產形態上恰好這六個名字**，
-  // 一支不多一支不少、改名也會紅），那是形狀斷言。
-  // ⚠ **不要為了「看起來重複」把它與下面那條部署形態閘門案合併**：兩案的被測對象是**兩種部署形態**，
-  //   合併必然丟掉一邊——「拿掉閘門」的突變只讓閘門案紅、案 8 綠，就是它們互不涵蓋的證明。
-  it("唯讀憑證的 tools/list ＝恰好九支（七支讀取＋create_transfer_token＋open_notes_as_files），不含 edit_note／create_note（案 8）", async () => {
+  // The two `not.toContain` lines only mean something because the write tools exist: with read tools alone they would pass for any implementation.
+  // With both write tools registered, this test catches "a read-only credential lists the write tools because scope filtering is missing".
+  // Swapping `canWrite = canWriteNotes(ctx)` for `canWrite = true` in `register.ts` reddens this test (the read-only credential's set) and the direct-call test below (a read-only credential skipping the list):
+  // the read-only credential then gets `edit_note`/`create_note`, the `insufficient_scope` dead code disappears, and the direct-call test degrades from "Tool edit_note not found" to `insufficient_scope`.
+  // This test uses a read-only credential on purpose: a read-write credential already sees every tool, so it would not notice scope filtering being removed.
+  // What discriminates today besides scope filtering itself is the `toEqual` line (**exactly these names in the production shape**, none more, none less, a rename also goes red) - a shape assertion.
+  // **Don't merge this with the deployment-gate test below to look less repetitive**: they test **two deployment shapes** and merging loses one side - removing the gate reddens only the gate test and leaves this one green, which shows they don't cover each other.
+  it("read-only credential's tools/list = exactly nine (seven read tools + create_transfer_token + open_notes_as_files), without edit_note / create_note", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read");
@@ -133,23 +110,14 @@ describe("#108 tools/list", () => {
     expect(names).not.toContain("create_note");
   });
 
-  // 部署形態閘門的形狀斷言：**這是那道部署形態閘門唯一的守衛**。
-  //   1. 突變實測（讀寫憑證版）：`register.ts` 的 `if (ctx.collab &&
-  //      ctx.editing)` 換成 `if (true)` → **只有本案紅**（`expected ['create_note',
-  //      'edit_note', …(4)] to deeply equal ['create_note','list_notes','search_notes']`——
-  //      無 collab 的 app 上此時也冒出 `edit_note`／`read_note_outline`／`read_note_section`，
-  //      當時是六支對三支）；案 8／9／9b／10 全部走 `buildCollabTestApp`（本來就有 collab），這條突變
-  //      對它們零效果，維持全綠。
-  //   2. 反過來把 `list_notes`／`search_notes` 也移進閘門 → 本案紅（一支都沒註冊，
-  //      `tools/list` 退成 `-32601`），連帶 `mcp-notes.test.ts` 的 29d 紅——它也走無 collab 的 app
-  //      （唯讀憑證版下與讀寫憑證版下行為一致）。
-  // ⚠ **改用讀寫憑證**：既有唯讀憑證的版本碰不到
-  //   `edit_note`——那支工具在**註冊時**就先被 scope 過濾掉，唯讀憑證測不出「它有沒有被部署
-  //   形態閘門擋下」；只有讀寫憑證能區分「沒宣告是因為沒有 collab」與「沒宣告是因為沒有 scope」。
-  //   `create_note` 不進這道閘門，所以集合裡它（與 `copy_note`、`create_transfer_token`）必須在，`edit_note` 必須不在。
-  //   #239：讀寫（無 notes:move）憑證看不到 `move_note_to_group`（它只在 `notes:move` 時註冊），所以比讀寫搬移少一支；
-  //   憑證刻意維持讀寫——換成讀寫搬移會讓這案同時改測「搬移權」與「部署形態」兩件事。
-  it("無 collab 的 app ＋讀寫憑證：只宣告查得動 DB 的五支（含 read_note_image、list_trash、list_folders）、create_note、copy_note、四支資料夾寫入工具（含 move_note_to_folder）與 create_transfer_token（create_note 不進部署形態閘門）", async () => {
+  // Deployment-gate shape assertion: **this is the only guard for that gate**. Removing the gate (`if (ctx.collab && ctx.editing)` -> `if (true)` in `register.ts`) reddens only this test (the app without collab would also list
+  // `edit_note`/`read_note_outline`/`read_note_section`); every other tool-list test uses `buildCollabTestApp`, which has collab anyway, so that mutation leaves them green. Conversely, moving `list_notes`/`search_notes` behind the gate
+  // also reddens this test (no tool registered, `tools/list` degrades to `-32601`) and `mcp-notes.test.ts`'s sentinel test (also an app without collab).
+  // **Uses a read-write credential**: a read-only credential can't reach `edit_note` (filtered by scope at registration), so it can't tell "not advertised because there's no collab" from "not advertised because there's no scope"; only a read-write credential can.
+  // `create_note` is outside this gate, so it (with `copy_note` and `create_transfer_token`) must be in the set and `edit_note` must not.
+  // A read-write credential without notes:move doesn't see `move_note_to_group` (it registers only with `notes:move`), so it has one fewer than read-write-move; the credential deliberately stays read-write:
+  // switching to read-write-move would make this test change both "move permission" and "deployment shape".
+  it("app without collab + read-write credential: only the five DB-querying tools (including read_note_image, list_trash, list_folders), create_note, copy_note, the four folder write tools (including move_note_to_folder) and create_transfer_token are advertised (create_note is outside the deployment gate)", async () => {
     const { app, db } = await buildTestApp();
     const userId = await seedUser(db);
     const { token } = await seedTokenForUser(db, userId, "notes:read notes:write");
@@ -157,11 +125,9 @@ describe("#108 tools/list", () => {
     expect(await toolNames(app, token)).toEqual(["copy_note", "create_note", ...FOLDER_WRITE_TOOLS, ...DB_ONLY_TOOLS, ...TOKEN_ONLY_TOOLS].sort());
   });
 
-  // 案 9：讀寫憑證的 `tools/list` ＝十支（生產形態）。與案 9b 的差異：這裡走 `.sort()`，
-  // 守的是**集合**，不重疊案 9b 的順序斷言。#239 起被測改讀寫搬移憑證（十支的前提），期望值不動；讀寫九支見下方 #239 案。
-  // #181：多 list_trash（DB_ONLY_TOOLS），十一支；讀寫十支。被測改讀寫搬移刪除（十三支，最大集合）；讀寫搬移十一支照舊另案。
-  // 資料夾：再多 list_folders（DB_ONLY_TOOLS）——讀寫搬移刪除十四支、讀寫搬移十二支；再加三支資料夾寫入工具（FOLDER_WRITE_TOOLS）——十七支、十五支；再加 move_note_to_folder（同一常數）——十八支、十六支；再加 delete_folder（DELETE_TOOLS）——十九支、十六支。
-  it("讀寫搬移刪除憑證的 tools/list 含二十支工具；讀寫搬移十七支（案 9；bulk transfer 起各多 open_notes_as_files）", async () => {
+  // Read-write-move-delete credential's `tools/list` (production shape). Differs from the ordered-list test: this one uses `.sort()` and guards the **set**, not overlapping the order assertion.
+  // Read-write and read-write-delete are covered by separate tests below.
+  it("read-write-move-delete credential's tools/list has twenty tools; read-write-move seventeen (each has open_notes_as_files)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, RWMD);
@@ -172,16 +138,10 @@ describe("#108 tools/list", () => {
     expect(await toolNames(ctx.app, rwm)).toEqual(rwmSet.sort());
   });
 
-  // 案 9b：名字陣列**逐字**等於寫死的十元清單，**含順序**——`{ sort: false }` 的
-  // `toolNames()` 才測得到；走 `.sort()` 的版本（案 9 那條）對順序永遠零鑑別力。
-  // ⚠ **本案對「拿掉 scope 過濾」這條突變零鑑別力**（案 8 那條的註解已詳述、實測推翻了
-  //   原本的預期）：本案打的是讀寫憑證，讀寫憑證的完整清單在那條突變前後一個字都不變。
-  //   本案真正殺的是**順序**。突變實測（把 `register.ts` 的 `list_notes`／
-  //   `search_notes` 註冊順序對調）：**只有本案紅**（`expected ['search_notes','list_notes',
-  //   …(4)] to deeply equal ['list_notes','search_notes',…(4)]`），案 9（走 `.sort()`）
-  //   維持綠——這就是兩案不重疊的證明：一個守集合，一個守順序。
-  // #239 起被測改讀寫搬移憑證（十元清單的前提），期望值不動。#181 起被測改讀寫搬移刪除（最大集合）。
-  it("讀寫搬移刪除憑證的 tools/list 名字陣列逐字等於寫死的二十元清單，含順序（案 9b）", async () => {
+  // The name array is **verbatim** the hard-coded list, **including order** - only `toolNames()` with `{ sort: false }` can see it; the `.sort()` version (the previous test) has zero discrimination on order.
+  // **This test has zero discrimination on "scope filtering removed"** (it uses the read-write credential, whose full list is unchanged by that mutation); what it kills is **order**: swapping the registration order of
+  // `list_notes`/`search_notes` in `register.ts` reddens only this test, while the previous (sorted) test stays green - one guards the set, the other the order.
+  it("read-write-move-delete credential's tools/list name array is verbatim the hard-coded twenty-name list, including order", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, RWMD);
@@ -190,12 +150,10 @@ describe("#108 tools/list", () => {
     expect(names).toEqual(RWMD_TOOLS_IN_ORDER);
   });
 
-  // #175：create_note 的模型面字串逐字在 wire 上，被撤掉的舊說法一句都不在
-  // （改寫一句，兩個方向各查一次——該在的在、該撤的撤）。
-  // 字面值寫死在這裡，與 `docs/mcp.md` 的定稿句對照（docs 在此檔外，本檔不比對 docs）。
-  // 比的是 JSON.parse 之後的字串（模型看到的），並另外以 `JSON.stringify(s).slice(1, -1)` 比原始 body，
-  // 確認 wire 上的逃脫形與預期一致（`—`、反引號、`'` 在 JSON 裡是否被逃脫）。
-  it("#175：create_note 的 description／group_id／title 字串逐字在 wire 上，舊說法不在", async () => {
+  // #175: `create_note`'s model-facing strings are verbatim on the wire and the withdrawn old claims are absent (each rewritten sentence is checked both ways: the right one present, the withdrawn one gone).
+  // The literals are hard-coded here, for comparison with the final sentences in `docs/mcp.md` (the docs are outside this file; this file doesn't compare against docs).
+  // Compares the JSON.parse'd strings (what the model sees) and also checks the raw body against `JSON.stringify(s).slice(1, -1)` to confirm the escaped form on the wire matches (whether the em dash, backtick and `'` are escaped in JSON).
+  it("#175: create_note's description / group_id / title strings are verbatim on the wire, the old claims are absent", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -222,7 +180,7 @@ describe("#108 tools/list", () => {
     expect(entry.inputSchema.properties.title!.description).toContain(T1);
     expect(Object.keys(entry.inputSchema.properties)).not.toContain("groupId");
 
-    // 撤掉的舊說法：一句都不能留在任何一處（description、兩個欄位的 describe）。
+    // Withdrawn old claims: none may remain anywhere (description, the describe of the two fields).
     const everywhere = [entry.description, ...Object.values(entry.inputSchema.properties).map(p => p.description ?? "")].join("\n");
     for (const gone of [
       "Create a new note owned by you.",
@@ -234,13 +192,12 @@ describe("#108 tools/list", () => {
       expect(everywhere, gone).not.toContain(gone);
     }
 
-    // wire 形：原始 body 含 `JSON.stringify(s).slice(1, -1)`。JSON.stringify 不逃脫非 ASCII，所以本條通過＝
-    // wire 上的 `—`（U+2014）、反引號、`'` 都是未逃脫的原字元（實跑通過，不需要改比跳脫形）。
+    // Wire form: the raw body contains `JSON.stringify(s).slice(1, -1)`. JSON.stringify doesn't escape non-ASCII, so passing means the em dash (U+2014), backticks and `'` on the wire are unescaped original characters (no need to compare the escaped form).
     for (const s of [G1, D2, D3, G2, T1]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
   });
 
-  // #180 R13：edit_note／create_note／instructions 的新字串逐字在 wire 上；舊句一句都不在。
-  it("#180 R13：rename 相關字串逐字在 wire 上，舊句不在", async () => {
+  // #180: the new strings of edit_note / create_note / instructions are verbatim on the wire; none of the old sentences remain.
+  it("#180: rename-related strings are verbatim on the wire, the old sentences are absent", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -268,7 +225,7 @@ describe("#108 tools/list", () => {
     const TITLE_FP_OUT = "After a rename, the fingerprint of the new title. Pass it as `if_match` to a following rename.";
     const URL_OUT = "After a rename, the note's page as a site-relative path, as in list_notes.";
     const CREATE_TITLE_TAIL = "Pass a title if you know it; edit_note's `rename` can change it later when the reply's `role` is `owner` or `editor`.";
-    // #381：read_note_outline 的標題指紋（不點名 edit_note——唯讀憑證也看得到這支）。
+    // #381: read_note_outline's title fingerprint (doesn't name edit_note - a read-only credential sees this tool too).
     const OUTLINE_TITLE_FP = "The fingerprint of the note's whole title, even when `note.title` is cut. Renaming the note needs it as `if_match`.";
     const outline = tools.find(t => t.name === "read_note_outline")!;
 
@@ -289,24 +246,23 @@ describe("#108 tools/list", () => {
       "Five operations",
       "only `append` may omit `if_match`",
       "Required for every operation except delete_section.",
-      // #381：原本釘的是前綴「Required for every operation except append;」——#381 之後新句又以它開頭（rename 不再豁免），
-      //   所以改釘 #180 之前那整句的後半（下面「the write fails if the note changed since you read it」），不是刪案。
+      // Pins the second half of the old sentence ("the write fails if the note changed since you read it"), because the new sentence starts with the same prefix as the old one (rename is no longer exempt).
       "No tool here renames a note afterwards",
-      // #381：rename 不再豁免 if_match、也不再「last title written wins」。
+      // rename no longer exempts if_match and no longer says "last title written wins".
       "except `append` and `rename` needs `if_match`",
       "Required for every operation except append and rename",
       "`rename` takes `title` and nothing else",
       "the last title written wins",
       "the write fails if the note changed since you read it",
-      // #381：回應欄位是 camelCase 的 titleFingerprint，snake_case 形一處都不得出現。
+      // The response field is camelCase `titleFingerprint`; the snake_case form must not appear anywhere.
       "title_fingerprint",
     ]) {
       expect(res.body, gone).not.toContain(JSON.stringify(gone).slice(1, -1));
     }
   });
 
-  // #269：站內連結的模型面字串逐字在 wire 上（逐字 toBe，不是前綴比對），並各多釘一句。
-  it("#269：sectionId／read_note_section markdown／edit_note markdown／create_note content 逐字在 wire 上", async () => {
+  // #269: the model-facing strings for internal links are verbatim on the wire (verbatim `toBe`, not a prefix match), each with one extra sentence pinned.
+  it("#269: sectionId / read_note_section markdown / edit_note markdown / create_note content strings are verbatim on the wire", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -327,15 +283,14 @@ describe("#108 tools/list", () => {
     expect(byName("edit_note").inputSchema.properties.markdown!.description!.endsWith(` ${WRITE_LINK}`)).toBe(true);
     expect(byName("create_note").inputSchema.properties.content!.description!.endsWith(` ${WRITE_LINK}`)).toBe(true);
     for (const s of [SECTION_ID, READ_LINK, WRITE_LINK]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
-    // 多釘的兩句：錨點形與「保留為一般連結」——有人把句子改短或改回草稿形會紅。
+    // Two extra sentences pinned: the anchor form and "kept as an ordinary link": goes red if someone shortens a sentence or reverts it to the draft form.
     expect(res.body).toContain("#b-<block id>");
     expect(res.body).toContain("kept as an ordinary link");
     expect(res.body).not.toContain("A link to another note comes back as");
   });
 
-  // 並排：並排與尺寸的模型面字串逐字（整句 toBe）在 wire 上；舊句不在。
-  // 尺寸句不提表格格子裡的圖片（尚未收）。
-  it("並排：edit_note markdown／create_note content／read_note_section 的並排與尺寸句逐字在 wire 上，舊句不在", async () => {
+  // Columns: the model-facing strings for columns and sizes are verbatim (whole-sentence `toBe`) on the wire; the old sentences are absent. The size sentence doesn't mention images inside table cells (not accepted yet).
+  it("columns: the columns and size sentences of edit_note markdown / create_note content / read_note_section are verbatim on the wire, the old sentences are absent", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -390,9 +345,9 @@ describe("#108 tools/list", () => {
     }
   });
 
-  // #177：截斷改按 JSON 逃脫後的長度計。outputSchema 上模型讀得到的兩件事要跟著改：heading 的說明（兩個方向——
-  // 新句在、舊句不在），以及群組 `owner` 的 `name` 有上限、有 `nameTruncated`（凡是回 `owner` 的工具都要有）。
-  it("#177：heading 說明是逃脫後的 200；群組 owner 帶 name 上限與 nameTruncated", async () => {
+  // #177: truncation counts the JSON-escaped length. Two things the model reads on the outputSchema change with it: the heading description (both directions: the new sentence present, the old one absent)
+  // and the group `owner`'s `name` having a limit and `nameTruncated` (every tool that returns `owner` must have it).
+  it("#177: the heading description says 200 after escaping; the group owner carries the name limit and nameTruncated", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -406,27 +361,24 @@ describe("#108 tools/list", () => {
     expect(res.body).not.toContain("cut at 200 characters.");
 
     const groupOwner = '"name":{"type":"string","maxLength":200},"nameTruncated":{"type":"boolean","const":true}';
-    // 資料夾：只認 owner 聯合——同時含群組判別與 `handle`；list_folders 的 `space` 也有 `"const":"group"`，但沒有 handle。
+    // Folders: only match the owner union - it has both the group discriminator and `handle`; list_folders' `space` also has `"const":"group"` but no handle.
     const withOwner = [...outputs]
       .filter(([, schema]) => schema.includes('"const":"group"') && schema.includes('"handle"'))
       .map(([name]) => name)
       .sort();
-    // #239：讀寫憑證的清單上沒有 move_note_to_group，本案因此不再檢查它的 owner 形——它與 copy_note 共用
-    // `noteSummarySchema`（`mcp/dto.ts`），接受這個取捨。
-    // move_note_to_folder 回 noteSummarySchema（notes:write 即註冊），也帶群組 owner 形。
+    // #239: a read-write credential's list has no move_note_to_group, so this test no longer checks its owner shape: it shares `noteSummarySchema` (`mcp/dto.ts`) with copy_note, an accepted trade-off.
+    // move_note_to_folder returns noteSummarySchema (registered with notes:write), so it also carries the group owner shape.
     expect(withOwner).toEqual(["copy_note", "create_note", "list_notes", "move_note_to_folder", "read_note_outline", "search_notes"]);
     for (const name of withOwner) expect(outputs.get(name), name).toContain(groupOwner);
-    // 資料夾工具的 `space` 群組形：群組名同樣有上限與 `groupNameTruncated`。
+    // The group shape of the folder tools' `space`: the group name likewise has a limit and `groupNameTruncated`.
     const groupSpace = '"groupName":{"type":"string","maxLength":200},"groupNameTruncated":{"type":"boolean","const":true}';
     for (const name of ["list_folders", "create_folder", "rename_folder", "move_folder"]) expect(outputs.get(name), name).toContain(groupSpace);
   });
 
-  // 案 10：唯讀憑證**跳過** `tools/list`，直接 `tools/call` `edit_note`——scope 過濾只在
-  // 註冊時擋，沒有第二道守衛防「client 記得舊清單／瞎猜工具名」。⚠ **不是 `insufficient_scope`**
-  // `register.ts` 沒註冊這個名字，SDK 直接判「未知工具名」，(4a) 形——`isError`、
-  // `content[0].text` 含 "Tool edit_note not found"、**沒有** `structuredContent`。本案剩下的
-  // 鑑別力是零副作用那半：那個呼叫從沒進到我們的 handler，`note_ai_edits` 必然零新增列。
-  it("唯讀憑證跳過 tools/list 直接呼叫 edit_note → SDK 的 (4a) 形，且無新 note_ai_edits 列（案 10）", async () => {
+  // A read-only credential **skips** `tools/list` and calls `edit_note` directly: scope filtering only happens at registration, with no second guard against "a client remembering an old list / guessing tool names".
+  // **Not `insufficient_scope`**: `register.ts` didn't register this name, so the SDK judges "unknown tool" - `isError`, `content[0].text` containing "Tool edit_note not found", **no** `structuredContent`.
+  // What this test still discriminates is the zero-side-effect half: that call never reached our handler, so `note_ai_edits` necessarily gets no new row.
+  it("read-only credential skipping tools/list and calling edit_note directly -> the SDK's not-found form, and no new note_ai_edits row", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -450,12 +402,10 @@ describe("#108 tools/list", () => {
     expect(after).toHaveLength(0);
   });
 
-  // P13：`runTool()` 涵蓋率守衛現在分散在三個檔（`register.ts` 檔頭已具名）——這裡守
-  // `edit_note`／`create_note`／`create_transfer_token`／`read_note_image`（#200）／`copy_note`、`move_note_to_group`（#180）那一半。`mcp-notes.test.ts` 只打 `list_notes`／`search_notes`、
-  // `mcp-content.test.ts` 只打兩支讀取工具，兩者對這幾支寫入／傳輸／讀圖工具都**恆綠**（不在它們的名字
-  // 集合裡）；沒有這一案，這些後加的工具就沒有 try/catch 守衛。
-  // #239：讀寫搬移憑證（move_note_to_group 只在 notes:move 時註冊），期望值不動。#181：改讀寫搬移刪除（delete_note／restore_note 才在清單上）。
-  it("P13：runTool() 涵蓋率——beforeTool 看到的名字集合逐字等於 {copy_note, create_folder, create_note, create_transfer_token, delete_folder, delete_note, edit_note, list_folders, list_trash, move_folder, move_note_to_folder, move_note_to_group, open_notes_as_files, read_note_image, rename_folder, restore_note}", async () => {
+  // The `runTool()` coverage guard is spread over three files (named in the header of `register.ts`): this one guards `edit_note`/`create_note`/`create_transfer_token`/`read_note_image`/`copy_note`/`move_note_to_group`
+  // and the rest of that half. `mcp-notes.test.ts` only hits `list_notes`/`search_notes` and `mcp-content.test.ts` only the two read tools, so both are **always green** for these write/transfer/image tools (not in their name sets);
+  // without this test, the later-added tools would have no try/catch guard. Uses a read-write-move-delete credential (`delete_note`/`restore_note` are on the list only then).
+  it("runTool() coverage: the names beforeTool sees are exactly {copy_note, create_folder, create_note, create_transfer_token, delete_folder, delete_note, edit_note, list_folders, list_trash, move_folder, move_note_to_folder, move_note_to_group, open_notes_as_files, read_note_image, rename_folder, restore_note}", async () => {
     const seen: string[] = [];
     const ctx = await buildCollabTestApp({ mcpTestHooks: { beforeTool: name => void seen.push(name) } });
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
@@ -503,44 +453,43 @@ describe("#108 tools/list", () => {
     ]);
   });
 
-  // #180 V11：annotations 只出現在 move_note_to_group（destructiveHint true、idempotentHint false）與 copy_note（destructiveHint false），其餘工具（含 read_note_image）一律沒有這把鍵。
-  // #181：delete_note 逐字 {destructiveHint:true}、restore_note 逐字 {destructiveHint:false}——兩支都不寫 idempotentHint（第二次呼叫回 not_found）。
-  it("#180 V11：move_note_to_group.annotations 逐字 {destructiveHint:true, idempotentHint:false}；copy_note.annotations 逐字 {destructiveHint:false}；delete_note {destructiveHint:true}、restore_note {destructiveHint:false}；list_folders {readOnlyHint:true}；create_folder {destructiveHint:false}、rename／move_folder／move_note_to_folder {destructiveHint:false, idempotentHint:true}；delete_folder {destructiveHint:true}；其餘工具無 annotations 鍵", async () => {
+  // delete_note, restore_note and delete_folder don't declare idempotentHint (a second call returns not_found).
+  it("annotations: move_note_to_group is verbatim {destructiveHint:true, idempotentHint:false}; copy_note {destructiveHint:false}; delete_note {destructiveHint:true}, restore_note {destructiveHint:false}; list_folders {readOnlyHint:true}; create_folder {destructiveHint:false}, rename_folder / move_folder / move_note_to_folder {destructiveHint:false, idempotentHint:true}; delete_folder {destructiveHint:true}; no other tool has an annotations key", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
-    const { token } = await seedTokenForUser(ctx.db, owner.id, RWMD); // #239／#181：清單上才有 move_note_to_group 與兩支垃圾桶寫入工具
+    const { token } = await seedTokenForUser(ctx.db, owner.id, RWMD); // only this credential's list has move_note_to_group and the two trash write tools
     const tools = (await mcpPost(ctx.app, rpc("tools/list"), { token })).json().result.tools as { name: string; annotations?: unknown }[];
     expect(tools.find(t => t.name === "move_note_to_group")!.annotations).toEqual({ destructiveHint: true, idempotentHint: false });
     expect(tools.find(t => t.name === "copy_note")!.annotations).toEqual({ destructiveHint: false });
     expect(tools.find(t => t.name === "delete_note")!.annotations).toEqual({ destructiveHint: true });
     expect(tools.find(t => t.name === "restore_note")!.annotations).toEqual({ destructiveHint: false });
-    expect(tools.find(t => t.name === "list_folders")!.annotations).toEqual({ readOnlyHint: true }); // 資料夾：指定的例外
+    expect(tools.find(t => t.name === "list_folders")!.annotations).toEqual({ readOnlyHint: true }); // folders: the designated exception
     expect(tools.find(t => t.name === "create_folder")!.annotations).toEqual({ destructiveHint: false });
     expect(tools.find(t => t.name === "rename_folder")!.annotations).toEqual({ destructiveHint: false, idempotentHint: true });
     expect(tools.find(t => t.name === "move_folder")!.annotations).toEqual({ destructiveHint: false, idempotentHint: true });
     expect(tools.find(t => t.name === "move_note_to_folder")!.annotations).toEqual({ destructiveHint: false, idempotentHint: true });
-    expect(tools.find(t => t.name === "delete_folder")!.annotations).toEqual({ destructiveHint: true }); // 不寫 idempotentHint（第二次呼叫回 not_found）
+    expect(tools.find(t => t.name === "delete_folder")!.annotations).toEqual({ destructiveHint: true }); // no idempotentHint written (the second call returns not_found)
     const annotated = ["copy_note", "move_note_to_group", ...DELETE_TOOLS, "list_folders", ...FOLDER_WRITE_TOOLS];
     expect(tools.filter(t => !annotated.includes(t.name) && "annotations" in t).map(t => t.name)).toEqual([]);
   });
 
-  // #239：`move_note_to_group` 依 `canMove` 註冊。突變「`register.ts` 的 `if (canMove)` 改回 `if (canWrite)`」→ 本案紅。
-  it("#239：讀寫無搬移憑證 → 十六支，不含 move_note_to_group（註冊順序不變；bulk transfer 起含 open_notes_as_files）", async () => {
+  // `move_note_to_group` registers by `canMove`: changing `if (canMove)` back to `if (canWrite)` in `register.ts` reddens this test.
+  it("#239: a read-write credential without move -> sixteen tools, no move_note_to_group (registration order unchanged; open_notes_as_files included)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
     expect(await toolNames(ctx.app, token, { sort: false })).toEqual(RWM_TOOLS_IN_ORDER.filter(n => n !== "move_note_to_group"));
   });
 
-  // #181：與 move 互相獨立——讀寫刪除有兩支垃圾桶寫入工具、沒有 move_note_to_group。
-  it("#181：讀寫刪除憑證 → 十九支，不含 move_note_to_group、含 delete_note／restore_note（資料夾功能加入後含 delete_folder；註冊順序不變）", async () => {
+  // Independent of move: read-write-delete has the two trash write tools and no move_note_to_group.
+  it("#181: read-write-delete credential -> nineteen tools, no move_note_to_group, with delete_note / restore_note (delete_folder included; registration order unchanged)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, RWD);
     expect(await toolNames(ctx.app, token, { sort: false })).toEqual(RWMD_TOOLS_IN_ORDER.filter(n => n !== "move_note_to_group"));
   });
 
-  it("#239：session → 十八支（無 create_transfer_token／open_notes_as_files，有 move_note_to_group；#181 起有 delete_note／restore_note；資料夾功能加入後有 list_folders、四支資料夾寫入工具與 delete_folder）", async () => {
+  it("#239: session -> eighteen tools (no create_transfer_token / open_notes_as_files; has move_note_to_group, delete_note / restore_note, list_folders, the four folder write tools and delete_folder)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const res = await mcpPost(ctx.app, rpc("tools/list"), { cookie: await sessionCookie(owner.id) });
@@ -548,11 +497,10 @@ describe("#108 tools/list", () => {
     expect(names).toEqual(RWMD_TOOLS_IN_ORDER.filter(n => n !== "create_transfer_token" && n !== "open_notes_as_files"));
   });
 
-  // 突變「`register.ts` 把 copy 的兩版對調」→ 本案紅。
-  it("#239 M1b：copy_note 的 description 與 group_id 說明依 canMove 二選一", async () => {
+  it("#239: copy_note's description and group_id description are either-or by canMove", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
-    // 憑證是 scope 字串＝token；`"session"`＝cookie（M1b：讀寫搬移與 session 都拿 (a)）。
+    // The credential is a scope string (token) or "session" (cookie); read-write-move and session both get the canMove version.
     const copyOf = async (cred: TokenScope | "session") => {
       const auth = cred === "session" ? { cookie: await sessionCookie(owner.id) } : { token: (await seedTokenForUser(ctx.db, owner.id, cred)).token };
       const res = await mcpPost(ctx.app, rpc("tools/list"), auth);
@@ -565,15 +513,10 @@ describe("#108 tools/list", () => {
     expect(await copyOf("session")).toEqual({ description: COPY_NOTE_DESCRIPTION, groupId: COPY_GROUP_ID_DESCRIBE });
   });
 
-  // 案 2 的 `listChanged` 那半（從傳輸層那一族移過來的）。
-  // ⚠ **順序是契約**：`registerTool` 內部會無條件把 `listChanged` 設回 `true`，
-  // 所以 `registerCapabilities({tools:{listChanged:false}})` 必須排在**註冊完工具之後**。
-  // 這一案在註冊工具之前零鑑別力（沒有 `registerTool` 就沒有東西會把旗標翻回去）——
-  // 實測「把 `registerCapabilities` 挪到註冊工具之前，三個測試檔全綠」。
-  // 突變實測（同一條突變、67 案）：**只有本案紅**（`expected true to be false`），
-  // `mcp-endpoint`／`mcp-notes`／`mcp-content`／`mcp-size` 全綠。
-  // **它是那條順序契約今天唯一的守衛。**
-  it("initialize 宣告 capabilities.tools.listChanged === false（案 2 的順序契約）", async () => {
+  // The `listChanged` half of the initialize test (moved here from the transport-layer family). **Order is the contract**: `registerTool` unconditionally sets `listChanged` back to `true`, so
+  // `registerCapabilities({tools:{listChanged:false}})` must come **after** all tools are registered. Before any tool is registered this test has zero discrimination (nothing flips the flag back).
+  // **It is today's only guard for that ordering contract.**
+  it("initialize declares capabilities.tools.listChanged === false (the ordering contract)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read");
@@ -581,23 +524,17 @@ describe("#108 tools/list", () => {
     const res = await mcpPost(ctx.app, INITIALIZE, { token });
     expect(res.statusCode).toBe(200);
     const caps = res.json().result.capabilities;
-    // 我們是 stateless ＋ GET 回 405，沒有 server→client 的推送通道，所以誠實宣告 false。
+    // We are stateless and GET returns 405, so there is no server-to-client push channel; declaring false is honest.
     expect(caps.tools.listChanged).toBe(false);
   });
 });
 
-describe("#108 JSON-RPC 批次", () => {
-  // 案 33。一發 POST 帶兩個 `tools/call`：一個看得見的筆記、一個只是「存在但你沒權限」的
-  // 筆記（**不是**隨機 UUID——要驗的是授權而不只是存在性）。
-  // 兩件事要同時成立：(1) 各自獨立授權（一成功一 `not_found`）；
-  // (2) 各自獨立扣桶，而 `role === "none"` 那發**不啃桶**（案 31 的同一條紀律）。
-  // 桶只有 2 格：批次扣掉 1 格 → 之後還能成功 1 發 → 第 3 發才 429。
-  // 突變實測：把 `note-read.ts` 的 `consume` 移到 `resolveRole` **之前**
-  // （＝失敗那發也啃桶）→ 本案紅（`expected true to be undefined`：批次啃掉兩格，
-  // 下一發就 429）。⚠ **同一條突變也讓 `mcp-content.test.ts` 的案 31 紅**——「失敗不啃桶」
-  // 那一半本案**不是**唯一的守衛。本案唯一守得住的是**批次那個形**：一發 POST 裡的兩個
-  // `tools/call` 各自跑一次授權、各自結一次帳（全樹沒有第二條測試打過批次）。
-  it("一發 POST 兩個 tools/call：各自授權、各自扣桶，失敗那發不啃桶（案 33）", async () => {
+describe("#108 JSON-RPC batch", () => {
+  // One POST with two `tools/call`: one a visible note, one a note that merely "exists but you have no permission" (**not** a random UUID: authorization is under test, not just existence).
+  // Two things must hold at once: (1) authorization is independent per call (one succeeds, one `not_found`); (2) the limiter is charged independently per call, and the `role === "none"` call **doesn't eat the limiter**
+  // (the same discipline as the content-tool limiter test). The limiter has 2 slots: the batch uses 1, then one more call can succeed, and the third gets 429.
+  // This test is **the only one that posts a batch**: each of the two calls in one POST runs its own authorization and its own accounting. The "failures don't eat the limiter" half is also guarded by `mcp-content.test.ts`.
+  it("one POST with two tools/call: each authorized and charged independently, the failing one doesn't eat the limiter", async () => {
     const ctx = await buildCollabTestApp({
       limiters: { contentRead: new FixedWindowLimiter({ limit: 2, windowMs: 600_000 }) },
     });
@@ -616,26 +553,25 @@ describe("#108 JSON-RPC 批次", () => {
     expect(Array.isArray(bodies)).toBe(true);
     expect(bodies).toHaveLength(2);
     const byId = new Map(bodies.map(b => [b.id, b.result]));
-    // (1) 各自獨立授權：owner 那發拿到 outline，陌生人那發是 `not_found`
-    //     （**不得**洩漏「存在但你沒權限」）。
+    // Each authorized independently: the owner's call gets the outline, the stranger's is `not_found` (**must not** reveal "exists but you have no permission").
     expect(byId.get(1)!.isError).toBeUndefined();
     expect(byId.get(2)!.isError).toBe(true);
     expect(byId.get(2)!.structuredContent!.code).toBe("not_found");
 
-    // (2) 批次只啃掉 1 格：還剩 1 格。
+    // The batch used only 1 slot: 1 remains.
     const second = await mcpPost(ctx.app, rpc("tools/call", { name: "read_note_outline", arguments: { note_id: mine.id } }), { token });
     expect(second.json().result.isError).toBeUndefined();
-    // 第 3 發（桶內第 3 次成功授權的呼叫）才被擋。
+    // The third call (the third successfully authorized one in the limiter) is the one blocked.
     const third = await mcpPost(ctx.app, rpc("tools/call", { name: "read_note_outline", arguments: { note_id: mine.id } }), { token });
     expect(third.json().result.structuredContent.code).toBe("too_many_requests");
   });
 });
 
-describe("#241 X-241：每支工具都拒未知鍵（wire 層；結構面由 unit/mcp-register.test.ts 守）", () => {
-  // #239：讀寫憑證不再列 move_note_to_group、copy_note 是無 group_id 版——加讀寫搬移憑證讓兩者的另一版也過 wire 層。
-  // #181：加兩個含 notes:delete 的形（delete_note／restore_note 只在它們的清單上）。
+describe("#241: every tool rejects unknown keys (wire level; the structure side is guarded by unit/mcp-register.test.ts)", () => {
+  // #239: a read-write credential no longer lists move_note_to_group and its copy_note has no group_id: adding a read-write-move credential lets the other version go through the wire level too.
+  // #181: adds the two forms containing notes:delete (delete_note/restore_note are only on their lists).
   for (const scope of [RWMD, RWD, RWM, "notes:read notes:write", "notes:read"] as const) {
-    it(`${scope}：tools/list 的每個名字收 { zz_unknown: 1 } → isError、無 structuredContent、訊息含 zz_unknown`, async () => {
+    it(`${scope}: every name in tools/list given { zz_unknown: 1 } -> isError, no structuredContent, message contains zz_unknown`, async () => {
       const ctx = await buildCollabTestApp();
       const owner = await ctx.createUser({ email: `x241-${randomUUID()}@example.com`, password: PASSWORD });
       const { token } = await seedTokenForUser(ctx.db, owner.id, scope);
@@ -651,7 +587,7 @@ describe("#241 X-241：每支工具都拒未知鍵（wire 層；結構面由 uni
     });
   }
 
-  it("X-241b：strict 不誤傷——list_notes 的 {} 成功；不帶 arguments 仍是 SDK 的 Required（與 raw shape 時相同）", async () => {
+  it("strict doesn't hurt: list_notes with {} succeeds; no arguments is still the SDK's Required (same as with the raw shape)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `x241b-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read");

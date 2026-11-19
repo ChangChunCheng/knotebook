@@ -1,6 +1,3 @@
-/**
- * bulk transfer：`open_notes_as_files`（B7、B10、B13）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -55,8 +52,8 @@ async function toolList(app: Parameters<typeof mcpPost>[0], opts: { token?: stri
   }>;
 }
 
-describe("B1：五種範圍與 access 落庫", () => {
-  it("{}→all、space personal／shared、group_id（大寫輸入落小寫）、folder_id；note_id NULL、purpose bulk", async () => {
+describe("five scopes and access stored in the DB", () => {
+  it("{} -> all, space personal/shared, group_id (uppercase input stored lowercase), folder_id; note_id NULL, purpose bulk", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const { token } = await seedTokenForUser(ctx.db, u.id, RO);
@@ -71,7 +68,7 @@ describe("B1：五種範圍與 access 落庫", () => {
     ];
     const extra = await seedTokenForUser(ctx.db, u.id, RO);
     for (const [k, [args, range]] of cases.entries()) {
-      const tok = k < 3 ? token : extra.token; // 每支母憑證至多 3 支
+      const tok = k < 3 ? token : extra.token; // each parent credential allows at most 3
       const r = await callTool(ctx.app, tok, TOOL, args);
       expect(r.isError, JSON.stringify(args)).toBeUndefined();
       const row = await rowOf(ctx.db, r.structuredContent.token as string);
@@ -79,7 +76,7 @@ describe("B1：五種範圍與 access 落庫", () => {
     }
   });
 
-  it("access：唯讀母憑證 read、讀寫 write、讀寫搬移刪除 write", async () => {
+  it("access: a read-only parent credential -> read, read-write -> write, read-write-move-delete -> write", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     for (const [scope, want] of [[RO, "read"], [RW, "write"], [RWMD, "write"]] as const) {
@@ -91,8 +88,8 @@ describe("B1：五種範圍與 access 落庫", () => {
   });
 });
 
-describe("B2：範圍至多給一個", () => {
-  it("兩兩組合與三個都給 → invalid_body＋BULK_RANGE_AMBIGUOUS_MESSAGE、零列", async () => {
+describe("at most one range", () => {
+  it("every pair and all three given -> invalid_body + BULK_RANGE_AMBIGUOUS_MESSAGE, zero rows", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const { token, tokenId } = await seedTokenForUser(ctx.db, u.id, RO);
@@ -111,8 +108,8 @@ describe("B2：範圍至多給一個", () => {
   });
 });
 
-describe("B3：group_id 要 can_read", () => {
-  it("非成員、canRead:false 角色、隨機 uuid → group_not_found 逐位元組相同；create-only 角色 → 成功", async () => {
+describe("group_id needs can_read", () => {
+  it("non-member, a canRead:false role, random uuid -> group_not_found byte-identical; a create-only role -> success", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -131,8 +128,8 @@ describe("B3：group_id 要 can_read", () => {
   });
 });
 
-describe("B4：folder_id 看不到 → not_found", () => {
-  it("別人的個人資料夾、隨機 uuid → not_found＋FOLDER_NOT_FOUND_MESSAGE，與 rename_folder 同一個 uuid 的錯誤逐位元組相同；自己的 shared 資料夾、可讀群組的資料夾 → 成功", async () => {
+describe("an invisible folder_id -> not_found", () => {
+  it("another person's personal folder and a random uuid -> not_found + FOLDER_NOT_FOUND_MESSAGE, byte-identical to rename_folder's error for the same uuid; one's own shared folder and a readable group's folder -> success", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -151,8 +148,8 @@ describe("B4：folder_id 看不到 → not_found", () => {
   });
 });
 
-describe("B5：每支母憑證至多 3 支未過期", () => {
-  it("3 支成功、第 4 支 too_many_requests；過期一支後第 4 支成功；另一支母憑證不受影響；upload／download 不佔名額", async () => {
+describe("each parent credential has at most 3 unexpired ones", () => {
+  it("3 succeed, the 4th is too_many_requests; after one expires the 4th succeeds; another parent credential is unaffected; upload/download credentials don't take a slot", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const a = await seedTokenForUser(ctx.db, u.id, RW);
@@ -168,7 +165,6 @@ describe("B5：每支母憑證至多 3 支未過期", () => {
     expect((await callTool(ctx.app, a.token, TOOL, {})).isError).toBeUndefined();
     const b = await seedTokenForUser(ctx.db, u.id, RW);
     expect((await callTool(ctx.app, b.token, TOOL, {})).isError).toBeUndefined();
-    // 已有 5 支 upload／download 的母憑證，3 支 bulk 照樣簽得出
     const c = await seedTokenForUser(ctx.db, u.id, RW);
     const note = await seedNote(ctx.db, { ownerId: u.id });
     for (let i = 0; i < 5; i++) await issueDirect(ctx.db, c.tokenId, note.id, i % 2 === 0 ? "upload" : "download");
@@ -176,8 +172,8 @@ describe("B5：每支母憑證至多 3 支未過期", () => {
   });
 });
 
-describe("B6：TTL", () => {
-  it("expiresAt − DB now ∈ [29:50, 30:10]；母憑證 5 分後到期 → 截在母憑證到期", async () => {
+describe("TTL", () => {
+  it("expiresAt - DB now is within [29:50, 30:10]; a parent credential expiring in 5 minutes -> capped at the parent's expiry", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const a = await seedTokenForUser(ctx.db, u.id, RO);
@@ -197,8 +193,8 @@ describe("B6：TTL", () => {
   });
 });
 
-describe("B7：註冊（依 canWrite 二選一）", () => {
-  it("(a) session 沒有 (b) 無 collab＋讀寫 token 沒有 (c) 唯讀 → RO description、讀寫／讀寫搬移刪除 → RW description；outputSchema 的 properties RW 多 `write` (d) properties 恰三鍵、additionalProperties false", async () => {
+describe("registration (either-or by canWrite)", () => {
+  it("(a) session has none (b) no collab + read-write token has none (c) read-only -> RO description, read-write / read-write-move-delete -> RW description; the RW outputSchema has one more property, `write` (d) properties are exactly three keys, additionalProperties false", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const cookie = (await cookieOf(u.id))[SESSION_COOKIE]!;
@@ -224,7 +220,7 @@ describe("B7：註冊（依 canWrite 二選一）", () => {
   });
 });
 
-describe("#417：instructions 只在清單上有 open_notes_as_files 時提它，讀寫／唯讀各一句", () => {
+describe("#417: instructions mention open_notes_as_files only when it is on the list, one sentence each for read-write and read-only", () => {
   const HINT_RW = "If you have a shell, use open_notes_as_files to change much of a note, or many notes.";
   const HINT_RO = "If you have a shell, use open_notes_as_files to read many or whole notes.";
   async function instructionsOf(app: Parameters<typeof mcpPost>[0], opts: { token?: string; cookie?: string }): Promise<string> {
@@ -233,7 +229,7 @@ describe("#417：instructions 只在清單上有 open_notes_as_files 時提它�
     return res.json().result.instructions as string;
   }
 
-  it("collab：唯讀 token → 讀的那句；讀寫／讀寫搬移刪除 token → 改的那句；session → 都沒有；無 collab 的讀寫／唯讀 token → 都沒有；四形 ≤ 1000", async () => {
+  it("collab: read-only token -> the read sentence; read-write / read-write-move-delete token -> the write sentence; session -> neither; no-collab read-write / read-only token -> neither; all four forms at most 1000", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     for (const [scope, hint, other] of [
@@ -242,7 +238,6 @@ describe("#417：instructions 只在清單上有 open_notes_as_files 時提它�
       [RWMD, HINT_RW, HINT_RO],
     ] as const) {
       const { token } = await seedTokenForUser(ctx.db, u.id, scope);
-      // 前提：清單上真的有它。
       expect((await toolList(ctx.app, { token })).map(t => t.name), scope).toContain(TOOL);
       const text = await instructionsOf(ctx.app, { token });
       expect(text, scope).toContain(hint);
@@ -263,8 +258,8 @@ describe("#417：instructions 只在清單上有 open_notes_as_files 時提它�
   });
 });
 
-describe("B8：簽發途中母憑證被撤銷", () => {
-  it("beforeLock 刪母列 → unauthorized＋REVOKED_MESSAGE、零列", async () => {
+describe("parent credential revoked while signing", () => {
+  it("beforeLock deletes the parent row -> unauthorized + REVOKED_MESSAGE, zero rows", async () => {
     const seam: IssueBulkTransferTokenSeam = {};
     const ctx = await buildCollabTestApp({ config, mcpTestHooks: { issueBulkTransferToken: seam } });
     const u = await seedUser(ctx.db);
@@ -277,14 +272,14 @@ describe("B8：簽發途中母憑證被撤銷", () => {
   });
 });
 
-describe("B9：同一母憑證並發簽發——① 鎖母列序列化計數", () => {
-  it("已有 2 支：第一發停在 afterCount，第二發卡在 ①（blocked）；放行後恰 3 支、第二發 too_many_requests", async () => {
+describe("concurrent signing on one parent credential: the lock on the parent row serializes the count", () => {
+  it("already 2: the first call stops at afterCount, the second blocks on the parent row lock (blocked); after release exactly 3 and the second is too_many_requests", async () => {
     const seam: IssueBulkTransferTokenSeam = {};
     const ctx = await buildCollabTestApp({ config, mcpTestHooks: { issueBulkTransferToken: seam } });
     const pool = ctx.db.$client;
     const u = await seedUser(ctx.db);
     const a = await seedTokenForUser(ctx.db, u.id, RO);
-    // 暖身：讓 touchLastUsed（api_tokens 的 UPDATE）先做完，否則會被當成第二發 blocked 的假證據（同 mcp-transfer-flow）。
+    // Warm-up: let touchLastUsed (the api_tokens UPDATE) finish first, otherwise its row lock would be mistaken for evidence that the second call is blocked (same as mcp-transfer-flow).
     expect((await mcpPost(ctx.app, rpc("tools/list"), { token: a.token })).statusCode).toBe(200);
     for (let i = 0; i < 2; i++) await issueBulkDirect(ctx.db, a.tokenId);
     let calls = 0;
@@ -304,7 +299,7 @@ describe("B9：同一母憑證並發簽發——① 鎖母列序列化計數", (
   });
 });
 
-describe("B10：輸出形與 curl", () => {
+describe("output shape and curl", () => {
   const checkCurls = (sc: Record<string, unknown>, keys: readonly ("export" | "note" | "write" | "revoke")[]) => {
     const t = sc.token as string;
     expect(t.startsWith("knbt_")).toBe(true);
@@ -317,7 +312,7 @@ describe("B10：輸出形與 curl", () => {
       for (const m of c.matchAll(/https?:\/\/[^"/]+/g)) expect(m[0], k).toBe(ORIGIN);
     }
   };
-  it("RO：鍵恰 {token, expiresAt, access, export, note, revoke, next}（沒有 write）；三組 curl；access read；next＝RO", async () => {
+  it("RO: keys exactly {token, expiresAt, access, export, note, revoke, next} (no write); three curl groups; access read; next = RO", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const { token } = await seedTokenForUser(ctx.db, u.id, RO);
@@ -327,7 +322,7 @@ describe("B10：輸出形與 curl", () => {
     checkCurls(sc, ["export", "note", "revoke"]);
     expect(sc.next).toBe(BULK_NEXT_RO);
   });
-  it("RW（讀寫、讀寫搬移刪除）：鍵多 write（八鍵）；四組 curl 只指 publicOrigin、權杖只在 Authorization header；access write；next＝RW", async () => {
+  it("RW (read-write, read-write-move-delete): one more key `write` (eight keys); four curl groups point only at publicOrigin, the token is only in the Authorization header; access write; next = RW", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     for (const scope of [RW, RWMD]) {
@@ -341,8 +336,8 @@ describe("B10：輸出形與 curl", () => {
   });
 });
 
-describe("B13：RW 權杖端到端（簽發 → export → 改一篇 → write → 200）", () => {
-  it("export.curl 的 URL 拿到 tar.gz、改其中一篇的本文、以 write.curl 的 URL／標頭 PUT → 200 applied、筆記內容換成改後的", async () => {
+describe("RW credential end to end (sign -> export -> edit one note -> write -> 200)", () => {
+  it("the export.curl URL yields a tar.gz, edit one note's body, PUT with write.curl's URL/headers -> 200 applied, the note's content is replaced", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: u.id }, { title: "E2E" });
@@ -354,7 +349,7 @@ describe("B13：RW 權杖端到端（簽發 → export → 改一篇 → write �
     const file = readTarGz(ex.body).find(e => e.type === "file" && e.data.toString("utf8").includes(n.id))!;
     expect(file).toBeDefined();
     const text = file.data.toString("utf8").replace("Second para", "Second para changed by agent");
-    // write.curl 的方法、標頭與 URL（以 curl 字串本身取，不另抄）
+    // Method, headers and URL of write.curl are taken from the curl string itself rather than copied.
     expect(sc.write.curl).toContain("-X PUT");
     expect(sc.write.curl).toContain('-H "Content-Type: text/markdown; charset=utf-8"');
     const r = await ctx.app.inject({
@@ -369,8 +364,8 @@ describe("B13：RW 權杖端到端（簽發 → export → 改一篇 → write �
   });
 });
 
-describe("B11：簽發後清掉過期列", () => {
-  it("一列已過期 → 成功簽發後消失；未過期的留著", async () => {
+describe("expired rows are cleaned after signing", () => {
+  it("an expired row -> gone after a successful signing; an unexpired one stays", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const a = await seedTokenForUser(ctx.db, u.id, RO);
@@ -389,8 +384,8 @@ describe("B11：簽發後清掉過期列", () => {
   });
 });
 
-describe("B12：strict", () => {
-  it("多一個鍵 spaces → SDK 輸入驗證錯誤、零列", async () => {
+describe("strict", () => {
+  it("an extra key spaces -> SDK input validation error, zero rows", async () => {
     const ctx = await buildCollabTestApp({ config });
     const u = await seedUser(ctx.db);
     const a = await seedTokenForUser(ctx.db, u.id, RO);

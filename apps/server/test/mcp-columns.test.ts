@@ -1,10 +1,3 @@
-/**
- * 並排（server 半）：MCP／REST 讀出並排、圖片寬度與表格欄寬的正規形，
- * 原樣寫回（replace_section）結構與寬度不變；只改一個字時寬度不流失（#305）；不合格的讀出（5 欄）原樣寫回整筆拒絕。
- *
- * ⚠ `callTool`／`payloadOf`／`errorOf` 是 `mcp-colors.test.ts` 那份的又一份；`humanEdit` 抄自 `note-edits.test.ts`
- * （同樣的理由：各自只有幾行）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -29,6 +22,7 @@ interface ToolCall {
   status: number;
   result: ToolResultBody;
 }
+// callTool/payloadOf/errorOf are copies of the same helpers in several other MCP test files, deliberately not moved into mcp-helpers.ts (a few lines each).
 async function callTool(app: FastifyInstance, token: string, name: string, args: unknown = {}): Promise<ToolCall> {
   const res = await mcpPost(app, rpc("tools/call", { name, arguments: args }), { token });
   return { status: res.statusCode, result: res.json().result };
@@ -63,19 +57,17 @@ async function scene(): Promise<Scene> {
   return { ctx, ownerId: owner.id, token, noteId: note.id, client };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote's generic triple
 type AnyBlocks = any[];
-/** provider 側用 server 的 EditorSession 改 client.doc（模擬人在瀏覽器編輯），等到 server 的 live doc 收到才回傳。 */
 async function humanEdit(s: Scene, sentinel: string, blocks: AnyBlocks): Promise<void> {
   const es = await EditorSession.open(testEditingRuntime, s.client.doc);
   try {
     es.editor.replaceBlocks(es.editor.document, blocks);
   } finally {
-    es.close(); // ⚠ 模組層單例 runtime 的 lease，throw 也要還
+    es.close(); // release the lease on the module-level singleton runtime, even when it throws
   }
   await waitFor(`server 收到人工編輯（${sentinel}）`, 5_000, () => docText(s.ctx.collab.hocuspocus.documents.get(s.noteId)!).includes(sentinel));
 }
-/** server 目前的內容（live doc 的 fork）經編輯器讀成完整 blocks。 */
 async function serverBlocks(s: Scene): Promise<AnyBlocks> {
   const { doc } = await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, s.noteId);
   const es = await EditorSession.open(testEditingRuntime, doc);
@@ -99,8 +91,8 @@ const P = (text: string) => ({ type: "paragraph", content: text });
 const col = (width: number, ...children: AnyBlocks) => ({ type: "column", props: { width }, children });
 const row = (...cols: AnyBlocks) => ({ type: "columnList", children: cols });
 
-describe("並排讀出 → 原樣寫回", () => {
-  it("MC1：read_note_section 的 _top 帶出正規並排行；原樣 replace_section 成功、再讀逐字相同、Y 結構仍是一列兩欄 [1, 1.5]", async () => {
+describe("columns read -> written back unchanged", () => {
+  it("read_note_section _top carries the canonical columns row; replace_section with the original text succeeds, reading again is identical, the Y structure is still one row of two columns [1, 1.5]", async () => {
     const s = await scene();
     await humanEdit(s, "後段落", [P("前段落"), row(col(1, P("左欄L")), col(1.5, P("右欄R"))), P("後段落")]);
     const r1 = await readTop(s);
@@ -118,7 +110,7 @@ describe("並排讀出 → 原樣寫回", () => {
   });
 });
 
-describe("#305：只改一個字，圖片寬度與表格欄寬不流失（server 半）", () => {
+describe("#305: changing one word loses neither image width nor table column widths (server half)", () => {
   const sized = (uploadId: string): AnyBlocks => [
     P("old words"),
     { type: "image", props: { url: `/api/uploads/${uploadId}`, previewWidth: 300 } },
@@ -134,7 +126,7 @@ describe("#305：只改一個字，圖片寬度與表格欄寬不流失（server
     await humanEdit(s, "tail sentinel", sized(uploadId));
   };
 
-  it("MC2：讀 _top → 只把 old 換成 new → replace_section → 段落換字、previewWidth 300、兩張表的 columnWidths 不變（合併格未設寬仍是 undefined）、再讀逐字相同", async () => {
+  it("read _top -> replace only old with new -> replace_section: paragraph text changed, previewWidth 300, both tables' columnWidths unchanged (merged cells without a width stay undefined), reading again is identical", async () => {
     const s = await scene();
     await seedSized(s);
     const r1 = await readTop(s);
@@ -153,7 +145,7 @@ describe("#305：只改一個字，圖片寬度與表格欄寬不流失（server
     s.client.disconnect();
   });
 
-  it("MC3：REST GET /api/notes/:id/content 同樣讀出 <figure> 寬度與第一列 colwidth", async () => {
+  it("REST GET /api/notes/:id/content also reads the <figure> width and the first row's colwidth", async () => {
     const s = await scene();
     await seedSized(s);
     const res = await getContent(s.ctx.app, s.noteId, s.token);
@@ -165,8 +157,8 @@ describe("#305：只改一個字，圖片寬度與表格欄寬不流失（server
   });
 });
 
-describe("不合格的既存結構（例外）", () => {
-  it("MC4：人工編輯出的 5 欄列讀出 5 個欄行；原樣 replace_section → unsupported_columns、內容不變", async () => {
+describe("invalid existing structure (exception)", () => {
+  it("a 5-column row made by manual editing reads as 5 column lines; replace_section with the original text -> unsupported_columns, content unchanged", async () => {
     const s = await scene();
     await humanEdit(s, "第五欄", [row(col(1, P("第一欄")), col(1, P("第二欄")), col(1, P("第三欄")), col(1, P("第四欄")), col(1, P("第五欄")))]);
     const r1 = await readTop(s);

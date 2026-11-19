@@ -1,19 +1,14 @@
 /**
- * #108：回應大小的兩道門檻（案 11b／11c）。
+ * Two response-size thresholds, which are **two different things** - don't mix them:
+ * - {@link N_LIST_MAX} governs the **context cost of `tools/list`** (every tool's input/output schema goes into the model's context; something must stop schemas from slowly bloating).
+ *   It is a **test threshold**, not a production constant, so it doesn't live in `src/`.
+ * - {@link MCP_MAX_WIRE} is `N`, governing **one `tools/call` response**. It is a **sentinel, not a target**: breaking it means a row of the table in `mcp/limits.ts` was missed;
+ *   the right response is to go back and check that row, **not to raise N**.
  *
- * 兩個數字是**兩件不同的事**，不要混：
- * - {@link N_LIST_MAX} 管 **`tools/list` 的脈絡成本**（所有工具的 input／output schema 全部
- *   進模型脈絡，「schema 慢慢變胖」需要有東西擋）。它是**測試門檻**，不是生產常數，所以
- *   不進 `src/`。
- * - {@link MCP_MAX_WIRE} 是 `N`，管**單次 `tools/call` 的回應**。它是**哨兵不是
- *   目標值**：破了代表 `mcp/limits.ts` 那張表的某一列漏接，正確處置是回頭查那一列，
- *   **不是調大 N**。
+ * Everything measured is the **wire response** (`res.body.length`, UTF-16 code units), not the payload: the mirror makes the same payload appear twice in the response (the second time JSON-escaped),
+ * `wire ~ 2.1 x payload`. The `tools/list` call also includes the SDK's own `"execution":{"taskSupport":"forbidden"}` and each schema's `"$schema"` line - only the whole body gives the cost that really enters the context.
  *
- * ⚠ 量的一律是 **wire 回應**（`res.body.length`，UTF-16 code unit），不是 payload：鏡像讓同一份 payload 在回應裡出現兩次（第二次還被 JSON 逃脫），`wire ≈ 2.1 × payload`。
- * `tools/list` 那一發還含 SDK 自產的 `"execution":{"taskSupport":"forbidden"}` 與兩份 schema
- * 各自的 `"$schema"` 行——量整個 body 才算得到真正進脈絡的成本。
- *
- * image block 是 N 的唯一豁免，由 `MCP_IMAGE_MAX_BYTES` 管——案 (vi)。
+ * The image block is the only exemption from N, governed by `MCP_IMAGE_MAX_BYTES` (case (vi)).
  */
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -44,48 +39,40 @@ import type { FastifyInstance } from "fastify";
 const PASSWORD = "correct-horse-battery";
 
 /**
- * `N`：一次 `tools/call` 的 wire 回應上限（UTF-16 code unit）。與
- * `POST /api/notes/:id/edits` 的 `bodyLimit` 同一個數字——請求進得來多大，回應就不該更大。
+ * `N`: upper bound of one `tools/call` wire response (UTF-16 code units). The same number as the `bodyLimit` of `POST /api/notes/:id/edits`:
+ * however large a request may be, the response shouldn't be larger.
  */
 export const MCP_MAX_WIRE = 262_144;
 
 /**
- * `tools/list` 的 wire 回應上限（UTF-16 code unit）。
+ * Upper bound of the `tools/list` wire response (UTF-16 code units).
  *
- * **怎麼訂**：量「最壞情形」的憑證（讀寫搬移刪除憑證，註冊的工具最多）的 `tools/list` wire ＝ W，
- * 向上取整到 1024 的倍數，再 ×1.3（「schema 與 `.describe()` 正常增修」的餘地），進位到百位。
- * 形狀比照 `scripts/check-bundle-size.mjs` 的 `MAX_ENTRY_BYTES`。
+ * **How it was set**: take W = the `tools/list` wire of the worst-case credential (the read-write-move-delete credential, with the most tools registered), round up to a multiple of 1024,
+ * multiply by 1.3 (room for normal schema and `.describe()` growth), round up to the hundreds. The shape follows `MAX_ENTRY_BYTES` in `scripts/check-bundle-size.mjs`.
+ * The rule is to re-derive only when it breaks: the threshold stays until a tool or schema really pushes some credential's wire over the line. When re-deriving, find out first **why it grew**
+ * and update this derivation with it; don't just raise it. W has grown since the recipe was first applied; re-running it today gives a higher number - expected, don't "correct" it.
+ * The `tools/list` test logs the current value on every run, so no baseline figures are copied elsewhere.
  *
- * **目前的基線**（#417 實測）：讀寫搬移刪除憑證二十支 wire ＝ 63 199（門檻 78 600 的 80.4%）；對照組：讀寫刪除十九支 59 786、
- * 讀寫搬移十七支 56 109、讀寫十六支 52 696、唯讀九支 26 534。照配方重推是 63 488 × 1.3 ＝ 82 534.4 → 82 600，
- * 但規則是破了才重訂：門檻不動，直到真的有工具或 schema 讓某個憑證的 wire 破線。重訂時回頭把「為什麼增加」
- * 查清楚，連同推導一起更新這段，不是逕自調大。案 11b 每次跑都 `console.log` 印出當下的值，對照組與百分比
- * 刻意不抄在別處。
- *
- * **什麼樣的迴歸會撞牆**：任何一支工具的 description 或 schema 加長 `N_LIST_MAX − W + 100` ＝ 15 501 字元
- * （接在句尾）就會紅（`expected … to be less than or equal to 78600`）。`tools/list` 的 schema 只進脈絡一份，
- * 加長多少 wire 就多長多少，不是 ×2.1 的鏡像效應。撞牆時**先問「這段字非進 schema 不可嗎」**：
- * `tools/list` 的每一個位元組每一次連線都進模型脈絡，而 `instructions` 與 `docs/mcp.md` 是更便宜的落點。
- * 另一個提醒：`open_notes_as_files` 的回應 wire 是 10 296（案 11c，餘裕 ×25.5；#417 實測）。
+ * **What regression hits the wall**: making any one tool's description or schema longer by `N_LIST_MAX - W + 100` characters (appended to a sentence end) goes red. The `tools/list` schema enters the
+ * context only once, so the wire grows by exactly what is added, not x2.1 as with the mirror. When it hits the wall **first ask "must this text be in the schema at all?"**: every byte of `tools/list`
+ * enters the model's context on every connection, while `instructions` and `docs/mcp.md` are cheaper homes.
  */
 export const N_LIST_MAX = 78_600;
 
 /**
- * 案 (vii) 第一發（#181 `list_trash` 最壞形）的下界哨兵。實測 **236 598**（群組名 80 個 `"`；第二發 67＋13 形 247 498；
- * 恰好 100 篇時 `truncated:false` 比 `true` 多 1 字元、鏡像兩份再多 2 → **247 500**，餘裕 ×1.06，剩 14 644）。落到 230 000 以下代表
- * 測資沒造滿（刪除者或群組沒帶上、標題沒截到逃脫後 200），或 `truncateText` 截得比「逃脫後 200」還兇——回頭查 fixture，不要改這個數字遷就（用意同 MIN_WORST_GROUP_WIRE）。
- * 資料夾功能加入後 `list_trash` 依預算截頁、每項另帶 `folderPath`（(vii) 每篇放在最壞的五層路徑），單頁不會再超過預算，所以改量
- * 「全部頁的 items 逐項 `wireCost` 合計」：101 項約 3 761 × 101 ≈ 38 萬，遠高於 230 000；低於它代表 fixture 沒造滿（同上）。
+ * Lower-bound sentinel for the first call of case (vii) (the worst shape of `list_trash`; group name of 80 `"`, the second call's 67+13 form is larger). Falling below 230 000 means the fixture isn't full
+ * (the deleter or group missing, titles not cut to 200 after escaping) or `truncateText` cuts harder than "200 after escaping": check the fixture, don't change this number to suit it (same intent as MIN_WORST_GROUP_WIRE).
+ * Since folders were added, `list_trash` pages by budget and every item carries `folderPath` (every note placed in the worst five-level path), so a single page can no longer exceed the budget; what is measured is
+ * "the sum of every item's `wireCost` over all pages": 101 items of about 3 761 each is about 380 000, far above 230 000; below it means the fixture isn't full (as above).
  */
 const MIN_WORST_TRASH_WIRE = 230_000;
 
 /**
- * 案 (iv) 第一發（#177 之後的群組形最壞情形）的下界哨兵。實測 **247 056**（餘裕 ×1.06，剩 15 088）；
- * #177 之前同一欄位配置的合規形（標題 200 個 ASCII、群組名 80 個 `"`）是 211 556。落到 240 000 以下代表測資沒造滿，
- * 或 `truncateText` 截得比「逃脫後 200」還兇（例如把預算算成兩份逃脫）——回頭查，不要改這個數字遷就。
- * 資料夾功能加入後 `list_notes` 依 wire 預算（`MCP_LIST_WIRE_BUDGET` 240 000）截頁，單頁回應不會再超過預算，所以改量
- * 「合併所有頁的 `notes` 後 `wireCost({ notes, nextCursor: null })`」（鏡像兩份、不含 JSON-RPC 信封）：100 篇加上 `folder: null`
- * 後預估約 25 萬（單頁實測 250 056 含信封）。它仍是「fixture 夠壞」的證明——低於 240 000 就代表不截頁也放得下，(iv) 便量不到截頁。
+ * Lower-bound sentinel for the first call of case (iv) (the worst group shape since #177). Falling below 240 000 means the fixture isn't full, or `truncateText` cuts harder than "200 after escaping"
+ * (e.g. the budget counted as two escapes): check, don't change this number to suit it.
+ * Since folders were added, `list_notes` pages by wire budget (`MCP_LIST_WIRE_BUDGET` 240 000), so a single page can no longer exceed it; what is measured is
+ * "`wireCost({ notes, nextCursor: null })` after merging all pages' `notes`" (mirror twice, excluding the JSON-RPC envelope): 100 notes with `folder: null` come to about 250 000.
+ * It is still the proof that "the fixture is bad enough": below 240 000 means it fits without paging, and (iv) couldn't observe paging.
  */
 const MIN_WORST_GROUP_WIRE = 240_000;
 
@@ -96,7 +83,6 @@ interface Measured {
 
 const measured: Measured[] = [];
 
-/** 量一發 `tools/call` 的完整 wire 回應，順手斷言它沒有變成錯誤結果。 */
 async function callWire(
   app: FastifyInstance,
   token: string,
@@ -107,7 +93,6 @@ async function callWire(
   return (await callWireResult(app, token, label, name, args)).wire;
 }
 
-/** 同 {@link callWire}，另回 `structuredContent`（資料夾 (viii) 要對回應內容下斷言）。 */
 async function callWireResult<T = Record<string, unknown>>(
   app: FastifyInstance,
   token: string,
@@ -118,7 +103,7 @@ async function callWireResult<T = Record<string, unknown>>(
   const res = await mcpPost(app, rpc("tools/call", { name, arguments: args }), { token });
   expect(res.statusCode).toBe(200);
   const result = res.json().result as { isError?: true; structuredContent: T };
-  // 錯誤結果都很小，會讓門檻假綠——被測的必須是成功路徑。
+  // Error results are tiny and would make the threshold falsely green: what is under test must be the success path.
   expect(result.isError).toBeUndefined();
   const wire = res.body.length;
   measured.push({ label, wire });
@@ -127,12 +112,11 @@ async function callWireResult<T = Record<string, unknown>>(
   return { wire, sc: result.structuredContent };
 }
 
-/** 一項在清單裡的 wire 成本（鏡像兩份＋兩個逗號）。 */
+/** Wire cost of one item in a list (mirror twice + two commas). */
 const itemWire = (v: unknown): number => wireCost(v) + 2;
 
 type ListNotesPage = { notes: Array<Record<string, unknown> & { id: string; updatedAt: string }>; nextCursor: string | null; pageCutShort?: true };
 
-/** 資料夾：`list_notes` 從頭翻到 `nextCursor` 為 null；每頁都量 wire、斷 ≤ N（同 callWire）。 */
 async function pageAllNotes(app: FastifyInstance, token: string, label: string, limit: number): Promise<ListNotesPage[]> {
   const pages: ListNotesPage[] = [];
   let cursor: string | undefined;
@@ -147,7 +131,7 @@ async function pageAllNotes(app: FastifyInstance, token: string, label: string, 
     measured.push({ label: pageLabel, wire });
     console.log(`[案 11c] ${pageLabel.padEnd(46)} wire=${String(wire).padStart(7)}  餘裕 ×${(MCP_MAX_WIRE / wire).toFixed(1)}`);
     expect(wire).toBeLessThanOrEqual(MCP_MAX_WIRE);
-    // 生產端不變量：每頁的 payload（鏡像兩份）不超過預算；比哨兵嚴，守得住預算常數接錯或不截頁這類回歸。
+    // Production invariant: each page's payload (mirror twice) stays within the budget; stricter than the sentinel, it catches regressions like the budget constant being mis-wired or paging not happening.
     expect(wireCost(result.structuredContent)).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
     pages.push(result.structuredContent);
     if (result.structuredContent.nextCursor === null) return pages;
@@ -163,7 +147,6 @@ type ListTrashPage = {
   pageCutShort?: true;
 };
 
-/** 資料夾：`list_trash` 從頭翻到 `nextCursor` 為 null；每頁 wire ≤ N、payload ≤ 預算、`truncated` ≡ `nextCursor !== null`。 */
 async function pageAllTrash(app: FastifyInstance, token: string, label: string): Promise<{ pages: ListTrashPage[]; wires: number[] }> {
   const pages: ListTrashPage[] = [];
   const wires: number[] = [];
@@ -189,7 +172,6 @@ async function pageAllTrash(app: FastifyInstance, token: string, label: string):
   throw new Error("list_trash 翻了 20 頁還沒到底");
 }
 
-/** 同一人 cookie 的 `GET /api/notes`（依微秒排；只比集合）。 */
 async function restNoteIds(app: FastifyInstance, userId: string): Promise<string[]> {
   const res = await app.inject({ method: "GET", url: "/api/notes", cookies: await cookieOf(userId) });
   expect(res.statusCode, res.body).toBe(200);
@@ -197,8 +179,8 @@ async function restNoteIds(app: FastifyInstance, userId: string): Promise<string
 }
 
 /**
- * 翻完的各頁：id 不重複、集合等於 REST、共 `total` 篇；序列依（`updatedAt` 毫秒 DESC, `id` DESC）——MCP 的 keyset 鍵。
- * REST 依微秒排，同一毫秒內順序可能不同，所以不比序列。
+ * After paging: ids without duplicates, the set equals REST, `total` notes; the sequence follows (`updatedAt` ms DESC, `id` DESC) - MCP's keyset key.
+ * REST sorts by microseconds, so the order within one millisecond may differ; the sequence isn't compared against it.
  */
 function expectPagedSameAsRest(pages: ListNotesPage[], restIds: string[], total: number): ListNotesPage["notes"] {
   const all = pages.flatMap(p => p.notes);
@@ -214,7 +196,6 @@ function expectPagedSameAsRest(pages: ListNotesPage[], restIds: string[], total:
   return all;
 }
 
-/** owner ＋ 唯讀 PAT。 */
 async function owner(ctx: CollabTestCtx): Promise<{ id: string; email: string; token: string }> {
   const email = `o-${randomUUID()}@example.com`;
   const user = await ctx.createUser({ email, password: PASSWORD });
@@ -222,16 +203,16 @@ async function owner(ctx: CollabTestCtx): Promise<{ id: string; email: string; t
   return { id: user.id, email, token };
 }
 
-/** 測資 (iv) 的 `count`（預設 100）篇最壞群組筆記（說明見 (iv) 上方的長註解）；(iv)、(iv-b) 與 LN4 共用。 */
+/** (iv)'s `count` (default 100) worst-case group notes (see the long comment above (iv)); shared by (iv), (iv-b) and the millisecond-boundary test. */
 async function seedWorstGroupNotes(
   ctx: CollabTestCtx,
   count: number = MCP_PAGE_MAX,
 ): Promise<{ o: { id: string; email: string; token: string }; g: { id: string } }> {
   const o = await owner(ctx);
-  const handle = `h${"a".repeat(31)}`; // 32 字元：讓 lastEdited.byHandle 也滿長，同 (iii)
+  const handle = `h${"a".repeat(31)}`; // 32 characters: so lastEdited.byHandle is full length too, like (iii)
   await ctx.db.update(users).set({ handle }).where(eq(users.id, o.id));
   const name = `${'"'.repeat(67)}${"\u0001".repeat(13)}`;
-  expect([...name]).toHaveLength(80); // `groups_name_chk` 的上限
+  expect([...name]).toHaveLength(80); // upper bound of `groups_name_chk`
   const g = await seedGroup(ctx.db, name, [{ userId: o.id, role: "member" }]);
   const agentLabel = "g".repeat(32);
   for (let i = 0; i < count; i += 1) {
@@ -248,14 +229,13 @@ async function firstSectionId(app: FastifyInstance, token: string, noteId: strin
     { token }
   );
   const payload = res.json().result.structuredContent as { sections: { sectionId: string; chars: number }[] };
-  // 取最長的那一段——`read_note_section` 的最壞情形是「有東西可以截」。
+  // Take the longest segment: read_note_section's worst case is "there is something to cut".
   return payload.sections.reduce((a, b) => (a.chars >= b.chars ? a : b)).sectionId;
 }
 
 /**
- * `edit_note` 的 `if_match` 只能從**指紋**來，而 `read_note_outline` 刻意不帶指紋
- * （`outline-page.ts` 檔頭）——量測要走 REST 的 `GET /content`，與 `mcp-edit-note.test.ts`
- * 的 `restOutline()` 同一個理由：獨立真相，不繞路去猜。
+ * `edit_note`'s `if_match` can only come from a **fingerprint**, and `read_note_outline` deliberately carries none (header of `outline-page.ts`), so measurement goes through REST `GET /content`,
+ * for the same reason as `restOutline()` in `mcp-edit-note.test.ts`: an independent truth, no detour to guess it.
  */
 async function sectionAt(
   app: FastifyInstance,
@@ -269,15 +249,11 @@ async function sectionAt(
   return body.outline[index]!;
 }
 
-describe("#108 tools/list 的脈絡成本（案 11b）", () => {
-  // 量的是唯讀憑證（四支工具）；讀寫憑證（六支工具）才是最壞情形——`edit_note`／
-  // `create_note` 的 input／output schema 一起進脈絡。本案改打讀寫憑證，唯讀憑證只當對照
-  // 一起印出來，門檻只釘在讀寫憑證那個數字上。
-  // #239：最壞情形換成**讀寫搬移**憑證（`move_note_to_group` 只在 notes:move 時註冊，
-  // `copy_note` 的說明是長版）——被測改它；讀寫與唯讀一起印出來當對照，門檻只釘在讀寫搬移那個數字上（支數見下方斷言；#181 起各多 list_trash）。
-  // #181：最壞情形換成**讀寫搬移刪除**憑證（`delete_note`／`restore_note` 只在 notes:delete 時註冊）——被測改它；
-  // 讀寫刪除、讀寫搬移、讀寫、唯讀一起印出來當對照，門檻只釘在 RWMD 那個數字上。
-  it("讀寫搬移刪除憑證的 tools/list 完整 wire 回應 ≤ N_LIST_MAX（RWD、RWM、RW、R 當對照）", async () => {
+describe("#108 tools/list context cost", () => {
+  // Measured with the worst-case credential: the read-write-move-delete credential (`delete_note`/`restore_note` only register with notes:delete, `move_note_to_group` only with notes:move,
+  // `copy_note`'s description is the long version, and the input/output schemas of `edit_note`/`create_note` all enter the context). Read-write-delete, read-write-move, read-write and read-only are
+  // printed alongside for comparison; the threshold is pinned only to the read-write-move-delete number (tool counts are in the assertions below).
+  it("read-write-move-delete credential's tools/list full wire response <= N_LIST_MAX (RWD, RWM, RW, R as comparison)", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
@@ -319,26 +295,19 @@ describe("#108 tools/list 的脈絡成本（案 11b）", () => {
   });
 });
 
-describe("#108 單次回應大小（案 11c）", () => {
-  // 測資 (i)：一顆 heading 260 000 字元、標題也 260 000 字元的筆記。
-  // **殺掉的寫法（四條突變全部實跑過；每一條都同時放寬對應的 `outputSchema`
-  // 上限，否則先擋下它的是 SDK 的 `validateToolOutput` 而不是這條大小門檻）**：
-  //   - `dto.ts` 的 `title` 不截 → `(i) list_notes` 520 644
-  //   - `read-note-outline.ts` 的 `note.title` 不截（**與上一條是兩個呼叫點**）→ 521 294
-  //   - `outline-page.ts` 的 `heading` 不截 → `(i) read_note_outline` 521 290
-  //   - `read-note-section.ts` 的 `markdown` 不截 → `(i) read_note_section` 560 513
-  // ⚠ **但這一案不是那四條的唯一守衛，別這樣宣稱**：`heading`／`markdown`
-  //   不截 `mcp-content.test.ts` 也會紅（各一案／三案），`title` 那條由 `mcp-notes.test.ts`
-  //   的 200 字元斷言直接守。**(i) 獨有的那一層是「病態筆記下 wire ≤ N」**——逐欄斷言看的是
-  //   欄位值，看不到「整個回應加起來會不會爆」，而那正是最後一列要的東西。
-  // 案 11c 補：`create_note` 的最壞情形是**回應裡的 `title` 被截到 200 字元 ＋ 多帶
-  // `titleTruncated:true`**（`toNoteSummary`，`dto.ts`）——與這一案的 `hugeTitle` 同一個
-  // 病態形，所以順手擺在 (i)：一發讀寫憑證的 `create_note`，帶一顆同樣 260 000 字元的標題。
-  // ⚠ `create_note` 不寫 live doc（不帶 `content`），對這一案其他量測**零污染**。
-  // #200：`create_transfer_token` 也在這一案量（每支工具都要量）——upload／download 各一發。它的回應
-  // 不帶標題或內容（只有 id、token、網址、curl、固定的 `next`），病態筆記對它不是最壞形，量的是「它也在 N 以內」這件事本身。
-  // `edit_note` 在 (ii) 量（它的最壞形是一整頁逐段指紋）。
-  it("(i) 一篇 heading／title 各 260 000 字元的筆記 → edit_note 的 rename 與其他工具（含 create_transfer_token 兩種 purpose）都 ≤ N", async () => {
+describe("#108 single response size", () => {
+  // Case (i): a note whose heading is 260 000 characters and whose title is also 260 000 characters.
+  // What it kills (each by loosening the matching `outputSchema` limit, otherwise the SDK's `validateToolOutput` blocks it before this size threshold): `title` not cut in `dto.ts`; `note.title` not cut in
+  // `read-note-outline.ts` (**a different call site from the previous one**); `heading` not cut in `outline-page.ts`; `markdown` not cut in `read-note-section.ts`.
+  // **This case is not the only guard for those four, don't claim it is**: not cutting `heading`/`markdown` also turns `mcp-content.test.ts` red, and `title` is guarded directly by the 200-character assertion in `mcp-notes.test.ts`.
+  // **What is unique to (i) is the layer "under a pathological note, wire <= N"**: per-field assertions look at field values and can't see whether the whole response blows up, which is what the last row needs.
+  // `create_note`'s worst case is **the response's `title` cut to 200 + the extra `titleTruncated:true`** (`toNoteSummary`, `dto.ts`) - the same pathological shape as this case's `hugeTitle`, so it sits here:
+  // one `create_note` with a read-write credential and a title of the same 260 000 characters.
+  // `create_note` doesn't write the live doc (no `content`), so it **doesn't pollute** this case's other measurements.
+  // `create_transfer_token` is also measured here (every tool must be): one upload and one download call. Its response carries no title or content (only id, token, URL, curl, a fixed `next`),
+  // so a pathological note isn't its worst shape; what is measured is "it is within N too".
+  // `edit_note` is measured in (ii) (its worst shape is a whole page of per-section fingerprints).
+  it("(i) a note with a 260 000-character heading and title -> edit_note's rename and the other tools (including create_transfer_token for both purposes) are all <= N", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
@@ -358,18 +327,18 @@ describe("#108 單次回應大小（案 11c）", () => {
     await callWire(ctx.app, rwToken, "(i) create_note", "create_note", { title: hugeTitle });
     await callWire(ctx.app, rwToken, "(i) create_transfer_token upload", "create_transfer_token", { note_id: note.id, purpose: "upload" });
     await callWire(ctx.app, rwToken, "(i) create_transfer_token download", "create_transfer_token", { note_id: note.id, purpose: "download" });
-    // bulk transfer：回應不帶標題或內容（權杖、三組 curl、固定的 `next`），量的是「它也在 N 以內」。
+    // bulk transfer: the response carries no title or content (token, three curl groups, a fixed `next`); what is measured is "it is within N too".
     await callWire(ctx.app, rwToken, "(i) open_notes_as_files", "open_notes_as_files", {});
-    // #180：copy_note 的最壞形＝副本 title 截斷＋titleTruncated（同 create_note）；來源就是這篇 260 000 字元標題的筆記。
+    // copy_note's worst case = the copy's title truncated + titleTruncated (like create_note); the source is this note with the 260 000-character title.
     await callWire(ctx.app, rwToken, "(i) copy_note", "copy_note", { note_id: note.id });
-    // #180：move_note_to_group 的最壞形＝搬後 title 截斷＋群組 owner。先建一個群組，把這篇病態筆記搬進去。
-    // #239：move_note_to_group 只在 notes:move 時註冊——這一發改用讀寫搬移憑證（callWire 斷 isError 為 undefined）。
+    // move_note_to_group's worst case = after the move the title truncated + the group owner. Create a group first and move this pathological note into it.
+    // move_note_to_group registers only with notes:move: this call uses a read-write-move credential (callWire asserts isError is undefined).
     const mg = await seedGroup(ctx.db, "Move target", [{ userId: o.id, role: "admin" }]);
     const { token: rwmToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move");
     await callWire(ctx.app, rwmToken, "(i) move_note_to_group", "move_note_to_group", { note_id: note.id, group_id: mg.id });
-    // #180：rename 的最壞形＝回應 `title` 被截到逃脫後 200 ＋ titleTruncated（鏡像兩份），標題同樣 260 000 字元。
-    // 擺在 (i) 最後：它會真的改標題（後面的量測若接在它之後，請排在它前面——copy／move 已排在這行之前）。
-    // #381：rename 必帶 if_match＝目前標題（hugeTitle，copy／move 都不改來源標題）的指紋。
+    // rename's worst case = the response `title` cut to 200 after escaping + titleTruncated (mirror twice), with the same 260 000-character title.
+    // Placed last in (i) because it really changes the title (add any new measurement before it; copy/move already are).
+    // rename needs `if_match` = the fingerprint of the current title (hugeTitle; copy/move don't change the source title).
     await callWire(ctx.app, rwToken, "(i) edit_note rename", "edit_note", {
       note_id: note.id,
       op: "rename",
@@ -379,12 +348,10 @@ describe("#108 單次回應大小（案 11c）", () => {
     client.disconnect();
   });
 
-  // 測資 (ii)：500 段、每段標題 1000 字元。**它只殺掉一種寫法：outline 不分頁**
-  // （`buildOutlinePage` 的 `slice(offset, offset + MCP_PAGE_MAX)` 拿掉 → 第一頁 319 692，紅）。
-  // ⚠ **它殺不掉「`heading` 不截」**（原本的註解這樣寫，實跑推翻）：100 段 × 1000 字元的
-  //   heading 只到 216 904，**還在 262 144 以內**。那一條靠 (i)（一顆 260 000 的 heading）。
-  //   最後一頁那一發是「分頁的邊界也在門檻內」，不是另一種寫法的守衛。
-  it("(ii) 500 段、每段標題 1000 字元 → outline 的第一頁與最後一頁都 ≤ N", async () => {
+  // Case (ii): 500 sections with 1000-character headings. **It only kills one thing: an unpaged outline** (removing `slice(offset, offset + MCP_PAGE_MAX)` in `buildOutlinePage` -> first page far over N, red).
+  // **It can't kill "`heading` not cut"**: 100 sections x 1000-character headings stay within 262 144; that one relies on (i) (one 260 000-character heading).
+  // The last-page call shows "the paging boundary is also within the threshold", not a guard for another way of writing it.
+  it("(ii) 500 sections with 1000-character headings -> the first and the last page of the outline are both <= N", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
@@ -404,12 +371,10 @@ describe("#108 單次回應大小（案 11c）", () => {
       section_id: sectionId,
     });
 
-    // 案 11c 補：`edit_note` 的最壞情形是**成功回應帶一整頁（100 筆）逐段指紋的
-    // outline**（`outline-page.ts` 的 `withFingerprints: true`，`read_note_outline` 完全
-    // 沒有這個負擔）。⚠ 寫入落點刻意指在**後段**（第 250 段，遠離第一頁）：`replace_section`
-    // 這族 op 的取頁規則是從落點（`afterSectionIndex`）起算，打第一段等於跟
-    // `read_note_outline` 第一頁量到同一種形，量不到「取頁規則對任意落點都算得出一整頁」
-    // 這件事——這一發放在該 it 的**最後**，因為它會真的寫進去，不得污染前面幾發的量測。
+    // `edit_note`'s worst case is a **success response carrying a whole page (100 entries) of per-section fingerprints** (`withFingerprints: true` in `outline-page.ts`; `read_note_outline` has no such burden).
+    // The write landing point is deliberately in the **later part** (section 250, far from the first page): the page rule of the `replace_section` family counts from the landing point (`afterSectionIndex`),
+    // so hitting the first section would measure the same shape as `read_note_outline`'s first page and miss "the page rule yields a whole page for any landing point".
+    // This call is **last** in the `it` because it really writes and must not pollute the earlier measurements.
     const target = await sectionAt(ctx.app, o.token, note.id, 250);
     await callWire(ctx.app, rwToken, "(ii) edit_note replace_section@250", "edit_note", {
       note_id: note.id,
@@ -422,31 +387,23 @@ describe("#108 單次回應大小（案 11c）", () => {
   });
 
   /**
-   * 測資 (iii)：100 筆「每一格都合規但都滿長」的筆記。**所有工具裡最大的回應是它**——
-   * 前兩組測資量不到（它們只有一兩筆列）。
+   * Case (iii): 100 notes in which "every field is compliant but full length". **The largest response of all tools is this one** - the first two cases can't measure it (they only have one or two rows).
    *
-   * ⚠ **不能用 `ctx.createNote` 隨手造**：那樣造出來的列 `last_edited_at` 是 NULL，`lastEdited`
-   * 恆為 `null`，那 32 字元 × 100 筆的 `agentLabel`／`byHandle` 根本不在回應裡，量到的值會
-   * 明顯小於真正的最壞情形。四欄要一起補滿：`lastEditedAt`／`lastEditedBy`／
-   * `lastEditedAgentLabel`（`lastEditedTokenId` 不進 DTO，不必補）。
-   * **量到的值明顯小於 160 000 就是測資沒造滿，回頭查測資，不要調 N。**
+   * **Don't create them casually with `ctx.createNote`**: the rows would have a NULL `last_edited_at`, `lastEdited` would always be `null`, the 32-character `agentLabel`/`byHandle` x 100 rows wouldn't be in the response at all,
+   * and the measured value would be clearly below the real worst case. Fill all four fields together: `lastEditedAt`/`lastEditedBy`/`lastEditedAgentLabel` (`lastEditedTokenId` doesn't enter the DTO).
+   * **A measured value clearly below 160 000 means the fixture isn't full: check the fixture, don't change N.**
    *
-   * 實測 **155 556**（餘裕 ×1.7）。⚠ **與先前估算的參考值 160 360 差 4804
-   * （每列約 48 wire）的成因已查明，不是測資沒造滿**：這裡的 `title` 取**恰好 200、不觸發截斷**，
-   * 而真正的最壞情形是 `title > 200` 被截到 200 **並多帶一把 `"titleTruncated":true`**
-   * （鏡像兩份 ≈ 48 wire／列）。刻意取 200，因為這一案要量的是「合規的最壞情形」；
-   * 引用這個數字時要一併講這句，否則會被問「是不是還是沒造滿」。
+   * Measures about 155 600, about 4 800 below the 160 360 estimate: the `title` here is **exactly 200 and has no `titleTruncated`**, while the true worst case is `title > 200` cut to 200 **plus an extra `"titleTruncated":true`** (mirror twice, about 48 wire per row, about 4 800 over 100 rows);
+   * 200 is deliberate because this case measures "the compliant worst case". State this when quoting the number, otherwise people ask whether the fixture is still not full.
    *
-   * ⚠ **誠實記下：這一案殺不掉任何一種「漏截」的寫法**——每一格都恰好在上限之內，拿掉截斷
-   * 對它零影響（那四條的守衛見 (i) 上面那段：`heading`／`markdown` 由 `mcp-content` 與 (i) 一起守、
-   * `title` 由 `mcp-notes` 直接守）。它守的是另一件事：**「單次回應 ≤ N」在合規的最壞情形下
-   * 是不是真的成立**。日後把 `MCP_PAGE_MAX` 調大、或往 `NoteSummary` 加欄位，紅的會是它。
+   * **Honest note: this case kills no way of "missing a cut"**: every cell is exactly at its limit, so removing truncation has zero effect on it (those four are guarded as described under (i): `heading`/`markdown` by `mcp-content` together with (i),
+   * `title` directly by `mcp-notes`). What it guards is another thing: **whether "one response <= N" really holds in the compliant worst case**. If `MCP_PAGE_MAX` is raised or a field is added to `NoteSummary`, this is what goes red.
    */
-  it("(iii) 100 筆滿長筆記（handle 32／title 200／slug 100／agentLabel 32）＋ limit 100 → ≤ N", async () => {
+  it("(iii) 100 full-length notes (handle 32 / title 200 / slug 100 / agentLabel 32) + limit 100 -> <= N", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
-    const handle = `h${"a".repeat(31)}`; // 32 字元，`handles_handle_chk` 的上限
+    const handle = `h${"a".repeat(31)}`; // 32 characters, the limit of `handles_handle_chk`
     expect(handle).toHaveLength(32);
     await ctx.db.update(users).set({ handle }).where(eq(users.id, o.id));
 
@@ -461,73 +418,61 @@ describe("#108 單次回應大小（案 11c）", () => {
     }
 
     const wire = await callWire(ctx.app, o.token, "(iii) list_notes limit=100", "list_notes", { limit: MCP_PAGE_MAX });
-    // 「測資沒造滿」的哨兵（判準見上：應落在 160 000 上下）。
-    // ⚠ **解析度只到「整組 `lastEdited` 落空」那一級**（實測）：整組落空 → 129 756，紅；
-    //   只把 `lastEditedAgentLabel` 設 null → 149 356，**綠**。也就是說它擋得住的是
-    //   那個形（用 `ctx.createNote` 隨手造 → `last_edited_at` 是 NULL → 四欄全不在回應裡），
-    //   **擋不住「四欄裡有一欄沒造滿」**。
+    // Sentinel for "the fixture isn't full" (criterion above: should land around 160 000). Its resolution only goes down to "the whole `lastEdited` group is missing" (created with `ctx.createNote` ->
+    // `last_edited_at` NULL -> all four fields absent from the response): that drops the value to ~130 000 (red), while only `lastEditedAgentLabel` null gives ~149 000 (green), so it does not catch
+    // "one of the four fields isn't full"; 140 000 sits between the two.
     expect(wire).toBeGreaterThan(140_000);
-    // `search_notes` 的 `limit` 上限是 50，所以它的最壞情形恰好是這一發的一半左右。
+    // `search_notes`' `limit` caps at 50, so its worst case is about half of this call.
     await callWire(ctx.app, o.token, "(iii) search_notes limit=50", "search_notes", { query: "ttt", limit: 50 });
 
-    // 案 11c 補：`create_note` 的另一半最壞情形——`owner.handle`（#175 前叫 `ownerHandle`）是這一案剛設的
-    // 32 字元上限（(i) 那一發的 owner 是隨機 email 產生的短 handle，量不到這一格）。標題
-    // 一樣給到會截斷的長度，兩案合起來才是 `create_note` 回應真正的最壞情形。
+    // `create_note`'s other half of the worst case: `owner.handle` (called `ownerHandle` before #175) at the 32-character limit just set here ((i)'s owner has a short random-email handle and can't measure this cell).
+    // The title is again long enough to truncate; both together form the real worst case of a `create_note` response.
     await callWire(ctx.app, rwToken, "(iii) create_note", "create_note", { title: "c".repeat(300) });
   });
 
   /**
-   * 測資 (iv)（#175；#177 改成真正的最壞形）：(iii) 的群組變體。群組筆記每列的 `owner` 是
-   * `{"kind":"group","id":"<36>","name":"<80 code point>"}`、`url` 是 `/g/<36>/…`，都比個人形的
-   * `{"kind":"user","handle":"<32>"}`／`/n/<32>/…` 長——(iii) 的 fixture 裡沒有群組筆記，量不到這一形。
+   * Case (iv) (#175; made the true worst shape in #177): the group variant of (iii). Each group-note row's `owner` is `{"kind":"group","id":"<36>","name":"<80 code points>"}` and its `url` is `/g/<36>/...`, both longer than the personal
+   * `{"kind":"user","handle":"<32>"}`/`/n/<32>/...` - (iii)'s fixture has no group notes and can't measure this shape.
    *
-   * **#177 之後的最壞形怎麼來的**：`title`／`owner.name` 走 `truncateText`，預算是「JSON 逃脫後 200」。一個字
-   * 在 wire 上的成本是兩份逃脫（structuredContent ＋ 鏡像 text 的再逃脫）：ASCII 2、`"`／`\` 6（`\"` ＋ `\\\"`）、
-   * `\n` 5、U+0001 13（`\u0001` ＋ `\u0001`）；佔的預算分別是 1、2、2、6。所以「wire／預算」最大的是 `"`／`\`
-   * （×3），C0 只有 ×2.17：
-   * - `title`（DB 不限長）：任何以 101 個以上 `"` 開頭的標題都截成 100 個 `"`（wire 600）＋ `titleTruncated`
-   *   （約 48）＝**每列 648**，比 200 個 ASCII（400）多 248。這裡用 200 個 `"`。
-   * - `owner.name`（DB 上限 80 code point）：80 個 `"` 只用掉預算 160、不截（wire 480）；不截的最好是 70 個 `"` ＋ 10 個
-   *   C0（預算恰好 200、wire 550）。截了會多帶 `nameTruncated`（約 46），所以最壞是**截過的**：**67 個 `"` ＋ 13 個
-   *   U+0001** → 留 67＋11（預算恰好 200、wire 545）＋ 旗標 ≈ 每列 591。全 C0（80 個）反而只剩 33 個 ＋ 旗標 ≈ 475。
-   *   ⚠ 這組是拿真的 `ownerForModel`／`toNoteSummary` 算兩層 `JSON.stringify` 的長度、對 `"`／U+0001／`\n`／ASCII／
-   *   emoji／CJK 任三種的組合窮舉出來的（一次性腳本、不進版控）；69＋11 比 67＋13 少 1。
-   * 第一發（最壞形）實測見 `[案 11c]` 那行 log。
+   * **How the worst shape after #177 was derived**: `title`/`owner.name` go through `truncateText` with a budget of "200 after JSON escaping". A character's wire cost is two escapes (structuredContent + the mirror text's re-escape):
+   * ASCII 2, `"`/`\` 6 (`\"` + `\\\"`), `\n` 5, U+0001 13 (`\u0001` + `\u0001`); the budget they use is 1, 2, 2, 6. So wire/budget is largest for `"`/`\` (x3), and C0 only x2.17:
+   * - `title` (unbounded in the DB): any title starting with 101 or more `"` is cut to 100 `"` (wire 600) + `titleTruncated` (about 48) = **648 per row**, 248 more than 200 ASCII (400). 200 `"` are used here.
+   * - `owner.name` (DB limit 80 code points): 80 `"` use only 160 of the budget and aren't cut (wire 480); the best uncut mix is 70 `"` + 10 C0 (budget exactly 200, wire 550). A cut adds `nameTruncated` (about 46), so the worst is a **cut one**:
+   *   **67 `"` + 13 U+0001** -> keeps 67+11 (budget exactly 200, wire 545) + the flag = about 591 per row. All C0 (80) leaves only 33 + the flag = about 475.
+   *   This mix was enumerated by computing the two-layer `JSON.stringify` length with the real `ownerForModel`/`toNoteSummary` over combinations of any three of `"`/U+0001/`\n`/ASCII/emoji/CJK; 69+11 is one less than 67+13.
    *
-   * 後兩發是**回到 #177 之前就會破 N 的兩形**：群組名改成 80 個 U+0001、標題改成 200 個 U+0001。資料夾功能加入後 list_notes
-   * 依預算截頁，它們只斷 ≤ N，不再是那兩條突變的守衛（見 it 內註解）。
+   * The last two calls are **two shapes that would have broken N before #177**: group name as 80 U+0001, and title as 200 U+0001. Since folders were added, list_notes pages by budget, so they only assert <= N
+   * and no longer guard those two mutations (see the comments inside the `it`).
    */
-  it("(iv) #175／#177 群組形：100 筆最壞群組筆記（標題 200 個 `\"`、群組名 67 個 `\"`＋13 個 U+0001）＋ limit 100 → 依大小截頁、每頁 ≤ N、續翻與 REST 同一組", async () => {
+  it("(iv) #175/#177 group shape: 100 worst-case group notes (title of 200 `\"`, group name of 67 `\"` + 13 U+0001) + limit 100 -> paged by size, every page <= N, continuing matches REST's set", async () => {
     const ctx = await buildCollabTestApp();
     const { o, g } = await seedWorstGroupNotes(ctx);
-    // 資料夾（m-3）：第一頁依 wire 預算截短；續翻到 null，每頁 ≤ N（pageAllNotes 內建），合計與 REST 同一組。
+    // Folders: the first page is cut short by the wire budget; continue to null, every page <= N (built into pageAllNotes), the total equals REST's set.
     const pages = await pageAllNotes(ctx.app, o.token, "(iv) list_notes limit=100（群組形最壞）", MCP_PAGE_MAX);
     expect(pages[0]!.pageCutShort).toBe(true);
     expect(pages[0]!.notes.length).toBeLessThan(MCP_PAGE_MAX);
     expect(pages[0]!.nextCursor).not.toBeNull();
     const all = expectPagedSameAsRest(pages, await restNoteIds(ctx.app, o.id), MCP_PAGE_MAX);
-    // 「測資沒造滿／截過頭」的哨兵，見常數註解：合併各頁後的 100 篇放不進一頁。
+    // Sentinel for "fixture not full / cut too much", see the constant's comment: the 100 notes merged from all pages don't fit on one page.
     expect(wireCost({ notes: all, nextCursor: null })).toBeGreaterThan(MIN_WORST_GROUP_WIRE);
     const search = await callWire(ctx.app, o.token, "(iv) search_notes limit=50（群組形最壞）", "search_notes", { query: '""""', limit: 50 });
-    expect(search).toBeGreaterThan(MIN_WORST_GROUP_WIRE / 2); // 確定 50 筆都命中，不是空結果的假綠
+    expect(search).toBeGreaterThan(MIN_WORST_GROUP_WIRE / 2); // make sure all 50 match, not a false green from an empty result
 
-    // 下面兩發是 #177 之前會破 N 的兩形，只斷 ≤ N。⚠ list_notes 依預算截頁，它們**不再是**「`ownerForModel` 不截群組名」
-    // 「`truncateText` 退回按原長度」兩條突變的守衛（那樣寫時頁會被截得更短，照樣 ≤ N）；實際守衛是 `test/unit/mcp-limits.test.ts`
-    // 的群組名與標題案。
+    // The next two calls are the shapes that would have broken N before #177 and only assert <= N. list_notes pages by budget, so they **no longer guard** the "ownerForModel doesn't truncate the group name" and
+    // "truncateText falls back to the original length" mutations (written that way the pages would just be cut shorter and still <= N); the real guards are the group-name and title cases of `test/unit/mcp-limits.test.ts`.
     await ctx.db.update(groups).set({ name: "\u0001".repeat(80) }).where(eq(groups.id, g.id));
     await callWire(ctx.app, o.token, "(iv) list_notes 群組名 80 個 U+0001", "list_notes", { limit: MCP_PAGE_MAX });
     await ctx.db.update(notes).set({ title: "\u0001".repeat(200) }).where(eq(notes.groupId, g.id));
     await callWire(ctx.app, o.token, "(iv) list_notes 標題 200 個 U+0001", "list_notes", { limit: MCP_PAGE_MAX });
 
-    // #175：`create_note` 的群組形（`groupId`）——回應的 `owner` 是上面改過的群組名。標題給 1000 個 `"`（會截）：
-    // 260 000 個 `"` 逃脫後超過請求的 bodyLimit（413），而截斷後的形與長度無關。
-    // 只靠 `callWire` 內建的 `≤ N` 與非錯誤；不加下界哨兵（create_note 回應本來就小）。
+    // #175: `create_note`'s group shape (`groupId`): the response's `owner` is the group name changed above. The title is 1000 `"` (it gets cut): 260 000 `"` would exceed the request bodyLimit after escaping (413),
+    // and the cut shape doesn't depend on the length. Relies only on `callWire`'s built-in `<= N` and non-error; no lower-bound sentinel (the `create_note` response is small anyway).
     const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
     await callWire(ctx.app, rwToken, "(iv) create_note（群組形）", "create_note", { title: '"'.repeat(1000), group_id: g.id });
   });
 
-  // (iv-b)：多一篇讓 `limit + 1` 那列存在（hasMore = true），截頁這條路徑在「本來就還有下一頁」時也要走到。
-  it("(iv-b) 101 篇最壞群組筆記、limit 100（查詢多取的那列存在）→ 第一頁照樣依大小截、有 nextCursor；續翻到底與 REST 同一組 101 篇", async () => {
+  // One more note, so the `limit + 1` row exists (hasMore = true) and the paging path is also exercised when there really is a next page.
+  it("(iv-b) 101 worst-case group notes, limit 100 (the extra row fetched by the query exists) -> the first page is still cut by size and has a nextCursor; continuing to the end matches REST's set of 101", async () => {
     const ctx = await buildCollabTestApp();
     const { o } = await seedWorstGroupNotes(ctx, MCP_PAGE_MAX + 1);
     const pages = await pageAllNotes(ctx.app, o.token, "(iv-b) list_notes 101 篇 limit=100", MCP_PAGE_MAX);
@@ -538,11 +483,11 @@ describe("#108 單次回應大小（案 11c）", () => {
   });
 
   /**
-   * LN4：截頁的游標落在同一毫秒的一對上。先把 (iv) 的 100 篇依原順序各拉開 2 ms（內容不變），翻一次找出第一頁的截點 k；
-   * 再把第 k、k+1 篇設成同一毫秒、差 1 µs，**µs 序與 id 序相反**（µs 較大的給 id 較小者）：REST（微秒）與 MCP（毫秒＋id）在這一對上順序相反，
-   * 游標若用微秒或非排序鍵就會漏掉其中一篇。
+   * Paging cursor landing on a pair within the same millisecond: first spread (iv)'s 100 notes 2 ms apart in their original order (content unchanged) and page once to find the first page's cut point k; then set notes k and k+1
+   * to the same millisecond and 1 microsecond apart with **microsecond order opposite to id order** (the larger microsecond goes to the smaller id): REST (microseconds) and MCP (milliseconds + id) order this pair oppositely,
+   * and a cursor using microseconds or a non-sort key would drop one of them.
    */
-  it("LN4 毫秒邊界：第一頁末篇與第二頁首篇同一毫秒、µs 序與 id 序相反 → 續翻不漏不重", async () => {
+  it("millisecond boundary: the last note of the first page and the first of the second are in the same millisecond with microsecond order opposite to id order -> paging neither skips nor repeats", async () => {
     const ctx = await buildCollabTestApp();
     const { o, g } = await seedWorstGroupNotes(ctx);
     const pool = ctx.db.$client;
@@ -557,11 +502,11 @@ describe("#108 單次回應大小（案 11c）", () => {
     expect(k).toBeLessThan(MCP_PAGE_MAX);
     const order = before.flatMap(p => p.notes).map(n => n.id);
     const [small, large] = [order[k - 1]!, order[k]!].sort() as [string, string];
-    const ms = new Date(base - (2 * k + 1)).toISOString(); // 介於第 k−1 篇與第 k+2 篇之間
+    const ms = new Date(base - (2 * k + 1)).toISOString(); // between notes k-1 and k+2
     await pool.query(`update notes set updated_at = $2::timestamptz + interval '501 microseconds' where id = $1`, [small, ms]);
     await pool.query(`update notes set updated_at = $2::timestamptz + interval '500 microseconds' where id = $1`, [large, ms]);
 
-    // 前提：這一毫秒恰好兩篇；µs 序與 id 序相反（REST 先 small、MCP 先 large）。
+    // Precondition: exactly two notes in this millisecond; microsecond order is opposite to id order (REST gives the small one first, MCP the large one).
     const same = await pool.query(`select count(*)::int as n from notes where date_trunc('milliseconds', updated_at) = $1::timestamptz`, [ms]);
     expect(same.rows[0].n).toBe(2);
     const rest = await restNoteIds(ctx.app, o.id);
@@ -575,11 +520,10 @@ describe("#108 單次回應大小（案 11c）", () => {
   });
 
   /**
-   * 測資 (v)（#93）：50 篇 (iv) 形的群組筆記，每篇 5 段、heading 200 個 `"`、body 以 `"` 為主並含查詢字。
-   * 沒有 wire 預算時約 328 000 > N（估算）；有預算 → ≤ N 且 `matchesTruncated: true`。
-   * 對照組：同一批改成正常 heading 與內文 → 每篇 3 個 match、無 matchesTruncated。
+   * Case (v) (#93): 50 group notes of (iv)'s shape, each with 5 sections, 200-`"` headings and a body mostly `"` containing the query word. Without the wire budget it would be about 328 000 > N (estimate);
+   * with the budget -> <= N and `matchesTruncated: true`. Control: the same batch with normal headings and body -> 3 matches per note, no matchesTruncated.
    */
-  it("(v) #93 search_notes：50 篇最壞群組筆記 × 5 段最壞 heading／內文 → ≤ N、matchesTruncated；正常內容 → 每篇 3 個", async () => {
+  it("(v) #93 search_notes: 50 worst-case group notes x 5 worst-case heading/body sections -> <= N, matchesTruncated; normal content -> 3 per note", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const handle = `h${"a".repeat(31)}`;
@@ -609,17 +553,16 @@ describe("#108 單次回應大小（案 11c）", () => {
     await ctx.db.update(noteSearchSections).set({ heading: "Heading", body: 'plain text """" here' }).where(inArray(noteSearchSections.noteId, ids));
     const normal = await mcpPost(ctx.app, rpc("tools/call", { name: "search_notes", arguments: { query: '""""', limit: 50 } }), { token: o.token });
     const np = normal.json().result.structuredContent as { notes: Array<{ matches: unknown[] }>; matchesTruncated?: true };
-    expect(np.notes).toHaveLength(50); // 下一行的 every 不得因空陣列而真
+    expect(np.notes).toHaveLength(50); // so the `every` on the next line isn't vacuously true over an empty array
     expect(np.notes.every(n => n.matches.length === 3)).toBe(true);
     expect("matchesTruncated" in np).toBe(false);
   });
 
   /**
-   * 測資 (vi)（#200）：image block 是 N 的**唯一豁免**，上限由 `MCP_IMAGE_MAX_BYTES` 單獨管。
-   * 剛好上限的圖：wire − image.data.length ≤ N（其餘部分照樣受哨兵管）、data.length ≤ 4·ceil(MAX/3)（base64 膨脹的精確上界）；
-   * 上限＋1 → file_too_large（不讀檔）。
+   * Case (vi) (#200): the image block is the **only exemption** from N, its limit governed alone by `MCP_IMAGE_MAX_BYTES`. An image exactly at the limit: wire - image.data.length <= N (the rest is still under the sentinel),
+   * data.length <= 4*ceil(MAX/3) (the exact upper bound of base64 inflation); limit + 1 -> file_too_large (file not read).
    */
-  it("(vi) #200 read_note_image：剛好上限的圖符合兩條界線；上限＋1 → file_too_large", async () => {
+  it("(vi) #200 read_note_image: an image exactly at the limit meets both bounds; limit + 1 -> file_too_large", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const note = await ctx.createNote(o.id, "image cap");
@@ -638,19 +581,15 @@ describe("#108 單次回應大小（案 11c）", () => {
   });
 
   /**
-   * 測資 (vii)（#181）：`list_trash` 的最壞形。一頁 100 項（101 篇 → `truncated: true`），每項的
-   * `title`（DB 不限長）與刪除者 `displayName`（DB 不限長）都以 300 個 `"` 截成 100 個 `"` ＋ `*Truncated`（理由同 (iv)：`"` 的
-   * wire／預算比最大）、`handle` 32、群組形（`group` 物件）、`retentionDays` 3650（`purgeAt` 非 null）。
-   * 第一發用群組名 80 個 `"`（不截）；第二發換成 (iv) 的 67 個 `"` ＋ 13 個 U+0001（截過＋`nameTruncated`，群組名的真正最壞形）。
-   * 突變（`toTrashItemForModel` 不截標題、outputSchema 同時放寬；實跑）→ 第一發 351 998 > N，紅。
-   * 資料夾：每篇放在五層 `[33,40,40,40,41]` 個 `"` 的群組資料夾鏈最深處（嚴格最壞路徑），每項另帶 `folderPath`；
-   * `list_trash` 依預算截頁，所以三發都翻到底：每頁 ≤ N 且 payload ≤ 預算、`truncated` ≡ `nextCursor !== null`，第一頁截點貼近預算
-   * （wire > 預算 − 4 000＝fixture 夠壞）。第三發（LT-PC）把 31 篇還原成活筆記、剩 70 篇：被預算截但查詢沒有下一列（hasMore false），
-   * 第一頁仍要 `truncated: true`、有 `nextCursor`（殺「`truncated` 改回 hasMore」）。
-   * `delete_note`／`restore_note` 各量一發（同一篇、最壞標題；`restore_note` 回的是 noteSummary 形，群組名是第二發那個）。
-   * 實測見 `[案 11c]` 那幾行 log。
+   * Case (vii) (#181): the worst shape of `list_trash`. One page of 100 items (101 notes -> `truncated: true`), each item's `title` (unbounded in the DB) and the deleter's `displayName` (unbounded in the DB) are 300 `"` cut to 100 `"` + `*Truncated`
+   * (same reason as (iv): `"` has the largest wire/budget ratio), `handle` 32, group shape (a `group` object), `retentionDays` 3650 (`purgeAt` non-null).
+   * The first call uses a group name of 80 `"` (not cut); the second switches to (iv)'s 67 `"` + 13 U+0001 (cut + `nameTruncated`, the group name's true worst shape).
+   * Folders: every note sits at the deepest point of a five-level group folder chain of `[33,40,40,40,41]` `"` (the strictly worst path), and every item also carries `folderPath`;
+   * `list_trash` pages by budget, so all three calls page to the end: every page <= N and payload <= budget, `truncated` is equivalent to `nextCursor !== null`, and the first page's cut point is close to the budget (wire > budget - 4 000 = the fixture is bad enough).
+   * The third call restores 31 notes to live notes, leaving 70: cut by the budget but the query has no next row (hasMore false), and the first page must still be `truncated: true` with a `nextCursor` (kills "`truncated` changed back to hasMore").
+   * `delete_note`/`restore_note` are measured once each (the same note, the worst title; `restore_note` returns the noteSummary shape, with the group name of the second call).
    */
-  it("(vii) #181 list_trash：101 篇最壞垃圾桶群組筆記（標題、刪除者名各 300 個 `\"`，handle 32，保留 3650 天，五層最壞路徑）→ 依大小截頁、每頁 ≤ N；delete_note／restore_note 最壞標題 → ≤ N", async () => {
+  it("(vii) #181 list_trash: 101 worst-case trashed group notes (title and deleter name of 300 `\"` each, handle 32, retention 3650 days, worst five-level path) -> paged by size, every page <= N; delete_note / restore_note with the worst title -> <= N", async () => {
     const ctx = await buildCollabTestApp();
     const o = await owner(ctx);
     const handle = `h${"a".repeat(31)}`;
@@ -669,14 +608,14 @@ describe("#108 單次回應大小（案 11c）", () => {
     const shot = async (label: string, total: number) => {
       const { pages, wires } = await pageAllTrash(ctx.app, o.token, label);
       expect(pages[0]!.pageCutShort).toBe(true);
-      expect(wires[0]!).toBeGreaterThan(MCP_LIST_WIRE_BUDGET - 4_000); // 截點貼近預算＝fixture 夠壞
+      expect(wires[0]!).toBeGreaterThan(MCP_LIST_WIRE_BUDGET - 4_000); // the cut point is close to the budget = the fixture is bad enough
       const items = pages.flatMap(p => p.items);
       expect(new Set(items.map(i => i.id)).size).toBe(total);
-      expect(items[0]!.folderPathTruncated).toBe(true); // 前提：真的帶上最壞路徑
-      // 資料夾（(viii) ④ 指回這裡）：每項最壞與路徑增量印出來，給 `limits.ts` 的推導註解定稿。
+      expect(items[0]!.folderPathTruncated).toBe(true); // precondition: the worst path is really carried
       const noPath: Record<string, unknown> = { ...items[0]! };
       delete noPath.folderPath;
       delete noPath.folderPathTruncated;
+      // Printed so the derivation in `limits.ts` can be checked against real values.
       console.log(
         `[案 11c 每項] ${label} list_trash 每項最壞 ${Math.max(...items.map(itemWire))}  ` +
           `folderPath 增量 ${wireCost(items[0]!) - wireCost(noPath)}  第一頁 ${pages[0]!.items.length} 項`
@@ -684,14 +623,14 @@ describe("#108 單次回應大小（案 11c）", () => {
       return { pages, sum: items.reduce((s, i) => s + wireCost(i), 0) };
     };
     const first = await shot("(vii) list_trash 101 篇（群組名 80 個 \"）", MCP_PAGE_MAX + 1);
-    expect(first.sum).toBeGreaterThan(MIN_WORST_TRASH_WIRE); // 「測資沒造滿／截過頭」的哨兵，見常數註解
+    expect(first.sum).toBeGreaterThan(MIN_WORST_TRASH_WIRE); // sentinel for "fixture not full / cut too much", see the constant's comment
 
     await ctx.db.update(groups).set({ name: `${'"'.repeat(67)}${"\u0001".repeat(13)}` }).where(eq(groups.id, g.id));
     const second = await shot("(vii) list_trash 101 篇（群組名 67+13）", MCP_PAGE_MAX + 1);
-    // 群組名真的換成截過的形（沒換到就是重量第一發）。截頁後單頁 wire 都貼著預算，比不出差別，所以比全部項目的合計成本。
+    // The group name really switches to the cut shape (if it didn't, this would repeat the first call). Paged single-page wires all hug the budget and can't show a difference, so compare the total cost of all items.
     expect(second.sum).toBeGreaterThan(first.sum);
 
-    // LT-PC：剩 70 篇（> 一頁放得下的、≤ 100）→ 被預算截，但查詢沒有下一列；第一頁照樣 truncated＋nextCursor，翻到底時 truncated false。
+    // Restoring 31 leaves 70 (more than fits on one page, at most 100): cut by the budget but the query has no next row; the first page is still truncated + nextCursor, and truncated is false when paging to the end.
     await ctx.db.$client.query(`update notes set deleted_at = null, deleted_by = null where id = any($1::uuid[])`, [ids.slice(70)]);
     const pc = await shot("(vii) LT-PC list_trash 70 篇", 70);
     expect([pc.pages[0]!.truncated, pc.pages[0]!.nextCursor !== null]).toEqual([true, true]);
@@ -703,18 +642,15 @@ describe("#108 單次回應大小（案 11c）", () => {
   });
 
   /**
-   * 測資 (viii)：一個 app 內造齊。
-   * - 群組名 67 個 `"`＋13 個 U+0001、owner handle 32；群組資料夾鏈五層 `[33, 40, 40, 40, 41]` 個 `"`（截後成本恰 400 的嚴格最壞路徑）；
-   *   最深那層另有 50 個兄弟資料夾，名稱 78 個 `"`＋兩位數序號（逃脫後 158 → 截成 40 個 `"`＋`nameTruncated`，路徑同樣恰 400）。
-   *   序號放在尾端：截後留下的前綴全是 `"`（wire 最貴的字），放前面會留下兩個便宜的數字。
-   * - 100 篇 (iv) 形群組筆記放在最深那層；另一位使用者有同形的個人資料夾鏈與 100 篇個人筆記（個人形，`owner` 是 handle）。
-   * 六發：① list_notes（兩形）② search_notes ③ list_folders ④ list_trash＝(vii)（同一最深路徑形，不重造；值見 (vii) 的 `[案 11c]` 行）
-   * ⑥ read_note_outline（(ii) 形放進最深層）⑤ delete_folder（300 篇子樹；會刪東西，排最後）。
-   * 這一案不是下列三條突變的守衛（預算截頁或 fixture 太小遮掉）：資料夾名不截 → `unit/mcp-folder-fields`、`mcp-folder-fields`；
-   * 路徑只截段不丟段 → `unit/mcp-folder-fields`、`mcp-trash-tools` 的八層案、`mcp-folders`；list_folders 每頁改 100 → `mcp-folders`。
-   * 破哨兵＝`limits.ts` 的上限表漏一列，處置是補列，不得調大 `MCP_MAX_WIRE`。
+   * Case (viii): everything built in one app.
+   * - Group name 67 `"` + 13 U+0001, owner handle 32; a five-level group folder chain of `[33, 40, 40, 40, 41]` `"` (the strictly worst path, exactly 400 after truncation); the deepest level also has 50 sibling folders
+   *   named 78 `"` + a two-digit serial (158 after escaping -> cut to 40 `"` + `nameTruncated`, path again exactly 400). The serial is at the end: the kept prefix after truncation is all `"` (the most expensive character on the wire); at the front it would keep two cheap digits.
+   * - 100 group notes of (iv)'s shape at the deepest level; another user has a same-shaped personal folder chain and 100 personal notes (personal shape, `owner` is the handle).
+   * Calls: list_notes (both shapes), search_notes, list_folders, list_trash (= case (vii), the same deepest-path shape, not rebuilt), read_note_outline ((ii)'s shape placed at the deepest level), and last delete_folder (300-note subtree; it deletes things).
+   * This case does not guard the three mutations below (budget paging or too-small fixtures hide them): folder name not cut -> `unit/mcp-folder-fields`, `mcp-folder-fields`; path cut by segment only without dropping segments -> `unit/mcp-folder-fields`,
+   * the eight-level case of `mcp-trash-tools`, `mcp-folders`; list_folders page changed to 100 -> `mcp-folders`. Breaking the sentinel = a row missing from the limits table in `limits.ts`; the response is to add the row, never to raise `MCP_MAX_WIRE`.
    */
-  it("(viii) 資料夾最壞形六發：list_notes／search_notes／list_folders／read_note_outline／delete_folder 都 ≤ N（list_trash 見 (vii)）", async () => {
+  it("(viii) worst folder shape: list_notes / search_notes / list_folders / read_note_outline / delete_folder all <= N (list_trash is in (vii))", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const q = (n: number): string => '"'.repeat(n);
@@ -746,12 +682,12 @@ describe("#108 單次回應大小（案 11c）", () => {
       await setNoteFolder(pool, id, pChain[4]!);
     }
 
-    // ① list_notes：筆記在最深層、folder.name 截過（40 個 `"`＋nameTruncated）→ 依預算截頁、第一頁貼近預算、續翻合計 100。
+    // list_notes: notes at the deepest level with a cut folder.name (40 `"` + nameTruncated) -> paged by budget, the first page close to the budget, and continuing totals 100.
     const firstWire = (label: string): number => measured.find(m => m.label === `${label} 第 1 頁`)!.wire;
     const gLabel = "(viii)① list_notes 群組形（最深層）";
     const gPages = await pageAllNotes(ctx.app, o.token, gLabel, MCP_PAGE_MAX);
     expect(gPages[0]!.pageCutShort).toBe(true);
-    expect(firstWire(gLabel)).toBeGreaterThan(MCP_LIST_WIRE_BUDGET - 4_000); // 截點貼近預算＝fixture 夠壞
+    expect(firstWire(gLabel)).toBeGreaterThan(MCP_LIST_WIRE_BUDGET - 4_000); // the cut point is close to the budget = the fixture is bad enough
     const gAll = expectPagedSameAsRest(gPages, await restNoteIds(ctx.app, o.id), MCP_PAGE_MAX);
     expect(gAll.every(n => (n.folder as { id: string } | null)?.id === deepest)).toBe(true);
     expect(gAll[0]!.folder).toMatchObject({ name: q(40), nameTruncated: true });
@@ -764,7 +700,7 @@ describe("#108 單次回應大小（案 11c）", () => {
         `第一頁 群組形 ${gPages[0]!.notes.length} 篇  個人形 ${pPages[0]!.notes.length} 篇${pPages[0]!.pageCutShort ? "（pageCutShort）" : ""}`
     );
 
-    // ② search_notes：(v) 形（每篇 5 段最壞 heading／內文），100 篇都建索引，筆記帶最壞 folder → ≤ N、matchesTruncated。
+    // search_notes: (v)'s shape (each note has 5 worst heading/body sections), all 100 notes indexed, notes carry the worst folder -> <= N, matchesTruncated.
     for (const [i, id] of groupNoteIds.entries()) {
       await ctx.db.insert(noteStates).values({ noteId: id, ydoc: Buffer.from(Y.encodeStateAsUpdate(new Y.Doc())), version: 1 });
       const rows = Array.from({ length: 5 }, (_, k) => ({
@@ -782,20 +718,20 @@ describe("#108 單次回應大小（案 11c）", () => {
     expect(search.sc.matchesTruncated).toBe(true);
     expect(search.sc.notes[0]!.folder).toMatchObject({ id: deepest, nameTruncated: true });
 
-    // ③ list_folders 一整頁：55 個群組資料夾取前 50；預算截不到（發現 19）→ pageCutShort 不在（日後紅＝某欄上限放寬了）。
+    // list_folders one full page: of 55 group folders take the first 50; the budget doesn't cut it -> pageCutShort is absent (if it turns red later, some field limit was loosened).
     const lf = await callWireResult<{ folders: Array<Record<string, unknown>>; nextCursor: string | null; pageCutShort?: true }>(
       ctx.app, o.token, "(viii)③ list_folders 一整頁", "list_folders", {}
     );
     expect(lf.sc.pageCutShort).toBeUndefined();
     expect(lf.sc.folders).toHaveLength(MCP_FOLDER_PAGE_MAX);
     expect(lf.sc.nextCursor).not.toBeNull();
-    // 鏈的前四層不截，其餘（最深層與 50 個兄弟）名稱與路徑都截過：一頁 50 項至少 46 項帶 pathTruncated。
+    // The first four levels of the chain aren't cut; the rest (the deepest level and the 50 siblings) are cut in both name and path: at least 46 of a page's 50 items carry pathTruncated.
     expect(lf.sc.folders.filter(f => f.pathTruncated === true && f.nameTruncated === true).length).toBeGreaterThanOrEqual(MCP_FOLDER_PAGE_MAX - 4);
     console.log(`[案 11c 每項] (viii)③ list_folders 每項最壞 ${Math.max(...lf.sc.folders.map(itemWire))}`);
 
-    // ④ list_trash：見 (vii)（同一個五層最深路徑形，每項另帶 folderPath）。
+    // list_trash: see (vii) (the same five-level deepest path, each item also carries folderPath).
 
-    // ⑥ read_note_outline：(ii) 形（500 段、標題 1000 字）先在頂層（folder null）量一次，放進最深層再量 → 多 > 1 000（folder 欄真的在）。
+    // read_note_outline: (ii)'s shape (500 sections, 1000-character titles) is measured at the top level (folder null) first, then at the deepest level -> more than 1 000 larger (the folder field is really there).
     const outlineNote = await ctx.createNote(p.id, "five hundred sections");
     const session = await ctx.loginAs(p.email, PASSWORD);
     const client = await seedContent(ctx, session, outlineNote.id, Array.from({ length: 500 }, (_, i) => `# ${String(i).padStart(4, "0")}${"h".repeat(994)}`).join("\n\n"));
@@ -815,7 +751,7 @@ describe("#108 單次回應大小（案 11c）", () => {
     );
     client.disconnect();
 
-    // ⑤ delete_folder 大子樹：最深層再補 200 篇（共 300）→ 刪整條鏈；回應 ≤ N、恰好 100 個 id＋旗標。
+    // delete_folder large subtree: add 200 more notes at the deepest level (300 total) -> delete the whole chain; response <= N, exactly 100 ids + the flag.
     await seedManyNotesInFolder(pool, { groupId: g.id }, deepest, 200);
     const { token: rwmdToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write notes:move notes:delete");
     const df = await callWireResult<{ trashedNoteCount: number; trashedNoteIds: string[]; trashedNoteIdsTruncated?: true; deletedFolderCount: number }>(
@@ -826,8 +762,7 @@ describe("#108 單次回應大小（案 11c）", () => {
     console.log(`[案 11c 每項] (viii)⑤ delete_folder payload（鏡像兩份）${wireCost(df.sc)}`);
   });
 
-  // 整張表印一次（PR 描述要貼）。**刻意是 hook 不是 `it`**：它只彙整前面幾案已經斷言過的
-  // 值，寫成 `it` 會讓「只跑其中一案」變成假紅。
+  // Print the whole table once. **A hook, deliberately not an `it`**: it only aggregates values earlier cases already asserted, and an `it` would make running just one of those cases a false red.
   afterAll(() => {
     console.log(
       `\n[案 11c 量測表] N=${MCP_MAX_WIRE}\n` +
@@ -837,8 +772,7 @@ describe("#108 單次回應大小（案 11c）", () => {
 });
 
 /**
- * 一列「每一格都合規但都滿長」的筆記；`lastEdited` 四欄一併補滿（見上面的 ⚠）。
- * 個人筆記給 `{ ownerId }`、群組筆記給 `{ groupId }`（XOR，#175）；`editorId` 是 `last_edited_by`。
+ * A row of an "every cell compliant but full length" note; fills all four `lastEdited` fields (see the warning above). Personal notes pass `{ ownerId }`, group notes `{ groupId }` (XOR, #175); `editorId` is `last_edited_by`.
  */
 async function seedMaxNote(
   db: Db,
