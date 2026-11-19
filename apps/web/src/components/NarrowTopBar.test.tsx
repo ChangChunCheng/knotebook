@@ -13,13 +13,8 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { stubLayoutTier } from "@/test/layout-tier";
 
 /**
- * #115：NarrowTopBar（`xl:hidden` 的側欄鈕＋K logo 列）消費端守衛。
- *
- * 明確清單＝HomePage／NotePageFallback／NoteRouteErrorFallback 三處
- * （第三處的斷言在 `ErrorBoundary.test.tsx`，它有現成的錯誤畫面 harness；
- * **AppErrorFallback 刻意排除**的反向斷言也在那邊）——沒有這組守衛，窄視窗上
- * 這些頁面就是「側欄藏了、又沒有任何入口能打開抽屜」的死路，而 jsdom 不套 CSS
- * 看不出來。
+ * #115: consumer guard for NarrowTopBar (the `xl:hidden` sidebar button + K logo row).
+ * The explicit list is HomePage, NotePageFallback and NoteRouteErrorFallback (the third's assertion lives in `ErrorBoundary.test.tsx`, which has the error-screen harness; the reverse assertion that AppErrorFallback is deliberately excluded is there too). Without this guard these pages are dead ends on a narrow window (sidebar hidden, nothing can open the drawer), which jsdom (no CSS) can't reveal.
  */
 
 const USER: UserDto = {
@@ -67,7 +62,7 @@ function renderWithProviders(children: ReactNode) {
   );
 }
 
-describe("NarrowTopBar 消費端（#115）", () => {
+describe("NarrowTopBar consumers (#115)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -77,26 +72,25 @@ describe("NarrowTopBar 消費端（#115）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("HomePage 內文卡頂有 xl:hidden 的側欄鈕列（開抽屜入口）", async () => {
+  it("HomePage content card top has the xl:hidden sidebar button row (entry to open the drawer)", async () => {
     renderWithProviders(<HomePage />);
-    // 靜態側欄沒有開抽屜的鈕，唯一的「Open sidebar」就是 NarrowTopBar 的。它必須在 main（內文卡）裡。
+    // The static sidebar has no drawer-opening button, so the "Open sidebar" found here is NarrowTopBar's; it must be inside main (the content card).
     const hamburger = await screen.findByRole("button", { name: "Open sidebar" });
     expect(hamburger.closest("main")).not.toBeNull();
-    // wrapper 與按鈕**各自**斷 xl:hidden——`closest('[class*="xl:hidden"]')` 含
-    // 元素自身、按鈕本身就帶這個 class，那種寫法恆真（wrapper 拔掉
-    // xl:hidden 仍全綠）。掉 wrapper 那個的後果是寬視窗每張內文卡頂多一條
-    // 「K Knotebook」列。
+    // Assert xl:hidden on the wrapper and on the button **separately**: `closest('[class*="xl:hidden"]')` includes the element itself and the button carries the class,
+    // so that form is always true (it stays green with xl:hidden removed from the wrapper). Losing the wrapper's class would leave a "K Knotebook" row
+    // at the top of every content card on wide windows.
     expect(hamburger.parentElement).toHaveClass("xl:hidden");
     expect(hamburger).toHaveClass("xl:hidden");
   });
 
-  it("NotePageFallback（chunk 載入中的過渡畫面）同樣有側欄鈕列", async () => {
+  it("NotePageFallback (transition screen while the chunk loads) also has the sidebar button row", async () => {
     renderWithProviders(<NotePageFallback />);
     const hamburger = await screen.findByRole("button", { name: "Open sidebar" });
     expect(hamburger.closest("main")).not.toBeNull();
   });
 
-  it("手機：頂列最前面是「Back to notes」，沒有「Open sidebar」", async () => {
+  it("phone: the top bar starts with 'Back to notes', no 'Open sidebar'", async () => {
     stubLayoutTier("phone");
     renderWithProviders(<NotePageFallback />);
     const back = await screen.findByRole("button", { name: "Back to notes" });
@@ -104,17 +98,17 @@ describe("NarrowTopBar 消費端（#115）", () => {
     expect(screen.queryByRole("button", { name: "Open sidebar" })).toBeNull();
   });
 
-  it("手機：頂列貼齊螢幕上緣，上內距加 safe area；非手機的 py-2 不變", async () => {
+  it("phone: top bar hugs the screen top edge, top padding plus safe area; py-2 unchanged for non-phone", async () => {
     stubLayoutTier("phone");
     renderWithProviders(<NotePageFallback />);
     const back = await screen.findByRole("button", { name: "Back to notes" });
     const bar = back.parentElement;
     expect(bar).toHaveClass("py-2", "max-sm:pt-[calc(0.5rem+env(safe-area-inset-top))]");
-    // 內文卡本身手機貼邊：沒有圓角與框。
+    // On phone the content card itself hugs the edges: no rounded corners or border.
     expect(back.closest("main")?.firstElementChild).toHaveClass("max-sm:rounded-none", "max-sm:border-0", "max-sm:pb-[env(safe-area-inset-bottom)]");
   });
 
-  it("浮動段：頂列是「Open sidebar」，沒有「Back to notes」", async () => {
+  it("floating tier: top bar is 'Open sidebar', no 'Back to notes'", async () => {
     stubLayoutTier("overlay");
     renderWithProviders(<NotePageFallback />);
     expect(await screen.findByRole("button", { name: "Open sidebar" })).toBeInTheDocument();

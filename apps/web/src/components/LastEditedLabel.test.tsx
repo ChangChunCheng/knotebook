@@ -1,10 +1,6 @@
 /**
- * #138：頁首的「最後編輯」標籤。
- *
- * ⚠ 時間一律用**既有的絕對日期格式**（`ApiTokensSection.tsx` 的 `formatDate` 同款
- * `toLocaleDateString(i18n.language)`）——repo 裡沒有任何 `Intl.RelativeTimeFormat`
- * 或相對時間 helper。斷言比對**完整格式化字串**而不是前綴：只比前綴的話，實作者
- * 臨時發明一套沒被審過的格式也照樣綠。
+ * Dates always use the existing absolute format (`formatDate` in `settings/ApiTokensSection.tsx`, i.e. `toLocaleDateString(i18n.language)`): the repo has no relative-time helper (no `Intl.RelativeTimeFormat`).
+ * Assertions compare the full formatted string, not a prefix: a prefix check would stay green if the code switched to an unreviewed format.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -40,14 +36,14 @@ describe("LastEditedLabel", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("lastEdited 為 null 時不渲染任何節點", () => {
+  it("renders no node when lastEdited is null", () => {
     const { container } = render(<LastEditedLabel note={{ ...NOTE, lastEdited: null }} onOpenEdits={vi.fn()} />);
     expect(screen.queryByTestId("last-edited")).toBeNull();
-    // 分隔線與標籤同一個 null 條件：不能只剩一條孤線。
+    // The separator shares the same null condition: it must not be left behind as a lone line.
     expect(container.firstChild).toBeNull();
   });
 
-  it("人形：前綴 + handle · 日期，不是按鈕；title 是含 who 的完整字串（lastEditedAt）", () => {
+  it("human: prefix + handle + date, not a button; title is the full string including who (lastEditedAt)", () => {
     render(
       <LastEditedLabel
         note={{ ...NOTE, lastEdited: { at: AT, byHandle: "alice", agentLabel: null } }}
@@ -60,7 +56,7 @@ describe("LastEditedLabel", () => {
     expect(el.getAttribute("title")).toBe(i18n.t("note.lastEditedAt", { who: "alice", when: full(AT) }));
   });
 
-  it("AI 形：handle (label) · 日期，是按鈕，按下呼叫 onOpenEdits", () => {
+  it("AI: handle (label) + date, is a button, pressing it calls onOpenEdits", () => {
     const open = vi.fn();
     render(
       <LastEditedLabel
@@ -70,17 +66,17 @@ describe("LastEditedLabel", () => {
     );
     const btn = screen.getByRole("button", { name: /alice \(claude\)/ });
     expect(btn.textContent).toBe(`Last edited by alice (claude) · ${fmt(AT)}`);
-    // AI 形是唯一可按的那一種，tooltip 比人形的 lastEditedAt 多一句「點一下看改了什麼」，
-    // 說明按下去會發生什麼（見上一案）。
+    // The AI shape is the clickable one, so its tooltip has one more sentence than the human lastEditedAt ("click to see what changed"),
+    // explaining what pressing does.
     expect(btn.getAttribute("title")).toBe(i18n.t("note.lastEditedTitle", { who: "alice (claude)", when: full(AT) }));
     fireEvent.click(btn);
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  // 窄視窗要跟同一個 header 裡的 ConnectionBadge 一致——
-  // 手機寬或頁首不到 36rem 時 sr-only（螢幕閱讀器讀得到、視覺隱藏），不是 hidden
-  // （display:none 整個從無障礙樹消失）。兩形（人形 span、AI 形 button）都要守。
-  it("窄視窗：max-sm:sr-only 與 @max-[36rem]:sr-only（非 hidden），兩形都要守", () => {
+  // A narrow window must match the ConnectionBadge in the same header: sr-only on phone width or when the header is under 36rem
+  // (readable by screen readers, visually hidden), not hidden (display:none removes it from the accessibility tree).
+  // Both shapes (human span, AI button) are covered.
+  it("narrow window: max-sm:sr-only and @max-[36rem]:sr-only (not hidden), for both shapes", () => {
     const { rerender } = render(
       <LastEditedLabel
         note={{ ...NOTE, lastEdited: { at: AT, byHandle: "alice", agentLabel: null } }}
@@ -104,8 +100,8 @@ describe("LastEditedLabel", () => {
     expect(aiEl.className).not.toContain("sm:inline");
   });
 
-  // class 斷言，不是行為斷言：jsdom 沒有 CSS、沒有版面，這裡只釘 class 字串。
-  it("分隔線與可縮（class 斷言，jsdom 無 CSS、無版面）：兩形皆然", () => {
+  // Class assertion, not behaviour: jsdom has no CSS or layout, so only the class strings are pinned.
+  it("separator and shrinkability (class assertions; jsdom has no CSS or layout): both shapes", () => {
     const { rerender } = render(
       <LastEditedLabel
         note={{ ...NOTE, lastEdited: { at: AT, byHandle: "alice", agentLabel: null } }}
@@ -129,7 +125,7 @@ describe("LastEditedLabel", () => {
     }
   });
 
-  it("帳號已刪（byHandle 為空字串）：who 代入「a deleted account」", () => {
+  it("deleted account (byHandle is an empty string): who becomes 'a deleted account'", () => {
     render(
       <LastEditedLabel
         note={{ ...NOTE, lastEdited: { at: AT, byHandle: "", agentLabel: null } }}

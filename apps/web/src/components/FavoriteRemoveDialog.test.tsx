@@ -27,7 +27,7 @@ describe("FavoriteRemoveDialog", () => {
     cleanup();
   });
 
-  it("標題與說明（帶入筆記標題）", () => {
+  it("title and description (with the note title filled in)", () => {
     setup({ title: "Alpha" });
     const dialog = screen.getByRole("dialog", { name: "Remove from favorites?" });
     expect(dialog).toHaveAccessibleDescription(
@@ -36,30 +36,30 @@ describe("FavoriteRemoveDialog", () => {
   });
 
   it.each([
-    ["空字串", ""],
-    ["只有空白", "  \t "],
-  ])("標題是%s → 說明換成「Untitled」佔位字", (_name, title) => {
+    ["empty string", ""],
+    ["whitespace only", "  \t "],
+  ])("title is %s -> description falls back to the Untitled placeholder", (_name, title) => {
     setup({ title });
     expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
       "\"Untitled\" will be removed from your favorites. The note itself isn't changed, and you can add it back later.",
     );
   });
 
-  it("標題前後有空白但有內容 → 照原字帶入", () => {
+  it("title with surrounding whitespace but content -> filled in as is", () => {
     setup({ title: " Alpha " });
     expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
       "\" Alpha \" will be removed from your favorites. The note itself isn't changed, and you can add it back later.",
     );
   });
 
-  it("開框時焦點在 Cancel；Remove 是第二顆", () => {
+  it("on open focus is on Cancel; Remove is the second button", () => {
     setup();
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
     const footer = screen.getByRole("button", { name: "Remove" }).parentElement!;
     expect(Array.from(footer.children).map((el) => el.textContent)).toEqual(["Cancel", "Remove"]);
   });
 
-  it("Remove 呼叫 onConfirm", () => {
+  it("Remove calls onConfirm", () => {
     const { onConfirm, onOpenChange } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -69,15 +69,15 @@ describe("FavoriteRemoveDialog", () => {
   it.each([
     ["Cancel", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
     ["Esc", () => fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })],
-    ["✕", () => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
-  ])("%s 呼叫 onOpenChange(false)、不呼叫 onConfirm", (_name, act) => {
+    ["close button", () => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
+  ])("%s calls onOpenChange(false) and not onConfirm", (_name, act) => {
     const { onConfirm, onOpenChange } = setup();
     act();
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("pending：兩鈕 disabled，Esc 與 ✕ 不呼叫 onOpenChange", () => {
+  it("pending: both buttons disabled, Esc and the close button don't call onOpenChange", () => {
     const { onConfirm, onOpenChange } = setup({ pending: true });
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();

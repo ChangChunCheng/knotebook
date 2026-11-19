@@ -18,7 +18,6 @@ import { AppShell, SidebarDrawerButton } from "./AppShell";
 import { NoteBrowseBar } from "./NoteBrowseBar";
 import { pressTrigger } from "@/test/menu-trigger";
 
-// 手機（< 640）的清單畫面：`/` 與非筆記路由時側欄滿版、筆記路由時藏起來並 inert；頂列、只有圖示的 tab 列、底部列與全螢幕搜尋。
 
 afterEach(() => {
   localStorage.clear();
@@ -110,7 +109,7 @@ function renderAt(path: string | string[], children: ReactNode = <LocationProbe 
   );
 }
 
-/** 側欄的 `<aside>`：筆記路由時它 inert＋隱藏，role 查詢要帶 `hidden: true`。 */
+/** On note routes the aside is inert and hidden, so role queries need `hidden: true`. */
 function aside(container: HTMLElement): HTMLElement {
   const node = container.querySelector<HTMLElement>("aside[data-sidebar-instance]");
   if (node === null) throw new Error("aside missing");
@@ -120,7 +119,6 @@ function aside(container: HTMLElement): HTMLElement {
 const BAR = "[data-phone-list-bar]";
 const FABS = "[data-phone-list-fabs]";
 
-/** 點底部左側的圓形「Search notes」鈕：開搜尋層、搜尋框掛上並取得焦點。 */
 async function openSearchLayer(): Promise<HTMLInputElement> {
   fireEvent.click(await screen.findByRole("button", { name: "Search notes" }));
   const input = (await screen.findByRole("textbox", { name: "Search notes" })) as HTMLInputElement;
@@ -128,14 +126,14 @@ async function openSearchLayer(): Promise<HTMLInputElement> {
   return input;
 }
 
-describe("AppShell — 手機清單畫面", () => {
+describe("AppShell - phone list screen", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
     stubLayoutTier("phone");
   });
 
-  it("PH1 `/`：側欄滿寬、在文件流裡（不是 fixed）、至少一個視窗高、沒有圓角與框；主內容區藏起來；沒有 inert、沒有拖曳把手", async () => {
+  it("`/`: sidebar full width, in document flow (not fixed), at least one viewport tall, no rounded corners or border; main content hidden; no inert, no drag handle", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const node = aside(container);
@@ -150,7 +148,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(node.style.width).toBe("");
   });
 
-  it("PH2 筆記路由：側欄仍在 DOM（不卸載）但 inert", async () => {
+  it("note route: sidebar stays in the DOM (not unmounted) but inert", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/n/tester/alpha-note");
     const node = aside(container);
@@ -158,7 +156,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(node).toHaveClass("hidden");
   });
 
-  it("PH3 非筆記路由（/groups/…）仍是清單：側欄不 inert、套滿版 class", async () => {
+  it("non-note route (/groups/...) is still the list: sidebar not inert, full-width classes applied", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/groups/g1");
     const node = aside(container);
@@ -166,7 +164,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(node).toHaveClass("max-sm:flex", "max-sm:min-h-svh");
   });
 
-  it("PH4 頂列：頭像鈕開使用者選單、選單有 Settings；中間是 Knotebook 字標；沒有選單列的名字文字", async () => {
+  it("top bar: avatar button opens the user menu which has Settings; Knotebook wordmark in the middle; no menu-row name text", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const trigger = await within(aside(container)).findByRole("button", { name: "Ann" });
@@ -178,7 +176,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(within(menu).getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("PH5 頂列高 48＋上緣 safe area；底部沒有使用者列（那顆鈕只有頂列一顆）", async () => {
+  it("top bar is 48 high plus the top safe area; no user row at the bottom (the avatar button exists once, in the top bar)", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     await within(aside(container)).findByRole("button", { name: "Ann" });
@@ -186,17 +184,17 @@ describe("AppShell — 手機清單畫面", () => {
     const top = container.querySelector("[data-phone-top-bar]");
     expect(top?.className).toContain("env(safe-area-inset-top)");
     expect(top?.firstElementChild).toHaveClass("h-12");
-    // 標題在左、頭像在右：標題左緣離邊 16px（同列文字起點）、頭像視覺右緣離邊 16px（點擊範圍 44、視覺 32 → 右內距 10px）。
+    // Title left, avatar right: title's left edge 16px from the screen edge (same as row text start); avatar's visual right edge 16px (hit area 44, visual 32, so right padding 10px).
     expect(top?.firstElementChild).toHaveClass("justify-between", "pl-4", "pr-2.5");
     expect(top?.firstElementChild?.firstElementChild).toHaveTextContent("Knotebook");
     expect(top?.firstElementChild?.lastElementChild).toBe(screen.getByRole("button", { name: "Ann" }));
-    // 滿版清單蓋住外框：左右（橫拿的瀏海）由清單自己退開；上下由頂列與底部列給，不在這一層重複。
+    // The full-width list covers the frame: left/right (landscape notch) are handled by the list itself, top/bottom by the top and bottom bars, not repeated at this level.
     const list = aside(container);
     expect(list).toHaveClass("max-sm:pl-[env(safe-area-inset-left)]", "max-sm:pr-[env(safe-area-inset-right)]");
     expect(list.className).not.toMatch(/max-sm:p[tb]-\[env/);
   });
 
-  it("PH6 tab 列：每個 tab 一顆、只有圖示（沒有文字）、h-11、不橫捲", async () => {
+  it("tab row: one button per tab, icon only (no text), h-11, no horizontal scroll", async () => {
     stubFetch([NOTE]);
     renderAt("/");
     const tablist = await screen.findByRole("tablist");
@@ -209,7 +207,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(tablist.className).not.toContain("overflow-x");
   });
 
-  it("PH7 沒在搜尋：清單底部沒有搜尋列、沒有搜尋框；左下圓形 Search、右下圓形 New note（各 56px、距邊 16px＋safe area、fixed）", async () => {
+  it("not searching: no search row or search box at the list bottom; round Search bottom-left and round New note bottom-right (each 56px, 16px from the edge plus safe area, fixed)", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
@@ -224,11 +222,10 @@ describe("AppShell — 手機清單畫面", () => {
     }
     expect(search).toHaveClass("left-[calc(1rem+env(safe-area-inset-left))]", "border", "bg-card/95", "supports-[backdrop-filter]:backdrop-blur-xs");
     expect(create).toHaveClass("right-[calc(1rem+env(safe-area-inset-right))]");
-    // 圖示鈕沒有可見文字。
     expect(create.textContent).toBe("");
   });
 
-  it("PH8 按 New note：建個人筆記並導向", async () => {
+  it("pressing New note creates a personal note and navigates to it", async () => {
     const created = stubFetch([NOTE]);
     renderAt("/");
     fireEvent.click(await screen.findByRole("button", { name: "New note" }));
@@ -236,7 +233,7 @@ describe("AppShell — 手機清單畫面", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/untitled-99999999"));
   });
 
-  it("PH9 點 Search：tab 列與清單換成搜尋層（空字顯示提示）、搜尋列（搜尋框＋Cancel）出現、兩顆浮動鈕消失", async () => {
+  it("pressing Search: tab row and list are replaced by the search layer (empty text shows a hint), the search row (box + Cancel) appears, the two floating buttons disappear", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
@@ -251,7 +248,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(input).toHaveClass("h-11", "text-base");
   });
 
-  it("PH10 打字出結果；按 Cancel 清空、離開搜尋層回到 tab 列與 New note", async () => {
+  it("typing shows results; Cancel clears and leaves the search layer, back to the tab row and New note", async () => {
     stubFetch([NOTE]);
     renderAt("/");
     const input = await openSearchLayer();
@@ -266,7 +263,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
-  it("PH11 失焦不關搜尋層（有字、沒字都一樣）；Esc 才關並清空", async () => {
+  it("blur doesn't close the search layer (with or without text); Esc closes it and clears", async () => {
     stubFetch([NOTE]);
     renderAt("/");
     const input = await openSearchLayer();
@@ -286,7 +283,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(screen.queryByTestId("phone-search-hint")).toBeNull();
   });
 
-  it("PH12 跨到 640 以上：搜尋層收起，回到手機後不會自己又開著", async () => {
+  it("crossing above 640 collapses the search layer; it isn't open again after going back to phone", async () => {
     stubFetch([NOTE]);
     const tier = stubLayoutTier("phone");
     renderAt("/");
@@ -300,7 +297,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(screen.queryByTestId("phone-search-hint")).toBeNull();
   });
 
-  it("PH13 選取模式：底部列換成選取動作列", async () => {
+  it("selection mode: the bottom bar is replaced by the selection action bar", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const panel = await screen.findByRole("tabpanel");
@@ -308,12 +305,11 @@ describe("AppShell — 手機清單畫面", () => {
     await within(aside(container)).findByText("0 selected");
     await waitFor(() => expect(container.querySelector("[data-select-action-bar]")).not.toBeNull());
     expect(container.querySelector(BAR)).toBeNull();
-    // 選取模式沒有浮動鈕（動作列在底部）。
     expect(container.querySelector(FABS)).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Search notes" })).toBeNull();
   });
 
-  it("PH14 垃圾桶 tab：沒有 New note、Search 鈕還在", async () => {
+  it("trash tab: no New note, Search button remains", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     fireEvent.click(await screen.findByRole("tab", { name: "Trash" }));
@@ -323,14 +319,14 @@ describe("AppShell — 手機清單畫面", () => {
     expect(within(fabs).getByRole("button", { name: "Search notes" })).toBeInTheDocument();
   });
 
-  it("PH15 清單捲動容器帶 overscroll-y-contain（Android 獨立視窗下拉不誤重整）", async () => {
+  it("list scroll container has overscroll-y-contain (Android standalone window: pull-down doesn't trigger a reload)", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
     expect(container.querySelector("[data-sidebar-list]")).toHaveClass("overscroll-y-contain");
   });
 
-  it("PH16 Ctrl+K 在筆記路由：回清單並聚焦底部搜尋框；在清單上：直接聚焦、preventDefault", async () => {
+  it("Ctrl+K on a note route: back to the list and focus the bottom search box; on the list: focus directly, preventDefault", async () => {
     stubFetch([NOTE]);
     renderAt("/n/tester/alpha-note");
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
@@ -345,7 +341,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(input).toHaveFocus();
   });
 
-  it("PH18 選取模式下 Ctrl+K：先結束選取、底部搜尋框回來並取得焦點", async () => {
+  it("Ctrl+K in selection mode: selection ends first, the bottom search box returns and gets focus", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const panel = await screen.findByRole("tabpanel");
@@ -359,7 +355,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(container.querySelector("[data-select-action-bar]")).toBeNull();
   });
 
-  it("PH19 筆記路由上用瀏覽列的搜尋鈕開搜尋層：側欄滿版蓋住筆記、不 inert、網址不變；有字時失焦（收鍵盤、點結果前的 blur）仍留著、結果看得到", async () => {
+  it("opening the search layer from the browse bar search button on a note route: sidebar covers the note full width, not inert, URL unchanged; blur with text (keyboard dismissed, blur before tapping a result) keeps it open and results visible", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt(
       "/n/tester/alpha-note",
@@ -382,7 +378,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(await within(results).findByRole("link", { name: /^Alpha Note/ })).toBeInTheDocument();
   });
 
-  it("PH21 清單上聚焦、打字、點結果（沒有 blur）：進入筆記路由後搜尋層關、側欄藏起來並 inert", async () => {
+  it("focus, type and click a result on the list (no blur): after entering the note route the search layer closes, sidebar hidden and inert", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/");
     const input = await openSearchLayer();
@@ -398,7 +394,7 @@ describe("AppShell — 手機清單畫面", () => {
     expect(screen.queryByRole("button", { name: "Cancel", hidden: true })).toBeNull();
   });
 
-  it("PH22 在清單上 Cancel／Esc 關搜尋層：焦點回到左下的 Search 鈕（不掉到 body）", async () => {
+  it("Cancel/Esc closing the search layer on the list: focus returns to the bottom-left Search button (not body)", async () => {
     stubFetch([NOTE]);
     renderAt("/");
     const input = await openSearchLayer();
@@ -413,7 +409,7 @@ describe("AppShell — 手機清單畫面", () => {
     await waitFor(() => expect(fab2).toHaveFocus());
   });
 
-  it("PH20 浮動段開著的抽屜：窄到手機時關掉（不留舊抽屜與遮罩蓋住滿版清單）", async () => {
+  it("floating-tier drawer left open: closed when narrowing to phone (no stale drawer and backdrop over the full-width list)", async () => {
     const tier = stubLayoutTier("overlay");
     stubFetch([NOTE]);
     renderAt(
@@ -429,7 +425,7 @@ describe("AppShell — 手機清單畫面", () => {
     await waitFor(() => expect(document.querySelector("[data-sidebar-drawer]")).toBeNull());
   });
 
-  it("PH17 手機點 tab：不開抽屜；在筆記路由點 tab 會回清單", async () => {
+  it("phone tab tap: doesn't open the drawer; on a note route a tab tap returns to the list", async () => {
     stubFetch([NOTE]);
     const { container } = renderAt("/n/tester/alpha-note");
     const tab = within(aside(container)).getByRole("tab", { name: "Groups", hidden: true });
@@ -439,13 +435,13 @@ describe("AppShell — 手機清單畫面", () => {
   });
 });
 
-describe("AppShell — 手機以外維持原樣", () => {
+describe("AppShell - non-phone stays unchanged", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
   });
 
-  it.each(["docked", "overlay"] as const)("PN1 %s：頂端搜尋框（13px、Ctrl K 徽章）、底部使用者列、沒有底部列與頭像形", async (tier) => {
+  it.each(["docked", "overlay"] as const)("%s: top search box (13px, Ctrl K badge), bottom user row, no bottom bar and no avatar shape", async (tier) => {
     stubLayoutTier(tier);
     stubFetch([NOTE]);
     const { container } = renderAt("/");
@@ -458,7 +454,7 @@ describe("AppShell — 手機以外維持原樣", () => {
     expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
   });
 
-  it("PN2 固定段下聚焦搜尋框不進搜尋層（tab 列還在）", async () => {
+  it("focusing the search box in the docked tier doesn't enter the search layer (tab row remains)", async () => {
     stubLayoutTier("docked");
     stubFetch([NOTE]);
     renderAt("/");
@@ -467,7 +463,7 @@ describe("AppShell — 手機以外維持原樣", () => {
     expect(screen.getByRole("tablist")).toBeInTheDocument();
   });
 
-  it("PN3 浮動段在筆記路由：側欄 aside 沒有 inert（抽屜流程不受手機規則影響）", async () => {
+  it("floating tier on a note route: sidebar aside is not inert (drawer flow unaffected by phone rules)", async () => {
     stubLayoutTier("overlay");
     stubFetch([NOTE]);
     const { container } = renderAt("/n/tester/alpha-note");
@@ -475,7 +471,7 @@ describe("AppShell — 手機以外維持原樣", () => {
   });
 });
 
-describe("AppShell — 手機筆記頁的瀏覽列", () => {
+describe("AppShell - phone note page browse bar", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -494,9 +490,9 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     );
   }
 
-  it("搜尋框按鈕：搜尋層蓋在筆記上（網址不變、側欄不 inert、搜尋框取得焦點）；Cancel 回到同一篇", async () => {
+  it("search box button: the search layer covers the note (URL unchanged, sidebar not inert, search box focused); Cancel returns to the same note", async () => {
     stubFetch([NOTE]);
-    // jsdom 不看 CSS：模擬瀏覽器「藏起來（inert）的元素聚焦不了」，才分得出是不是真的先把搜尋層開起來再聚焦。
+    // jsdom ignores CSS: simulate the browser being unable to focus hidden (inert) elements, so the test can tell whether the search layer is really opened before focusing.
     const originalFocus = HTMLElement.prototype.focus;
     const focusSpy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, ...args) {
       if (this.closest("[inert]") !== null) return;
@@ -512,21 +508,18 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     const input = within(node).getByRole("textbox", { name: "Search notes" });
     await waitFor(() => expect(input).toHaveFocus());
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
-    // 搜尋層開著：筆記頁的浮動鈕不渲染。
     expect(screen.queryByTestId("note-browse-bar")).toBeNull();
 
-    // 筆記在搜尋層後面：不可達。
     expect(container.querySelector("main")).toHaveAttribute("inert");
 
     fireEvent.click(within(node).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(node).toHaveAttribute("inert"));
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
     expect(container.querySelector("main")).not.toHaveAttribute("inert");
-    // 焦點回到瀏覽列的搜尋鈕。
     await waitFor(() => expect(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" })).toHaveFocus());
   });
 
-  it("搜尋層開在筆記上時按系統返回：回到清單，搜尋層已關、搜尋框沒有焦點", async () => {
+  it("system back with the search layer open on a note: back to the list, search layer closed, search box not focused", async () => {
     stubFetch([NOTE]);
     function Back() {
       const navigate = useNavigate();
@@ -554,7 +547,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(input).not.toHaveFocus();
   });
 
-  it("搜尋層開在筆記上時按 Ctrl+K：直接聚焦搜尋框，不回清單", async () => {
+  it("Ctrl+K with the search layer open on a note: focuses the search box directly, doesn't go back to the list", async () => {
     stubFetch([NOTE]);
     renderNote();
     fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "Search notes" }));
@@ -566,7 +559,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/n/tester/alpha-note");
   });
 
-  it("開著搜尋層的筆記路由上，點結果換到另一篇：搜尋層關掉、側欄藏起來", async () => {
+  it("on a note route with the search layer open, clicking a result for another note: search layer closes, sidebar hidden", async () => {
     stubFetch([NOTE, OTHER]);
     const { container } = renderNote();
     const node = aside(container);
@@ -582,7 +575,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(screen.queryByTestId("sidebar-search")).toBeNull();
   });
 
-  it("開著搜尋層時點的結果就是目前這篇：搜尋層也關掉", async () => {
+  it("clicking a result that is the current note with the search layer open: search layer also closes", async () => {
     stubFetch([NOTE]);
     const { container } = renderNote();
     const node = aside(container);
@@ -594,7 +587,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(screen.queryByTestId("sidebar-search")).toBeNull();
   });
 
-  it("同一篇換網址（改名後的 canonical 收斂）不算換頁：搜尋層留著", async () => {
+  it("same note with a changed URL (canonical redirect after rename) isn't a page change: search layer stays", async () => {
     stubFetch([NOTE]);
     function Rename() {
       const navigate = useNavigate();
@@ -624,7 +617,7 @@ describe("AppShell — 手機筆記頁的瀏覽列", () => {
     expect(node).not.toHaveAttribute("inert");
   });
 
-  it("「New note」建立並導向新筆記（同一個 createNote 流程）", async () => {
+  it("'New note' creates and navigates to the new note (same createNote flow)", async () => {
     const created = stubFetch([NOTE]);
     renderNote();
     fireEvent.click(within(screen.getByTestId("note-browse-bar")).getByRole("button", { name: "New note" }));

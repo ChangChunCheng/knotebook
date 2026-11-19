@@ -10,8 +10,8 @@ import { __resetFolderSortForTests } from "@/components/sidebar/folder-sort";
 import { AppErrorBoundary } from "./ErrorBoundary";
 import { NoteList } from "./NoteList";
 
-// 新增群組對話框的 lazy chunk 載入失敗：只在原位顯示 inline 錯誤，側欄與整個 app 不崩。
-// `vi.mock` 整檔生效，所以獨立成檔（照 NoteList.folder-lazy-error.test.tsx）。
+// The new-group dialog's lazy chunk fails to load: only an inline error in place, the sidebar and the whole app don't crash.
+// `vi.mock` applies to the whole file, hence a separate file (as in NoteList.folder-lazy-error.test.tsx).
 vi.mock("@/components/groups/GroupNameDialog", () =>
   Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/GroupNameDialog-abc.js")),
 );
@@ -20,7 +20,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-describe("NoteList — 新增群組對話框 chunk 載入失敗", () => {
+describe("NoteList - new group dialog chunk fails to load", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     sessionStorage.clear();
@@ -46,7 +46,7 @@ describe("NoteList — 新增群組對話框 chunk 載入失敗", () => {
     __resetFolderSortForTests();
   });
 
-  it("重載額度已用完：按 New group 後 tabpanel 內出現 inline 錯誤，側欄標題列還在、app 沒崩", async () => {
+  it("reload allowance used up: pressing New group shows an inline error in the tabpanel, the sidebar header row is still there, the app didn't crash", async () => {
     sessionStorage.setItem("knotebook:chunk-reload:groupDialog", "1");
     render(
       <AppErrorBoundary reload={vi.fn()}>

@@ -1,6 +1,6 @@
 /**
- * 筆記大小上限的前端檢查，用**真的** BlockNote＋y-prosemirror（`buildNoteEditorOptions` 建的編輯器，帶 UndoManager）與真的檢查函式
- * （`createNoteSizeGuard`，不是替身）：貼上事件經 BlockNote 自己的貼上流程走到 `handlePaste`，估的是解析好的內容。
+ * Front-end check of the note size limit with the **real** BlockNote + y-prosemirror (editor built by `buildNoteEditorOptions`, with an UndoManager) and the real check function
+ * (`createNoteSizeGuard`, not a stand-in): a paste event goes through BlockNote's own paste flow to `handlePaste`, and what is estimated is the parsed content.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
@@ -12,10 +12,10 @@ import { useNoteOverLimit } from "@/hooks/useNoteOverLimit";
 vi.mock("@/components/ui/toast", () => ({ toast: vi.fn() }));
 const { buildNoteEditorOptions } = await import("./NoteEditor");
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試用編輯器，走 repo 慣例的 BlockNoteEditor<any,any,any>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test editor; repo convention BlockNoteEditor<any,any,any>
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** server 存的大小（新文件＋applyUpdate＋encode：本機 UndoManager 留住的墓碑會被回收）。 */
+/** The size the server stores (fresh doc + applyUpdate + encode: tombstones kept by the local UndoManager are reclaimed). */
 function serverSize(doc: Y.Doc): number {
   const c = new Y.Doc();
   Y.applyUpdate(c, Y.encodeStateAsUpdate(doc));
@@ -77,7 +77,7 @@ function paste(editor: AnyEditor, data: Record<string, string>) {
 
 function drop(editor: AnyEditor, data: Record<string, string>, pos: number) {
   const view = editor._tiptapEditor.view as unknown as { posAtCoords: unknown; dom: HTMLElement };
-  view.posAtCoords = () => ({ pos, inside: -1 }); // jsdom 沒有版面：落點直接給
+  view.posAtCoords = () => ({ pos, inside: -1 }); // jsdom has no layout: give the drop position directly
   const ev = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
   Object.defineProperty(ev, "dataTransfer", { value: { types: Object.keys(data), getData: (t: string) => data[t] ?? "", files: [], items: [] } });
   Object.defineProperty(ev, "clientX", { value: 1 });
@@ -100,8 +100,8 @@ const wordHtml = (n: number) =>
   Array.from({ length: n }, (_, i) => `<p class=MsoNormal style="margin:0cm;mso-pagination:none"><span lang=EN-US style="font-size:11.0pt;font-family:Calibri;mso-ascii-theme-font:minor-latin">Short line ${i}<o:p></o:p></span></p>`).join("") +
   "</body></html>";
 
-describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
-  it("每一種貼上來源都在插入之前問到檢查（純文字、HTML、markdown、站內 blocknote/html、VS Code）；沒有空間 → 不插入、提示", async () => {
+describe("paste size check (real BlockNote + y-prosemirror)", () => {
+  it("every paste source asks the check before inserting (plain text, HTML, markdown, in-site blocknote/html, VS Code); no room -> not inserted, hint shown", async () => {
     const s = setup();
     s.fill(5);
     const src = setup();
@@ -114,7 +114,7 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
       ["站內 blocknote/html", { "blocknote/html": internal, "text/html": internal, "text/plain": "x" }],
       ["VS Code", { "text/plain": "const a = 1;\nconst b = 2;", "vscode-editor-data": JSON.stringify({ version: 1, mode: "typescript" }) }],
     ];
-    s.setLimit(serverSize(s.doc)); // 一點空間都沒有
+    s.setLimit(serverSize(s.doc)); // no room at all
     for (const [name, data] of sources) {
       placeCursorAtEnd(s.editor);
       const before = Y.encodeStateAsUpdate(s.doc);
@@ -126,18 +126,17 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
       expect(Y.encodeStateAsUpdate(s.doc), `${name}：沒有插入`).toEqual(before);
     }
     expect(s.notified).toHaveLength(sources.length);
-    // 有空間時同樣的貼上照常插入（檢查放行）
     s.setLimit(undefined);
     placeCursorAtEnd(s.editor);
     paste(s.editor, sources[0]![1]);
     expect(JSON.stringify(s.editor.document)).toContain("just some plain text pasted here");
   });
 
-  it("接近上限：markdown 表格（文字只有幾 KB，存下來是它的幾十倍）→ 擋；空間夠才放", () => {
+  it("near the limit: a markdown table (a few KB of text, tens of times that once stored) -> blocked; allowed when there is room", () => {
     const s = setup();
     s.fill(10);
     const md = mdTable(300);
-    s.setLimit(serverSize(s.doc) + 30_000); // 剩 30 KB：比表格的文字（約 8 KB）多，但遠比存下來的（約 300 KB）少
+    s.setLimit(serverSize(s.doc) + 30_000); // 30 KB left: more than the table's text (about 8 KB) but far less than what is stored (about 300 KB)
     expect(new TextEncoder().encode(md).byteLength).toBeLessThan(30_000);
     placeCursorAtEnd(s.editor);
     const before = Y.encodeStateAsUpdate(s.doc);
@@ -147,14 +146,14 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
     s.setLimit(serverSize(s.doc) + 600_000);
     paste(s.editor, { "text/plain": md });
     const grown = serverSize(s.doc) - before.byteLength;
-    expect(grown).toBeGreaterThan(30_000); // 真的長了這麼多：剛才擋得對
+    expect(grown).toBeGreaterThan(30_000); // it really grew this much: blocking was right
   });
 
-  it("接近上限：項目清單（800 項）→ 擋", () => {
+  it("near the limit: a bullet list (800 items) -> blocked", () => {
     const s = setup();
     s.fill(10);
     const md = mdList(800);
-    s.setLimit(serverSize(s.doc) + 60_000); // 文字約 8 KB；存下來約 175 KB
+    s.setLimit(serverSize(s.doc) + 60_000); // text about 8 KB; about 175 KB once stored
     placeCursorAtEnd(s.editor);
     const before = Y.encodeStateAsUpdate(s.doc);
     paste(s.editor, { "text/plain": md });
@@ -162,12 +161,12 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
     expect(s.notified).toHaveLength(1);
   });
 
-  it("Word 那種剪貼簿 HTML 很肥、內容很少 → 放行（估的是解析後的內容，不是剪貼簿的位元組）", () => {
+  it("Word-style clipboard HTML is fat with little content -> allowed (the estimate is of the parsed content, not the clipboard bytes)", () => {
     const s = setup();
     s.fill(10);
     const html = wordHtml(20);
     const headroom = 10_000;
-    expect(new TextEncoder().encode(html).byteLength).toBeGreaterThan(headroom); // 用剪貼簿位元組估會擋
+    expect(new TextEncoder().encode(html).byteLength).toBeGreaterThan(headroom); // estimating by clipboard bytes would block it
     s.setLimit(serverSize(s.doc) + headroom);
     placeCursorAtEnd(s.editor);
     paste(s.editor, { "text/html": html, "text/plain": "Short line" });
@@ -175,13 +174,13 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
     expect(JSON.stringify(s.editor.document)).toContain("Short line 19");
   });
 
-  it("接近上限時剪下再貼上（搬移）→ 放行：本機刪掉的內容（UndoManager 留著的墓碑）不算", async () => {
+  it("cut and paste near the limit (a move) -> allowed: content deleted locally (tombstones kept by the UndoManager) doesn't count", async () => {
     const s = setup();
     s.fill(200);
     const moved = s.editor.document.slice(50, 100);
     const html = await s.editor.blocksToFullHTML(moved);
-    s.setLimit(serverSize(s.doc) + 2_000); // 只剩 2 KB；搬的那段約 12 KB
-    s.editor.removeBlocks(moved.map(b => b.id)); // 剪下
+    s.setLimit(serverSize(s.doc) + 2_000); // only 2 KB left; the moved part is about 12 KB
+    s.editor.removeBlocks(moved.map(b => b.id)); // cut
     expect(Y.encodeStateAsUpdate(s.doc).byteLength, "UndoManager 留住刪掉的內容：原始大小沒變小").toBeGreaterThan(serverSize(s.doc) + 5_000);
     placeCursorAtEnd(s.editor);
     paste(s.editor, { "blocknote/html": html, "text/html": html, "text/plain": "x" });
@@ -191,14 +190,13 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
     expect(text).toContain("paragraph 99 with");
   });
 
-  it("取代選取範圍、換成較短的字 → 放行（扣掉被取代的部分；筆記已超過上限也一樣）", () => {
+  it("replacing the selection with shorter text -> allowed (the replaced part is subtracted; same when the note is already over the limit)", () => {
     const s = setup();
     s.fill(30, i => (i === 5 ? "x".repeat(3_000) : `paragraph ${i}`));
-    s.setLimit(serverSize(s.doc) - 1_000); // 已經超過上限
+    s.setLimit(serverSize(s.doc) - 1_000); // already over the limit
     const target = s.editor.document[5]!;
     void target;
     const view = s.editor._tiptapEditor.view;
-    // 選取那一段的文字
     let from = -1;
     let to = -1;
     view.state.doc.descendants((node, pos) => {
@@ -219,8 +217,8 @@ describe("貼上的大小檢查（真的 BlockNote＋y-prosemirror）", () => {
   });
 });
 
-describe("拖放與帶屬性的內容（真的 BlockNote＋y-prosemirror）", () => {
-  it("從外面拖進來（HTML、純文字）：插入之前問到檢查；沒有空間 → 不插入、提示；有空間 → 照常插入", () => {
+describe("drag-drop and content with attributes (real BlockNote + y-prosemirror)", () => {
+  it("dragged in from outside (HTML, plain text): asks the check before inserting; no room -> not inserted, hint shown; room -> inserted as usual", () => {
     const s = setup();
     s.fill(20);
     const end = s.editor._tiptapEditor.view.state.doc.content.size - 3;
@@ -239,7 +237,7 @@ describe("拖放與帶屬性的內容（真的 BlockNote＋y-prosemirror）", ()
     expect(JSON.stringify(s.editor.document)).toContain("dropped html");
   });
 
-  it("帶大屬性的 block（mermaid 原始碼）：ProseMirror 內容的估計把屬性的位元組算進去，約等於實際成長（同站內 AI 的 blocks 估法）", () => {
+  it("block with large attributes (mermaid source): the ProseMirror content estimate counts the attribute bytes, about the actual growth (same as the in-site AI blocks estimate)", () => {
     const s = setup();
     const view = s.editor._tiptapEditor.view;
     const estBefore = estimatePmBytes(view.state.doc);
@@ -254,7 +252,7 @@ describe("拖放與帶屬性的內容（真的 BlockNote＋y-prosemirror）", ()
     expect(estimateBlocksBytes(blocks) / actual).toBeGreaterThan(0.8);
   });
 
-  it("格式很多的內容（每個字粗體、連結）：估計約等於實際成長", () => {
+  it("heavily formatted content (every character bold, linked): the estimate is about the actual growth", () => {
     const s = setup();
     s.fill(3);
     placeCursorAtEnd(s.editor);
@@ -268,8 +266,8 @@ describe("拖放與帶屬性的內容（真的 BlockNote＋y-prosemirror）", ()
   });
 });
 
-describe("超過上限的提示與墓碑（真的編輯器，有 UndoManager）", () => {
-  it("長過上限 → 提示；刪掉 95% → 原始大小還很大（墓碑），回收過的大小才是 server 的；提示消失、貼上又放行", async () => {
+describe("over-limit hint and tombstones (real editor with UndoManager)", () => {
+  it("longer than the limit -> hint; delete 95% -> raw size is still large (tombstones), the reclaimed size is what the server has; the hint disappears and pasting is allowed again", async () => {
     const s = setup();
     s.fill(400);
     const limit = serverSize(s.doc) - 5_000;

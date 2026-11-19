@@ -11,12 +11,12 @@ import { ThemeProvider } from "@/theme";
 import type { PublicNoteRef } from "@/lib/public-note-ref";
 import { PublicNoteEditor } from "./PublicNoteEditor";
 
-// **沒有 QueryClientProvider**：任何 useNotes 呼叫都會直接拋錯。
+// **No QueryClientProvider**: any useNotes call throws immediately.
 
 const PUB = "11111111-1111-4111-8111-111111111111";
 const PRIV = "22222222-2222-4222-8222-222222222222";
 
-/** `pubTarget`：第一個 wikilink 的 targetNoteId——預設小寫；另有案傳大寫（舊文件可能存大寫 id）。 */
+/** `pubTarget`: the targetNoteId of the first wikilink - lowercase by default; another case passes uppercase (old documents may store uppercase ids). */
 function docWith(pubTarget: string = PUB): Y.Doc {
   const doc = new Y.Doc();
   blocksToYXmlFragment(
@@ -58,7 +58,7 @@ function renderPublic(publicRef: PublicNoteRef, links: PublicLinkDto[], doc: Y.D
   );
 }
 
-describe("#269 公開頁渲染 wikilink", () => {
+describe("#269 public page renders wikilinks", () => {
   const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => new Promise(() => {}));
   beforeEach(async () => {
     await i18n.changeLanguage("en");
@@ -68,7 +68,7 @@ describe("#269 公開頁渲染 wikilink", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   for (const publicRef of [{ kind: "token", token: "t".repeat(43) }, { kind: "path", handle: "h", slug: "s" }] as PublicNoteRef[]) {
-    it(`${publicRef.kind} 形：公開目標成 <a href=/p/…>、非公開純文字、同篇錨點 <a href=#b-…>；零 GET /api/notes`, async () => {
+    it(`${publicRef.kind} shape: public target becomes <a href=/p/...>, non-public becomes plain text, same-note anchor becomes <a href=#b-...>; zero GET /api/notes`, async () => {
       renderPublic(publicRef, [{ id: PUB, title: "Public Title", path: "/p/alice/pub" }]);
       const pub = await screen.findByRole("link", { name: "Public Title" });
       expect(pub).toHaveAttribute("href", "/p/alice/pub");
@@ -81,8 +81,8 @@ describe("#269 公開頁渲染 wikilink", () => {
     });
   }
 
-  it("文件存大寫 targetNoteId、payload 回 DB 正規化的小寫 id ⇒ 仍連到公開目標（不退成純文字）", async () => {
-    // 必須含 a–f：PUB 全是數字，toUpperCase() 不變，測不出大小寫（首次突變驗證存活即因此）。
+  it("document stores an uppercase targetNoteId, payload returns the DB-normalised lowercase id => still links to the public target (doesn't fall back to plain text)", async () => {
+    // Must contain a-f: PUB is all digits, so toUpperCase() is unchanged and the case difference can't be detected.
     const hexId = "abcdef12-3456-4789-8abc-def123456789";
     expect(hexId.toUpperCase()).not.toBe(hexId);
     renderPublic({ kind: "token", token: "t".repeat(43) }, [{ id: hexId, title: "Public Title", path: "/p/alice/pub" }], docWith(hexId.toUpperCase()));
@@ -92,8 +92,8 @@ describe("#269 公開頁渲染 wikilink", () => {
   });
 });
 
-describe("並排公開頁", () => {
-  // 可手動觸發的 ResizeObserver 替身（同 collab/columns/layout-extension.test.ts）：只觸發 observe 了該元素的那個 observer。
+describe("side-by-side public page", () => {
+  // Manually triggerable ResizeObserver stand-in (as in collab/columns/layout-extension.test.ts): only fires the observer that observed that element.
   const instances: Array<{ targets: Set<Element>; callback: ResizeObserverCallback }> = [];
   class FakeResizeObserver {
     readonly targets = new Set<Element>();
@@ -118,7 +118,7 @@ describe("並排公開頁", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("Y.Doc 含一列 → 畫出列與兩欄、唯讀；列寬 300 → 整列堆疊（版面外掛在公開頁也生效）", async () => {
+  it("Y.Doc with one row -> row and two columns drawn, read-only; row width 300 -> the whole row stacks (the layout plugin also works on the public page)", async () => {
     const doc = new Y.Doc();
     blocksToYXmlFragment(
       BlockNoteEditor.create({ schema: noteSchema }),
@@ -150,14 +150,14 @@ describe("並排公開頁", () => {
   });
 });
 
-describe("#465 公開頁把編輯器交給標題大綱", () => {
+describe("#465 public page hands the editor to the heading outline", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("掛載時 onEditor 收到編輯器（讀得到文件的標題），卸載時收到 null", async () => {
+  it("on mount onEditor receives the editor (the document's headings are readable), on unmount it receives null", async () => {
     const onEditor = vi.fn();
     const view = render(
       <ThemeProvider>
@@ -176,7 +176,7 @@ describe("#465 公開頁把編輯器交給標題大綱", () => {
     expect(onEditor).toHaveBeenLastCalledWith(null);
   });
 
-  it("呼叫端每次 render 換新的回呼也不會重報", async () => {
+  it("a new callback on every render from the caller doesn't re-report", async () => {
     const calls: unknown[] = [];
     const doc = docWith();
     const ref = { kind: "token", token: "t".repeat(43) } as const;

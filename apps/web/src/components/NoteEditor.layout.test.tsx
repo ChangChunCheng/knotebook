@@ -47,40 +47,22 @@ function stubFetch() {
 }
 
 /**
- * 卡片版面：三層 flex class 漏掉任何一個都是
- * 「畫面在 jsdom 快照/一般互動測試裡看起來完全正常，只有真的有滾動內容、真的有
- * flex 容器擠壓時才會露餡」的靜默失敗——這裡延續同一個精神，直接斷言 class 字串
- * 本身，改測 slot 化後的新節點鏈：
+ * Card layout: a missing class in any of the three flex layers is a silent failure (it looks fine in jsdom snapshots and ordinary interaction tests and only shows with real scrolling content and flex squeeze), so this asserts the class strings themselves, against the slotted node chain:
  *
- *   根 row（relative flex h-full min-h-0 min-w-0 flex-1 gap-3；relative＝640-1279 浮動版本面板的定位基準，守衛在 `NoteEditor.versions-floating.test.tsx`）
- *     內文卡（flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl
- *             border border-border bg-card）
+ *   root row (relative flex h-full min-h-0 min-w-0 flex-1 gap-3; `relative` is the positioning base of the 640-1279 floating versions panel, guarded in `NoteEditor.versions-floating.test.tsx`)
+ *     content card (flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card)
  *       {headerSlot}
- *       捲動容器（min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip——
- *                 `overflow-x-clip`＝#162，見 `NoteEditor.tsx` :423 附近的註解：裁掉
- *                 寬表格 hover 時「新增列」按鈕超出右緣的部分，不讓它變成這層的橫向
- *                 可捲溢出）
- *         置中 wrapper（articleColumn(width) ＋ ARTICLE_COLUMN_PADDING ＋ relative flex
- *                        min-h-full flex-col py-6——標準欄寬＝捲動容器 85%，下限 680px
- *                        （改版前的固定值，中等視窗承重）、上限 1056px；#297 的寬／全寬
- *                        不會比標準窄（92.5%、上限 1408px／不設上限），下限不變。#115 起
- *                        欄寬／內距是 `ui/article-column.ts` 的常數且內文是唯一
- *                        消費端（頁首/頁尾滿卡寬）；理由見該檔。`relative`＝#160：
- *                        BlockNote 表格 hover 浮層的 containing block，收在這層
- *                        擋掉全頁滾軸，別搬去捲動容器）
- *           note-editor（BlockNoteView，className 加 flex-1：wrapper
- *             的 min-h-full 無法把百分比高度傳給孫層，必須讓 BlockNoteView 自己
- *             成為置中 wrapper 的成長項。**兩者都要斷言，缺一即假守衛**）
- *       {previewSlot}（有值時才渲染，data-testid="preview-slot"；此時捲動容器多一個 hidden）
- *       CornerStack（歷史泡泡的零高度錨點，在卡內、頁尾之前；本檔無 provider＝不渲染）
+ *       scroll container (min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip; `overflow-x-clip` (#162) clips the part of a wide table's hover "add row" button that sticks out past the right edge, so it doesn't become horizontal scroll overflow of this layer)
+ *         centering wrapper (articleColumn(width) + ARTICLE_COLUMN_PADDING + relative flex min-h-full flex-col py-6; standard column width = 85% of the scroll container, at least 680px (the fixed value before the redesign, load-bearing at medium windows), at most 1056px; the wide / full-width modes (#297) are never narrower than standard (92.5% capped at 1408px / uncapped), same minimum. Column width and padding are constants of `ui/article-column.ts` (header/footer don't use it; they are full card width). `relative` (#160) is the containing block of BlockNote's table hover overlays, kept at this layer to avoid a page-wide scrollbar; don't move it to the scroll container)
+ *           note-editor (BlockNoteView, className adds flex-1: the wrapper's min-h-full can't pass a percentage height to grandchildren, so BlockNoteView itself must be the growing item of the centering wrapper; both must be asserted)
+ *       {previewSlot} (rendered only when set, data-testid="preview-slot"; the scroll container then gets hidden)
+ *       CornerStack (zero-height anchor of the history bubble, inside the card, before the footer; no provider in this file = not rendered)
  *       {footerSlot}
- *     VersionsPanel（panelOpen 時，經 VersionsLazyBoundary；本檔無 provider＝恆不渲染）
+ *     VersionsPanel (when panelOpen, via VersionsLazyBoundary; no provider in this file = never rendered)
  *
- * 這裡刻意掛**真正的** `<NoteEditor>`（不是 `NotePage.test.tsx`/`NoteEditorView.test.tsx`
- * 用的 mock 或只測 `NoteEditorView` 半層），驗證 `NoteEditor.tsx` 實際渲染出來的容器
- * class 與要求的逐字一致。
+ * The real `<NoteEditor>` is mounted on purpose (not the mock used in `NotePage.test.tsx`/`NoteEditorView.test.tsx`, nor half the layer via `NoteEditorView`), to verify that the container classes `NoteEditor.tsx` really renders match the required ones verbatim.
  */
-describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () => {
+describe("NoteEditor layout (slotted: node chain + two-layer class smoke)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -90,7 +72,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     vi.unstubAllGlobals();
   });
 
-  it("根/內文卡/捲動容器/置中 wrapper/BlockNoteView 五層 class 逐一斷言；headerSlot/footerSlot 落在正確位置", async () => {
+  it("five layers' classes asserted one by one (root / content card / scroll container / centering wrapper / BlockNoteView); headerSlot/footerSlot land in the right place", async () => {
     const doc = new Y.Doc();
     const provider = { awareness: null } as never;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,7 +95,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
 
     const editorRoot = await screen.findByTestId("note-editor");
     const centerWrapper = editorRoot.parentElement;
-    // 欄外一層是 display: contents 的流程包裝（手機頁尾在捲動容器時才變成直欄），不產生盒子。
+    // One layer outside the columns is a display: contents flow wrapper (on phone the footer becomes a column only when inside the scroll container); it produces no box.
     const flow = centerWrapper?.parentElement;
     expect(flow).toHaveAttribute("data-article-flow");
     expect(flow).toHaveClass("contents");
@@ -127,7 +109,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     expect(root).not.toBeNull();
 
     expect(root).toHaveClass("relative", "flex", "h-full", "min-h-0", "min-w-0", "flex-1", "gap-3");
-    // #274：版本面板與其錯誤外框共用的寬度來源——列容器設 CSS 變數（預設 320）。拿掉 style 則兩者寬度失效。
+    // #274: the width source shared by the versions panel and its error frame: the row container sets a CSS variable (default 320). Removing the style breaks both widths.
     expect(root!.style.getPropertyValue("--versions-panel-width")).toBe("320px");
     expect(contentCard).toHaveClass(
       "flex",
@@ -141,17 +123,15 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       "border-border",
       "bg-card",
     );
-    // 手機（< 640）內容卡貼齊螢幕：沒有圓角與框；640 起的 rounded-xl／border 仍在（上面）。
+    // Phone (< 640): the content card hugs the screen edges, no rounded corners or border; from 640 up rounded-xl/border remain (above).
     expect(contentCard).toHaveClass("max-sm:rounded-none", "max-sm:border-0");
     expect(scrollWrapper).toHaveClass("min-h-0", "min-w-0", "flex-1", "overflow-y-auto", "overflow-x-clip");
-    // 640 起固定預留捲軸槽：筆記開始超出時文字欄不跳，歷史泡泡離捲軸的空隙也恆定。
+    // From 640 up a scrollbar gutter is always reserved: the text column doesn't jump when a note starts to overflow, and the gap between the history bubble and the scrollbar stays constant.
     expect(scrollWrapper).toHaveClass("sm:[scrollbar-gutter:stable]");
-    // 欄寬與內距取自 `ui/article-column.ts`（#115：內文是唯一消費端，頁首/頁尾
-    // 滿卡寬）。結構守衛在 `ui/article-column.guard.test.ts`。
-    // issue #160：`relative` 是置中 wrapper 必須承重的一根——BlockNote 表格 hover
-    // 浮層（`bn-extend-button` 等）走 FloatingPortal + `position: absolute`，往上找
-    // 不到 positioned 祖先就會以 `<html>` 當 containing block，撐出全頁滾軸。缺了
-    // 拿掉 JSX 的 `relative` 只有本案會紅。
+    // Column width and padding come from `ui/article-column.ts` (#115; header/footer don't use it, they are full card width).
+    // The structural guard is in `ui/article-column.guard.test.ts`.
+    // #160: `relative` is the one thing the centering wrapper must carry: BlockNote's table hover overlays (`bn-extend-button` etc.) use FloatingPortal + `position: absolute`;
+    // with no positioned ancestor they take `<html>` as containing block and produce a page-wide scrollbar.
     expect(centerWrapper).toHaveClass(
       ...ARTICLE_COLUMN.split(" "),
       ARTICLE_COLUMN_PADDING,
@@ -161,13 +141,13 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
       "flex-col",
       "py-6",
     );
-    // 欄底沒有為歷史泡泡額外留白：只有 py-6，底部留白等於頂部。
+    // No extra bottom space for the history bubble: only py-6, bottom padding equals top padding.
     expect(centerWrapper!.className).not.toMatch(/(sm:)?pb-/);
-    // 雙層斷言（缺一即假守衛）：置中 wrapper 的 min-h-full/flex-col **與** BlockNoteView
-    // 的 flex-1，兩者都要在——高度鏈只有兩者同時存在才成立。
+    // Two-layer assertion: the centering wrapper's min-h-full/flex-col AND BlockNoteView's flex-1;
+    // the height chain only holds when both are present.
     expect(editorRoot).toHaveClass("min-h-full", "flex-1");
 
-    // headerSlot/footerSlot 落在內文卡內、分別在捲動容器的前後（不是巢狀在裡面）。
+    // headerSlot/footerSlot sit inside the content card, before and after the scroll container (not nested inside it).
     expect(contentCard).toContainElement(screen.getByTestId("header-slot-marker"));
     expect(contentCard).toContainElement(screen.getByTestId("footer-slot-marker"));
     expect(scrollWrapper).not.toContainElement(screen.getByTestId("header-slot-marker"));
@@ -176,7 +156,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     doc.destroy();
   });
 
-  it("previewSlot：捲動容器加 hidden、slot 渲染在同一張卡內（捲動容器之後、footer 之前），活編輯器仍在 DOM", async () => {
+  it("previewSlot: the scroll container gets hidden, the slot renders in the same card (after the scroll container, before the footer), the live editor stays in the DOM", async () => {
     const doc = new Y.Doc();
     const provider = { awareness: null } as never;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -209,7 +189,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     doc.destroy();
   });
 
-  it("沒有 previewSlot → 捲動容器沒有 hidden、沒有 preview-slot 節點", async () => {
+  it("no previewSlot -> the scroll container has no hidden and there is no preview-slot node", async () => {
     const doc = new Y.Doc();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -225,7 +205,7 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
     doc.destroy();
   });
 
-  it("活編輯器不重掛：previewSlot 進出時 BlockNoteView 根節點是同一個 DOM 元素", async () => {
+  it("live editor isn't remounted: the BlockNoteView root is the same DOM element when previewSlot enters and leaves", async () => {
     const doc = new Y.Doc();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tree = (slot?: ReactNode) => (
@@ -244,8 +224,8 @@ describe("NoteEditor 佈局（slot 化：節點鏈 + 雙層 class smoke）", () 
   });
 });
 
-/** #297：內文欄跟著這篇的站內寬度（`useNoteWidth(noteId)`），換寬度不重建編輯器。 */
-describe("NoteEditor 內文寬度（#297）", () => {
+/** #297: the body column follows this note's in-site width (`useNoteWidth(noteId)`); changing the width doesn't rebuild the editor. */
+describe("NoteEditor body width (#297)", () => {
   const STANDARD_MAX = "max-w-[clamp(42.5rem,85%,66rem)]";
 
   beforeEach(async () => {
@@ -256,7 +236,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    // L3／L5 會留下 note.width.note-1，不帶到後面的檔案。
+    // Cases that change the width leave note.width.note-1 behind; clear it so it doesn't carry over to later files.
     localStorage.clear();
   });
 
@@ -280,7 +260,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     return { rerender: (id: string, d: Y.Doc) => rerender(tree(id, d)) };
   }
 
-  it("L1 預設：欄是標準寬", async () => {
+  it("default: the column is standard width", async () => {
     const doc = new Y.Doc();
     renderEditor("note-1", doc);
     await screen.findByTestId("note-editor");
@@ -288,7 +268,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc.destroy();
   });
 
-  it("L2 localStorage 已存 wide → 掛載就是寬，沒有標準的 max-w", async () => {
+  it("localStorage already stores wide -> wide on mount, without the standard max-w", async () => {
     localStorage.setItem("note.width.note-1", "wide");
     const doc = new Y.Doc();
     renderEditor("note-1", doc);
@@ -299,7 +279,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc.destroy();
   });
 
-  it("L3 掛載後改成全寬 → 欄跟著變，BlockNoteEditor.create 不再被呼叫", async () => {
+  it("switching to full width after mount -> the column follows, BlockNoteEditor.create isn't called again", async () => {
     const doc = new Y.Doc();
     renderEditor("note-1", doc);
     await screen.findByTestId("note-editor");
@@ -316,7 +296,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc.destroy();
   });
 
-  it("L4 另一個分頁改了這篇（storage 事件）→ 開著的欄即時跟上", async () => {
+  it("another tab changes this note (storage event) -> an open column follows immediately", async () => {
     const doc = new Y.Doc();
     renderEditor("note-1", doc);
     await screen.findByTestId("note-editor");
@@ -327,7 +307,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc.destroy();
   });
 
-  it("L5 換篇：note-2 是標準；note-1 設全寬後換回 note-1 → 全寬", async () => {
+  it("switching notes: note-2 is standard; after setting note-1 to full width and switching back to note-1 -> full width", async () => {
     const doc1 = new Y.Doc();
     const doc2 = new Y.Doc();
     const { rerender } = renderEditor("note-1", doc1);
@@ -342,7 +322,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
     doc2.destroy();
   });
 
-  it("L6 頁首寬度鈕（headerSlot，與 NotePage 同組合）按一下 → 欄變寬；再按一下 → 全寬", async () => {
+  it("header width button (headerSlot, same composition as NotePage) pressed once -> column becomes wide; pressed again -> full width", async () => {
     const doc = new Y.Doc();
     renderEditor("note-1", doc, <NoteWidthToggle noteId="note-1" />);
     await screen.findByTestId("note-editor");
@@ -356,7 +336,7 @@ describe("NoteEditor 內文寬度（#297）", () => {
   });
 });
 
-describe("NoteEditor 手機編輯工具列", () => {
+describe("NoteEditor phone editing toolbar", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -377,7 +357,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     );
   }
 
-  it("mobileToolbar：工具列在、文章欄尾端有 aria-hidden 的空白（讓文件尾端也能捲到工具列之上）", async () => {
+  it("mobileToolbar: toolbar present, and an aria-hidden spacer at the end of the article column (so the document end can scroll above the toolbar)", async () => {
     renderEditor(true);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
     expect(document.querySelector("[data-mobile-edit-toolbar]")).not.toBeNull();
@@ -386,7 +366,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(column.lastElementChild).toBe(spacer);
   });
 
-  it("mobileToolbar：內文卡手機下緣留 safe area（工具列頂端恰在捲動容器下緣上方 60px）；沒有工具列時不留", async () => {
+  it("mobileToolbar: on phone the content card leaves a safe-area gap at the bottom (toolbar top sits exactly 60px above the scroll container bottom); none without a toolbar", async () => {
     const on = renderEditor(true);
     const cardOn = (await screen.findByTestId("article-column")).closest(".overflow-hidden") as HTMLElement;
     expect(cardOn).toHaveClass("max-sm:pb-[env(safe-area-inset-bottom)]");
@@ -399,7 +379,7 @@ describe("NoteEditor 手機編輯工具列", () => {
   const FOOTER = <div data-testid="footer-probe">mentions</div>;
   const scrollRootOf = (column: HTMLElement) => column.closest(".overflow-y-auto") as HTMLElement;
 
-  it("手機：欄、頁尾、工具列空白包在 min-h-full 的直欄裡（依序），欄撐滿剩下的高度；捲動容器在手機上是撐滿卡的直欄、流程包裝跟著撐", async () => {
+  it("phone: column, footer and toolbar spacer are wrapped in a min-h-full vertical flow (in that order), the column fills the remaining height; the scroll container on phone is a vertical flex filling the card and the flow wrapper stretches with it", async () => {
     stubLayoutTier("phone");
     renderEditor(true, FOOTER);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
@@ -410,7 +390,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(flow.parentElement).toBe(scrollRoot);
     expect(flow).toHaveClass("flex", "min-h-full", "flex-col");
     expect(flow).not.toHaveClass("contents");
-    // 640 起仍是一般區塊；手機上卡至少一個視窗高，這層與流程包裝要把高度往下傳（短筆記點下方空白仍聚焦到最後）。
+    // From 640 up it's still an ordinary block; on phone the card is at least one viewport tall, and this layer and the flow wrapper must pass the height down (tapping blank space under a short note still focuses the last block).
     expect(scrollRoot).not.toHaveClass("flex");
     expect(scrollRoot).toHaveClass("max-sm:flex", "max-sm:flex-col");
     expect(flow).toHaveClass("max-sm:grow");
@@ -421,14 +401,14 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(column.contains(spacer)).toBe(false);
   });
 
-  it("手機沒在編輯（沒有工具列）：頁尾仍在捲動容器的最後", async () => {
+  it("phone, not editing (no toolbar): the footer is still last in the scroll container", async () => {
     stubLayoutTier("phone");
     renderEditor(false, FOOTER);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
     expect(column.parentElement!.lastElementChild).toBe(screen.getByTestId("footer-probe"));
   });
 
-  it("手機：捲動容器委派表格的右緣提示（後來才出現的寬表格也標得到；非手機不標）", async () => {
+  it("phone: the scroll container delegates the table right-edge hint (a wide table appearing later is marked too; not on non-phone)", async () => {
     vi.stubGlobal("CSS", { supports: () => false });
     stubLayoutTier("phone");
     const view = renderEditor(false, FOOTER);
@@ -442,7 +422,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(table).not.toHaveAttribute("data-kb-more-right");
   });
 
-  it.each(["overlay", "docked"] as const)("%s：表格不標右緣提示", async (tier) => {
+  it.each(["overlay", "docked"] as const)("%s: tables get no right-edge hint", async (tier) => {
     vi.stubGlobal("CSS", { supports: () => false });
     stubLayoutTier(tier);
     renderEditor(false, FOOTER);
@@ -455,7 +435,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(table).not.toHaveAttribute("data-kb-more-right");
   });
 
-  it.each(["overlay", "docked"] as const)("%s：頁尾照舊在卡底、不在捲動容器內", async (tier) => {
+  it.each(["overlay", "docked"] as const)("%s: the footer stays at the card bottom, not inside the scroll container", async (tier) => {
     stubLayoutTier(tier);
     renderEditor(false, FOOTER);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
@@ -464,13 +444,13 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(footer.previousElementSibling).toBe(scrollRootOf(column));
   });
 
-  it("頁首槽位在手機給上緣 safe area（橫幅與頁首都在它之下）", async () => {
+  it("header slot gets the top safe area on phone (banner and header are both below it)", async () => {
     renderEditor(false);
     await screen.findByTestId("article-column");
     expect(document.querySelector("[data-note-header-slot]")).toHaveClass("max-sm:pt-[env(safe-area-inset-top)]");
   });
 
-  it("手機上捲的是文件：卡不裁切、至少一個視窗高（svh）；捲動容器縱向 visible；頁首槽位 sticky 釘在頂端、不透明底；640 起照舊", async () => {
+  it("on phone the document scrolls: the card doesn't clip and is at least one viewport tall (svh); the scroll container is vertically visible; the header slot is sticky at the top with an opaque background; unchanged from 640 up", async () => {
     renderEditor(false, FOOTER, true);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
     const scrollRoot = scrollRootOf(column);
@@ -479,16 +459,16 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(card).toHaveClass("overflow-hidden", "max-sm:overflow-visible", "max-sm:min-h-svh");
     expect(card.className).not.toMatch(/(^|\s)max-sm:min-h-dvh(\s|$)/);
     expect(scrollRoot).toHaveClass("overflow-y-auto", "max-sm:overflow-y-visible", "overflow-x-clip");
-    // 手機上高度從內容長出來（flex-basis auto），編輯器（className 也套到 BlockNote 的 portal 根節點）不靠 min-h-full。
+    // On phone the height grows from the content (flex-basis auto); the editor (className is also applied to BlockNote's portal root) doesn't rely on min-h-full.
     expect(scrollRoot).toHaveClass("max-sm:flex-auto");
     expect(screen.getByTestId("note-editor")).toHaveClass("min-h-full", "flex-1", "max-sm:min-h-0", "max-sm:flex-auto");
     expect(header).toHaveClass("max-sm:sticky", "max-sm:top-0", "max-sm:bg-card");
     expect(header.className).toMatch(/max-sm:z-\d+/);
-    // 頁首的祖先（到卡為止）在手機上都不能是捲動容器，sticky 才黏得住文件。
+    // On phone no ancestor of the header (up to the card) may be a scroll container, otherwise sticky can't stick to the document.
     expect(header.parentElement).toBe(card);
   });
 
-  it("版本預覽中：捲動容器只有 hidden，不帶手機的 flex（否則手機上預覽與活編輯器會同時出現）", async () => {
+  it("during version preview: the scroll container has only hidden, without the phone flex (otherwise the preview and the live editor would show together on phone)", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -502,12 +482,12 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(scrollRoot).not.toHaveClass("max-sm:flex");
   });
 
-  it("手機：頁首槽位的高度寫進 <html> 的 --kb-sticky-top，卸載時移除；非手機不寫", async () => {
+  it("phone: the header slot's height is written into <html>'s --kb-sticky-top and removed on unmount; not written on non-phone", async () => {
     const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return new DOMRect(0, 0, 390, this.hasAttribute("data-note-header-slot") ? 97.4 : 0);
     });
     onTestFinished(() => rect.mockRestore());
-    // 筆記在 AppShell 的外框（文件代為捲動）裡才寫
+    // Only written when the note is inside AppShell's frame (the document scrolls on its behalf).
     const frame = document.createElement("div");
     frame.setAttribute("data-phone-page-scroll", "");
     document.body.append(frame);
@@ -524,7 +504,7 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(document.documentElement.style.getPropertyValue("--kb-sticky-top")).toBe("");
   });
 
-  it.each([false, true])("fabClearance：捲動內容最後有 aria-hidden 的空白（5rem＋safe area，浮動鈕之上）；欄撐滿高度（頁尾有無 %s 都一樣）", async (withFooter) => {
+  it.each([false, true])("fabClearance: the scroll content ends with an aria-hidden spacer (5rem + safe area, above the floating buttons); the column fills the height (same with footer = %s)", async (withFooter) => {
     stubLayoutTier("phone");
     renderEditor(false, withFooter ? FOOTER : undefined, true);
     const column = (await screen.findByTestId("article-column")) as HTMLElement;
@@ -537,14 +517,14 @@ describe("NoteEditor 手機編輯工具列", () => {
     expect(column).toHaveClass("grow", "shrink-0");
   });
 
-  it("沒有 fabClearance：沒有這段空白", async () => {
+  it("no fabClearance: no such spacer", async () => {
     stubLayoutTier("phone");
     renderEditor(false, FOOTER);
     await screen.findByTestId("article-column");
     expect(document.querySelector("[data-fab-clearance]")).toBeNull();
   });
 
-  it.each([false, undefined])("mobileToolbar=%s（桌機、或手機沒在編輯）：沒有工具列也沒有空白", async (flag) => {
+  it.each([false, undefined])("mobileToolbar=%s (desktop, or phone not editing): no toolbar and no spacer", async (flag) => {
     renderEditor(flag);
     await screen.findByTestId("article-column");
     expect(document.querySelector("[data-mobile-edit-toolbar]")).toBeNull();

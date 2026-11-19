@@ -10,7 +10,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { ThemeProvider } from "@/theme";
 import { NoteEditor } from "./NoteEditor";
 
-// 讓面板 render 時拋錯，走錯誤外框（`VERSIONS_ERROR_FRAME.panel`）。
+// Make the panel throw on render, going through the error frame (`VERSIONS_ERROR_FRAME.panel`).
 const crash = vi.hoisted(() => ({ on: false }));
 vi.mock("@/components/versions/VersionsLazy", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/components/versions/VersionsLazy")>();
@@ -53,7 +53,6 @@ function stubFetch() {
   );
 }
 
-/** 探針：目前的版本狀態，加上開面板、進預覽、離開預覽的外部按鈕。 */
 function Controls() {
   const v = useVersions();
   return (
@@ -101,7 +100,6 @@ async function renderAt(tier: LayoutTier) {
     </QueryClientProvider>,
   );
   const editor = await screen.findByTestId("note-editor");
-  // 欄 → 流程包裝 → 捲動容器 → 內文卡 → 列容器。
   const row = editor.parentElement!.parentElement!.parentElement!.parentElement!.parentElement!;
   return { ...tierHandle, doc, row, ...utils };
 }
@@ -111,7 +109,7 @@ async function openPanel() {
   return screen.findByTestId("versions-panel");
 }
 
-describe("NoteEditor 版本面板：浮動與固定", () => {
+describe("NoteEditor versions panel: floating and fixed", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.clear();
@@ -123,11 +121,11 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     vi.restoreAllMocks();
   });
 
-  it("列容器是定位基準；面板同時帶浮動（absolute、z-20、陰影、上緣讓出頁首）與固定（xl:relative）兩段 class", async () => {
+  it("the row container is the positioning base; the panel carries both the floating (absolute, z-20, shadow, top edge clears the header) and the fixed (xl:relative) class sets", async () => {
     const { row, doc } = await renderAt("overlay");
     expect(row).toHaveClass("relative", "flex", "h-full", "gap-3");
     const panel = await openPanel();
-    // 面板包在 `display: contents` 的 slot 裡（不產生盒子），定位基準仍是列容器。
+    // The panel is wrapped in a `display: contents` slot (it produces no box), so the positioning base is still the row container.
     const slot = panel.parentElement!;
     expect(slot).toHaveAttribute("data-versions-panel-slot");
     expect(slot).toHaveClass("contents");
@@ -139,7 +137,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     doc.destroy();
   });
 
-  it("歷史泡泡的錨點在內文卡裡、頁尾之前（提及列之上，不在視窗角落）；面板開著時消失，收起後回來；手機沒有", async () => {
+  it("history bubble anchor is inside the content card, before the footer (above the mentions row, not in a window corner); gone while the panel is open and back once closed; none on phone", async () => {
     const { row, setLayoutTier } = await renderAt("docked");
     const anchor = await screen.findByTestId("corner-anchor");
     const card = row.firstElementChild!;
@@ -152,7 +150,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     expect(screen.queryByTestId("corner-anchor")).not.toBeInTheDocument();
   });
 
-  it("--note-header-h：列容器量頁首外包層的高度（ResizeObserver 回報 57 -> 57px）", async () => {
+  it("--note-header-h: the row container measures the header wrapper's height (ResizeObserver reports 57 -> 57px)", async () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -170,7 +168,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     doc.destroy();
   });
 
-  it("跨 1280（浮動 <-> 固定）：面板留著，同一個 DOM 節點、狀態不變", async () => {
+  it("crossing 1280 (floating <-> fixed): the panel stays, same DOM node, state unchanged", async () => {
     const { setLayoutTier, doc } = await renderAt("overlay");
     const panel = await openPanel();
     expect(state().mode).toBe("panel");
@@ -183,21 +181,21 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     doc.destroy();
   });
 
-  it("預覽區：面板開著時右側讓出面板寬度（只在 xl 以下），面板關掉就不讓", async () => {
+  it("preview area: with the panel open it yields the panel's width on the right (only below xl); when the panel is closed it doesn't", async () => {
     const { doc } = await renderAt("overlay");
     await openPanel();
     fireEvent.click(screen.getByText("host-preview"));
     const slot = await screen.findByTestId("preview-slot");
     expect(slot).toHaveClass("max-xl:mr-[min(var(--versions-panel-width),calc(100%_-_3rem))]");
     fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
-    // 關面板連預覽一起走；只剩面板關著的預覽（例如固定段以外的其他入口）不可能存在，這裡直接再開預覽驗證沒有面板時不讓。
+    // Closing the panel takes the preview with it; a preview with the panel closed can't normally exist, so open a preview again directly to verify there is no yielding without a panel.
     fireEvent.click(screen.getByText("host-preview"));
     expect(screen.queryByTestId("versions-panel")).not.toBeInTheDocument();
     expect(screen.getByTestId("preview-slot")).not.toHaveClass("max-xl:mr-[min(var(--versions-panel-width),calc(100%_-_3rem))]");
     doc.destroy();
   });
 
-  it("跨 640（浮動 -> 手機）：面板與預覽都關", async () => {
+  it("crossing 640 (floating -> phone): panel and preview both close", async () => {
     const { setLayoutTier, doc } = await renderAt("overlay");
     await openPanel();
     fireEvent.click(screen.getByText("host-preview"));
@@ -208,8 +206,8 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     doc.destroy();
   });
 
-  describe("點筆記區收起（只在浮動段、且只開清單時）", () => {
-    it("只開清單（沒有預覽）：點筆記內文、頁首、面板外的按鈕 -> 面板關", async () => {
+  describe("click on the note area collapses it (floating tier only, and only with the list open)", () => {
+    it("list only (no preview): clicking the note body, the header, or a button outside the panel -> the panel closes", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.pointerDown(await screen.findByTestId("note-editor"));
@@ -221,7 +219,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("只開清單：點面板內 -> 不關", async () => {
+    it("list only: clicking inside the panel -> doesn't close", async () => {
       const { doc } = await renderAt("overlay");
       const panel = await openPanel();
       fireEvent.pointerDown(within(panel).getByRole("heading", { name: "Version history" }));
@@ -231,7 +229,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("差異檢視中（preview 非 null）：點筆記內文 -> 面板仍在；面板的 ✕ 才關", async () => {
+    it("during diff view (preview non-null): clicking the note body -> the panel stays; only its close button closes it", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.click(screen.getByText("host-preview"));
@@ -243,7 +241,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("從差異檢視回到清單（stopPreview）後再點筆記區 -> 關", async () => {
+    it("back from diff view to the list (stopPreview), then clicking the note area -> closes", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.click(screen.getByText("host-preview"));
@@ -255,7 +253,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("面板載入失敗的錯誤外框：在「Try again」上按下不算外點，重試按得到", async () => {
+    it("error frame when the panel fails to load: pressing 'Try again' doesn't count as an outside click, so retry can be pressed", async () => {
       crash.on = true;
       vi.spyOn(console, "error").mockImplementation(() => {});
       const { doc } = await renderAt("overlay");
@@ -267,7 +265,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("只開清單：在面板列 ⋯ 選單的項目上按下 -> 不關", async () => {
+    it("list only: pressing on an item of the panel row's more menu -> doesn't close", async () => {
       const { doc } = await renderAt("overlay");
       const panel = await openPanel();
       const triggers = await within(panel).findAllByRole("button", { name: /more|actions|options/i });
@@ -279,10 +277,10 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     });
 
     it.each([
-      ["選單（role=menu）", { role: "menu" }],
-      ["popper 浮層", { "data-radix-popper-content-wrapper": "" }],
-      ["對話框（role=dialog）", { role: "dialog" }],
-    ])("只開清單：在%s裡按下 -> 不關；移除之後在外面按下才關", async (_name, attrs) => {
+      ["menu (role=menu)", { role: "menu" }],
+      ["popper layer", { "data-radix-popper-content-wrapper": "" }],
+      ["dialog (role=dialog)", { role: "dialog" }],
+    ])("list only: pressing inside %s -> doesn't close; pressing outside after removing it closes", async (_name, attrs) => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       const portal = document.createElement("div");
@@ -301,7 +299,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("只開清單：版本對話框開著（狀態在、節點尚未掛上）時，在外面按下 -> 不關", async () => {
+    it("list only: with the versions dialog open (state present, node not yet mounted), pressing outside -> doesn't close", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.click(screen.getByText("host-save"));
@@ -310,7 +308,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("只開清單：側欄抽屜開著時，點它的遮罩（在 role=dialog 之外）-> 面板留在原位；抽屜關掉後點外面才關", async () => {
+    it("list only: with the sidebar drawer open, clicking its overlay (outside the role=dialog) -> the panel stays; after the drawer closes, clicking outside closes it", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       const drawer = document.createElement("div");
@@ -330,7 +328,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("固定段（>= 1280）：只開清單、差異檢視中，點筆記區都不關", async () => {
+    it("fixed tier (>= 1280): with list only or in diff view, clicking the note area doesn't close", async () => {
       const { doc } = await renderAt("docked");
       await openPanel();
       fireEvent.pointerDown(screen.getByTestId("outside"));
@@ -341,7 +339,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("跨斷點跟著換：浮動只開清單時點外面會關，換到固定段之後同樣的點擊不關", async () => {
+    it("follows breakpoint changes: floating with list only, clicking outside closes; after switching to the fixed tier the same click doesn't close", async () => {
       const { setLayoutTier, doc } = await renderAt("overlay");
       await openPanel();
       act(() => setLayoutTier("docked"));
@@ -351,8 +349,8 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
     });
   });
 
-  describe("面板內按 Esc", () => {
-    it("浮動段：關面板（連預覽），焦點回到歷史泡泡", async () => {
+  describe("pressing Esc inside the panel", () => {
+    it("floating tier: closes the panel (and the preview), focus returns to the history bubble", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.click(screen.getByText("host-preview"));
@@ -365,7 +363,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("固定段：同一個動作面板不關", async () => {
+    it("fixed tier: the same action doesn't close the panel", async () => {
       const { doc } = await renderAt("docked");
       await openPanel();
       const closeButton = screen.getByRole("button", { name: "Close version history" });
@@ -375,7 +373,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("浮動段：差異檢視中，焦點在列容器內、面板外（頁首）按 Esc -> 面板不關", async () => {
+    it("floating tier: in diff view, Esc pressed with focus inside the row container but outside the panel (header) -> the panel doesn't close", async () => {
       const { doc } = await renderAt("overlay");
       await openPanel();
       fireEvent.click(screen.getByText("host-preview"));
@@ -384,7 +382,7 @@ describe("NoteEditor 版本面板：浮動與固定", () => {
       doc.destroy();
     });
 
-    it("浮動段：面板載入失敗的錯誤外框裡按 Esc -> 照常關", async () => {
+    it("floating tier: Esc inside the error frame of a panel that failed to load -> closes as usual", async () => {
       crash.on = true;
       vi.spyOn(console, "error").mockImplementation(() => {});
       const { doc } = await renderAt("overlay");

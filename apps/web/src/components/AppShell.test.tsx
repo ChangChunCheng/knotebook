@@ -18,12 +18,10 @@ import { FOLDER_LIST_EMPTY, folderDto, groupFolder } from "@/test/folder-fixture
 import { __resetCollapseForTests, isCollapsed, setCollapsed } from "@/components/sidebar/collapse";
 import { __resetFolderSortForTests } from "@/components/sidebar/folder-sort";
 
-// `sidebar.tab` 的 localStorage 往外洩：一個案切了 tab，同檔後面找個人筆記的案會在錯的 tab 找不到。
+// `sidebar.tab` leaks through localStorage: a case that switches tab would make later cases looking for personal notes miss them on the wrong tab.
 afterEach(() => localStorage.removeItem("sidebar.tab"));
 
-// 「新增筆記 → 導向新筆記頁」的接線案——#122 起導向的是 /n/<handle>/<slug> 新形，
-// probe 掛在 /n/:handle/:slug 底下（新形 route 的承接由 App.resetKey.test control 3 守；
-// 舊形由同檔主案/control 2 與 App.errorBoundary.test 案 11 守）。
+// Wiring of "new note -> navigate to the new note page": since #122 it navigates to the /n/<handle>/<slug> shape, so the probe is mounted under /n/:handle/:slug (routing of this shape is also exercised in App.resetKey.test.tsx).
 
 interface FakeResponseInit {
   ok: boolean;
@@ -65,19 +63,17 @@ const CREATED: NoteDto = {
   permissions: OWNER_PERMS,
 };
 
-/** 停在 `/n/:handle/:slug`（#122 新形）的替身頁——把解析到的兩段印出來，讓斷言看得到落點。 */
 function NoteRouteProbe() {
   const { handle, slug } = useParams<{ handle: string; slug: string }>();
   return <div data-testid="note-route">{`${handle}/${slug}`}</div>;
 }
 
-/** 停在 `/g/:groupId/:slug`（#175 群組筆記）的替身頁。 */
 function GroupNoteRouteProbe() {
   const { groupId, slug } = useParams<{ groupId: string; slug: string }>();
   return <div data-testid="group-note-route">{`${groupId}/${slug}`}</div>;
 }
 
-describe("AppShell — new note", () => {
+describe("AppShell - new note", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -106,7 +102,7 @@ describe("AppShell — new note", () => {
         if (url === "/api/notes" && method === "GET") {
           return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) }));
         }
-        // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+        // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
         if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
         throw new Error(`unexpected fetch: ${method} ${url}`);
       }),
@@ -129,17 +125,14 @@ describe("AppShell — new note", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New note" }));
 
-    // #122：新筆記吃 DB default 的 `untitled-<uuid8>` slug → canonical 是
-    // `/n/<ownerHandle>/<slug>`（新形單一態）。
-    const expectedSegments = canonicalNotePath(CREATED).replace("/n/", ""); // "handle/slug" 兩段
+    // #122: a new note takes the DB default `untitled-<uuid8>` slug, so canonical is `/n/<ownerHandle>/<slug>`.
+    const expectedSegments = canonicalNotePath(CREATED).replace("/n/", ""); // "handle/slug": two segments
     await waitFor(() => expect(screen.getByTestId("note-route")).toHaveTextContent(expectedSegments));
   });
 
-  it("#103／#175：群組段的「＋」以 groupId 建筆記並導向新筆記的 /g/ 網址", async () => {
-    // #175：這個 fixture 以前沒標 `GroupDto`、`myRole: "admin"` 是字串——tsc 不報，
-    // 但「＋」改看 `myRole.permissions.create` 之後會丟 TypeError。現在標型別並走共用 helper。
+  it("#103/#175: the + in a group section creates the note with groupId and navigates to the new note's /g/ URL", async () => {
     const group: GroupDto = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Workshop A" }, adminRole());
-    // 群組筆記（#175）：無個人 owner、role 從不是 owner、canonical 是 `/g/<groupId>/<slug>`。
+    // Group note (#175): no personal owner, the role is never owner, canonical is `/g/<groupId>/<slug>`.
     const created: NoteDto = {
       ...CREATED,
       id: "77777777-7777-7777-7777-777777777777",
@@ -171,7 +164,7 @@ describe("AppShell — new note", () => {
         if (url === "/api/notes" && method === "GET") {
           return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([CREATED]) }));
         }
-        // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+        // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
         if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
         throw new Error(`unexpected fetch: ${method} ${url}`);
       }),
@@ -193,7 +186,7 @@ describe("AppShell — new note", () => {
       </QueryClientProvider>,
     );
 
-    // 群組列在「群組」tab（預設 tab 是「我的筆記」）。
+    // Groups are listed on the Groups tab (the default tab is My notes).
     fireEvent.click(await screen.findByRole("tab", { name: "Groups" }));
     fireEvent.click(await screen.findByRole("button", { name: "New note in Workshop A" }));
 
@@ -253,10 +246,8 @@ describe("AppShell — new note", () => {
   });
 });
 
-// AppShell 的搜尋框與 Ctrl/Cmd+K：聚焦搜尋框、Esc 清空+blur、以及
-// AppShell → SearchResults 的 query 接線（搜尋中換成扁平結果視圖）。結果列的可及名稱是
-// 「標題 位置」，所以以 `^標題` regex 取列，不用全字比對（全字比對的負向斷言會空轉）。
-describe("AppShell — search box & Ctrl/Cmd+K", () => {
+// A result row's accessible name is "title location", so rows are fetched with a `^title` regex instead of an exact match (a negative assertion with an exact match would be vacuous).
+describe("AppShell - search box & Ctrl/Cmd+K", () => {
   const ALPHA_NOTE: NoteDto = {
     id: "44444444-4444-4444-4444-444444444444",
     title: "Alpha Note",
@@ -309,7 +300,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
         if (url === "/api/notes" && method === "GET") {
           return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(notes) }));
         }
-        // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+        // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
         if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
         throw new Error(`unexpected fetch: ${method} ${url}`);
       }),
@@ -346,8 +337,8 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     const input = await screen.findByRole("textbox", { name: "Search notes" });
     expect(input).not.toHaveFocus();
 
-    // `fireEvent` 回傳 `dispatchEvent` 的結果：cancelable 事件被 `preventDefault()`
-    // 攔下時回傳 `false`——藉此在不碰內部實作的前提下斷言 `defaultPrevented`。
+    // `fireEvent` returns the result of `dispatchEvent`: it is `false` when a cancelable event was stopped by `preventDefault()`,
+    // which lets the test assert `defaultPrevented` without touching internals.
     const notCanceled = fireEvent.keyDown(window, { key: "k", ctrlKey: true });
 
     expect(input).toHaveFocus();
@@ -364,12 +355,10 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(input).toHaveFocus();
   });
 
-  // BlockNote 的建立連結工具在編輯器 DOM 上綁原生 keydown 監聽
-  // Ctrl/Cmd+K，`preventDefault()` 但不 `stopPropagation()`，事件仍會冒泡到
-  // `window`——若 AppShell 不放行會搶在編輯器前面把焦點拉去搜尋框。這裡直接在
-  // dispatch 前呼叫 `event.preventDefault()`，模擬「已經有人處理過這個按鍵」
-  // 抵達 AppShell 的 handler 時的狀態，不需要真的掛一個 NoteEditor。
-  it("Ctrl+K is ignored when the event arrives already defaultPrevented (e.g. BlockNote's own create-link shortcut) — no focus", async () => {
+  // BlockNote's create-link tool binds a native keydown listener for Ctrl/Cmd+K on the editor DOM and calls `preventDefault()` without `stopPropagation()`,
+  // so the event still bubbles to `window`; if AppShell didn't yield it would grab focus for the search box ahead of the editor.
+  // Calling `event.preventDefault()` before dispatch simulates "someone already handled this key" arriving at AppShell's handler, without mounting a NoteEditor.
+  it("Ctrl+K is ignored when the event arrives already defaultPrevented (e.g. BlockNote's own create-link shortcut) - no focus", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
 
@@ -381,10 +370,10 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(input).not.toHaveFocus();
   });
 
-  it("Ctrl+K is ignored while a [role=\"dialog\"] is open on the page — no focus, no preventDefault", async () => {
+  it("Ctrl+K is ignored while a [role=dialog] is open on the page - no focus, no preventDefault", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
-    // 不需要真的開一個 Radix Dialog——handler 只檢查 DOM 上有沒有這個選擇器。
+    // No real Radix Dialog needed: the handler only checks the DOM for this selector.
     render(<div role="dialog">fake dialog</div>);
 
     const input = await screen.findByRole("textbox", { name: "Search notes" });
@@ -394,10 +383,9 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(notCanceled).toBe(true);
   });
 
-  // 釘住 AppShell.tsx 檔頭「⋮ 選單是 role="menu"，不在這個判定範圍內」的宣稱：
-  // ⋮ 選單開著時（`role="menu"`，不是 `role="dialog"`）Ctrl+K 仍會觸發並把焦點
-  // 搶去搜尋框——跟上面 `role="dialog"` 那案是刻意的一組對照。
-  it("Ctrl+K still triggers while a [role=\"menu\"] (⋮ dropdown) is open — only [role=\"dialog\"] is excluded", async () => {
+  // With a dropdown menu open (role="menu", not role="dialog") Ctrl+K still triggers and takes focus:
+  // deliberately paired with the role="dialog" case above.
+  it("Ctrl+K still triggers while a [role=menu] (dropdown) is open - only [role=dialog] is excluded", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
     render(<div role="menu">fake ⋮ menu</div>);
@@ -410,9 +398,8 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
   });
 
   it("shortcut badge: Mac platform shows ⌘K, non-Mac shows Ctrl K", async () => {
-    // AppShell 只讀 `navigator.platform`，最小替身即足——`{ ...navigator, … }`
-    // 的 spread 是空的（jsdom 的 navigator 屬性全在原型鏈上，不是 own
-    // property，object spread 拷貝不到），改用明確最小替身避免誤導。
+    // AppShell only reads `navigator.platform`, so a minimal stand-in suffices; `{ ...navigator }` would spread nothing
+    // (jsdom's navigator properties live on the prototype chain, not as own properties).
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     vi.stubGlobal("navigator", { platform: "MacIntel" } as Navigator);
     const { unmount } = renderShell();
@@ -424,7 +411,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(await screen.findByText("Ctrl K")).toBeInTheDocument();
   });
 
-  it("按鍵語意刻意釘死：Ctrl+Shift+K 不觸發（嚴格比對 event.key===\"k\"，Shift 讓瀏覽器回報大寫 \"K\"）", async () => {
+  it("key semantics are pinned on purpose: Ctrl+Shift+K doesn't trigger (strict event.key === 'k'; Shift makes the browser report uppercase 'K')", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
 
@@ -451,7 +438,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(input).not.toHaveFocus();
   });
 
-  it("real path: typing in the search box actually shrinks the sidebar note list (AppShell → SearchResults query wiring)", async () => {
+  it("real path: typing in the search box actually shrinks the sidebar note list (AppShell -> SearchResults query wiring)", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
 
@@ -465,7 +452,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(screen.queryAllByRole("link", { name: /^Beta Note/ })).toHaveLength(0);
   });
 
-  it("AS-S1：搜尋中 tab 列與 tabpanel 都不渲染；Esc 後 tablist 回來、原 tab 仍選中", async () => {
+  it("while searching neither the tab row nor the tabpanel renders; after Esc the tablist returns with the original tab still selected", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
     const input = await screen.findByRole("textbox", { name: "Search notes" });
@@ -483,7 +470,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("AS-S2：清除鈕——空字串時沒有、有 Ctrl K 徽章；有字時換成清除鈕；點了清空、焦點留在輸入框、tablist 回來", async () => {
+  it("clear button: absent for an empty string (the Ctrl K badge shows); with text it replaces the badge; clicking clears, focus stays in the input, tablist returns", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
     const input = await screen.findByRole("textbox", { name: "Search notes" });
@@ -503,7 +490,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("只有空白也算搜尋中（現行行為）：換成搜尋視圖、出現清除鈕", async () => {
+  it("whitespace-only counts as searching (current behaviour): swaps to the search view and shows the clear button", async () => {
     stubFetchWithNotes([ALPHA_NOTE, BETA_NOTE]);
     renderShell();
     const input = await screen.findByRole("textbox", { name: "Search notes" });
@@ -513,7 +500,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(screen.getByRole("button", { name: "Clear search" })).toBeInTheDocument();
   });
 
-  it("AS-S3：點結果換頁後搜尋字串保留、搜尋視圖仍在（可連開好幾個結果）", async () => {
+  it("clicking a result to change page keeps the search text and the search view (several results can be opened in a row)", async () => {
     const one: NoteDto = { ...ALPHA_NOTE, id: "77777777-7777-7777-7777-777777777771", title: "Alpha One", slug: "a" };
     const two: NoteDto = { ...ALPHA_NOTE, id: "77777777-7777-7777-7777-777777777772", title: "Alpha Two", slug: "b" };
     stubFetchWithNotes([one, two]);
@@ -548,7 +535,7 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
     expect(screen.getByTestId("sidebar-search")).toBeInTheDocument();
   });
 
-  it("#229：inert 傳 true → AppShell 根 div 帶 inert 屬性；不傳 → 沒有", async () => {
+  it("#229: inert=true -> the AppShell root div has the inert attribute; omitted -> none", async () => {
     stubFetchWithNotes([ALPHA_NOTE]);
     const first = renderShell(true);
     await screen.findByRole("textbox", { name: "Search notes" });
@@ -561,18 +548,11 @@ describe("AppShell — search box & Ctrl/Cmd+K", () => {
 });
 
 /**
- * #115：側欄抽屜（< 1280 的導覽入口）。
+ * #115: sidebar drawer (navigation entry below 1280). jsdom has no CSS, so `hidden`/`xl:flex` don't affect accessibility queries, and an open drawer puts two SidebarContent copies (static and drawer) in the DOM: queries in this group are scoped with `within(drawer)`, never global byRole.
  *
- * jsdom 沒有 CSS——`hidden`/`xl:flex` 不影響可及性查詢，抽屜開著時 DOM 上同時有
- * 靜態與抽屜兩份 SidebarContent，因此本組查詢一律 `within(drawer)` 圈定，不用
- * 全域 byRole（雙實例）。
- *
- * matchMedia：`test/setup.ts` 的 stub 恆 `matches:false` 且 addEventListener 是
- * no-op——「Ctrl+K 窄分支」與「跨斷點 resize 關閉」兩案必須自己 stub 一個可控的
- * MediaQueryList（自持 listener 集合＋手動 dispatch change），否則寫出「掛了
- * listener 但永遠不會觸發」的實作照樣全綠。
+ * The `test/setup.ts` matchMedia stub always has `matches:false` and a no-op addEventListener, so the "Ctrl+K narrow branch" and "resize across the breakpoint closes" cases stub a controllable MediaQueryList (own listener set + manual dispatch of change); otherwise an implementation that registers a listener that never fires would still pass.
  */
-describe("AppShell — #115 側欄抽屜", () => {
+describe("AppShell - #115 sidebar drawer", () => {
   const NOTE: NoteDto = {
     id: "66666666-6666-6666-6666-666666666666",
     title: "Drawer Note",
@@ -607,15 +587,14 @@ describe("AppShell — #115 側欄抽屜", () => {
         if (url === "/api/notes" && method === "GET") {
           return Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(notes) }));
         }
-        // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+        // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
         if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
         throw new Error(`unexpected fetch: ${method} ${url}`);
       }),
     );
   }
 
-  /** 可控 matchMedia stub：回傳「觸發 change」的把手。`matches` 是初值，之後由
-   * dispatch 帶的值決定（實作讀 event.matches）。 */
+  /** Controllable matchMedia stub returning a handle that fires `change`; `matches` is only the initial value, afterwards the dispatched value decides (the implementation reads event.matches). */
   function stubControllableMatchMedia(initialMatches: boolean) {
     const listeners = new Set<(e: { matches: boolean }) => void>();
     const mql = {
@@ -628,7 +607,7 @@ describe("AppShell — #115 側欄抽屜", () => {
       removeListener: () => {},
       dispatchEvent: () => false,
     };
-    // 只有 OVERLAY_QUERY 回 mql；其餘 query（例如 WIDE_POINTER_QUERY）一律不成立、不註冊監聽。
+    // Only OVERLAY_QUERY returns an mql; other queries (e.g. WIDE_POINTER_QUERY) don't match and register no listener.
     vi.stubGlobal("matchMedia", vi.fn((query: string) => (query === OVERLAY_QUERY ? mql : { ...mql, matches: false, addEventListener: () => {}, removeEventListener: () => {} })));
     return {
       dispatchChange(matches: boolean) {
@@ -639,10 +618,8 @@ describe("AppShell — #115 側欄抽屜", () => {
     };
   }
 
-  // 側欄鈕在頁面層（NotePage 頁首／NarrowTopBar），AppShell 本體沒有——harness 自己
-  // 當那個消費端，把 SidebarDrawerButton 放進 children。
-  // `wrap`：要包在 `<AppShell>` **外面**的 provider（例如 NotePage 提供的 NotePageControlsContext）
-  // ——children 插槽在 AppShell 裡面，放不進去。
+  // The sidebar button lives at page level (NotePage header / NarrowTopBar), not in AppShell, so the harness acts as that consumer and puts SidebarDrawerButton into children.
+  // `wrap`: a provider that must go outside `<AppShell>` (e.g. NotePage's NotePageControlsContext); the children slot is inside AppShell and can't hold it.
   function renderShell(
     children: ReactNode = <SidebarDrawerButton />,
     wrap: (shell: ReactNode) => ReactNode = (shell) => shell,
@@ -669,31 +646,30 @@ describe("AppShell — #115 側欄抽屜", () => {
     vi.unstubAllGlobals();
   });
 
-  it("點側欄鈕開抽屜：dialog 有可及名稱、掛 data-sidebar-drawer、bg-card flex flex-col；內容含搜尋框與筆記列", async () => {
+  it("clicking the sidebar button opens the drawer: dialog has an accessible name, data-sidebar-drawer, bg-card flex flex-col; contains the search box and note rows", async () => {
     stubFetchWithNotes([NOTE]);
     renderShell();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
 
     const drawer = await screen.findByRole("dialog", { name: "Navigation" });
-    // 不變量四件套（缺底色透出 overlay 黑、缺 flex 脈絡長清單擠出鈕、
-    // 缺屬性則 Ctrl+K 讓路判別失效）。
+    // Invariants: no background color -> overlay black shows through; no flex context -> a long list pushes the button out;
+    // no attribute -> the Ctrl+K yield check can't recognise the drawer.
     expect(drawer).toHaveAttribute("data-sidebar-drawer");
     expect(drawer).toHaveClass("fixed", "inset-y-0", "left-0", "z-50", "flex", "flex-col", "bg-card");
     expect(drawer).not.toHaveClass("w-64");
-    // 抽屜貼著視窗左緣與上下緣：瀏海、Home 指示條、橫拿的側邊都要退開。
+    // The drawer hugs the left/top/bottom window edges: notch, home indicator and landscape sides must stay clear.
     expect(drawer).toHaveClass("pt-[env(safe-area-inset-top)]", "pb-[env(safe-area-inset-bottom)]", "pl-[env(safe-area-inset-left)]");
-    // 側欄鈕開＝焦點落在抽屜容器本身（不聚焦搜尋框以免觸控彈鍵盤）——這一步武裝
-    // Radix 的 focus trap；onOpenAutoFocus 只 preventDefault 不補聚焦的錯誤實作
-    // 會讓焦點留在側欄鈕、Tab 逃進 aria-hidden 背景（原本沒案子抓）。
+    // Opened via the sidebar button, focus lands on the drawer container itself (not the search box, so touch keyboards don't pop up);
+    // this step arms Radix's focus trap: an implementation where onOpenAutoFocus only preventDefaults without focusing would leave focus on the sidebar button and let Tab escape into the aria-hidden background.
     expect(drawer).toHaveFocus();
 
     expect(within(drawer).getByRole("textbox", { name: "Search notes" })).toBeInTheDocument();
-    // 預設 tab 是「我的筆記」，個人筆記只列在那一個面板（單數查詢）。
+    // The default tab is My notes: personal notes are listed in that one panel only (singular query).
     expect(await within(drawer).findByRole("link", { name: "Drawer Note" })).toBeInTheDocument();
   });
 
-  it("點抽屜裡的筆記（route change）→ 抽屜關閉", async () => {
+  it("clicking a note in the drawer (route change) closes the drawer", async () => {
     stubFetchWithNotes([NOTE]);
     renderShell();
 
@@ -705,7 +681,7 @@ describe("AppShell — #115 側欄抽屜", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
   });
 
-  it("開抽屜→Esc 關→Ctrl+K 仍聚焦**靜態**搜尋框（兩實例 ref 不共用；共用 ref 會在抽屜 unmount 時被清成 null）", async () => {
+  it("open drawer -> Esc closes -> Ctrl+K still focuses the static search box (the two instances don't share a ref; a shared ref would be cleared to null when the drawer unmounts)", async () => {
     stubFetchWithNotes([NOTE]);
     renderShell();
 
@@ -714,19 +690,19 @@ describe("AppShell — #115 側欄抽屜", () => {
     fireEvent.keyDown(drawer, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
 
-    // 抽屜關了，畫面上只剩靜態那份搜尋框。
+    // With the drawer closed only the static search box remains, which is why the singular getByRole works.
     const input = screen.getByRole("textbox", { name: "Search notes" });
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(input).toHaveFocus();
   });
 
-  it("Ctrl+K 窄分支（matchMedia matches:true）：開抽屜並聚焦抽屜內搜尋框", async () => {
+  it("Ctrl+K narrow branch (matchMedia matches:true): opens the drawer and focuses the search box inside it", async () => {
     stubControllableMatchMedia(true);
     stubFetchWithNotes([NOTE]);
     renderShell();
     await screen.findByRole("button", { name: "Open sidebar" });
 
-    // 回傳 false＝事件被 preventDefault（窄視窗按 Ctrl+K 不能同時觸發瀏覽器網址列搜尋）。
+    // false means the event was preventDefault-ed (on a narrow window Ctrl+K must not also trigger the browser's address-bar search).
     const notCanceled = fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(notCanceled).toBe(false);
 
@@ -734,7 +710,7 @@ describe("AppShell — #115 側欄抽屜", () => {
     await waitFor(() => expect(within(drawer).getByRole("textbox", { name: "Search notes" })).toHaveFocus());
   });
 
-  it("跨斷點 resize（change → matches:false）→ 抽屜關閉", async () => {
+  it("resize across the breakpoint (change -> matches:false) closes the drawer", async () => {
     const media = stubControllableMatchMedia(true);
     stubFetchWithNotes([NOTE]);
     renderShell();
@@ -749,7 +725,7 @@ describe("AppShell — #115 側欄抽屜", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
   });
 
-  it("抽屜裡對開著的那篇按 AI 修改紀錄：呼叫 openEdits 並關抽屜（不導頁，所以 pathname effect 關不了它）", async () => {
+  it("AI edit history for the open note from the drawer: calls openEdits and closes the drawer (no navigation, so the pathname effect can't close it)", async () => {
     stubFetchWithNotes([NOTE]);
     const openEdits = vi.fn();
     renderShell(<SidebarDrawerButton />, (shell) => (
@@ -771,12 +747,12 @@ describe("AppShell — #115 側欄抽屜", () => {
     await waitFor(() => expect(document.querySelector("[data-sidebar-drawer]")).toBeNull());
   });
 
-  describe("浮動段（640-1279）", () => {
+  describe("floating tier (640-1279)", () => {
     afterEach(() => {
       localStorage.removeItem("sidebar.width");
     });
 
-    it("固定側欄只在 xl 以上顯示；側欄鈕在 xl 以上隱藏，名稱是 Open sidebar", async () => {
+    it("fixed sidebar shows only from xl up; the sidebar button is hidden from xl up and named Open sidebar", async () => {
       stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
       const { container } = renderShell();
@@ -790,13 +766,13 @@ describe("AppShell — #115 側欄抽屜", () => {
       expect(button.querySelector("svg")).toHaveAttribute("data-icon", "panel-left");
     });
 
-    it("按側欄鈕開抽屜：焦點在抽屜容器、不在搜尋框；Esc 關閉後焦點回側欄鈕", async () => {
+    it("sidebar button opens the drawer: focus on the drawer container, not the search box; after Esc focus returns to the sidebar button", async () => {
       stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
       renderShell();
 
       const button = await screen.findByRole("button", { name: "Open sidebar" });
-      button.focus(); // 真實點擊會先聚焦鈕；fireEvent.click 不會，Radix 關閉時要還焦點的對象就是它
+      button.focus(); // a real click focuses the button first, fireEvent.click doesn't; Radix returns focus to it on close
       fireEvent.click(button);
       const drawer = await screen.findByRole("dialog", { name: "Navigation" });
       expect(drawer).toHaveFocus();
@@ -806,11 +782,11 @@ describe("AppShell — #115 側欄抽屜", () => {
       fireEvent.keyDown(drawer, { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
       await waitFor(() => expect(button).toHaveFocus());
-      // 還焦點不捲動：opener 若是編輯器，focus() 預設會把捲動位置帶到游標。
+      // Return focus without scrolling: if the opener is the editor, focus() by default scrolls to the caret.
       expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
     });
 
-    it("Ctrl+K 開抽屜且焦點在抽屜裡的搜尋框，並 preventDefault", async () => {
+    it("Ctrl+K opens the drawer with focus on its search box, and preventDefault", async () => {
       stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
       renderShell();
@@ -821,7 +797,7 @@ describe("AppShell — #115 側欄抽屜", () => {
       await waitFor(() => expect(within(drawer).getByRole("textbox", { name: "Search notes" })).toHaveFocus());
     });
 
-    it("點遮罩（筆記區）關閉抽屜", async () => {
+    it("clicking the overlay (note area) closes the drawer", async () => {
       stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
       renderShell();
@@ -837,7 +813,7 @@ describe("AppShell — #115 側欄抽屜", () => {
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
     });
 
-    it("抽屜寬度吃存下來的側欄寬度，右側至少留 4rem；抽屜裡沒有拖曳把手", async () => {
+    it("drawer width follows the stored sidebar width, leaving at least 4rem on the right; no drag handle in the drawer", async () => {
       localStorage.setItem("sidebar.width", "400");
       stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
@@ -845,14 +821,14 @@ describe("AppShell — #115 側欄抽屜", () => {
 
       fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
       const drawer = await screen.findByRole("dialog", { name: "Navigation" });
-      // jsdom 的 cssstyle 會把 min() 的逗號兩側補上 `*`，所以分開比對兩個成分。
+      // jsdom's cssstyle pads both sides of the comma in min() with `*`, so the two components are matched separately.
       const widthStyle = drawer.getAttribute("style") ?? "";
       expect(widthStyle).toContain("min(400px");
       expect(widthStyle).toContain("calc(100vw - 4rem)");
       expect(within(drawer).queryByRole("separator")).toBeNull();
     });
 
-    it("跨 1280 變固定版面 -> 開著的抽屜關掉", async () => {
+    it("crossing 1280 into the fixed layout closes an open drawer", async () => {
       const tier = stubLayoutTier("overlay");
       stubFetchWithNotes([NOTE]);
       renderShell();
@@ -864,7 +840,7 @@ describe("AppShell — #115 側欄抽屜", () => {
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
     });
 
-    it("固定版面下 Ctrl+K 聚焦固定側欄的搜尋框、不開抽屜", async () => {
+    it("in the fixed layout Ctrl+K focuses the fixed sidebar's search box and doesn't open a drawer", async () => {
       stubLayoutTier("docked");
       stubFetchWithNotes([NOTE]);
       renderShell();
@@ -877,8 +853,7 @@ describe("AppShell — #115 側欄抽屜", () => {
   });
 });
 
-// ── 在資料夾建立筆記
-describe("AppShell — 在資料夾建立筆記", () => {
+describe("AppShell - creating a note in a folder", () => {
   const G: GroupDto = groupDto({ id: "G", name: "G" }, adminRole());
   const FOLDERS = [folderDto({ id: "A", name: "A" }), groupFolder({ id: "GF", name: "GF", groupId: "G" })];
 
@@ -898,7 +873,6 @@ describe("AppShell — 在資料夾建立筆記", () => {
     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
   }
 
-  /** `post`：POST /api/notes 的回應；每次 POST 的 body 記進回傳的陣列。 */
   function stubCreate(post: () => Response) {
     const bodies: unknown[] = [];
     vi.stubGlobal(
@@ -914,7 +888,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
         if (url === "/api/notes" && method === "GET") return Promise.resolve(json([]));
         if (url === "/api/groups" && method === "GET") return Promise.resolve(json([G]));
         if (url === "/api/auth/me") return Promise.resolve(json(USER));
-        // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+        // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
         if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
         throw new Error(`unexpected fetch: ${method} ${url}`);
       }),
@@ -945,7 +919,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
 
   const fail = (status: number, code: string) => () => json({ error: { code, message: "x" } }, status);
 
-  it("AS-F1 個人資料夾「＋」→ body {folderId}、導到新筆記、資料夾寫成展開", async () => {
+  it("personal folder plus -> body {folderId}, navigates to the new note, folder written as expanded", async () => {
     setCollapsed("folder:A", true);
     const bodies = stubCreate(() => json(CREATED, 201));
     renderShell();
@@ -955,7 +929,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
     expect(isCollapsed("folder:A")).toBe(false);
   });
 
-  it("AS-F1 群組資料夾「＋」→ body {groupId, folderId}", async () => {
+  it("group folder plus -> body {groupId, folderId}", async () => {
     const created: NoteDto = { ...CREATED, ownerId: null, ownerHandle: null, role: "editor", groupId: "G", group: { id: "G", name: "G" } };
     const bodies = stubCreate(() => json(created, 201));
     renderShell();
@@ -965,7 +939,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
     await waitFor(() => expect(screen.getByTestId("group-note-route")).toHaveTextContent(`G/${CREATED.slug}`));
   });
 
-  it("AS-F2 404 folder_not_found → toast「Folder not found.」、失效 ['folders']、不導頁", async () => {
+  it("404 folder_not_found -> toast 'Folder not found.', ['folders'] invalidated, no navigation", async () => {
     stubCreate(fail(404, "folder_not_found"));
     const queryClient = renderShell();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
@@ -975,7 +949,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
     expect(screen.getByText("home")).toBeInTheDocument();
   });
 
-  it("AS-F3 409 folder_too_deep → toast 帶入上限、不含 {{max}}", async () => {
+  it("409 folder_too_deep -> toast shows the limit, without {{max}}", async () => {
     stubCreate(fail(409, "folder_too_deep"));
     renderShell();
     fireEvent.click(await screen.findByRole("button", { name: "New note in A" }));
@@ -984,8 +958,7 @@ describe("AppShell — 在資料夾建立筆記", () => {
   });
 });
 
-// ── 功能導覽登記處：AppShell 交出切 tab、結束選取、關抽屜、讀目前 tab 的控制
-describe("AppShell — 功能導覽登記處", () => {
+describe("AppShell - feature tour registry", () => {
   const NOTE: NoteDto = { ...CREATED, id: "77777777-7777-7777-7777-777777777777", title: "Tour Note", slug: "tour-note" };
 
   function stubFetchForTour() {
@@ -1028,7 +1001,7 @@ describe("AppShell — 功能導覽登記處", () => {
     vi.unstubAllGlobals();
   });
 
-  it("寬視窗：getTab 讀目前 tab；showTab 切 tab、不開抽屜；卸載後撤掉登記", async () => {
+  it("wide window: getTab reads the current tab; showTab switches tab without opening the drawer; the registration is removed on unmount", async () => {
     localStorage.setItem("sidebar.tab", "recent");
     stubFetchForTour();
     const { unmount } = renderShell();
@@ -1046,7 +1019,7 @@ describe("AppShell — 功能導覽登記處", () => {
     expect(getShellControls()).toBeNull();
   });
 
-  it("closeDrawer 關掉開著的抽屜", async () => {
+  it("closeDrawer closes an open drawer", async () => {
     stubFetchForTour();
     renderShell();
     fireEvent.click(await screen.findByRole("button", { name: "Open sidebar" }));
@@ -1056,13 +1029,13 @@ describe("AppShell — 功能導覽登記處", () => {
     await waitFor(() => expect(document.querySelector("[data-sidebar-drawer]")).toBeNull());
   });
 
-  it("endSelectionIfActive：選取模式中結束並回 true；不在選取模式回 false", async () => {
+  it("endSelectionIfActive: ends selection and returns true in selection mode; returns false when not in selection mode", async () => {
     stubFetchForTour();
     renderShell();
     const controls = getShellControls()!;
     expect(controls.endSelectionIfActive()).toBe(false);
 
-    // 筆記清單載入前「Select」是 disabled。
+    // "Select" is disabled before the note list loads.
     await waitFor(() => expect(screen.getByRole("button", { name: "Select" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Select" }));
     await screen.findByRole("button", { name: "Done" });

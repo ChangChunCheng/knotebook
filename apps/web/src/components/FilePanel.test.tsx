@@ -10,24 +10,22 @@ import { noteSchema } from "@/collab/schema";
 import { createFilePanel } from "./FilePanel";
 
 /**
- * headless 編輯器（不 `.mount()`）：`createFilePanel` 只用到 `getBlock`/`updateBlock`
- * ——純文件操作，跟 `wikilink/menu.test.tsx` 需要 mount 才能用的 `openSuggestionMenu`
- * （atom node NodeView 渲染）不是同一類，不需要真的掛進 DOM。
+ * Headless editor (not `.mount()`ed): `createFilePanel` only uses `getBlock`/`updateBlock`, pure document operations. Unlike `openSuggestionMenu` in
+ * `wikilink/menu.test.tsx` (which needs mounting for the atom node NodeView rendering), no real DOM mount is needed.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any（同 NoteEditor.test.ts）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; any by repo convention (same as NoteEditor.test.ts)
 function headlessEditor(): BlockNoteEditor<any, any, any> {
   return BlockNoteEditor.create({ schema: noteSchema }) as never;
 }
 
-/** 在文件裡插入一個指定型別的 block，回傳它的 id。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 function insertBlock(editor: BlockNoteEditor<any, any, any>, type: string): string {
   const first = editor.document[0]!;
   return editor.insertBlocks([{ type } as never], first, "after")[0]!.id;
 }
 
-/** 面板的上傳 tab 讀 `useAuthConfig()`：測試用的 config 預先放進快取，前驗上限才不必等 fetch。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+/** The panel's upload tab reads `useAuthConfig()`: the test config is pre-placed in the cache so the pre-check limit doesn't wait for a fetch. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 function renderPanel(editor: BlockNoteEditor<any, any, any>, noteId: string, blockId: string, config: Partial<AuthConfigDto> = {}) {
   const MyFilePanel = createFilePanel(noteId);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -42,7 +40,7 @@ function renderPanel(editor: BlockNoteEditor<any, any, any>, noteId: string, blo
   return { ...view, queryClient };
 }
 
-/** `fetch` 樁：`GET /api/auth/config` 回 `config`，其餘（上傳）交給 `upload`；回傳 `upload`，斷言只數上傳端點。 */
+/** `fetch` stub: `GET /api/auth/config` returns `config`, everything else (upload) goes to `upload`; returns `upload` so assertions count only upload endpoint calls. */
 function stubFetch(upload: ReturnType<typeof vi.fn>, config: Partial<AuthConfigDto> | (() => Partial<AuthConfigDto>) = {}) {
   vi.stubGlobal(
     "fetch",
@@ -61,8 +59,7 @@ function pngFile(name = "a.png"): File {
 
 const ONE_MIB = 1048576;
 
-/** 建一個「聲稱」大小為 `size` 位元組的 File——不真的配置那麼多記憶體（同
- * `upload-file.test.ts` 的 `fileOfSize` 手法）。 */
+/** A File that "claims" `size` bytes without allocating that memory (same technique as `fileOfSize` in `uploads/upload-file.test.ts`). */
 function pngFileOfSize(size: number): File {
   const f = pngFile();
   Object.defineProperty(f, "size", { value: size });
@@ -73,8 +70,8 @@ function fakeResponse({ ok, status, json }: { ok: boolean; status: number; json?
   return { ok, status, json: json ?? (() => Promise.reject(new Error("no body"))) } as unknown as Response;
 }
 
-describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+describe("FilePanel (image block recovery + own Upload/Embed tabs)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   let editor: BlockNoteEditor<any, any, any>;
 
   beforeEach(async () => {
@@ -87,7 +84,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
   });
 
   describe("image block", () => {
-    it("兩個 tab：Upload（預設開啟）與 Embed", () => {
+    it("two tabs: Upload (open by default) and Embed", () => {
       const blockId = insertBlock(editor, "image");
       renderPanel(editor, "note-1", blockId);
 
@@ -97,12 +94,11 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(uploadTab).toHaveAttribute("aria-selected", "true");
       expect(embedTab).toHaveAttribute("aria-selected", "false");
 
-      // Upload tab 預設開啟：檔案輸入在畫面上，Embed 的網址輸入不在。
       expect(screen.getByLabelText("Choose an image file to upload")).toBeInTheDocument();
       expect(screen.queryByPlaceholderText("Paste a link…")).not.toBeInTheDocument();
     });
 
-    it("切到 Embed tab：Upload 的檔案輸入消失，換成網址輸入", () => {
+    it("switching to the Embed tab: Upload's file input disappears, replaced by the URL input", () => {
       const blockId = insertBlock(editor, "image");
       renderPanel(editor, "note-1", blockId);
 
@@ -112,7 +108,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(screen.getByPlaceholderText("Paste a link…")).toBeInTheDocument();
     });
 
-    it("上傳成功：呼叫 postUpload（真的打 fetch），block 拿到回傳的 url", async () => {
+    it("upload success: calls postUpload (really hits fetch), the block gets the returned url", async () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValue(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }));
@@ -134,7 +130,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
-    it("上傳失敗（已知錯誤碼）：行內錯誤顯示對應 errors.<code> 文案，不是通用文案；block 完全不動（不是 editor.uploadFile 那條會誤刪 block 的路徑）", async () => {
+    it("upload failure (known error code): the inline error shows the matching errors.<code> text, not the generic one; the block is untouched (not the editor.uploadFile path that would wrongly delete the block)", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         fakeResponse({
           ok: false,
@@ -151,18 +147,17 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       fireEvent.change(input, { target: { files: [pngFile()] } });
 
       await waitFor(() => {
-        // `errors.unsupported_media_type` 的實際文案，
-        // 不是通用的 `note.filePanel.upload.error`——已知錯誤碼要顯示對症下藥的訊息。
+        // The actual text of `errors.unsupported_media_type`, not the generic `note.filePanel.upload.error`:
+        // a known error code must show a targeted message.
         expect(screen.getByRole("alert")).toHaveTextContent("That file type isn't supported.");
       });
 
-      // block 還在、props 沒被動過（沒有 url 寫入，也沒有被移除）。
       const block = editor.getBlock(blockId);
       expect(block).toBeDefined();
       expect((block!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("上傳被配額拒（帶數字）：行內兩行——「Storage is full」＋用量句；block 不動", async () => {
+    it("upload rejected by quota (with numbers): two inline lines, 'Storage is full' plus a usage sentence; block untouched", async () => {
       stubFetch(vi.fn().mockResolvedValue(fakeResponse({
         ok: false, status: 409,
         json: () => Promise.resolve({ error: { code: "storage_quota_exceeded", message: "x" }, storage: { incomingBytes: 3, usedBytes: 1572864, quotaBytes: 1048576 } }),
@@ -175,7 +170,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("上傳被配額拒（沒數字）：行內用通用句", async () => {
+    it("upload rejected by quota (no numbers): inline generic sentence", async () => {
       stubFetch(vi.fn().mockResolvedValue(fakeResponse({
         ok: false, status: 409,
         json: () => Promise.resolve({ error: { code: "storage_quota_exceeded", message: "x" }, storage: { incomingBytes: null } }),
@@ -187,7 +182,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("This space has no room for the file. Ask its owner or a site admin.");
     });
 
-    it("上傳失敗（檔案超過 config 的 maxUploadBytes，client 前驗 reject，不打上傳端點）：顯示 errors.file_too_large，不是誤導的通用「請再試一次」", async () => {
+    it("upload failure (file exceeds config's maxUploadBytes, client pre-check rejects, upload endpoint not hit): shows errors.file_too_large, not the misleading generic 'try again'", async () => {
       const config = { maxUploadBytes: ONE_MIB };
       const uploadMock = stubFetch(vi.fn(), config);
 
@@ -204,7 +199,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("config 沒有 maxUploadBytes：不前驗，大檔照發上傳", async () => {
+    it("config without maxUploadBytes: no pre-check, a large file is uploaded anyway", async () => {
       const uploadMock = stubFetch(
         vi.fn().mockResolvedValue(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) })),
         {},
@@ -221,8 +216,8 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(uploadMock).toHaveBeenCalledTimes(1);
     });
 
-    it("上限變了不必重掛：config 快取更新後，同一個面板下一次選檔就用新上限", async () => {
-      let serverLimit = ONE_MIB; // 掛載時的重抓也讀得到「server 現在的值」，不會把快取蓋回舊值
+    it("limit changes without remount: after the config cache updates, the same panel's next file pick uses the new limit", async () => {
+      let serverLimit = ONE_MIB; // the refetch on mount also reads the server's current value, so the cache isn't overwritten back to the old one
       const uploadMock = stubFetch(
         vi.fn().mockResolvedValue(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) })),
         () => ({ maxUploadBytes: serverLimit }),
@@ -244,7 +239,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       await waitFor(() => expect(uploadMock).toHaveBeenCalledTimes(1));
     });
 
-    it("上傳失敗（非 ApiFail，例如網路層例外）：落回通用文案", async () => {
+    it("upload failure (not ApiFail, e.g. a network-level exception): falls back to the generic text", async () => {
       stubFetch(vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
       const blockId = insertBlock(editor, "image");
@@ -258,10 +253,9 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       });
     });
 
-    // image block 的 EmbedTab 是同一個元件，但只有透過
-    // 「切到 Embed tab」才會渲染網址輸入——scheme 白名單邏輯本身在 audio/video/file
-    // 三案已覆蓋，這裡補 image block 這條進入路徑本身的覆蓋面（純覆蓋面，不是新邏輯）。
-    it("Embed tab：javascript: 偽 URL → 拒收＋行內錯誤，props.url 未寫入", () => {
+    // The image block's EmbedTab is the same component but only renders the URL input after "switching to Embed tab";
+    // the scheme allowlist logic itself is covered by the audio/video/file cases, this adds coverage of the image block's entry path (coverage only, no new logic).
+    it("Embed tab: javascript: pseudo URL -> rejected with an inline error, props.url not written", () => {
       const blockId = insertBlock(editor, "image");
       renderPanel(editor, "note-1", blockId);
       fireEvent.click(screen.getByRole("tab", { name: "Embed link" }));
@@ -274,7 +268,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("Embed tab：https:// → 通過（不觸發錯誤）", () => {
+    it("Embed tab: https:// -> accepted (no error)", () => {
       const blockId = insertBlock(editor, "image");
       renderPanel(editor, "note-1", blockId);
       fireEvent.click(screen.getByRole("tab", { name: "Embed link" }));
@@ -288,8 +282,8 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
     });
   });
 
-  describe.each(["audio", "video", "file"])("%s block（只有 Embed，沒有 Upload tab）", (type) => {
-    it("沒有分頁列、沒有檔案輸入，直接是網址輸入", () => {
+  describe.each(["audio", "video", "file"])("%s block (Embed only, no Upload tab)", (type) => {
+    it("no tab bar, no file input, straight to the URL input", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -298,7 +292,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(screen.getByPlaceholderText("Paste a link…")).toBeInTheDocument();
     });
 
-    it("Embed：輸入網址、按 Enter → block 寫回 url/name", () => {
+    it("Embed: enter a URL and press Enter -> block writes back url/name", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -311,7 +305,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect(props.name).toBe("clip.mp4");
     });
 
-    it("Embed：點按鈕也能提交（不必靠 Enter）", () => {
+    it("Embed: clicking the button also submits (no need for Enter)", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -322,7 +316,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("https://example.com/clip.mp4");
     });
 
-    it("空白網址：按鈕停用，Enter 不提交", () => {
+    it("blank URL: button disabled, Enter doesn't submit", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -334,8 +328,8 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    // 安全 backlog ④：Embed tab 的 URL scheme 白名單。
-    it("javascript: 偽 URL → 拒收＋行內錯誤，props.url 未寫入", () => {
+    // URL scheme allowlist for the Embed tab (security).
+    it("javascript: pseudo URL -> rejected with an inline error, props.url not written", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -347,7 +341,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("無 scheme（new URL 解析失敗）→ 拒收＋行內錯誤，不自動補 scheme", () => {
+    it("no scheme (new URL fails to parse) -> rejected with an inline error, no scheme auto-prepended", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -359,7 +353,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("");
     });
 
-    it("https:// → 通過（不觸發錯誤）", () => {
+    it("https:// -> accepted (no error)", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 
@@ -371,7 +365,7 @@ describe("FilePanel（image block 恢復＋自家 Upload/Embed tab）", () => {
       expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("https://example.com/clip.mp4");
     });
 
-    it("http:// → 通過（不觸發錯誤）", () => {
+    it("http:// -> accepted (no error)", () => {
       const blockId = insertBlock(editor, type);
       renderPanel(editor, "note-1", blockId);
 

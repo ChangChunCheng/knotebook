@@ -10,8 +10,8 @@ import { indexFolders } from "@/components/sidebar/folder-index";
 import { NoteMenu } from "@/components/NoteMenu";
 import type { DestinationPick } from "@/components/share/GroupTransfer";
 
-// 移動／複製確認框的 lazy chunk 載入失敗：只在原位顯示 inline 錯誤，⋮ 鈕與整個 app 不崩。
-// `vi.mock` 整檔生效，所以獨立成檔（照 NoteList.folder-lazy-error.test.tsx）。選單項換成一顆按鈕直接餵 pick（照 NoteMenu.pick.test.tsx）。
+// The move/copy confirm dialog's lazy chunk fails to load: only an inline error in place, the more menu button and the whole app don't crash.
+// `vi.mock` applies to the whole file, hence a separate file (as in NoteList.folder-lazy-error.test.tsx); the menu item is replaced by one button that feeds a pick directly (as in NoteMenu.pick.test.tsx).
 vi.mock("@/components/share/GroupTransferDialog", () =>
   Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/GroupTransferDialog-abc.js")),
 );
@@ -54,7 +54,7 @@ const NOTE: NoteDto = {
   permissions: { ...OWNER_PERMS },
 };
 
-describe("NoteMenu — 移動／複製確認框 chunk 載入失敗", () => {
+describe("NoteMenu - move/copy confirm dialog chunk fails to load", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     sessionStorage.clear();
@@ -68,7 +68,7 @@ describe("NoteMenu — 移動／複製確認框 chunk 載入失敗", () => {
     sessionStorage.clear();
   });
 
-  it("選定群組後出現 inline 錯誤，⋮ 鈕還在、app 沒崩", async () => {
+  it("after choosing a group an inline error appears, the more menu button is still there, the app didn't crash", async () => {
     render(
       <AppErrorBoundary reload={vi.fn()}>
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

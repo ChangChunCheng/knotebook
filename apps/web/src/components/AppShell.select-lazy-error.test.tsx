@@ -13,13 +13,9 @@ import { AppErrorBoundary } from "./ErrorBoundary";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 一般 tab 選取模式的 lazy chunk（SelectLazy）載入失敗（#181／AL2b／AL3，拆法照 AppShell.trash-lazy-error.test.tsx）：
-// 只有選取那幾塊出錯，側欄其餘與頁面照常，不冒到 AppErrorBoundary。錯誤訊息照 Chromium 的裸動態 import 失敗措辭；
-// vitest 把 factory 的 reject 包成「error when mocking a module」、原錯誤放 `cause`（`isChunkLoadError` 查 cause 一層）。
-// ⚠ 只 mock SelectLazy 時實測清單換成了真的勾選樹、select 旗標被成功那份的 beacon 清掉：NoteList 同一次 render 對 SelectLazy
-// 發兩個 `import()`（標題列、清單），vitest 3.2.7 同一個 importer 的並發 import 有一支繞過 factory、載入真模組（`execute.js`
-// requestWithMock 共用 callstack，註解「will not work if user does Promise.all(import(), import())」）。所以連真 SelectLazy
-// 第一個 import 的字串包也讓它失敗，繞過的那一支照樣以同一個 chunk 錯誤失敗（真瀏覽器裡三個掛載點抓同一個 chunk，本來就一起失敗）。
+// SelectLazy chunk (normal-tab selection mode) fails to load (#181; same structure as AppShell.trash-lazy-error.test.tsx): only the selection parts error, the rest of the sidebar and page stay, nothing bubbles to AppErrorBoundary.
+// The message mimics Chromium's bare dynamic-import failure; vitest wraps the factory's reject as "error when mocking a module" with the original in `cause` (`isChunkLoadError` checks one level of cause).
+// Mocking only SelectLazy isn't enough: NoteList issues two `import()`s of SelectLazy in one render (title row, list) and in vitest 3.2.7 one of two concurrent imports from the same importer bypasses the factory and loads the real module (`requestWithMock` in execute.js shares one callstack; its comment: "will not work if user does Promise.all(import(), import())"). So the real SelectLazy's first import is made to fail too, and the bypassing import then fails with the same chunk error (in a real browser the three mount points fetch the same chunk and fail together anyway).
 vi.mock("@/components/sidebar/SelectLazy", () =>
   Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/SelectLazy-abc.js")),
 );
@@ -64,7 +60,7 @@ function stubFetch() {
       if (url === "/api/auth/me") return Promise.resolve(fakeResponse(USER));
       if (url === "/api/folders") return Promise.resolve(new Response(JSON.stringify(FOLDER_LIST_EMPTY), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url === "/api/notes" && method === "GET") return Promise.resolve(fakeResponse(NOTES));
-      // #93：搜尋字 ≥ 2 個字時側欄內文區會打 /api/search（回空）。
+      // #93: with search text of 2+ characters the sidebar content area calls /api/search (returns empty).
       if (url.startsWith("/api/search?")) return Promise.resolve(new Response(JSON.stringify({ hits: [], nextCursor: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
@@ -93,13 +89,12 @@ const aside = () => document.querySelector("aside") as HTMLElement;
 const header = () => aside().querySelector("[data-sidebar-header]") as HTMLElement;
 const list = () => aside().querySelector("[data-sidebar-list]") as HTMLElement;
 
-/** 我的筆記 tab 等清單到了按「Select」。 */
 async function startSelecting() {
   await within(aside()).findByRole("link", { name: "p1" });
   fireEvent.click(within(header()).getByRole("button", { name: "Select" }));
 }
 
-describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
+describe("AppShell - normal-tab selection chunk fails to load", () => {
   let reload: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -116,7 +111,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     __resetCollapseForTests();
   });
 
-  it("AL2a 本 session 已自動重整過一次：清單位置就地顯示 chunk 錯誤＋重試，標題列與底部的錯誤內容隱藏，側欄其餘照常", async () => {
+  it("auto-reload already used once this session: the list position shows the chunk error plus retry in place, error content of the title row and bottom is hidden, the rest of the sidebar works", async () => {
     sessionStorage.setItem(SELECT_FLAG, "1");
     stubFetch();
     renderApp();
@@ -125,13 +120,13 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     const listAlert = await within(list()).findByRole("alert");
     expect(listAlert).toHaveTextContent(i18n.t("app.chunkLoadError"));
     expect(within(listAlert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    // 比對整個 className：外框只有 `p-2`
+    // Match the whole className: the frame has only `p-2`.
     expect(listAlert.parentElement?.className).toBe("p-2");
-    // 標題列那份也接住了，錯誤內容藏起來
+    // The header and footer copies are hidden: the list copy already shows the error.
     const headerAlerts = within(header()).getAllByRole("alert");
     expect(headerAlerts).toHaveLength(1);
     expect(headerAlerts[0]!.parentElement?.className).toBe("hidden");
-    // 底部那份同理（清單、標題列以外只剩它一個）
+    // What remains after excluding the list and header copies is the footer's.
     const footerAlerts = within(aside())
       .getAllByRole("alert")
       .filter((el) => !list().contains(el) && !header().contains(el));
@@ -147,7 +142,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it("AL2b 第一次失敗：用 select 自己的額度自動重整一次（三個掛載點只重整一次），NotePage 與垃圾桶的額度不動、app 不崩", async () => {
+  it("first failure: auto-reloads once using select's own allowance (three mount points reload once), NotePage and trash allowances untouched, app doesn't crash", async () => {
     stubFetch();
     renderApp();
     await startSelecting();
@@ -161,7 +156,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     expect(screen.getByTestId("page-body")).toBeInTheDocument();
   });
 
-  it("AL3 錯誤態沒有 Esc 與 Done：點 Groups 離開選取，群組是平常的列", async () => {
+  it("error state has no Esc or Done: clicking Groups leaves selection, groups are ordinary rows", async () => {
     sessionStorage.setItem(SELECT_FLAG, "1");
     stubFetch();
     renderApp();
@@ -174,6 +169,6 @@ describe("AppShell — 一般 tab 選取 chunk 載入失敗", () => {
     expect(within(header()).getByRole("button", { name: "Select" })).toBeEnabled();
     expect(within(aside()).queryAllByRole("checkbox")).toHaveLength(0);
     expect(within(aside()).queryByRole("alert")).toBeNull();
-    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull(); // 群組 tab 沒有個人的新增鈕
+    expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull(); // the Groups tab has no personal new-note button
   });
 });
