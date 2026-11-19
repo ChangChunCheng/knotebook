@@ -242,4 +242,4 @@ Bug reports and feature requests go in the [issue tracker](https://github.com/sw
 
 ## License
 
-MIT, see [LICENSE](./LICENSE). Bundled third-party components (a font asset, jsdiff, BlockNote) carry their own licenses, see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+MIT, see [LICENSE](./LICENSE). Bundled third-party components (a font asset, jsdiff, BlockNote, Lucide icon paths) carry their own licenses, see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
