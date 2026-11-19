@@ -698,6 +698,7 @@ Prefer rolling forward; if you must roll back, treat it as a temporary state.
 
 ## See also
 
+- [Limitations worth knowing](./limitations.md) — the short list to read before deploying, including the deployment and env-var gotchas.
 - [Known limitations](./known-limitations.md) — the full list, including several deployment/env-var gotchas referenced above.
 - [Restoring note content from a backup](./backup-restore.md).
 - [API contract summary](./api.md).
