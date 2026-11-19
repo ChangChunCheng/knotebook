@@ -230,13 +230,15 @@ For running a server:
 
 For contributors and maintainers:
 
+- [Contributing](CONTRIBUTING.md): setting up a development environment, the checks a pull request must pass, and the project's conventions.
+- [Architecture](ARCHITECTURE.md): a map of the code, from the server and real-time collaboration to the web app and the tests.
 - [Running the e2e suite locally](docs/e2e-local.md): the Playwright suite against a throwaway Docker Compose stack in WSL, and running several at once.
 - [Releasing](docs/releasing.md): preparing a release pull request with `pnpm release:prepare`, and what the Release workflow does after the merge.
 - [CHANGELOG](CHANGELOG.md): every release, with its upgrade notes.
 
 ## Contributing
 
-Bug reports and feature requests go in the [issue tracker](https://github.com/sw-willie-wu/knotebook/issues); planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones). Pull requests are welcome; to run the end-to-end tests locally, see [Running the e2e suite locally](docs/e2e-local.md).
+Bug reports and feature requests go in the [issue tracker](https://github.com/sw-willie-wu/knotebook/issues); planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones). Pull requests are welcome; to run the end-to-end tests locally, see [Running the e2e suite locally](docs/e2e-local.md). Before your first pull request, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

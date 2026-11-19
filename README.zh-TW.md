@@ -232,13 +232,15 @@ Claude Desktop 與其他用戶端怎麼接、每項工具做什麼，見 [MCP](d
 
 貢獻者與維護者：
 
+- [參與貢獻](CONTRIBUTING.md)：開發環境設定、送出前要通過的檢查與專案慣例（英文）。
+- [架構導覽](ARCHITECTURE.md)：程式碼地圖，從伺服器、即時協作到前端與測試（英文）。
 - [在本機跑 e2e 測試](docs/e2e-local.md)：在 WSL 裡對一套用完即丟的 Docker Compose 環境跑 Playwright 測試，以及同時跑好幾套。
 - [發版流程](docs/releasing.md)：用 `pnpm release:prepare` 準備發版 PR，以及 merge 後 Release workflow 自動做的事。
 - [CHANGELOG](CHANGELOG.md)：每個版本與升級說明。
 
 ## 參與貢獻
 
-問題回報與功能建議請開在 [issue tracker](https://github.com/sw-willie-wu/knotebook/issues)；規劃記在 [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones)。歡迎發 pull request；在本機跑端對端測試的方式見 [在本機跑 e2e 測試](docs/e2e-local.md)。
+問題回報與功能建議請開在 [issue tracker](https://github.com/sw-willie-wu/knotebook/issues)；規劃記在 [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones)。歡迎發 pull request；在本機跑端對端測試的方式見 [在本機跑 e2e 測試](docs/e2e-local.md)。第一次發 pull request 之前，請先讀 [CONTRIBUTING.md](CONTRIBUTING.md)（英文）。
 
 ## 授權
 
