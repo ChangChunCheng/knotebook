@@ -3,7 +3,7 @@ import { canonicalColor, isCustomColor, isShownColor, normalizeNoteColors } from
 
 const BOTH = "style (CSSOM) / data-*";
 const DATA = "data-*";
-// [input, expected, source]：source 是這個值會從哪條路徑進來（style 經 CSSOM 改寫，或 data-* 原字串）
+// [input, expected, source]: source is the path this value arrives through (style rewritten by the CSSOM, or the raw data-* string)
 const ACCEPT: [string, string, string][] = [
   ["red", "red", BOTH], ["default", "default", BOTH],
   ["#F60", "#ff6600", DATA], ["#FF6600", "#ff6600", DATA], ["#ff6600", "#ff6600", DATA],
@@ -16,7 +16,7 @@ const REJECT: [unknown, string][] = [
   ["RED", DATA], ["Red", DATA], ["#ff660080", DATA], ["#f608", DATA],
   ["rgb(256, 0, 0)", DATA], ["rgb(-1, 0, 0)", DATA], ["rgb(255.5, 0, 0)", DATA],
   ["rgb(1 2 3)", DATA], ["RGB(1,2,3)", DATA], ["rgb(100%, 0%, 0%)", DATA], ["rgb(1, 2)", DATA],
-  ["rgb( 1,2,3)", DATA], // 非 CSS 空白（NBSP）不收
+  ["rgb( 1,2,3)", DATA], // non-CSS whitespace (NBSP) is not accepted
   ["rgba(255, 102, 0, 0.5)", BOTH], ["rgba(1, 2, 3, 1)", BOTH],
   ...["tomato", "transparent", "currentcolor", "var(--x)", "url(x)", "expression(x)", "oklch(0.7 0.1 30)",
     "lab(50 20 30)", "color(srgb 1 0 0)", "color-mix(in srgb, red, blue)", "", "ff6600", "#ff660", "#gggggg"]

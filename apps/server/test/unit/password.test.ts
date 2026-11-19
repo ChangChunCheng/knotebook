@@ -6,19 +6,19 @@ describe("password service", () => {
     setHashConcurrency(4);
   });
 
-  it("hash/verify 往返", async () => {
+  it("hash/verify round trip", async () => {
     const h = await hashPassword("correct horse battery st");
     expect(await verifyPassword(h, "correct horse battery st")).toBe(true);
     expect(await verifyPassword(h, "wrong password here!!")).toBe(false);
   });
 
-  it("argon2id 參數達標", async () => {
+  it("argon2id parameters meet the minimum", async () => {
     const h = await hashPassword("correct horse battery st");
     expect(h).toMatch(/^\$argon2id\$/);
     expect(h).toMatch(/m=19456,t=2,p=1/);
   });
 
-  it("併發超限 throw HashBusyError 不排隊 (hash)", async () => {
+  it("throws HashBusyError instead of queueing when concurrency is exceeded (hash)", async () => {
     setHashConcurrency(2);
     const rs = await Promise.all(Array.from({ length: 6 }, () => hashPassword("x".repeat(16)).catch(e => e)));
     const errors = rs.filter(r => r instanceof HashBusyError);
@@ -30,7 +30,7 @@ describe("password service", () => {
     });
   });
 
-  it("併發超限 throw HashBusyError 不排隊 (verify)", async () => {
+  it("throws HashBusyError instead of queueing when concurrency is exceeded (verify)", async () => {
     const h = await hashPassword("x".repeat(16));
     setHashConcurrency(2);
     const rs = await Promise.all(Array.from({ length: 6 }, () => verifyPassword(h, "x".repeat(16)).catch(e => e)));
@@ -43,38 +43,32 @@ describe("password service", () => {
     });
   });
 
-  it("釋放路徑測試 (hash): 限額滿後恢復正常", async () => {
+  it("release path (hash): back to normal after the limit was full", async () => {
     setHashConcurrency(1);
-    // First call succeeds
     const h1 = await hashPassword("password1");
     expect(h1).toMatch(/^\$argon2id\$/);
-    // Send 2 concurrent calls, 1 fails
     const rs = await Promise.allSettled([
       hashPassword("password2"),
       hashPassword("password3"),
     ]);
     expect(rs[0].status === "rejected" || rs[1].status === "rejected").toBe(true);
-    // After errors, next call should succeed (counter released)
     const h2 = await hashPassword("password4");
     expect(h2).toMatch(/^\$argon2id\$/);
   });
 
-  it("釋放路徑測試 (verify): argon2 異常也正確釋放", async () => {
+  it("release path (verify): the slot is also released when argon2 errors", async () => {
     setHashConcurrency(1);
     const validHash = await hashPassword("password1");
-    // Call verify with invalid hash (triggers argon2 error)
     const badResult = await verifyPassword("invalid-hash-format", "password");
     expect(badResult).toBe(false);
-    // Next verify should succeed (counter released despite argon2 error)
     const goodResult = await verifyPassword(validHash, "password1");
     expect(goodResult).toBe(true);
   });
 
-  it("共用計數器測試: hash 佔用 slot 導致 verify 被拒", async () => {
+  it("shared counter: a hash holding a slot gets verify calls rejected", async () => {
     setHashConcurrency(2);
-    // Launch 1 hash + 5 verify concurrently
-    // Hash and verify share same semaphore counter; sync dispatch means hash consumes 1 slot,
-    // leaving only 1 slot for 5 verify calls, so at least 4 are rejected
+    // Concurrency 2, six calls dispatched synchronously: hash and verify share one counter, so the hash takes a slot,
+    // one verify gets the other, and the remaining four are rejected.
     const hash1 = hashPassword("x".repeat(16));
     const verify1 = verifyPassword(DUMMY_HASH, "x".repeat(16));
     const verify2 = verifyPassword(DUMMY_HASH, "x".repeat(16));
@@ -84,15 +78,14 @@ describe("password service", () => {
     const results = await Promise.allSettled([hash1, verify1, verify2, verify3, verify4, verify5]);
     const rejectedCount = results.filter(r => r.status === "rejected").length;
     const verifyRejectedCount = results
-      .slice(1) // skip hash result
+      .slice(1)
       .filter(r => r.status === "rejected")
       .length;
-    // With concurrency 2 and 1 hash + 5 verify, expect at least some verify to be rejected
     expect(verifyRejectedCount).toBeGreaterThan(0);
-    expect(rejectedCount).toBe(4); // 4 total rejected (3-4 verify)
+    expect(rejectedCount).toBe(4);
   });
 
-  it("setHashConcurrency 驗證輸入", async () => {
+  it("setHashConcurrency validates its input", async () => {
     expect(() => setHashConcurrency(NaN)).toThrow(RangeError);
     expect(() => setHashConcurrency(0)).toThrow(RangeError);
     expect(() => setHashConcurrency(-1)).toThrow(RangeError);
@@ -100,7 +93,7 @@ describe("password service", () => {
     expect(() => setHashConcurrency(1)).not.toThrow();
   });
 
-  it("verifyPassword 無效 hash 回傳 false 而非拋錯", async () => {
+  it("verifyPassword returns false for an invalid hash instead of throwing", async () => {
     const result = await verifyPassword("not-a-valid-hash-format", "any password");
     expect(result).toBe(false);
   });

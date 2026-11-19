@@ -3,7 +3,6 @@ import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "./ydoc.js";
 import { canonicalizeElements, canonicalizeSection, sectionize, TOP_SECTION_ID, topLevelContainers } from "./note-sections.js";
 
-/** 手工造 BlockNote 結構：fragment > blockGroup > blockContainer(id) > <type …>text */
 function makeDoc(blocks: Array<{ id: string; type: "paragraph" | "heading"; text: string; level?: number; nested?: Array<{ id: string; type: "heading"; text: string; level: number }> }>): Y.Doc {
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
@@ -38,12 +37,12 @@ function makeDoc(blocks: Array<{ id: string; type: "paragraph" | "heading"; text
 }
 
 describe("sectionize", () => {
-  it("無 heading → 只有 _top，含全部 block", () => {
+  it("no heading -> only _top, containing all blocks", () => {
     const doc = makeDoc([{ id: "a", type: "paragraph", text: "x" }, { id: "b", type: "paragraph", text: "y" }]);
     expect(sectionize(doc.getXmlFragment(YDOC_FRAGMENT))).toEqual([{ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 2, blockIds: ["a", "b"] }]);
   });
 
-  it("h2→h3→h2：h3 併入 h2 的段；下一個 h2 開新段；chars 累計", () => {
+  it("h2 -> h3 -> h2: h3 folds into h2's section; the next h2 opens a new section; chars accumulate", () => {
     const doc = makeDoc([
       { id: "p0", type: "paragraph", text: "intro" },
       { id: "h1", type: "heading", level: 2, text: "A" },
@@ -58,22 +57,22 @@ describe("sectionize", () => {
     expect(s[1]).toMatchObject({ level: 2, heading: "A", chars: 1 + 2 + 3 + 2 });
   });
 
-  it("連續 heading 各自成段；heading 在末尾是只含自己的段", () => {
+  it("consecutive headings each form a section; a heading at the end is a section containing only itself", () => {
     const doc = makeDoc([{ id: "h1", type: "heading", level: 1, text: "A" }, { id: "h2", type: "heading", level: 1, text: "B" }]);
     expect(sectionize(doc.getXmlFragment(YDOC_FRAGMENT)).map(x => x.blockIds)).toEqual([[], ["h1"], ["h2"]]);
   });
 
-  it("heading 開頭 → outline[0] 是 _top、0 block、chars 0", () => {
+  it("heading first -> outline[0] is _top, 0 blocks, chars 0", () => {
     const doc = makeDoc([{ id: "h1", type: "heading", level: 1, text: "A" }]);
     expect(sectionize(doc.getXmlFragment(YDOC_FRAGMENT))[0]).toEqual({ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 0, blockIds: [] });
   });
 
-  it("空文件（無 blockGroup）→ 只有空 _top", () => {
+  it("empty document (no blockGroup) -> only an empty _top", () => {
     const doc = new Y.Doc();
     expect(sectionize(doc.getXmlFragment(YDOC_FRAGMENT))).toEqual([{ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 0, blockIds: [] }]);
   });
 
-  it("巢狀 blockContainer 內的 heading 不分段", () => {
+  it("a heading inside a nested blockContainer does not start a section", () => {
     const doc = makeDoc([
       { id: "h1", type: "heading", level: 1, text: "A" },
       { id: "p1", type: "paragraph", text: "li", nested: [{ id: "n1", type: "heading", level: 1, text: "inner" }] },
@@ -83,7 +82,7 @@ describe("sectionize", () => {
     expect(s[1]!.blockIds).toEqual(["h1", "p1"]);
   });
 
-  it("小寫 blockgroup 假結構不成段（nodeName 是 camelCase）", () => {
+  it("a lower-case blockgroup fake structure does not form a section (nodeName is camelCase)", () => {
     const doc = new Y.Doc();
     const group = new Y.XmlElement("blockgroup");
     const c = new Y.XmlElement("blockcontainer"); c.setAttribute("id", "x");
@@ -92,7 +91,7 @@ describe("sectionize", () => {
     expect(topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))).toEqual([]);
   });
 
-  it("chars 算純文字：heading 文字算，bold 標記不算", () => {
+  it("chars counts plain text: heading text counts, bold marks do not", () => {
     const doc = new Y.Doc();
     const group = new Y.XmlElement("blockGroup");
     const c = new Y.XmlElement("blockContainer"); c.setAttribute("id", "a");
@@ -119,18 +118,18 @@ describe("canonicalize", () => {
     return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[0]!;
   };
 
-  it("同內容不同 id → 相同；改一字 → 不同", () => {
+  it("same content, different ids -> equal; changing one character -> different", () => {
     expect(canonicalizeElements([withId("a", "hi")])).toBe(canonicalizeElements([withId("b", "hi")]));
     expect(canonicalizeElements([withId("a", "hi")])).not.toBe(canonicalizeElements([withId("a", "ho")]));
   });
 
-  it("屬性鍵序無關", () => {
+  it("attribute key order does not matter", () => {
     const x = withId("a", "t", { textAlignment: "left", backgroundColor: "default" });
     const y = withId("a", "t", { backgroundColor: "default", textAlignment: "left" });
     expect(canonicalizeElements([x])).toBe(canonicalizeElements([y]));
   });
 
-  it("bold mark 有影響；link href 有影響、mark 屬性物件鍵序無關；mark 物件內的 null 值有影響", () => {
+  it("a bold mark matters; a link href matters, the key order of a mark's attribute object does not; a null value inside a mark object matters", () => {
     const plain = mk(t => t.insert(0, "x"));
     const bold = mk(t => t.insert(0, "x", { bold: {} }));
     expect(canonicalizeElements([plain])).not.toBe(canonicalizeElements([bold]));
@@ -139,13 +138,13 @@ describe("canonicalize", () => {
     const l3 = mk(t => t.insert(0, "x", { link: { href: "https://b", target: "_blank" } }));
     expect(canonicalizeElements([l1])).toBe(canonicalizeElements([l2]));
     expect(canonicalizeElements([l1])).not.toBe(canonicalizeElements([l3]));
-    // yjs 13.6.32 對頂層 `{ link: null }` 會整個略過（insertAttributes 的 equalAttrs(null,null)），所以 null 只能測在 mark 物件內
+    // yjs 13.6.32 skips a top-level `{ link: null }` entirely (insertAttributes' equalAttrs(null, null)), so null can only be tested inside the mark object
     const nestedNull = mk(t => t.insert(0, "x", { link: { href: "https://a", target: null } }));
     const noTarget = mk(t => t.insert(0, "x", { link: { href: "https://a" } }));
     expect(canonicalizeElements([nestedNull])).not.toBe(canonicalizeElements([noTarget]));
   });
 
-  it("canonicalizeSection：id 不在頂層或順序改變 → null；空 → \"\"", () => {
+  it("canonicalizeSection: an id not at top level or reordered -> null; empty -> \"\"", () => {
     const doc = makeDoc([{ id: "a", type: "paragraph", text: "1" }, { id: "b", type: "paragraph", text: "2" }]);
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
     expect(canonicalizeSection(f, ["a", "b"])).toBeTypeOf("string");
@@ -155,8 +154,7 @@ describe("canonicalize", () => {
   });
 });
 
-// ─────────── #93 T1／T2：textOf 迭代化 ───────────
-/** 改動前的遞迴版 textOf，逐字保留當參考實作（T1 等價性的對照組）。 */
+/** Recursive reference implementation of textOf (the version before it was made iterative), kept verbatim as the control for the equivalence tests. */
 function refTextOf(node: Y.XmlElement | Y.XmlText): string {
   if (node instanceof Y.XmlText) {
     return (node.toDelta() as Array<{ insert: unknown }>).map(d => (typeof d.insert === "string" ? d.insert : "")).join("");
@@ -169,7 +167,7 @@ function refTextOf(node: Y.XmlElement | Y.XmlText): string {
   return s;
 }
 
-/** 改動前的 sectionize，只換成呼叫 refTextOf；與 note-sections.ts 的 `sectionize` 行為等價（helper 內聯、省略 blockIds）。 */
+/** Reference sectionize (the version before textOf was made iterative), only switched to call refTextOf; behaves like `sectionize` in note-sections.ts (helpers inlined, blockIds omitted). */
 function refSectionize(fragment: Y.XmlFragment): Array<{ sectionId: string; heading: string; chars: number }> {
   const out: Array<{ sectionId: string; level: number; heading: string; chars: number }> = [{ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 0 }];
   let current = out[0]!;
@@ -187,7 +185,7 @@ function refSectionize(fragment: Y.XmlFragment): Array<{ sectionId: string; head
   return out.map(({ sectionId, heading, chars }) => ({ sectionId, heading, chars }));
 }
 
-/** 決定性 PRNG（LCG），讓隨機文件可重現。 */
+/** Deterministic PRNG (LCG) so random documents are reproducible. */
 function lcg(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -196,7 +194,6 @@ function lcg(seed: number): () => number {
   };
 }
 
-/** 往 el 尾端塞 1–4 個子節點：XmlText、wikilink（content:"none"）、XmlHook、或巢狀元素（含 mermaid）。 */
 function fillInline(el: Y.XmlElement, r: () => number, depth: number): void {
   const k = 1 + Math.floor(r() * 4);
   for (let j = 0; j < k; j += 1) {
@@ -249,11 +246,11 @@ function randomDoc(seed: number): Y.Doc {
   return doc;
 }
 
-describe("#93 textOf 迭代化", () => {
-  // 建鏈必須包在單一 doc.transact 裡：逐筆 insert 每次各開一個 transaction、收尾成本隨深度長，整條鏈是 O(n²)
-  // （CI 上單這段同步跑 40–48 s；同步卡住 worker 超過 60 s 會讓 vitest 的 onTaskUpdate RPC 逾時 → Unhandled Error、exit 1）。
-  // 單一 transaction 下 20 000 層本機實測約 20 ms，樹的形狀相同。
-  it("T2：20 000 層 blockContainer 鏈 → sectionize 不拋，最深處的字算進 chars", () => {
+describe("#93 iterative textOf", () => {
+  // The chain must be built inside one doc.transact: inserting one by one opens a transaction each time and the closing cost grows with depth, so the whole chain is O(n^2)
+  // (on CI this stretch alone runs 40-48 s synchronously; blocking the worker for over 60 s makes vitest's onTaskUpdate RPC time out -> Unhandled Error, exit 1).
+  // A single transaction builds the same tree quickly.
+  it("20 000 levels of blockContainer chain -> sectionize does not throw, and the deepest text counts in chars", () => {
     const doc = new Y.Doc();
     doc.transact(() => {
       const group = new Y.XmlElement("blockGroup");
@@ -278,7 +275,7 @@ describe("#93 textOf 迭代化", () => {
     expect(s[0]!.chars).toBe("DEEPEST".length);
   });
 
-  it("T1：子節點順序——heading 由三個子節點組成時串接順序與文件順序相同", () => {
+  it("child order: when a heading consists of three child nodes the concatenation order equals the document order", () => {
     const doc = new Y.Doc();
     const group = new Y.XmlElement("blockGroup");
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [group]);
@@ -302,7 +299,7 @@ describe("#93 textOf 迭代化", () => {
     expect(sectionize(doc.getXmlFragment(YDOC_FRAGMENT))[1]).toMatchObject({ heading: "abcdef", chars: 6 });
   });
 
-  it("T1：200 份隨機巢狀文件（含 wikilink、mermaid、XmlHook）的 heading／chars 與遞迴參考實作逐一相等", () => {
+  it("200 random nested documents (with wikilink, mermaid, XmlHook): heading/chars equal the recursive reference implementation one by one", () => {
     for (let seed = 1; seed <= 200; seed += 1) {
       const f = randomDoc(seed).getXmlFragment(YDOC_FRAGMENT);
       const got = sectionize(f).map(({ sectionId, heading, chars }) => ({ sectionId, heading, chars }));
@@ -310,7 +307,7 @@ describe("#93 textOf 迭代化", () => {
     }
   });
 
-  it("T1：既有 fixture（makeDoc，含巢狀 heading）與參考實作相等", () => {
+  it("the existing fixture (makeDoc, with a nested heading) equals the reference implementation", () => {
     const doc = makeDoc([
       { id: "p0", type: "paragraph", text: "intro" },
       { id: "h1", type: "heading", level: 2, text: "A" },
@@ -321,7 +318,6 @@ describe("#93 textOf 迭代化", () => {
   });
 });
 
-/** 手建含並排列的頂層：blockGroup > [blockContainer…, columnList(id) > column > blockContainer > <type>]。 */
 type RowSpec = { kind: "row"; id: string; cols: Array<Array<{ type: "paragraph" | "heading"; id: string; text: string }>> };
 function makeRowDoc(top: Array<{ kind: "p" | "h"; id: string; text: string; level?: number } | RowSpec>): Y.Doc {
   const doc = new Y.Doc();
@@ -356,30 +352,30 @@ function makeRowDoc(top: Array<{ kind: "p" | "h"; id: string; text: string; leve
   return doc;
 }
 
-describe("並排列是頂層單位", () => {
+describe("a columns row is a top-level unit", () => {
   const row: RowSpec = { kind: "row", id: "r", cols: [[{ type: "paragraph", id: "a1", text: "甲乙" }], [{ type: "heading", id: "h", text: "欄內" }]] };
 
-  it("NS1：topLevelContainers 依序收 blockContainer、columnList；不攤平欄內", () => {
+  it("topLevelContainers collects blockContainer and columnList in order; does not flatten inside columns", () => {
     const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row, { kind: "h", id: "H2", text: "B" }, { kind: "p", id: "p2", text: "y" }]);
     const tops = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(tops.map(c => c.nodeName)).toEqual(["blockContainer", "columnList", "blockContainer", "blockContainer"]);
     expect(tops.map(c => c.getAttribute("id"))).toEqual(["p1", "r", "H2", "p2"]);
   });
 
-  it("NS2：sectionize 把列當非標題單位（chars 含欄內全部文字）；欄內 heading 不開新段", () => {
+  it("sectionize treats a row as a non-heading unit (chars include all text inside the columns); a heading inside a column does not open a section", () => {
     const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row, { kind: "h", id: "H2", text: "B" }, { kind: "p", id: "p2", text: "y" }]);
     const s = sectionize(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(s[0]).toMatchObject({ sectionId: TOP_SECTION_ID, blockIds: ["p1", "r"], chars: 1 + 2 + 2 });
     expect(s.map(x => x.heading)).toEqual(["", "B"]);
     expect(s.some(x => x.heading.includes("欄內"))).toBe(false);
-    // 列的第一欄第一顆就是 heading 也一樣
+    // the same when the first block of the row's first column is a heading
     const doc2 = makeRowDoc([{ kind: "row", id: "r", cols: [[{ type: "heading", id: "h0", text: "欄首" }], [{ type: "paragraph", id: "b", text: "z" }]] }]);
     const s2 = sectionize(doc2.getXmlFragment(YDOC_FRAGMENT));
     expect(s2).toHaveLength(1);
     expect(s2[0]).toMatchObject({ blockIds: ["r"], chars: 3 });
   });
 
-  it("NS3：canonicalizeSection 認得列的 id；順序錯 → null", () => {
+  it("canonicalizeSection recognises the row's id; wrong order -> null", () => {
     const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row]);
     const f = doc.getXmlFragment(YDOC_FRAGMENT);
     expect(canonicalizeSection(f, ["p1", "r"])).toContain("EcolumnList(");

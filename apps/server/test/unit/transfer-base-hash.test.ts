@@ -4,36 +4,36 @@ import { bodyLines, lineKey, normalizeBody, normalizeNumbered } from "../../src/
 import { LINE_HASH_BYTES, baseHashes, deriveTransferKey, hmacOf, newBaseKey, newSalt, transferKeyId } from "../../src/transfer/base-hash.js";
 import { TRANSFER_FILE_VERSION, writeNoteFile } from "../../src/transfer/frontmatter.js";
 
-/** bulk transfer 的基底雜湊：frontmatter、HMAC＋鹽、key_id、正規化、編號正規化。 */
+/** bulk transfer base hash: frontmatter, HMAC + salt, key_id, normalisation, numbering normalisation. */
 
-describe("H1 normalizeBody", () => {
+describe("normalizeBody", () => {
   it.each([
-    ["去 BOM", "\ufeffa\nb", "a\nb"],
-    ["CRLF → LF", "a\r\nb\r\n", "a\nb"],
-    ["開頭空行（含只有空白的行）去掉", "\n  \n\t\na\n", "a"],
-    ["結尾所有 \\n 去掉", "a\n\n\n", "a"],
-    ["中間空行保留", "a\n\n\nb", "a\n\n\nb"],
-    ["空字串", "", ""],
-    ["只有換行", "\n\n", ""],
-    ["開頭行的前導空白屬於內容（不是空行）", "  a", "  a"],
-    ["結尾只去 \\n、不去行尾空白", "a  \n", "a  "],
+    ["strip BOM", "\ufeffa\nb", "a\nb"],
+    ["CRLF -> LF", "a\r\nb\r\n", "a\nb"],
+    ["leading blank lines (including whitespace-only lines) removed", "\n  \n\t\na\n", "a"],
+    ["all trailing newlines removed", "a\n\n\n", "a"],
+    ["blank lines in the middle kept", "a\n\n\nb", "a\n\n\nb"],
+    ["empty string", "", ""],
+    ["only newlines", "\n\n", ""],
+    ["leading whitespace of the first line is content (not a blank line)", "  a", "  a"],
+    ["only trailing newlines are removed, not trailing whitespace", "a  \n", "a  "],
   ])("%s", (_name, raw, want) => {
     expect(normalizeBody(raw)).toBe(want);
   });
 });
 
-describe("H2 bodyLines／lineKey／normalizeNumbered", () => {
-  it("bodyLines：空字串 → []；否則 split", () => {
+describe("bodyLines / lineKey / normalizeNumbered", () => {
+  it("bodyLines: empty string -> []; otherwise split", () => {
     expect(bodyLines("")).toEqual([]);
     expect(bodyLines("a")).toEqual(["a"]);
     expect(bodyLines("a\n\nb")).toEqual(["a", "", "b"]);
   });
-  it("lineKey：trimEnd（空白、tab）", () => {
+  it("lineKey: trimEnd (spaces, tabs)", () => {
     expect(lineKey("a  ")).toBe("a");
     expect(lineKey("a\t \t")).toBe("a");
     expect(lineKey("  a")).toBe("  a");
   });
-  it("normalizeNumbered：行首（可縮排）的數字編號換成 1.；行中的不動", () => {
+  it("normalizeNumbered: a leading number (may be indented) is replaced by 1.; numbers mid-line are untouched", () => {
     expect(normalizeNumbered("3. x")).toBe("1. x");
     expect(normalizeNumbered("   12. y")).toBe("   1. y");
     expect(normalizeNumbered("x 2. y")).toBe("x 2. y");
@@ -42,13 +42,13 @@ describe("H2 bodyLines／lineKey／normalizeNumbered", () => {
   });
 });
 
-describe("H3 HMAC＋鹽的行雜湊", () => {
+describe("HMAC + salt line hashing", () => {
   const key = deriveTransferKey("test-app-secret-0123456789abcdef");
   const saltA = Buffer.alloc(16, 0xa1);
   const saltB = Buffer.alloc(16, 0xb2);
   const hashOfLine = (h: Buffer, i: number) => h.subarray(i * LINE_HASH_BYTES, (i + 1) * LINE_HASH_BYTES).toString("hex");
 
-  it("同一行在兩列（兩個 salt）雜湊不同；同一列內兩個相同行雜湊相同", () => {
+  it("the same line in two rows (two salts) hashes differently; two identical lines in the same row hash the same", () => {
     const lines = ["same line", "other", "same line"];
     const a = baseHashes(key, saltA, { body: lines.join("\n"), title: "T", lines, kinds: [0, 0, 0] });
     const b = baseHashes(key, saltB, { body: lines.join("\n"), title: "T", lines, kinds: [0, 0, 0] });
@@ -59,7 +59,7 @@ describe("H3 HMAC＋鹽的行雜湊", () => {
     expect(a.titleSha.equals(b.titleSha)).toBe(false);
   });
 
-  it("長度與形：lineHashes 每行 8 bytes；lineKinds 每行 1 byte；body／title 32 bytes", () => {
+  it("length and shape: lineHashes 8 bytes per line; lineKinds 1 byte per line; body/title 32 bytes", () => {
     const lines = ["a", "", "1. b", "c"];
     const h = baseHashes(key, saltA, { body: lines.join("\n"), title: "T", lines, kinds: [0, 0, 1, 0] });
     expect(LINE_HASH_BYTES).toBe(8);
@@ -69,7 +69,7 @@ describe("H3 HMAC＋鹽的行雜湊", () => {
     expect(h.titleSha.length).toBe(32);
   });
 
-  it("值＝HMAC-SHA256(K, salt ‖ x)：獨立算一次逐位元組相等（body 用傳入的已正規化本文、line 先 lineKey）", () => {
+  it("value = HMAC-SHA256(K, salt || x): independently computed, byte-for-byte equal (body uses the passed-in normalised body, line goes through lineKey first)", () => {
     const lines = ["x  ", "y"];
     const body = "x  \ny";
     const h = baseHashes(key, saltA, { body, title: "標題", lines, kinds: [0, 0] });
@@ -80,7 +80,7 @@ describe("H3 HMAC＋鹽的行雜湊", () => {
     expect(hmacOf(key, saltA, "y").equals(ref("y"))).toBe(true);
   });
 
-  it("kind 1 的 3. x 與 1. x 雜湊相同；kind 0 的不同；行尾空白不影響", () => {
+  it("kind 1: `3. x` and `1. x` hash the same; kind 0 differ; trailing whitespace does not matter", () => {
     const lines = ["3. x", "1. x", "3. x", "1. x", "a", "a \t"];
     const h = baseHashes(key, saltA, { body: lines.join("\n"), title: "T", lines, kinds: [1, 1, 0, 0, 0, 0] });
     expect(hashOfLine(h.lineHashes, 0)).toBe(hashOfLine(h.lineHashes, 1));
@@ -88,13 +88,13 @@ describe("H3 HMAC＋鹽的行雜湊", () => {
     expect(hashOfLine(h.lineHashes, 4)).toBe(hashOfLine(h.lineHashes, 5));
   });
 
-  it("lines 與 kinds 長度不符 → 丟錯（呼叫端錯誤，不靜默截斷）", () => {
+  it("lines and kinds of different length -> throws (a caller error, no silent truncation)", () => {
     expect(() => baseHashes(key, saltA, { body: "a", title: "T", lines: ["a"], kinds: [] })).toThrow();
   });
 });
 
-describe("H4 transferKeyId", () => {
-  it("＝ sha256(sha256(`${APP_SECRET}:transfer-base`)) 前 8 hex；換 APP_SECRET 就不同", () => {
+describe("transferKeyId", () => {
+  it("= first 8 hex of sha256(sha256(`${APP_SECRET}:transfer-base`)); a different APP_SECRET gives a different one", () => {
     const s = "test-app-secret-0123456789abcdef";
     const k = createHash("sha256").update(`${s}:transfer-base`).digest();
     expect(deriveTransferKey(s).equals(k)).toBe(true);
@@ -104,8 +104,8 @@ describe("H4 transferKeyId", () => {
   });
 });
 
-describe("H5 newBaseKey／newSalt", () => {
-  it("newBaseKey 是 16 hex（寫回的格式守衛靠它）、每次不同；newSalt 16 bytes", () => {
+describe("newBaseKey / newSalt", () => {
+  it("newBaseKey is 16 hex (the write-back format guard relies on it) and different each time; newSalt is 16 bytes", () => {
     const a = newBaseKey();
     const b = newBaseKey();
     expect(a).toMatch(/^[0-9a-f]{16}$/);
@@ -116,10 +116,10 @@ describe("H5 newBaseKey／newSalt", () => {
   });
 });
 
-describe("H6 writeNoteFile", () => {
+describe("writeNoteFile", () => {
   const fm = (title: string) => ({ id: "3f2c0e1a-0000-4000-8000-000000000001", title, role: "editor", base: "7d41c0b2e9a85f13", url: "/n/alice/meeting-notes" });
 
-  it("8 行 frontmatter，鍵序固定；本文原樣接上", () => {
+  it("8 lines of frontmatter in fixed key order; body appended verbatim", () => {
     const out = writeNoteFile(fm("會議紀錄"), "# H\n\nbody  \n");
     expect(out).toBe(
       "---\nknotebook: 1\nid: 3f2c0e1a-0000-4000-8000-000000000001\ntitle: \"會議紀錄\"\nrole: editor\nbase: 7d41c0b2e9a85f13\nurl: /n/alice/meeting-notes\n---\n# H\n\nbody  \n",
@@ -130,7 +130,7 @@ describe("H6 writeNoteFile", () => {
     );
   });
 
-  it.each([['"'], ["\\"], ["'"], ["#"], ["a: b"], ["-x"], ["😀 emoji"], ["line1\nline2"], ['a "b" \\c'], ["\u2028"]])("標題 %j 往返：title 行 JSON.parse 後逐字相等、仍單行", title => {
+  it.each([['"'], ["\\"], ["'"], ["#"], ["a: b"], ["-x"], ["😀 emoji"], ["line1\nline2"], ['a "b" \\c'], ["\u2028"]])("title %j round trip: the title line is equal verbatim after JSON.parse and stays a single line", title => {
     const out = writeNoteFile(fm(title), "body");
     const lines = out.split("\n");
     expect(lines[0]).toBe("---");

@@ -1,15 +1,14 @@
 /**
- * #131／2：登入導回的兩支共用純函式（`packages/shared`）。
+ * #131: the two pure functions shared by the login redirect (`packages/shared`).
  *
- * `isExcludedPath` 原本是 `apps/server/src/http/spa.ts` 的私有函式（決定哪些路徑
- * 不該回 SPA 的 index.html），本 PR 搬進 shared 給 `safeNextPath` 共用——同一份
- * 「這條路徑不是 SPA 頁」的判準只能有一處，否則 OIDC callback 會把人導到裸 JSON。
+ * `isExcludedPath` (which paths must not get the SPA's index.html) is shared by `apps/server/src/http/spa.ts` and `safeNextPath`:
+ * the criterion "this path is not an SPA page" must live in one place, otherwise the OIDC callback would send people to bare JSON.
  */
 import { describe, expect, it } from "vitest";
 import { EXCLUDED_PREFIXES, isExcludedPath, MAX_NEXT_PATH_LENGTH, safeNextPath } from "@knotebook/shared";
 
 describe("isExcludedPath", () => {
-  it("裸前綴本身與其子路徑都算命中", () => {
+  it("a bare prefix and its sub-paths both match", () => {
     expect(isExcludedPath("/api")).toBe(true);
     expect(isExcludedPath("/api/notes")).toBe(true);
     expect(isExcludedPath("/collab")).toBe(true);
@@ -17,71 +16,71 @@ describe("isExcludedPath", () => {
     expect(isExcludedPath("/assets/app.js")).toBe(true);
   });
 
-  it("segment 邊界比對，不是字串 startsWith", () => {
-    // 這兩條是防「把實作簡化成 pathname.startsWith(prefix)」的守衛：
-    // /collaborators 是一個合法的 SPA 路徑，不該被 /collab 牽連。
+  it("matches on segment boundaries, not string startsWith", () => {
+    // Guards against simplifying the implementation to pathname.startsWith(prefix):
+    // /collaborators is a valid SPA path and must not be caught by /collab.
     expect(isExcludedPath("/collaborators")).toBe(false);
     expect(isExcludedPath("/apifoo")).toBe(false);
     expect(isExcludedPath("/assetsx")).toBe(false);
   });
 
-  it("#131 新增的兩個前綴：/oauth 與 /.well-known（#132 的 RFC 形 JSON，不是 SPA 頁）", () => {
+  it("the two prefixes added in #131: /oauth and /.well-known (RFC-shaped JSON from #132, not SPA pages)", () => {
     expect(isExcludedPath("/oauth")).toBe(true);
     expect(isExcludedPath("/oauth/token")).toBe(true);
     expect(isExcludedPath("/.well-known")).toBe(true);
     expect(isExcludedPath("/.well-known/oauth-authorization-server")).toBe(true);
-    // 邊界同上：/.well-knownx 不是 /.well-known 的子路徑。
+    // same boundary rule: /.well-knownx is not a sub-path of /.well-known.
     expect(isExcludedPath("/.well-knownx")).toBe(false);
     expect(isExcludedPath("/oauthx")).toBe(false);
   });
 
-  it("一般 SPA 路徑不命中", () => {
+  it("ordinary SPA paths do not match", () => {
     expect(isExcludedPath("/")).toBe(false);
     expect(isExcludedPath("/n/alice/my-note")).toBe(false);
     expect(isExcludedPath("/settings/account")).toBe(false);
-    // #132 的同意頁是 SPA 路徑 /authorize、**不在 /oauth 之下**。這一行釘住的是反向：
-    // 沒有人把 /authorize（或 /auth）也塞進清單、害同意頁自己拿不到 SPA fallback；
-    // 正因為排除 /oauth 並不殃及它，所以沒有理由刪掉那個前綴。
+    // The #132 consent page is the SPA path /authorize, **not under /oauth**. This line pins the reverse:
+    // nobody puts /authorize (or /auth) into the list and leaves the consent page without the SPA fallback;
+    // excluding /oauth does not affect it, so there is no reason to remove that prefix.
     expect(isExcludedPath("/authorize")).toBe(false);
   });
 
-  it("不做正規化：比的是餵進來的原字串", () => {
-    // 這條釘住常數註解宣稱的契約。兩個呼叫端刻意餵不同的形（spa.ts 餵未解碼的
-    // request.url，safeNextPath 餵 new URL(...).pathname），所以這支述詞自己絕不能
-    // 偷做 dot-segment 收斂或斜線合併——否則兩端的判定都會悄悄改變。
+  it("does no normalisation: compares the raw string passed in", () => {
+    // Pins the contract stated in the constant's comment. The two callers deliberately pass different shapes (spa.ts passes the undecoded
+    // request.url, safeNextPath passes new URL(...).pathname), so this predicate must not do dot-segment collapsing
+    // or slash merging itself - otherwise both callers' decisions would change silently.
     expect(isExcludedPath("/x/../api/notes")).toBe(false);
-    // routes/public.ts 的 token 遮罩理由鏈依賴這一條（它算準了 //api/… 比不中前綴、
-    // 會落進 SPA fallback）。
+    // The token masking in routes/public.ts relies on this (it counts on //api/... not matching a prefix,
+    // so it falls into the SPA fallback).
     expect(isExcludedPath("//api/notes")).toBe(false);
   });
 
-  it("EXCLUDED_PREFIXES 就是這六條（新增前綴要連同 spa fallback 的行為一起想過）", () => {
+  it("EXCLUDED_PREFIXES is exactly these six (think about the SPA fallback behaviour together with any new prefix)", () => {
     expect([...EXCLUDED_PREFIXES]).toEqual(["/api", "/collab", "/healthz", "/assets", "/oauth", "/.well-known"]);
   });
 });
 
 describe("safeNextPath", () => {
-  it("合法的站內路徑：原字串逐字回傳", () => {
+  it("valid in-site path: returned verbatim", () => {
     expect(safeNextPath("/")).toBe("/");
     expect(safeNextPath("/x")).toBe("/x");
     expect(safeNextPath("/n/alice/my-note")).toBe("/n/alice/my-note");
     expect(safeNextPath("/n/alice/my-note?x=1")).toBe("/n/alice/my-note?x=1");
     expect(safeNextPath("/n/alice/my-note?x=1#frag")).toBe("/n/alice/my-note?x=1#frag");
-    // segment 邊界：/apifoo 不受 /api 牽連。
+    // segment boundary: /apifoo is not caught by /api.
     expect(safeNextPath("/apifoo")).toBe("/apifoo");
   });
 
-  it("回傳的是輸入原字串，不是正規化形——這是 open redirect 的分水嶺", () => {
-    // /..//evil 通過所有檢查（相對於本站解析仍是本站），但 new URL(...).pathname
-    // 正規化後是 "//evil"：把正規化形當回傳值送進 Location/navigate，瀏覽器會把它
-    // 當 protocol-relative URL，人就被送到 http://evil。回原字串則無害。
+  it("returns the raw input, not the normalised form - this is the open-redirect watershed", () => {
+    // /..//evil passes every check (resolved relative to this site it is still this site), but new URL(...).pathname
+    // normalises it to "//evil": sending the normalised form to Location/navigate would make the browser read it as a
+    // protocol-relative URL and send the person to http://evil. Returning the raw string is harmless.
     expect(safeNextPath("/..//evil")).toBe("/..//evil");
-    // 相反的機制：百分比編碼**不會**被解析器還原，所以這串從頭到尾都只是一個
-    // 奇怪的檔名，跟上面那條不同源。
+    // The opposite mechanism: percent-encoding is **not** undone by the parser, so this string is just an odd
+    // file name from start to end, a different cause from the case above.
     expect(safeNextPath("/%2F%2Fevil")).toBe("/%2F%2Fevil");
   });
 
-  it("不是以單一 / 開頭的一律 null（相對路徑、空字串、其他 scheme）", () => {
+  it("anything not starting with a single / is null (relative paths, empty string, other schemes)", () => {
     expect(safeNextPath("x")).toBeNull();
     expect(safeNextPath("")).toBeNull();
     expect(safeNextPath("?x=1")).toBeNull();
@@ -91,45 +90,45 @@ describe("safeNextPath", () => {
     expect(safeNextPath("javascript:alert(1)")).toBeNull();
   });
 
-  it("跨站形（會被解析成 authority 的次字元）一律 null", () => {
+  it("cross-site shapes (a second character the parser would treat as an authority) are null", () => {
     expect(safeNextPath("//evil")).toBeNull();
     expect(safeNextPath("/\\evil")).toBeNull();
   });
 
-  it("逐字點名的四個控制字元（對照組）", () => {
-    // URL 解析器會靜默吃掉 CR/LF/TAB，所以必須在解析前擋——Location 標頭注入。
+  it("the four control characters named verbatim (control group)", () => {
+    // The URL parser silently swallows CR/LF/TAB, so they must be rejected before parsing - Location header injection.
     expect(safeNextPath("/x\r\nSet-Cookie: a=b")).toBeNull();
     expect(safeNextPath("/x\ny")).toBeNull();
     expect(safeNextPath("/x\ty")).toBeNull();
-    // NUL：**用 String.fromCharCode 組**，不要在原始碼裡打入裸控制字元。
+    // NUL: **build it with String.fromCharCode**; do not type a bare control character into the source.
     expect(safeNextPath("/x" + String.fromCharCode(0) + "y")).toBeNull();
   });
 
-  it("非可見 ASCII 一律拒收：C0、空白、DEL、latin-1、未編碼的非 ASCII", () => {
-    // 理由見 safeNextPath 的 JSDoc 第 4 條（成功導向不做編碼，所以字串必須可以逐字
-    // 當 Location 用）。這一組殺的是「退回四字元版」與「上界只到 U+007F」兩種突變。
+  it("non-visible ASCII is rejected: C0, space, DEL, latin-1, unencoded non-ASCII", () => {
+    // A successful redirect is not encoded, so the string must be usable verbatim as Location (see safeNextPath's JSDoc).
+    // Catches reverting to the four-character check and an upper bound that stops at U+007F.
     for (const code of [0x01, 0x0b, 0x0c, 0x1f, 0x7f]) {
       expect(safeNextPath("/x" + String.fromCharCode(code) + "y")).toBeNull();
     }
     expect(safeNextPath("/x y")).toBeNull();
-    // 未編碼的 CJK 路徑（/n/alice/筆記）：U+0100 起 → Node 的標頭驗證會丟
-    // ERR_INVALID_CHAR。用 fromCharCode 組，避免原始碼裡的 NFC/NFD 不穩。
+    // Unencoded CJK path (/n/alice/<CJK>): from U+0100 up, Node's header validation throws
+    // ERR_INVALID_CHAR. Built with fromCharCode to avoid NFC/NFD instability in the source.
     expect(safeNextPath("/n/alice/" + String.fromCharCode(0x7b46, 0x8a18))).toBeNull();
-    // latin-1（é）：Node 的標頭驗證其實放行，但我們一律不收——判準只有一條，不隨
-    // 下游放寬。
+    // latin-1 (e-acute): Node's header validation actually lets it through, but it is rejected anyway - the criterion is a single rule
+    // that does not follow downstream loosening.
     expect(safeNextPath("/x" + String.fromCharCode(0xe9) + "y")).toBeNull();
   });
 
-  it("可見 ASCII 的邊界與百分比編碼形收受", () => {
-    // 0x21（!）與 0x7e（~）是可見區間的兩端，都不該被擋。
+  it("boundaries of visible ASCII and percent-encoded forms are accepted", () => {
+    // 0x21 (!) and 0x7e (~) are the two ends of the visible range; neither may be rejected.
     expect(safeNextPath("/x!y")).toBe("/x!y");
     expect(safeNextPath("/x~y")).toBe("/x~y");
-    // 已編碼形合法，而且這正是瀏覽器實際會送來的形（location.pathname 是編碼形）。
+    // the encoded form is valid, and it is the form browsers actually send (location.pathname is encoded).
     expect(safeNextPath("/n/alice/%E7%AD%86%E8%A8%98")).toBe("/n/alice/%E7%AD%86%E8%A8%98");
   });
 
-  it("長度上限 2048（含）", () => {
-    // 常數值本身也要釘：只用常數推導的話，把 2048 改成 512 兩條斷言仍會全綠。
+  it("length cap 2048 (inclusive)", () => {
+    // The constant itself is pinned too: if only the constant were used to derive them, changing 2048 to 512 would leave both assertions green.
     expect(MAX_NEXT_PATH_LENGTH).toBe(2048);
     const atLimit = "/" + "a".repeat(2047);
     expect(atLimit).toHaveLength(2048);
@@ -137,7 +136,7 @@ describe("safeNextPath", () => {
     expect(safeNextPath("/" + "a".repeat(2048))).toBeNull();
   });
 
-  it("非 SPA 頁的路徑一律 null（否則登入後會落在裸 JSON）", () => {
+  it("paths that are not SPA pages are null (otherwise login would land on bare JSON)", () => {
     expect(safeNextPath("/api")).toBeNull();
     expect(safeNextPath("/api/notes")).toBeNull();
     expect(safeNextPath("/collab/xyz")).toBeNull();
@@ -147,66 +146,66 @@ describe("safeNextPath", () => {
     expect(safeNextPath("/.well-known/oauth-protected-resource")).toBeNull();
   });
 
-  it("排除判定看的是**解析後**的 pathname，不是原字串的字面前綴", () => {
-    // 這族釘住「用 new URL(...).pathname 餵 isExcludedPath」這個實作選擇。
-    // （對照組在上面 isExcludedPath 那族：同一個字串直接問述詞是 false。）
+  it("the exclusion check looks at the **resolved** pathname, not the raw string's literal prefix", () => {
+    // Pins the implementation choice of feeding new URL(...).pathname to isExcludedPath.
+    // (The contrast is in the isExcludedPath group above: asking the predicate directly with the same string is false.)
     expect(safeNextPath("/x/../api/notes")).toBeNull();
-    // %2e%2e 會被解析器還原成 dot-segment → 同樣擋得掉。
+    // %2e%2e is restored by the parser to a dot-segment -> blocked as well.
     expect(safeNextPath("/x/%2e%2e/api/notes")).toBeNull();
     expect(safeNextPath("/x/%2E%2E/api/notes")).toBeNull();
-    // 反過來 %2f **不會**被還原：這串的 pathname 是 /x/..%2fapi/notes，比不中任何
-    // 前綴，所以放行——它導過去會落到 App.tsx 的 /* catch-all（首頁），不是 API，無害。
+    // Conversely %2f is **not** restored: this string's pathname is /x/..%2fapi/notes, which matches no
+    // prefix, so it passes - redirecting there lands on the App.tsx /* catch-all (home page), not the API, so it is harmless.
     expect(safeNextPath("/x/..%2fapi/notes")).toBe("/x/..%2fapi/notes");
   });
 
-  it("/login 自己不是合法目標（登入完又回登入表單的死路）", () => {
+  it("/login itself is not a valid target (a dead end back to the login form)", () => {
     expect(safeNextPath("/login")).toBeNull();
     expect(safeNextPath("/login?next=%2Fx")).toBeNull();
-    // 尾斜線與大小寫都要收斂：react-router 的比對忽略尾斜線、預設大小寫不敏感，
-    // 這兩種形一樣會渲染登入頁。
+    // Trailing slash and case both need collapsing: react-router matching ignores trailing slashes and is case-insensitive by default,
+    // so these shapes also render the login page.
     expect(safeNextPath("/login/")).toBeNull();
-    // `+` 是 load-bearing：react-router 對 end 路由編出來的是 `\/login\/*$`，多個尾
-    // 斜線一樣會渲染登入頁；只吃一個斜線的 `\/$` 會漏掉這個形。
+    // The `+` is load-bearing: react-router compiles an end route to `\/login\/*$`, so several trailing
+    // slashes also render the login page; a `\/$` that eats only one slash would miss this shape.
     expect(safeNextPath("/login//")).toBeNull();
     expect(safeNextPath("/LOGIN")).toBeNull();
-    // 但 /login 開頭的其他路徑不受牽連（不是前綴比對）。
+    // other paths that merely start with /login are not caught (not a prefix match).
     expect(safeNextPath("/loginx")).toBe("/loginx");
   });
 
-  it("/link-account 也不是合法目標（存在前提是「還沒登入、正在連結」——#187）", () => {
+  it("/link-account is not a valid target either (it exists only while not yet signed in and linking - #187)", () => {
     expect(safeNextPath("/link-account")).toBeNull();
     expect(safeNextPath("/link-account/")).toBeNull();
     expect(safeNextPath("/LINK-ACCOUNT")).toBeNull();
     expect(safeNextPath("/link-account?error=oidc_link_expired")).toBeNull();
-    // 不是前綴比對：同字首的其他路徑不受牽連。
+    // not a prefix match: other paths with the same start are not caught.
     expect(safeNextPath("/link-accounts")).toBe("/link-accounts");
   });
 
-  it("非字串輸入 → null（query string 讀出來可能是 null 或陣列）", () => {
+  it("non-string input -> null (a query string can read back as null or an array)", () => {
     expect(safeNextPath(null)).toBeNull();
     expect(safeNextPath(undefined)).toBeNull();
-    // ⚠ fixture 的形很重要：Fastify 對 `?next=/&next=x` 給的是 ["/", "x"]，它的 [0]
-    // 正好是 "/"，所以**只有這個形**能證明 typeof 守衛真的在守——換成 ["/x", "/y"]
-    // 的話，拿掉 typeof 那行測試依然全綠（它是被 input[0] !== "/" 擋掉的）。
+    // The fixture shape matters: for `?next=/&next=x` Fastify gives ["/", "x"], whose [0]
+    // is "/", so this is the shape that proves the typeof guard is doing the guarding - with ["/x", "/y"]
+    // removing the typeof line leaves the test green (input[0] !== "/" blocks it instead).
     expect(safeNextPath(["/", "x"] as unknown as string)).toBeNull();
   });
 });
 
-describe("#187：/register 也排除（「存在前提是尚未登入」）", () => {
-  it.each(["/register", "/register/", "/REGISTER", "/Register//", "/register?next=%2Fx"])("%s → null", (input) => {
+describe("#187: /register is excluded too (it exists only while not yet signed in)", () => {
+  it.each(["/register", "/register/", "/REGISTER", "/Register//", "/register?next=%2Fx"])("%s -> null", (input) => {
     expect(safeNextPath(input)).toBeNull();
   });
-  it("前綴相似但不是同一頁 → 照收", () => {
+  it("a similar prefix but a different page -> accepted", () => {
     expect(safeNextPath("/registered")).toBe("/registered");
     expect(safeNextPath("/n/alice/register")).toBe("/n/alice/register");
   });
 });
 
-describe("#286：/reset-password 也排除（已登入者只會看到「請先登出」）", () => {
-  it.each(["/reset-password", "/reset-password/", "/RESET-PASSWORD"])("%s → null", (input) => {
+describe("#286: /reset-password is excluded too (a signed-in person would only see \"please sign out first\")", () => {
+  it.each(["/reset-password", "/reset-password/", "/RESET-PASSWORD"])("%s -> null", (input) => {
     expect(safeNextPath(input)).toBeNull();
   });
-  it("前綴相似但不是同一頁 → 照收", () => {
+  it("a similar prefix but a different page -> accepted", () => {
     expect(safeNextPath("/reset-passwords")).toBe("/reset-passwords");
   });
 });

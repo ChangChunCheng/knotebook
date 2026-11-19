@@ -4,68 +4,68 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { selectVersionsToDelete, type VersionPolicyRow } from "../../src/collab/version-policy.js";
 
-const NOW = new Date("2026-10-09T12:00:00Z"); // 週五
+const NOW = new Date("2026-10-09T12:00:00Z"); // Friday
 const at = (iso: string) => new Date(iso);
 const auto = (seq: number, iso: string): VersionPolicyRow => ({ seq, kind: "auto", createdAt: at(iso) });
 const manual = (seq: number, iso: string): VersionPolicyRow => ({ seq, kind: "manual", createdAt: at(iso) });
 const run = (rows: VersionPolicyRow[], o: { f?: number; d?: number; base?: number | null } = {}) =>
   selectVersionsToDelete(rows, { now: NOW, keepAllDays: o.f ?? 7, dailyUntilDays: o.d ?? 30, baseSeq: o.base ?? null });
 
-describe("selectVersionsToDelete（F 天內全留、F–D 天每 UTC 日一版、D 天以上每 UTC 週一版）", () => {
-  it("F 天內全留（同一天兩版也留）", () => {
+describe("selectVersionsToDelete (everything kept within F days, one version per UTC day between F and D days, one per UTC Monday-week beyond D days)", () => {
+  it("everything within F days is kept (two versions on the same day too)", () => {
     expect(run([auto(1, "2026-10-05T01:00:00Z"), auto(2, "2026-10-05T23:00:00Z"), auto(3, "2026-10-09T11:00:00Z")])).toEqual([]);
   });
 
-  it("F–D 天：同一 UTC 日只留 createdAt 最新的一版；不同日各留", () => {
+  it("between F and D days: only the version with the newest createdAt per UTC day is kept; different days each keep one", () => {
     const rows = [auto(1, "2026-09-20T01:00:00Z"), auto(2, "2026-09-20T23:00:00Z"), auto(3, "2026-09-21T10:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
     expect(run(rows)).toEqual([1]);
   });
 
-  it("D 天以上：同一 UTC 週（週一 00:00 起）只留最新；跨週一 00:00 是不同週", () => {
-    // 2026-07-27 是週一：seq 1（週六）、seq 2（週日 23:59:59）同一週；seq 3 是下一週的週一 00:00。
+  it("D days or older: only the newest per UTC week (starting Monday 00:00) is kept; crossing Monday 00:00 is a different week", () => {
+    // 2026-07-27 is a Monday: seq 1 (Saturday) and seq 2 (Sunday 23:59:59) are in the same week; seq 3 is the next week's Monday 00:00.
     const rows = [auto(1, "2026-08-01T10:00:00Z"), auto(2, "2026-08-02T23:59:59Z"), auto(3, "2026-08-03T00:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
     expect(run(rows)).toEqual([1]);
   });
 
-  it("跨 F 邊界的同一日：F 內那版不跟 F 外那版比——F 外那版是它所在區間當日唯一的一版，留", () => {
-    // F=7 的界線是 2026-10-02T12:00Z：seq 1 在界線外（7 天 1 小時）、seq 2 在界線內。
+  it("the same day across the F boundary: the version inside F is not compared with the one outside - the one outside is the only version of its day in its band, so it is kept", () => {
+    // The F=7 boundary is 2026-10-02T12:00Z: seq 1 is outside (7 days 1 hour), seq 2 is inside.
     const rows = [auto(1, "2026-10-02T11:00:00Z"), auto(2, "2026-10-02T13:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
     expect(run(rows)).toEqual([]);
   });
 
-  it("跨 D 邊界的同一週：週桶只在 D 以上的列之間比", () => {
-    // D=30 的界線是 2026-09-09T12:00Z（週三）；同週（2026-09-07 週一起）：seq 3 在 D 內（日桶）、seq 1／seq 2 在 D 外（週桶）。
+  it("the same week across the D boundary: week buckets are compared only among rows at D or older", () => {
+    // The D=30 boundary is 2026-09-09T12:00Z (a Wednesday); same week (starting Monday 2026-09-07): seq 3 is within D (day bucket), seq 1 / seq 2 are outside D (week bucket).
     const rows = [auto(1, "2026-09-08T10:00:00Z"), auto(2, "2026-09-09T11:00:00Z"), auto(3, "2026-09-09T13:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
     expect(run(rows)).toEqual([1]);
   });
 
-  it("恰好 F 天、恰好 D 天：落進較舊的那個區間（F ≤ age、D ≤ age）", () => {
+  it("exactly F days and exactly D days: fall into the older band (F <= age, D <= age)", () => {
     const rows = [auto(1, "2026-10-02T11:00:00Z"), auto(2, "2026-10-02T12:00:00Z"), auto(3, "2026-09-09T12:00:00Z"), auto(4, "2026-09-08T01:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
-    // seq 2 恰 7 天 → 日桶，與 seq 1 同日且較新 → seq 1 刪；seq 3 恰 30 天 → 週桶，與 seq 4 同週（2026-09-07 起）且較新 → seq 4 刪。
+    // seq 2 is exactly 7 days -> day bucket, same day as seq 1 and newer -> seq 1 is deleted; seq 3 is exactly 30 days -> week bucket, same week as seq 4 (starting 2026-09-07) and newer -> seq 4 is deleted.
     expect(run(rows)).toEqual([1, 4]);
   });
 
-  it("F = D：沒有日桶，F 以外直接按週", () => {
+  it("F = D: no day bucket, beyond F goes straight to weeks", () => {
     const rows = [auto(1, "2026-09-28T01:00:00Z"), auto(2, "2026-09-30T01:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
-    expect(run(rows, { f: 7, d: 7 })).toEqual([1]); // 2026-09-28 是週一，兩列同週
+    expect(run(rows, { f: 7, d: 7 })).toEqual([1]); // 2026-09-28 is a Monday, the two rows are in the same week
   });
 
-  it("手動、基底、最新一版永遠留；同一列滿足多條規則照樣只算一次", () => {
+  it("manual, base and the latest version are kept; a row that satisfies several rules is still counted once", () => {
     const rows = [manual(1, "2026-08-01T00:00:00Z"), auto(2, "2026-08-01T01:00:00Z"), auto(3, "2026-08-01T02:00:00Z"), auto(4, "2026-08-01T03:00:00Z")];
-    // seq 4 是最新（seq 最大）；seq 2 是基底；seq 1 手動；同週的自動只剩 seq 3 與 seq 4 競爭——seq 4 已因最新而留，seq 3 是週桶裡唯一的候選 → 留。
+    // seq 4 is the latest (largest seq); seq 2 is the base; seq 1 is manual; among the automatic ones in the same week only seq 3 and seq 4 compete - seq 4 is already kept as the latest, so seq 3 is the only candidate in the week bucket -> kept.
     expect(run(rows, { base: 2 })).toEqual([]);
-    expect(run([...rows, auto(5, "2026-08-01T04:00:00Z")], { base: 2 })).toEqual([3]); // seq 5 成為最新，seq 4 與 seq 3 同週競爭、seq 4 較新
+    expect(run([...rows, auto(5, "2026-08-01T04:00:00Z")], { base: 2 })).toEqual([3]); // seq 5 becomes the latest; seq 4 and seq 3 compete in the same week, seq 4 is newer
   });
 
-  it("同一 createdAt：留 seq 較大者；空輸入回空；回傳遞增排序", () => {
-    // seq 小的排前面（DB 的自然順序）——拿掉 tie-break 時先見到的 seq 3 會被留下、得 [5]。
+  it("same createdAt: the larger seq is kept; empty input gives empty output; the result is in ascending order", () => {
+    // the smaller seq comes first (the DB's natural order) - without the tie-break, seq 3 seen first would be kept, giving [5].
     expect(run([auto(3, "2026-09-20T01:00:00Z"), auto(5, "2026-09-20T01:00:00Z"), auto(9, "2026-10-09T11:00:00Z")])).toEqual([3]);
     expect(run([])).toEqual([]);
     const many = [auto(7, "2026-09-20T01:00:00Z"), auto(2, "2026-09-20T02:00:00Z"), auto(4, "2026-09-20T03:00:00Z"), auto(9, "2026-10-09T11:00:00Z")];
     expect(run(many)).toEqual([2, 7]);
   });
 
-  it("時間一律外部注入：檔內（剝註解後）沒有 Date.now 與 new Date(", () => {
+  it("time is injected from outside: the file (comments stripped) has no Date.now or new Date(", () => {
     const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/collab/version-policy.ts");
     const code = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(code).not.toMatch(/Date\.now|new Date\(/);

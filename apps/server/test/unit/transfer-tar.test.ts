@@ -9,14 +9,12 @@ import zlib from "node:zlib";
 import { TarGzWriter, paxRecord } from "../../src/transfer/tar.js";
 import { parseTar, readPartialTarGz, readTarGz } from "../tar-read.js";
 
-/** bulk transfer 的 tar 輸出。 */
-
 const MTIME = new Date("2026-11-02T00:00:00Z");
 const cjk64 = "資料夾名稱很長".repeat(10).slice(0, 64);
 const title64 = "會議紀錄標題非常長的筆記".repeat(6).slice(0, 64);
 const a64 = "a".repeat(64);
 const b64s = "b".repeat(64);
-/** 21 項名單（目錄不帶尾斜線）。 */
+/** The 21-entry list (directories carry no trailing slash). */
 const ENTRIES: Array<{ dir: string } | { name: string }> = [
   { dir: "My notes" },
   { dir: "Groups" },
@@ -42,7 +40,7 @@ const ENTRIES: Array<{ dir: string } | { name: string }> = [
 ];
 const bodyOf = (n: string) => Buffer.from(`---\nknotebook: 1\ntitle: ${JSON.stringify(n)}\n---\n內容 ${n}\n`, "utf8");
 
-/** 收集用 Writable；`hold` 時不呼叫 write 回呼（＝下游不消化），`release()` 之後消化。 */
+/** Collecting Writable; while `hold` is set the write callback is not called (= downstream does not consume), and after `release()` it consumes. */
 function sink(opts: { hold?: boolean; highWaterMark?: number } = {}) {
   const chunks: Buffer[] = [];
   let holding = opts.hold ?? false;
@@ -84,7 +82,7 @@ async function writeAll(w: TarGzWriter) {
 }
 
 describe("TarGzWriter", () => {
-  it("T-1 往返：21 項（CJK、emoji、é、符號、空資料夾、~270 code point 的 CJK 長路徑、ASCII > 100 bytes）名稱、型別、內容、順序逐一相等", async () => {
+  it("round trip: 21 entries (CJK, emoji, e-acute, symbols, an empty folder, a CJK long path of ~270 code points, ASCII > 100 bytes): names, types, content and order all equal one by one", async () => {
     const s = sink();
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     await writeAll(w);
@@ -95,7 +93,7 @@ describe("TarGzWriter", () => {
     expect(w.bytesOut).toBe(s.bytes().length);
   });
 
-  it("T-2 ASCII ≤ 100 bytes 的名字不寫 pax、其餘都寫；長度自含的 pax 記錄在位數進位時也對", async () => {
+  it("ASCII names of <= 100 bytes get no pax record, all others do; a self-length-containing pax record is also right when the digit count carries", async () => {
     const s = sink();
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     await writeAll(w);
@@ -106,14 +104,14 @@ describe("TarGzWriter", () => {
     expect(pax).toBe(want);
     expect(want).toBeGreaterThan(5);
     expect(headers.filter(h => h.type !== "x").map(h => h.name)).toContain("My notes/ascii-only.md");
-    // 自含長度：body 長 94 → 94+2=96；body 長 98 → 98+2=100（三位數）→ 再算一次 101
+    // self-contained length: body length 94 -> 94+2=96; body length 98 -> 98+2=100 (three digits) -> compute again to 101
     for (const v of ["x".repeat(84), "x".repeat(88), "x".repeat(89), "é".repeat(500)]) {
       const r = paxRecord("path", v);
       expect(Number(r.toString("utf8").split(" ")[0]), v.length.toString()).toBe(r.length);
     }
   });
 
-  it("T-3 每個 512 標頭的 checksum 重算等於欄位值", async () => {
+  it("the checksum of every 512-byte header recomputes to the field value", async () => {
     const s = sink();
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     await writeAll(w);
@@ -123,7 +121,7 @@ describe("TarGzWriter", () => {
     for (const h of headers) expect(h.checksumField, h.name).toBe(h.checksumComputed);
   });
 
-  it("T-4 逐篇 flush：每個 addFile resolve 時，已收到的位元組（SYNC_FLUSH 解開）就含剛寫完那一項的完整內容", async () => {
+  it("per-file flush: when each addFile resolves, the bytes received so far (decompressed with SYNC_FLUSH) already contain the complete content of the entry just written", async () => {
     const s = sink();
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     for (let i = 0; i < 5; i++) {
@@ -136,7 +134,7 @@ describe("TarGzWriter", () => {
     await w.finish();
   });
 
-  it("T-5 背壓：下游 highWaterMark 16 且不消化 → 1 MiB 亂數的 addFile 50 ms 內仍未 resolve；下游開始消化後 resolve", async () => {
+  it("backpressure: downstream highWaterMark 16 and not consuming -> addFile of 1 MiB of random bytes is still unresolved after 50 ms; resolves once downstream starts consuming", async () => {
     const s = sink({ hold: true, highWaterMark: 16 });
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     const st = settle(w.addFile("My notes/big.bin", randomBytes(1024 * 1024)));
@@ -149,7 +147,7 @@ describe("TarGzWriter", () => {
     expect(readTarGz(s.bytes()).map(e => e.path)).toEqual(["My notes/big.bin"]);
   });
 
-  it("T-6 abort 之後輸出讀不出完整包；finish 之後最後 1024 bytes（解壓後）全零", async () => {
+  it("after abort the output does not read as a complete archive; after finish the last 1024 bytes (decompressed) are all zero", async () => {
     const a = sink();
     const wa = new TarGzWriter(a.w, { mtime: MTIME });
     await wa.addFile("My notes/a.md", Buffer.from("a"));
@@ -164,7 +162,7 @@ describe("TarGzWriter", () => {
     expect(tar.subarray(tar.length - 1024).every(x => x === 0)).toBe(true);
   });
 
-  it("T-8a abort 解除等待：下游不消化時 pending 的 addFile 在 abort 後 100 ms 內以 AbortError reject；之後 addFile／addDir／finish 立刻 reject", async () => {
+  it("abort releases waiting: when downstream is not consuming, a pending addFile rejects with AbortError within 100 ms of abort; after that addFile / addDir / finish reject at once", async () => {
     const s = sink({ hold: true, highWaterMark: 16 });
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     const st = settle(w.addFile("My notes/big.bin", randomBytes(1024 * 1024)));
@@ -177,10 +175,10 @@ describe("TarGzWriter", () => {
     await expect(w.addFile("x", Buffer.from("x"))).rejects.toMatchObject({ name: "AbortError" });
     await expect(w.addDir("x")).rejects.toMatchObject({ name: "AbortError" });
     await expect(w.finish()).rejects.toMatchObject({ name: "AbortError" });
-    w.abort(); // 冪等
+    w.abort(); // idempotent
   });
 
-  it("T-8b 下游自己被 destroy（模擬 socket 斷）→ pending 的 addFile 100 ms 內 reject", async () => {
+  it("downstream itself destroyed (simulating a socket drop) -> a pending addFile rejects within 100 ms", async () => {
     const s = sink({ hold: true, highWaterMark: 16 });
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     const st = settle(w.addFile("My notes/big.bin", randomBytes(1024 * 1024)));
@@ -193,7 +191,7 @@ describe("TarGzWriter", () => {
     expect(w.aborted).toBe(true);
   });
 
-  it("T-8c finish 進行中下游被 destroy → finish 以 AbortError reject、不 resolve", async () => {
+  it("downstream destroyed while finish is in progress -> finish rejects with AbortError, does not resolve", async () => {
     const s = sink({ hold: true, highWaterMark: 16 });
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     const st = settle(w.finish());
@@ -213,7 +211,7 @@ describe("TarGzWriter", () => {
       return false;
     }
   })();
-  it.runIf(hasGnuTar)("T-7 GNU tar -tzf 列出的名字＝名單", async () => {
+  it.runIf(hasGnuTar)("GNU tar -tzf lists names = the list", async () => {
     const s = sink();
     const w = new TarGzWriter(s.w, { mtime: MTIME });
     await writeAll(w);

@@ -1,5 +1,5 @@
-// node --test（同 changelog-section.test.mjs 慣例）：對假目錄測 check-bundle-size 的
-// 判斷邏輯，不必真的 build——真 dist 的檢查在 CI 的 build 之後跑 check-bundle-size.mjs。
+// node --test (same convention as changelog-section.test.mjs): tests the judgement logic of check-bundle-size against fake directories, no real build needed -
+// the real dist is checked by check-bundle-size.mjs after the build in CI.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,18 +8,18 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { AVATAR_ENCODE_RE, GROUP_LAZY_DIALOGS, AVATAR_IMAGE_MARKER, BODY_SEARCH_MARKER, FOLDER_I18N_MARKER, HELP_I18N_MARKER, MANAGEMENT_I18N_MARKERS, MAX_ENTRY_BYTES, MOBILE_TOOLBAR_I18N_MARKER, SELECT_I18N_MARKER, SHORTCUTS_I18N_MARKER, TOUR_I18N_MARKER, VERSIONS_MARKERS, checkBundleSize } from './check-bundle-size.mjs';
 
-// 守預設上限 750 KiB（理由見 check-bundle-size.mjs 的常數註解；下面兩案明傳 700 * 1024 測判斷本身，與預設值無關）。
-test('BS0 首包上限是 750 KiB', () => {
+// pins the default cap of 750 KiB (reason in the constant's comment in check-bundle-size.mjs; the next two cases pass 700 * 1024 explicitly to test the judgement itself, independent of the default).
+test('default entry size cap is 750 KiB', () => {
   assert.equal(MAX_ENTRY_BYTES, 750 * 1024);
 });
 
-// 站台管理／設定字串包的假 chunk：帶著全部 MANAGEMENT_I18N_MARKERS（真 build 裡這包是 management-strings-<hash>.js）。
+// Fake chunk for the site admin / settings string bundle: carries all MANAGEMENT_I18N_MARKERS (in a real build this bundle is management-strings-<hash>.js).
 const MGMT_PACK = { 'management-strings-Mgt000.js': `const m={${MANAGEMENT_I18N_MARKERS.map(k => `${k}:"x"`).join(',')}}` };
 
-// 頭貼編碼模組的假 chunk：帶著 marker（真 build 裡是 encode-<hash>.js）。
+// Fake chunk for the avatar encoding module: carries the marker (encode-<hash>.js in a real build).
 const AVATAR_PACK = { 'encode-Eee000.js': `class E extends Error{constructor(){super();this.name="${AVATAR_IMAGE_MARKER}"}}` };
 
-// 三個只在開啟時才載入的對話框的假 chunk：各自帶 marker（真 build 裡是 GroupNameDialog／DeleteGroupDialog／GroupTransferDialog-<hash>.js）。
+// Fake chunks for three dialogs loaded only when opened: each carries its marker (in a real build GroupNameDialog / DeleteGroupDialog / GroupTransferDialog-<hash>.js).
 const GROUP_DIALOG_PACK = Object.fromEntries(GROUP_LAZY_DIALOGS.map((d, i) => [`${d.name}-Ggg00${i}.js`, `t("${d.marker}")`]).concat([['icons-extra-Iii000.js', 'x']]));
 
 const MARKER_BASE = {
@@ -42,7 +42,7 @@ function fakeAssets(files) {
   return { assets, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-test('entry 在上限內且 NotePage chunk 存在 → 通過並回報摘要', () => {
+test('entry within the cap and a NotePage chunk present -> passes and reports a summary', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 500_000,
     'NotePage-Def456.js': 1_000_000,
@@ -59,7 +59,7 @@ test('entry 在上限內且 NotePage chunk 存在 → 通過並回報摘要', ()
     'BodySearchLazy-Bbb000.js': 8_000,
     ...MGMT_PACK,
     ...AVATAR_PACK, ...GROUP_DIALOG_PACK,
-    'index-Abc123.css': 50_000, // css 不是 entry chunk，pattern 只認 .js
+    'index-Abc123.css': 50_000, // css is not an entry chunk; the pattern only matches .js
   });
   try {
     const result = checkBundleSize(assets, { maxEntryBytes: 700 * 1024 });
@@ -83,7 +83,7 @@ test('entry 在上限內且 NotePage chunk 存在 → 通過並回報摘要', ()
   }
 });
 
-test('entry 超過上限 → throw，訊息含實際 bytes 與迴歸提示', () => {
+test('entry over the cap -> throws, message contains the actual bytes and a regression hint', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Fat999.js': 1_700_000,
     'NotePage-Def456.js': 10,
@@ -95,7 +95,7 @@ test('entry 超過上限 → throw，訊息含實際 bytes 與迴歸提示', () 
   }
 });
 
-test('NotePage chunk 不存在（split 被拿掉）→ throw', () => {
+test('NotePage chunk missing (split removed) -> throws', () => {
   const { assets, cleanup } = fakeAssets({ 'index-Abc123.js': 100 });
   try {
     assert.throws(() => checkBundleSize(assets), /NotePage/);
@@ -104,11 +104,11 @@ test('NotePage chunk 不存在（split 被拿掉）→ throw', () => {
   }
 });
 
-test('fail-closed：dist 不存在 → throw（不是靜默通過）', () => {
+test('fail-closed: dist missing -> throws (not a silent pass)', () => {
   assert.throws(() => checkBundleSize(join(tmpdir(), 'no-such-dir-bundle-check')), /pnpm build/);
 });
 
-test('fail-closed：多個 entry chunk（build 產物形狀不符預期）→ throw', () => {
+test('fail-closed: several entry chunks (build output shape not as expected) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Aaa111.js': 100,
     'index-Bbb222.js': 100,
@@ -121,9 +121,9 @@ test('fail-closed：多個 entry chunk（build 產物形狀不符預期）→ th
   }
 });
 
-// issue #94：mermaid 必須留在自己的 chunk。這條擋的是「有人在 lib/mermaid.ts 以外靜態
-// import 了 mermaid」——那會讓它被併進 NotePage/entry，獨立 chunk 就消失。
-test('mermaid chunk 不存在（被靜態 import 併回去）→ throw', () => {
+// issue #94: mermaid must stay in its own chunk. This guards against someone statically importing mermaid outside lib/mermaid.ts -
+// it would be merged into NotePage/entry and the separate chunk would disappear.
+test('mermaid chunk missing (merged back by a static import) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100,
     'NotePage-Def456.js': 100,
@@ -135,13 +135,11 @@ test('mermaid chunk 不存在（被靜態 import 併回去）→ throw', () => {
   }
 });
 
-// issue #96：shiki 必須留在自己的 chunk（同 mermaid 那條的理由——唯一允許 import 它的
-// 地方是 lib/code-highlight.ts 的 `import("shiki")`）。它的核心 ~150KB，被靜態 import
-// 併回 entry 的話 entry 會貼著首包上限，症狀是「時而超標」而不是穩定紅。
-// ⚠ chunk 名叫 shiki-<hash> 是 vite.config.ts 的 chunkFileNames 改的：shiki 的套件
-// 入口檔叫 index.mjs，Rollup 預設用檔名命名 chunk，會產出第二個 index-<hash>.js、
-// 撞上 entry 偵測（上面「恰一個 entry」那條 fail-closed 就是這樣抓到它的）。
-test('shiki chunk 不存在（被靜態 import 併回去）→ throw', () => {
+// issue #96: shiki must stay in its own chunk (same reason as mermaid - the only place allowed to import it is the `import("shiki")` in lib/code-highlight.ts).
+// Its core is ~150KB; if a static import merged it back into the entry, the entry would sit right at the cap and the symptom would be "sometimes over" rather than stably red.
+// The chunk is named shiki-<hash> by chunkFileNames in vite.config.ts: shiki's package entry file is index.mjs and Rollup names chunks after the file by default,
+// which would produce a second index-<hash>.js and collide with entry detection (the fail-closed "exactly one entry" case above catches this).
+test('shiki chunk missing (merged back by a static import) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100,
     'NotePage-Def456.js': 100,
@@ -154,10 +152,9 @@ test('shiki chunk 不存在（被靜態 import 併回去）→ throw', () => {
   }
 });
 
-// issue #201／#247：站台管理的五個區塊必須是自己的 lazy chunk（App.tsx 的五個
-// `lazy(() => import("./components/admin/AdminSections"))` 是唯一 import 點）——有人靜態 import 它或它重新匯出的區塊，
-// Rollup 會把它們併回 entry、這個 chunk 消失。
-test('AdminSections chunk 不存在（被靜態 import 併回 entry）→ throw', () => {
+// issue #201 / #247: the site-admin sections must be their own lazy chunk (the `lazy(() => import("./components/admin/AdminSections"))` calls in App.tsx are the only import point) -
+// if someone statically imports it or a section it re-exports, Rollup merges them back into the entry and this chunk disappears.
+test('AdminSections chunk missing (merged back into the entry by a static import) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100,
     'NotePage-Def456.js': 100,
@@ -171,8 +168,8 @@ test('AdminSections chunk 不存在（被靜態 import 併回 entry）→ throw'
   }
 });
 
-// 版本歷史 UI（含 diff 套件）必須是自己的 lazy chunk
-test('VersionsLazy chunk 不存在（被靜態 import 併回 NotePage／entry）→ throw', () => {
+// the version history UI (including the diff package) must be its own lazy chunk
+test('VersionsLazy chunk missing (merged back into NotePage/entry by a static import) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10,
     'AdminSections-Mno345.js': 10, 'PresentationOverlay-Pqr678.js': 10,
@@ -184,7 +181,7 @@ test('VersionsLazy chunk 不存在（被靜態 import 併回 NotePage／entry）
   }
 });
 
-test('簡報層 chunk 不存在（#229 迴歸：PresentationOverlay 被靜態 import）→ throw', () => {
+test('presentation layer chunk missing (#229 regression: PresentationOverlay was statically imported) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
     'VersionsLazy-Vvv000.js': 10,
@@ -196,8 +193,8 @@ test('簡報層 chunk 不存在（#229 迴歸：PresentationOverlay 被靜態 im
   }
 });
 
-// #181：垃圾桶 tab 的面板與底部必須是自己的 lazy chunk（TrashLazy 是唯一入口）
-test('TrashLazy chunk 不存在（兩個掛載點都改成靜態 import、整組併回 entry）→ throw', () => {
+// #181: the trash tab's panel and footer must be their own lazy chunk (TrashLazy is the only entry)
+test('TrashLazy chunk missing (both mount points changed to static imports, the whole group merged back into the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
     'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10,
@@ -209,8 +206,8 @@ test('TrashLazy chunk 不存在（兩個掛載點都改成靜態 import、整組
   }
 });
 
-// #181：一般 tab 選取模式必須是自己的 lazy chunk（SelectLazy 是唯一入口）
-test('BS1 SelectLazy chunk 不存在（整組併回 entry）→ throw', () => {
+// #181: the general tab's selection mode must be its own lazy chunk (SelectLazy is the only entry)
+test('SelectLazy chunk missing (the whole group merged back into the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10,
     'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10,
@@ -222,7 +219,7 @@ test('BS1 SelectLazy chunk 不存在（整組併回 entry）→ throw', () => {
   }
 });
 
-test('BS2 entry 含選取字串包的鍵名（字串包或 import 它的模組被首包靜態 import）→ throw', () => {
+test('entry contains the select string bundle\'s key names (the bundle, or a module importing it, is statically imported by the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${SELECT_I18N_MARKER}:"Delete 1 selected item"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -234,7 +231,7 @@ test('BS2 entry 含選取字串包的鍵名（字串包或 import 它的模組�
   }
 });
 
-test('BS3 鍵名只在 SelectLazy 裡 → 通過、回傳 selectChunks', () => {
+test('key names only inside SelectLazy -> passes, returns selectChunks', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'SelectLazy-Sss000.js': `const s={${SELECT_I18N_MARKER}:"Delete 1 selected item"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -246,15 +243,15 @@ test('BS3 鍵名只在 SelectLazy 裡 → 通過、回傳 selectChunks', () => {
   }
 });
 
-// marker 改名即靜默失效——綁回 select.en.json（比照下面 VERSIONS_MARKERS 綁 en.json）。
-test('BS4 SELECT_I18N_MARKER 是 select.en.json 裡 select.* 的鍵', () => {
+// A renamed marker silently stops working - bind it back to select.en.json (as VERSIONS_MARKERS below is bound to en.json).
+test('SELECT_I18N_MARKER is a select.* key in select.en.json', () => {
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/select.en.json', import.meta.url)), 'utf8'));
   let node = bundle;
   for (const part of `select.${SELECT_I18N_MARKER}`.split('.')) node = node?.[part];
   assert.equal(typeof node, 'string', `select.${SELECT_I18N_MARKER} 不在 select.en.json——鍵改名了，請同步更新 SELECT_I18N_MARKER`);
 });
 
-test('BS-M1 entry 含手機編輯工具列字串包的鍵名 → throw', () => {
+test('entry contains the mobile edit toolbar string bundle\'s key names -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${MOBILE_TOOLBAR_I18N_MARKER}:"Hide keyboard"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -266,7 +263,7 @@ test('BS-M1 entry 含手機編輯工具列字串包的鍵名 → throw', () => {
   }
 });
 
-test('BS-M2 鍵名只在 NotePage 裡 → 通過', () => {
+test('key names only inside NotePage -> passes', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'NotePage-Def456.js': `const s={${MOBILE_TOOLBAR_I18N_MARKER}:"Hide keyboard"}`,
     'VersionsLazy-Vvv000.js': 'x',
@@ -278,7 +275,7 @@ test('BS-M2 鍵名只在 NotePage 裡 → 通過', () => {
   }
 });
 
-test('BS-M3 MOBILE_TOOLBAR_I18N_MARKER 是 mobile-toolbar.en.json 裡 mobileToolbar.* 的鍵、不在主 en.json', () => {
+test('MOBILE_TOOLBAR_I18N_MARKER is a mobileToolbar.* key in mobile-toolbar.en.json, not in the main en.json', () => {
   const dir = new URL('../apps/web/src/i18n/', import.meta.url);
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('mobile-toolbar.en.json', dir)), 'utf8'));
   assert.equal(typeof bundle.mobileToolbar?.[MOBILE_TOOLBAR_I18N_MARKER], 'string');
@@ -286,8 +283,8 @@ test('BS-M3 MOBILE_TOOLBAR_I18N_MARKER 是 mobile-toolbar.en.json 裡 mobileTool
   assert.equal(main.mobileToolbar, undefined);
 });
 
-// 資料夾：資料夾對話框必須是自己的 lazy chunk（FolderLazy 是唯一入口）
-test('BS-F1 FolderLazy chunk 不存在（整組併回 entry）→ throw', () => {
+// Folders: the folder dialogs must be their own lazy chunk (FolderLazy is the only entry)
+test('FolderLazy chunk missing (the whole group merged back into the entry) -> throws', () => {
   const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
   delete files['FolderLazy-Fff000.js'];
   const { assets, cleanup } = fakeAssets(files);
@@ -298,7 +295,7 @@ test('BS-F1 FolderLazy chunk 不存在（整組併回 entry）→ throw', () => 
   }
 });
 
-test('BS-F2 entry 含資料夾字串包的鍵名（字串包或 import 它的模組被首包靜態 import）→ throw', () => {
+test('entry contains the folder string bundle\'s key names (the bundle, or a module importing it, is statically imported by the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${FOLDER_I18N_MARKER}:"Restoring from the trash rebuilds the folders"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -310,7 +307,7 @@ test('BS-F2 entry 含資料夾字串包的鍵名（字串包或 import 它的模
   }
 });
 
-test('BS-F3 鍵名只在 FolderLazy 裡 → 通過、回傳 folderChunks', () => {
+test('key names only inside FolderLazy -> passes, returns folderChunks', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'FolderLazy-Fff000.js': `const s={${FOLDER_I18N_MARKER}:"Restoring from the trash rebuilds the folders"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -322,8 +319,8 @@ test('BS-F3 鍵名只在 FolderLazy 裡 → 通過、回傳 folderChunks', () =>
   }
 });
 
-// #93：側欄搜尋的內文區必須是自己的 lazy chunk（BodySearchLazy 是唯一入口）
-test('BS-B1 BodySearchLazy chunk 不存在（被靜態 import、整組併回 entry）→ throw', () => {
+// #93: the body area of the sidebar search must be its own lazy chunk (BodySearchLazy is the only entry)
+test('BodySearchLazy chunk missing (statically imported, the whole group merged back into the entry) -> throws', () => {
   const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
   delete files['BodySearchLazy-Bbb000.js'];
   const { assets, cleanup } = fakeAssets(files);
@@ -334,7 +331,7 @@ test('BS-B1 BodySearchLazy chunk 不存在（被靜態 import、整組併回 ent
   }
 });
 
-test('BS-B2 entry 含內文區的 marker（body-match）→ throw', () => {
+test('entry contains the body area\'s marker (body-match) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `e("section",{"data-testid":"${BODY_SEARCH_MARKER}"})`, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
   });
@@ -345,7 +342,7 @@ test('BS-B2 entry 含內文區的 marker（body-match）→ throw', () => {
   }
 });
 
-test('BS-B3 marker 只在 BodySearchLazy 裡 → 通過、回傳 bodySearchChunks', () => {
+test('marker only inside BodySearchLazy -> passes, returns bodySearchChunks', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'BodySearchLazy-Bbb000.js': `e("section",{"data-testid":"${BODY_SEARCH_MARKER}"})`, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
   });
@@ -356,7 +353,7 @@ test('BS-B3 marker 只在 BodySearchLazy 裡 → 通過、回傳 bodySearchChunk
   }
 });
 
-test('BS-B4 BODY_SEARCH_MARKER 只出現在 BodySearchResults.tsx（首包的 SearchResults／gate／fallback 不得用這個字）', () => {
+test('BODY_SEARCH_MARKER appears only in BodySearchResults.tsx (SearchResults / gate / fallback in the entry must not use this word)', () => {
   const src = fileURLToPath(new URL('../apps/web/src/components/sidebar/', import.meta.url));
   assert.ok(readFileSync(join(src, 'BodySearchResults.tsx'), 'utf8').includes(`"${BODY_SEARCH_MARKER}"`));
   for (const name of ['SearchResults.tsx', 'body-search-gate.ts', 'SidebarLazyBoundary.tsx', 'BodySearchLazy.tsx']) {
@@ -364,16 +361,16 @@ test('BS-B4 BODY_SEARCH_MARKER 只出現在 BodySearchResults.tsx（首包的 Se
   }
 });
 
-// marker 改名即靜默失效——綁回 folders.en.json（比照 BS4）。
-test('BS-F4 FOLDER_I18N_MARKER 是 folders.en.json 裡 folderDialogs.* 的鍵', () => {
+// A renamed marker silently stops working - bind it back to folders.en.json (as for the select marker above).
+test('FOLDER_I18N_MARKER is a folderDialogs.* key in folders.en.json', () => {
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/folders.en.json', import.meta.url)), 'utf8'));
   let node = bundle;
   for (const part of `folderDialogs.${FOLDER_I18N_MARKER}`.split('.')) node = node?.[part];
   assert.equal(typeof node, 'string', `folderDialogs.${FOLDER_I18N_MARKER} 不在 folders.en.json——鍵改名了，請同步更新 FOLDER_I18N_MARKER`);
 });
 
-// 快捷鍵介紹頁：清單、字串包、鍵面必須是自己的 lazy chunk（ShortcutsLazy 是唯一入口，ShortcutsDialog 的 lazy import）
-test('BS-K1 ShortcutsLazy chunk 不存在（整組併回 entry）→ throw', () => {
+// shortcuts guide: the list, string bundle and key faces must be their own lazy chunk (ShortcutsLazy is the only entry, via the lazy import in ShortcutsDialog)
+test('ShortcutsLazy chunk missing (the whole group merged back into the entry) -> throws', () => {
   const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
   delete files['ShortcutsLazy-Kkk000.js'];
   const { assets, cleanup } = fakeAssets(files);
@@ -384,7 +381,7 @@ test('BS-K1 ShortcutsLazy chunk 不存在（整組併回 entry）→ throw', () 
   }
 });
 
-test('BS-K2 entry 含快捷鍵字串包的鍵名（字串包或清單被首包靜態 import）→ throw', () => {
+test('entry contains the shortcuts string bundle\'s key names (the bundle or the list is statically imported by the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${SHORTCUTS_I18N_MARKER}:"Backspace at the start of a column"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -396,7 +393,7 @@ test('BS-K2 entry 含快捷鍵字串包的鍵名（字串包或清單被首包�
   }
 });
 
-test('BS-K3 鍵名只在 ShortcutsLazy 裡 → 通過、回傳 shortcutsChunks', () => {
+test('key names only inside ShortcutsLazy -> passes, returns shortcutsChunks', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': `const s={${SHORTCUTS_I18N_MARKER}:"Backspace at the start of a column"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -408,8 +405,8 @@ test('BS-K3 鍵名只在 ShortcutsLazy 裡 → 通過、回傳 shortcutsChunks',
   }
 });
 
-// marker 改名即靜默失效——綁回 shortcuts.en.json（比照 BS4），且不能是主 en.json 的鍵。
-test('BS-K4 SHORTCUTS_I18N_MARKER 是 shortcuts.en.json 裡 shortcutsGuide.items.* 的鍵，不在主 en.json', () => {
+// A renamed marker silently stops working - bind it back to shortcuts.en.json (as for the select marker above); it must not be a key of the main en.json.
+test('SHORTCUTS_I18N_MARKER is a shortcutsGuide.items.* key in shortcuts.en.json, not in the main en.json', () => {
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/shortcuts.en.json', import.meta.url)), 'utf8'));
   let node = bundle;
   for (const part of `shortcutsGuide.items.${SHORTCUTS_I18N_MARKER}`.split('.')) node = node?.[part];
@@ -418,8 +415,8 @@ test('BS-K4 SHORTCUTS_I18N_MARKER 是 shortcuts.en.json 裡 shortcutsGuide.items
   assert.ok(!main.includes(`"${SHORTCUTS_I18N_MARKER}"`), `${SHORTCUTS_I18N_MARKER} 不該在主 en.json`);
 });
 
-// 功能導覽：遮罩、卡片、站點表、示範筆記、字串包必須是自己的 lazy chunk（TourLazy 是唯一入口，TourProvider 的 import()）
-test('BS-T1 TourLazy chunk 不存在（整組併回 entry）→ throw', () => {
+// feature tour: the overlay, cards, site table, sample notes and string bundle must be their own lazy chunk (TourLazy is the only entry, via import() in TourProvider)
+test('TourLazy chunk missing (the whole group merged back into the entry) -> throws', () => {
   const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
   delete files['TourLazy-Tou000.js'];
   const { assets, cleanup } = fakeAssets(files);
@@ -430,7 +427,7 @@ test('BS-T1 TourLazy chunk 不存在（整組併回 entry）→ throw', () => {
   }
 });
 
-test('BS-T2 entry 含導覽字串包的鍵名（字串包或導覽模組被首包靜態 import）→ throw', () => {
+test('entry contains the tour string bundle\'s key names (the bundle or tour modules are statically imported by the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${TOUR_I18N_MARKER}:"Keep the sample note, or move it to the trash?"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -442,7 +439,7 @@ test('BS-T2 entry 含導覽字串包的鍵名（字串包或導覽模組被首�
   }
 });
 
-test('BS-T3 鍵名只在 TourLazy 裡 → 通過、回傳 tourChunks', () => {
+test('key names only inside TourLazy -> passes, returns tourChunks', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'TourLazy-Tou000.js': `const s={${TOUR_I18N_MARKER}:"Keep the sample note, or move it to the trash?"}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -454,15 +451,15 @@ test('BS-T3 鍵名只在 TourLazy 裡 → 通過、回傳 tourChunks', () => {
   }
 });
 
-test('BS-T4 TOUR_I18N_MARKER 是 tour.en.json 裡 tourGuide.* 的鍵，不在主 en.json', () => {
+test('TOUR_I18N_MARKER is a tourGuide.* key in tour.en.json, not in the main en.json', () => {
   const tour = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/tour.en.json', import.meta.url)), 'utf8'));
   assert.equal(typeof tour.tourGuide?.[TOUR_I18N_MARKER], 'string', `tourGuide.${TOUR_I18N_MARKER} 不在 tour.en.json——鍵改名了，請同步更新 TOUR_I18N_MARKER`);
   const main = readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/en.json', import.meta.url)), 'utf8');
   assert.ok(!main.includes(`"${TOUR_I18N_MARKER}"`), `${TOUR_I18N_MARKER} 不該在主 en.json`);
 });
 
-// 說明視窗：entry 不得含說明頁的字串；說明視窗的 chunk 不得帶著導覽的字串包或引用導覽的 chunk
-test('entry 含說明頁的字串鍵名 → throw', () => {
+// help dialog: the entry must not contain the help page's strings; the help dialog's chunk must not carry the tour string bundle or reference the tour's chunk
+test('entry contains the help page\'s string keys -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `const s={${HELP_I18N_MARKER}:{}}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -474,7 +471,7 @@ test('entry 含說明頁的字串鍵名 → throw', () => {
   }
 });
 
-test('說明視窗的 chunk 含導覽字串包的鍵名 → throw', () => {
+test('the help dialog chunk contains the tour string bundle\'s key names -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': `const s={${TOUR_I18N_MARKER}:"x",${HELP_I18N_MARKER}:{}}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -486,7 +483,7 @@ test('說明視窗的 chunk 含導覽字串包的鍵名 → throw', () => {
   }
 });
 
-test('說明視窗的 chunk 靜態引用 TourLazy chunk（鍵名在別的檔）→ throw', () => {
+test('the help dialog chunk statically references the TourLazy chunk (key names are in another file) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': 'import{T}from"./TourLazy-Tou000.js";export{T}', 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -498,7 +495,7 @@ test('說明視窗的 chunk 靜態引用 TourLazy chunk（鍵名在別的檔）�
   }
 });
 
-test('導覽字串包被抽成共用 chunk、說明視窗的 chunk 只留一行靜態 import → throw', () => {
+test('the tour string bundle is extracted into a shared chunk and the help dialog chunk keeps only a static import line -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': 'import"./tour-strings-Zzz999.js";export{};', 'tour-strings-Zzz999.js': `const s={${TOUR_I18N_MARKER}:"x"}`,
     'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
@@ -510,7 +507,7 @@ test('導覽字串包被抽成共用 chunk、說明視窗的 chunk 只留一行�
   }
 });
 
-test('說明視窗的 chunk 只是動態 import 導覽的 chunk（括號形）→ 通過', () => {
+test('the help dialog chunk only dynamically imports the tour chunk (parenthesised form) -> passes', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': 'const load=()=>import("./TourLazy-Tou000.js");export{load};',
     'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
@@ -522,7 +519,7 @@ test('說明視窗的 chunk 只是動態 import 導覽的 chunk（括號形）�
   }
 });
 
-test('說明頁的鍵名只在 ShortcutsLazy 裡、導覽只在 TourLazy 裡 → 通過', () => {
+test('the help page\'s key names only inside ShortcutsLazy and the tour\'s only inside TourLazy -> passes', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'ShortcutsLazy-Kkk000.js': `const s={${HELP_I18N_MARKER}:{}}`, 'TourLazy-Tou000.js': `const s={${TOUR_I18N_MARKER}:"x"}`,
     'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
@@ -534,14 +531,14 @@ test('說明頁的鍵名只在 ShortcutsLazy 裡、導覽只在 TourLazy 裡 →
   }
 });
 
-test('HELP_I18N_MARKER 是 shortcuts.en.json 的 helpGuide 底下的鍵，不在主 en.json', () => {
+test('HELP_I18N_MARKER is a key under helpGuide in shortcuts.en.json, not in the main en.json', () => {
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/shortcuts.en.json', import.meta.url)), 'utf8'));
   assert.equal(typeof bundle.helpGuide?.[HELP_I18N_MARKER], 'object', `helpGuide.${HELP_I18N_MARKER} 不在 shortcuts.en.json——鍵改名了，請同步更新 HELP_I18N_MARKER`);
   const main = readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/en.json', import.meta.url)), 'utf8');
   assert.ok(!main.includes(`"${HELP_I18N_MARKER}"`), `${HELP_I18N_MARKER} 不該在主 en.json`);
 });
 
-test('BS5 MANAGEMENT_I18N_MARKERS 都是 management.en.json 裡被搬走子樹的鍵，且不在首包保留的 15 鍵裡', () => {
+test('MANAGEMENT_I18N_MARKERS are all keys of the subtree moved out of management.en.json, and not among the keys the entry keeps', () => {
   const bundle = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/management.en.json', import.meta.url)), 'utf8'));
   const found = [];
   const walk = (node, path) => {
@@ -556,7 +553,7 @@ test('BS5 MANAGEMENT_I18N_MARKERS 都是 management.en.json 裡被搬走子樹�
   for (const marker of MANAGEMENT_I18N_MARKERS) assert.ok(!main.includes(`"${marker}"`), `${marker} 不該在主 en.json`);
 });
 
-test('BS6 entry 含字串包 marker → throw；沒有 management-strings chunk → throw；chunk 缺 marker → throw', () => {
+test('entry contains a string bundle marker -> throws; no management-strings chunk -> throws; a chunk missing a marker -> throws', () => {
   const { 'management-strings-Mgt000.js': _pack, ...withoutPack } = MARKER_BASE;
   const leak = fakeAssets({ ...MARKER_BASE, 'index-Abc123.js': `const s={${MANAGEMENT_I18N_MARKERS[1]}:"Built-in"}`, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' });
   try {
@@ -578,7 +575,7 @@ test('BS6 entry 含字串包 marker → throw；沒有 management-strings chunk 
   }
 });
 
-test('entry CSS 含 .reveal-viewport（reveal.css 進了首包）→ throw；lazy chunk 的 CSS 含它不算', () => {
+test('entry CSS contains .reveal-viewport (reveal.css entered the entry) -> throws; a lazy chunk\'s CSS containing it does not count', () => {
   const base = {
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10,
     'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10, 'PresentationOverlay-Pqr678.js': 10, 'TrashLazy-Ttt000.js': 10,
@@ -598,7 +595,7 @@ test('entry CSS 含 .reveal-viewport（reveal.css 進了首包）→ throw；laz
   }
 });
 
-test('reveal-viewport 字串只准在 PresentationOverlay-*.js：在 overlay 裡通過、在 NotePage 裡 throw（reveal.js 被靜態 import 進 NotePage）', () => {
+test('the reveal-viewport string is only allowed in PresentationOverlay-*.js: inside the overlay passes, inside NotePage throws (reveal.js statically imported into NotePage)', () => {
   const base = {
     'index-Abc123.js': 100, 'mermaid.core-Ghi789.js': 10, 'shiki-Jkl012.js': 10, 'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10,
     'TrashLazy-Ttt000.js': 10, 'SelectLazy-Sss000.js': 10, 'FolderLazy-Fff000.js': 10, 'ShortcutsLazy-Kkk000.js': 10, 'TourLazy-Tou000.js': 10, 'BodySearchLazy-Bbb000.js': 10, ...MGMT_PACK, ...AVATAR_PACK, ...GROUP_DIALOG_PACK,
@@ -617,7 +614,7 @@ test('reveal-viewport 字串只准在 PresentationOverlay-*.js：在 overlay 裡
   }
 });
 
-test('簡報 chunk 的靜態 import 閉包（含間接）碰到 shiki → throw；只有動態 import("./shiki-…") 不算', () => {
+test('the static import closure (including indirect) of the presentation chunk reaching shiki -> throws; only a dynamic import("./shiki-...") does not count', () => {
   const base = {
     'index-Abc123.js': 100, 'NotePage-Def456.js': 10, 'mermaid.core-Ghi789.js': 10, 'AdminSections-Mno345.js': 10, 'VersionsLazy-Vvv000.js': 10,
     'shiki-Jkl012.js': 'export const s=1', 'bundle-full-Zz9.js': 'export const b=1', 'TrashLazy-Ttt000.js': 10,
@@ -643,7 +640,7 @@ test('簡報 chunk 的靜態 import 閉包（含間接）碰到 shiki → throw�
   }
 });
 
-test('VersionsLazy 自己含 marker 則通過', () => {
+test('VersionsLazy containing the marker itself -> passes', () => {
   const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': VERSIONS_MARKERS.join(' ') });
   try {
     assert.doesNotThrow(() => checkBundleSize(assets));
@@ -653,7 +650,7 @@ test('VersionsLazy 自己含 marker 則通過', () => {
 });
 
 for (const marker of VERSIONS_MARKERS) {
-  test(`非 VersionsLazy 的 chunk 含 marker ${marker}（元件被靜態 import 搬進 NotePage）→ throw，訊息含 VersionsLazy`, () => {
+  test(`a chunk other than VersionsLazy contains marker ${marker} (the component was moved into NotePage by a static import) -> throws, message contains VersionsLazy`, () => {
     const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'NotePage-Def456.js': `x("${marker}")`, 'VersionsLazy-Vvv000.js': 'x' });
     try {
       assert.throws(() => checkBundleSize(assets), /NotePage-Def456\.js[\s\S]*VersionsLazy/);
@@ -663,8 +660,8 @@ for (const marker of VERSIONS_MARKERS) {
   });
 }
 
-// marker 改名即靜默失效——把 i18n key 型 marker 綁回 en.json（`diff` 套件的字面不是 key，另外只准一個）。
-test('每個 i18n key 型 marker 都存在於 en.json；非 key 的只有 diff 套件那一個', () => {
+// A renamed marker silently stops working - bind the i18n-key markers back to en.json (the `diff` package's literal is not a key; only one such is allowed).
+test('every i18n-key marker exists in en.json; the only non-key one is the diff package\'s', () => {
   const en = JSON.parse(readFileSync(fileURLToPath(new URL('../apps/web/src/i18n/en.json', import.meta.url)), 'utf8'));
   const nonKeys = [];
   for (const marker of VERSIONS_MARKERS) {
@@ -679,14 +676,14 @@ test('每個 i18n key 型 marker 都存在於 en.json；非 key 的只有 diff �
   assert.deepEqual(nonKeys, ['u{2DE}-']);
 });
 
-// `u{2DE}-` marker 取自 diff 套件 word.js 的 extendedWordChars；diff 升版改寫該字面時這案會紅，提醒換 marker。
-test('diff 套件的 word.js 仍含 marker 字面 u{2DE}-', () => {
+// The `u{2DE}-` marker comes from extendedWordChars in the diff package's word.js; if a diff upgrade rewrites that literal this case goes red, as a reminder to pick another marker.
+test('the diff package\'s word.js still contains the marker literal u{2DE}-', () => {
   const wordJs = fileURLToPath(new URL('../apps/web/node_modules/diff/libesm/diff/word.js', import.meta.url));
   assert.ok(readFileSync(wordJs, 'utf8').includes('u{2DE}-'), 'diff 的 word.js 不再含 u{2DE}-——請改挑新的 diff 獨有字面並更新 VERSIONS_MARKERS');
 });
 
-// 頭貼的解碼／編碼模組（avatars/encode.ts）不得進首包。
-test('BS-A1 entry 含頭貼影像模組的 marker（被靜態 import 進首包）→ throw', () => {
+// the avatar decoding/encoding module (avatars/encode.ts) must not enter the entry.
+test('entry contains the avatar image module\'s marker (statically imported into the entry) -> throws', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE, 'index-Abc123.js': `class E extends Error{constructor(){super();this.name="${AVATAR_IMAGE_MARKER}"}}`, 'NotePage-Def456.js': 'x',
     'VersionsLazy-Vvv000.js': 'x',
@@ -698,7 +695,7 @@ test('BS-A1 entry 含頭貼影像模組的 marker（被靜態 import 進首包�
   }
 });
 
-test('BS-A2 marker 只在 encode-*.js 裡 → 通過、回傳 avatarEncodeChunks', () => {
+test('marker only in encode-*.js -> passes, returns avatarEncodeChunks', () => {
   const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' });
   try {
     assert.deepEqual(checkBundleSize(assets).avatarEncodeChunks, ['encode-Eee000.js']);
@@ -707,7 +704,7 @@ test('BS-A2 marker 只在 encode-*.js 裡 → 通過、回傳 avatarEncodeChunks
   }
 });
 
-test('BS-A3 marker 被靜態 import 進別的 lazy chunk（裁切框的 chunk 帶著它）→ throw，訊息點名該 chunk', () => {
+test('marker statically imported into another lazy chunk (the crop dialog\'s chunk carries it) -> throws, message names that chunk', () => {
   const marker = `this.name="${AVATAR_IMAGE_MARKER}"`;
   for (const stray of ['AvatarCropDialog-Ccc000.js', 'SettingsAccountSection-Sss111.js', 'NotePage-Def456.js']) {
     const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x', [stray]: marker });
@@ -719,7 +716,7 @@ test('BS-A3 marker 被靜態 import 進別的 lazy chunk（裁切框的 chunk �
   }
 });
 
-test('BS-A3b 靜態 import 之後 encode 不再獨立成 chunk（marker 只在別的 chunk、沒有 encode-*.js）→ throw', () => {
+test('after a static import encode is no longer its own chunk (marker only in another chunk, no encode-*.js) -> throws', () => {
   const { 'encode-Eee000.js': _encode, ...withoutEncode } = MARKER_BASE;
   const { assets, cleanup } = fakeAssets({ ...withoutEncode, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x', 'AvatarCropDialog-Ccc000.js': `this.name="${AVATAR_IMAGE_MARKER}"` });
   try {
@@ -729,7 +726,7 @@ test('BS-A3b 靜態 import 之後 encode 不再獨立成 chunk（marker 只在�
   }
 });
 
-test('BS-A5 完全沒有 encode-*.js（動態 import 被拿掉、模組沒被打包）→ throw（fail-closed）', () => {
+test('no encode-*.js at all (dynamic import removed, module not bundled) -> throws (fail-closed)', () => {
   const { 'encode-Eee000.js': _encode, ...withoutEncode } = MARKER_BASE;
   const { assets, cleanup } = fakeAssets({ ...withoutEncode, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' });
   try {
@@ -739,7 +736,7 @@ test('BS-A5 完全沒有 encode-*.js（動態 import 被拿掉、模組沒被打
   }
 });
 
-test('BS-A6 encode-*.js 存在但不含 marker（檔名對、內容不對）→ throw', () => {
+test('encode-*.js exists but has no marker (right file name, wrong content) -> throws', () => {
   const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'encode-Eee000.js': 'x', 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' });
   try {
     assert.throws(() => checkBundleSize(assets), /找不到含 AvatarImageError 的 encode-<hash>\.js/);
@@ -748,12 +745,12 @@ test('BS-A6 encode-*.js 存在但不含 marker（檔名對、內容不對）→ 
   }
 });
 
-test('BS-A7 AVATAR_ENCODE_RE 只認 encode-<hash>.js', () => {
+test('AVATAR_ENCODE_RE matches only encode-<hash>.js', () => {
   assert.ok(AVATAR_ENCODE_RE.test('encode-Abc_123-x.js'));
   for (const bad of ['encode.js', 'encode-Abc.css', 'xencode-Abc.js', 'AvatarEncode-Abc.js', 'encode-Abc.js.map']) assert.ok(!AVATAR_ENCODE_RE.test(bad), bad);
 });
 
-test('BS-A8 兩個 chunk 靜態 import 共用的 encode-*.js（共用 chunk 的形，marker 仍只在 encode 裡）→ throw，訊息點名 importer', () => {
+test('two chunks statically import a shared encode-*.js (shared-chunk shape, the marker still only inside encode) -> throws, message names the importer', () => {
   for (const [stray, code] of [
     ['NotePage-Def456.js', 'import{r as a}from"./encode-Eee000.js";x'],
     ['SettingsAccountSection-Sss111.js', 'import"./encode-Eee000.js";x'],
@@ -768,7 +765,7 @@ test('BS-A8 兩個 chunk 靜態 import 共用的 encode-*.js（共用 chunk 的�
   }
 });
 
-test('BS-A9 動態 import("./encode-*.js")（含 mapDeps 列名）→ 通過', () => {
+test('dynamic import("./encode-*.js") (including the mapDeps list entry) -> passes', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE,
     'NotePage-Def456.js': 'x',
@@ -782,7 +779,7 @@ test('BS-A9 動態 import("./encode-*.js")（含 mapDeps 列名）→ 通過', (
   }
 });
 
-test('BS-A10 別的模組也叫 encode-*.js 且被靜態 import（不含頭貼 marker）→ 不誤報', () => {
+test('another module is also named encode-*.js and is statically imported (no avatar marker) -> no false report', () => {
   const { assets, cleanup } = fakeAssets({
     ...MARKER_BASE,
     'encode-Zzz999.js': 'export const e=1',
@@ -796,13 +793,13 @@ test('BS-A10 別的模組也叫 encode-*.js 且被靜態 import（不含頭貼 m
   }
 });
 
-// marker 改名即靜默失效——綁回 encode.ts 的 this.name 字串字面量。
-test('BS-A4 AVATAR_IMAGE_MARKER 是 avatars/encode.ts 裡 this.name 的字串字面量', () => {
+// A renamed marker silently stops working - bind it back to the this.name string literal in encode.ts.
+test('AVATAR_IMAGE_MARKER is the string literal of this.name in avatars/encode.ts', () => {
   const source = readFileSync(fileURLToPath(new URL('../apps/web/src/avatars/encode.ts', import.meta.url)), 'utf8');
   assert.ok(source.includes(`this.name = "${AVATAR_IMAGE_MARKER}"`), `encode.ts 沒有 this.name = "${AVATAR_IMAGE_MARKER}"——marker 或類別改名了，請同步更新 AVATAR_IMAGE_MARKER`);
 });
 
-test('BS-G1 缺任一個群組／移動複製對話框的 lazy chunk → throw，訊息點名該對話框', () => {
+test('any group / move-copy dialog\'s lazy chunk missing -> throws, message names that dialog', () => {
   for (const dialog of GROUP_LAZY_DIALOGS) {
     const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
     for (const name of Object.keys(files)) if (name.startsWith(`${dialog.name}-`)) delete files[name];
@@ -815,7 +812,7 @@ test('BS-G1 缺任一個群組／移動複製對話框的 lazy chunk → throw�
   }
 });
 
-test('BS-G2 entry 含任一個對話框的 marker → throw，訊息含該 marker', () => {
+test('entry contains any dialog\'s marker -> throws, message contains that marker', () => {
   for (const dialog of GROUP_LAZY_DIALOGS) {
     const { assets, cleanup } = fakeAssets({
       ...MARKER_BASE, 'index-Abc123.js': `t("${dialog.marker}")`, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x',
@@ -828,7 +825,7 @@ test('BS-G2 entry 含任一個對話框的 marker → throw，訊息含該 marke
   }
 });
 
-test('BS-G3 marker 只在各自的 lazy chunk 裡 → 通過、回傳 groupDialogChunks', () => {
+test('markers only inside their own lazy chunks -> passes, returns groupDialogChunks', () => {
   const { assets, cleanup } = fakeAssets({ ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' });
   try {
     const result = checkBundleSize(assets);
@@ -838,8 +835,8 @@ test('BS-G3 marker 只在各自的 lazy chunk 裡 → 通過、回傳 groupDialo
   }
 });
 
-// marker 改名即靜默失效——綁回各對話框的原始檔（字面量 t("…")）。
-test('BS-G4 GROUP_LAZY_DIALOGS 的 marker 都寫在對應原始檔裡，且不在首包同步載入的檔案裡', () => {
+// A renamed marker silently stops working - bind it back to each dialog's source file (the literal t("...")).
+test('the GROUP_LAZY_DIALOGS markers are all written in their source files and not in the files the entry loads synchronously', () => {
   const src = fileURLToPath(new URL('../apps/web/src/', import.meta.url));
   for (const dialog of GROUP_LAZY_DIALOGS) {
     assert.ok(readFileSync(join(src, dialog.source), 'utf8').includes(`"${dialog.marker}"`), `${dialog.source} 沒有 "${dialog.marker}"`);
@@ -850,7 +847,7 @@ test('BS-G4 GROUP_LAZY_DIALOGS 的 marker 都寫在對應原始檔裡，且不�
   }
 });
 
-test('BS-G5 缺 icons-extra chunk → throw', () => {
+test('icons-extra chunk missing -> throws', () => {
   const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
   delete files['icons-extra-Iii000.js'];
   const { assets, cleanup } = fakeAssets(files);
@@ -861,7 +858,7 @@ test('BS-G5 缺 icons-extra chunk → throw', () => {
   }
 });
 
-test('BS-G6 對話框 chunk 存在但不含自己的 marker → throw', () => {
+test('dialog chunk exists but does not contain its own marker -> throws', () => {
   for (const dialog of GROUP_LAZY_DIALOGS) {
     const files = { ...MARKER_BASE, 'NotePage-Def456.js': 'x', 'VersionsLazy-Vvv000.js': 'x' };
     for (const name of Object.keys(files)) if (name.startsWith(`${dialog.name}-`)) files[name] = 'export const x=1';

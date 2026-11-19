@@ -22,63 +22,63 @@ describe("normalizeSlug", () => {
     expect(normalizeSlug(nfd)).toBe(nfc);
   });
 
-  it("大寫 → 小寫", () => {
+  it("upper case -> lower case", () => {
     expect(normalizeSlug("Hello-World")).toBe("hello-world");
   });
 });
 
 describe("validateSlug", () => {
-  it("合法 slug → null", () => {
+  it("valid slug -> null", () => {
     expect(validateSlug("hello-world")).toBeNull();
     expect(validateSlug("你好-世界")).toBeNull();
   });
 
-  it("İstanbul lowercase 後帶 combining dot above → charset（不含 \\p{M}）", () => {
+  it("lower-cased dotted capital I carries a combining dot above -> charset (combining marks not allowed)", () => {
     // normalizeSlug("İ") produces "i̇" = i + U+0307 (combining dot above), which is \p{M}
     const s = normalizeSlug("İstanbul");
     expect(validateSlug(s)).toBe("charset");
   });
 
-  it("整串 uuid → uuid_like", () => {
+  it("whole uuid -> uuid_like", () => {
     expect(validateSlug("f47ac10b-58cc-4372-a567-0e02b2c3d479")).toBe("uuid_like");
   });
 
-  it("report-<uuid> 結尾 → uuid_like", () => {
+  it("ending in report-<uuid> -> uuid_like", () => {
     expect(validateSlug("report-3f2504e0-4f89-11d3-9a0c-0305e82c3301")).toBe("uuid_like");
   });
 
-  it("保留字 new → reserved", () => {
+  it("reserved word new -> reserved", () => {
     expect(validateSlug("new")).toBe("reserved");
   });
 
-  it("開頭/結尾 dash → dash", () => {
+  it("leading/trailing dash -> dash", () => {
     expect(validateSlug("-a-")).toBe("dash");
     expect(validateSlug("-abc")).toBe("dash");
     expect(validateSlug("abc-")).toBe("dash");
   });
 
-  it("連續 dash → dash", () => {
+  it("consecutive dashes -> dash", () => {
     expect(validateSlug("a--b")).toBe("dash");
   });
 
-  it("純 dash → dash", () => {
+  it("only dashes -> dash", () => {
     expect(validateSlug("-")).toBe("dash");
     expect(validateSlug("---")).toBe("dash");
   });
 
-  it("101 字元 → length", () => {
+  it("101 characters -> length", () => {
     expect(validateSlug("a".repeat(101))).toBe("length");
   });
 
-  it("空字串 → length", () => {
+  it("empty string -> length", () => {
     expect(validateSlug("")).toBe("length");
   });
 
-  it("100 字元剛好合法 → null", () => {
+  it("exactly 100 characters is valid -> null", () => {
     expect(validateSlug("a".repeat(100))).toBeNull();
   });
 
-  it("含空白／符號 → charset", () => {
+  it("whitespace/symbols -> charset", () => {
     expect(validateSlug("a b")).toBe("charset");
     expect(validateSlug("a_b")).toBe("charset");
     expect(validateSlug("a.b")).toBe("charset");
@@ -86,23 +86,23 @@ describe("validateSlug", () => {
 });
 
 describe("titleSlug", () => {
-  it("中文保留", () => {
+  it("Chinese is kept", () => {
     expect(titleSlug("你好世界")).toBe("你好世界");
   });
 
-  it("大小寫保留（titleSlug 不做 lowercase，只有 normalizeSlug 做）、空白轉 dash", () => {
+  it("case is kept (titleSlug does not lowercase, only normalizeSlug does); whitespace becomes dash", () => {
     expect(titleSlug("Hello World")).toBe("Hello-World");
   });
 
-  it('"!!!" → ""', () => {
+  it('"!!!" -> ""', () => {
     expect(titleSlug("!!!")).toBe("");
   });
 
-  it("摺疊連續分隔字元 & 去頭尾 dash", () => {
+  it("collapses consecutive separators and trims leading/trailing dashes", () => {
     expect(titleSlug("  Hello   World!!  ")).toBe("Hello-World");
   });
 
-  it("𠮷 repeat 40 截斷後 encodeURIComponent 不 throw、截斷不產生尾 dash", () => {
+  it("an astral character repeated 40 times: after truncation encodeURIComponent does not throw, truncation leaves no trailing dash", () => {
     const title = "𠮷".repeat(40);
     const slug = titleSlug(title);
     expect(() => encodeURIComponent(slug)).not.toThrow();
@@ -110,7 +110,7 @@ describe("titleSlug", () => {
     expect(Array.from(slug).length).toBeLessThanOrEqual(60);
   });
 
-  it("截斷剛好切在 surrogate pair 中間也不產生半個代理對（不 throw、可安全 encode）", () => {
+  it("a cut that lands inside a surrogate pair does not leave half a pair (does not throw, safe to encode)", () => {
     // 61 astral chars (each 2 UTF-16 code units) forces the 60-code-point Array.from
     // truncation to land mid-way through the surrogate-pair boundary handling.
     const title = "𠮷".repeat(61);
@@ -119,75 +119,75 @@ describe("titleSlug", () => {
     expect(() => encodeURIComponent(slug)).not.toThrow();
   });
 
-  it("空字串 → 空字串", () => {
+  it("empty string -> empty string", () => {
     expect(titleSlug("")).toBe("");
   });
 });
 
 describe("autoSlugFromTitle", () => {
-  it("正常標題 → 小寫 slug", () => {
+  it("normal title -> lower-case slug", () => {
     expect(autoSlugFromTitle("Hello World")).toBe("hello-world");
   });
 
-  it("合法非 ASCII 候選原封不動穿過首驗——不剝重音（與 0007 SQL 版刻意分歧）", () => {
+  it("a valid non-ASCII candidate passes the first validation untouched - accents are not stripped (deliberately differs from the 0007 SQL version)", () => {
     expect(autoSlugFromTitle("École Normale")).toBe("école-normale");
     expect(autoSlugFromTitle("Tiếng Việt")).toBe("tiếng-việt");
     expect(autoSlugFromTitle("你好世界")).toBe("你好世界");
   });
 
-  it("uuid 形標題 → untitled（uuid_like 擋下、剝 mark 救不了）", () => {
+  it("uuid-shaped title -> untitled (uuid_like blocks it, stripping marks does not help)", () => {
     expect(autoSlugFromTitle("f47ac10b-58cc-4372-a567-0e02b2c3d479")).toBe("untitled");
     expect(autoSlugFromTitle("Report 3f2504e0-4f89-11d3-9a0c-0305e82c3301")).toBe("untitled");
   });
 
-  it("İstanbul → NFD 剝 \\p{M} 後過驗 → istanbul", () => {
-    // normalizeSlug("İ") 產 i + U+0307（\p{M}）→ 首驗 charset 紅；剝 mark 後合法
+  it("dotted capital I: fails the first validation, after NFD and stripping combining marks it validates -> istanbul", () => {
+    // normalizeSlug yields i + U+0307 (a combining mark) for it -> the first validation fails on charset; after stripping marks it is valid
     expect(autoSlugFromTitle("İstanbul")).toBe("istanbul");
   });
 
-  it("首驗失敗才進 fallback，且剝 mark 先 NFD：同串的預組合重音一併被剝", () => {
-    // 只有 İ 肇事，但 fallback 是整串去變音符——Café 的 é 一起變 e
+  it("the fallback runs only after the first validation fails, and strips marks after NFD: precomposed accents in the same string are stripped too", () => {
+    // Only the dotted capital I causes it, but the fallback removes diacritics from the whole string - the é in Café becomes e too
     expect(autoSlugFromTitle("İstanbul Café")).toBe("istanbul-cafe");
   });
 
-  it("剝 mark 後回 NFC：產物是 normalizeSlug 的固定點", () => {
-    // NFD 會把諺文拆成 conjoining jamo（\p{Lo}，不是 mark 不會被剝）——
-    // 少了尾端 NFC 就會回分解形，與 DB 唯一比對用的 NFC 形對不上
+  it("after stripping marks it returns NFC: the output is a fixed point of normalizeSlug", () => {
+    // NFD splits Hangul into conjoining jamo (\p{Lo}, not marks, so not stripped) -
+    // without the final NFC the decomposed form would come back and not match the NFC form the DB unique comparison uses
     const out = autoSlugFromTitle("İ한글");
     expect(out).toBe("i한글");
     expect(normalizeSlug(out)).toBe(out);
   });
 
-  it("保留字標題 new → untitled", () => {
+  it("reserved-word title new -> untitled", () => {
     expect(autoSlugFromTitle("new")).toBe("untitled");
     expect(autoSlugFromTitle("New")).toBe("untitled");
   });
 
-  it("空標題 → untitled", () => {
+  it("empty title -> untitled", () => {
     expect(autoSlugFromTitle("")).toBe("untitled");
   });
 
-  it("全符號標題 → untitled", () => {
+  it("all-symbol title -> untitled", () => {
     expect(autoSlugFromTitle("!!! ??? ***")).toBe("untitled");
   });
 
-  it("untitled 本身是合法 slug（fallback 不會自我打架）", () => {
+  it("untitled is itself a valid slug (the fallback does not conflict with itself)", () => {
     expect(validateSlug("untitled")).toBeNull();
   });
 
-  it("截長：>60 字元標題 → 截 60（與 0007 SQL 版同界）", () => {
-    // 此組輸入/期望值供 0007 的 SQL/TS 雙實作對照複用——改值要兩處一起
+  it("truncation: a title over 60 characters -> cut to 60 (same boundary as the 0007 SQL version)", () => {
+    // These inputs/expectations are reused to compare the 0007 SQL and TS implementations - change the values in both places
     const title = "Q3 Planning Meeting Notes For The Whole Engineering Organization Retro";
     expect(autoSlugFromTitle(title)).toBe("q3-planning-meeting-notes-for-the-whole-engineering-organiza");
   });
 
-  it("截斷點恰落在 dash 之後 → 去尾 dash 而非退 untitled", () => {
-    // 第 60 個 code point 正是 dash；titleSlug 若少了「截斷後去尾 dash」那步，
-    // validateSlug 會判 dash → 整串退 untitled（0007 對照亦複用此值）
+  it("a cut right after a dash -> trailing dash removed instead of falling back to untitled", () => {
+    // The 60th code point is a dash; if titleSlug lacked the "strip trailing dash after truncation" step,
+    // validateSlug would say dash and the whole string would fall back to untitled (the 0007 comparison reuses this value too)
     expect(autoSlugFromTitle("a".repeat(59) + " bbbb")).toBe("a".repeat(59));
   });
 
-  it("性質：未被精確釘死的輸入，產物恆過 validateSlug 且為 normalizeSlug 固定點", () => {
+  it("property: for inputs not pinned exactly, the output passes validateSlug and is a fixed point of normalizeSlug", () => {
     for (const t of ["Ünsal Çelik Ötesi", "𠮷".repeat(61), "ヘッダー The-Header", "école--fancy!!"]) {
       const out = autoSlugFromTitle(t);
       expect(validateSlug(out)).toBeNull();
@@ -197,52 +197,52 @@ describe("autoSlugFromTitle", () => {
 });
 
 describe("extractRefUuid", () => {
-  it("大寫 uuid 也取得到", () => {
+  it("an upper-case uuid is extracted too", () => {
     const uuid = "F47AC10B-58CC-4372-A567-0E02B2C3D479";
     expect(extractRefUuid(`note-${uuid}`)).toBe(uuid.toLowerCase());
   });
 
-  it("小寫 uuid 取得到", () => {
+  it("a lower-case uuid is extracted", () => {
     const uuid = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
     expect(extractRefUuid(uuid)).toBe(uuid);
   });
 
-  it("無 uuid → null", () => {
+  it("no uuid -> null", () => {
     expect(extractRefUuid("hello-world")).toBeNull();
   });
 });
 
 describe("canonicalNotePath", () => {
-  // 個人筆記：`/n/<ownerHandle>/<slug>`（#122）；#175 起群組筆記另一形 `/g/<groupId>/<slug>`。
-  // 兩段不做 URL 編碼——handle 是 a-z0-9-、群組 id 是 uuid、slug 已過 normalizeSlug，
-  // 非 ASCII 交給傳輸層（與舊 /notes/<slug> 形同慣例）。
-  it("→ /n/<ownerHandle>/<slug>", () => {
+  // Personal notes: `/n/<ownerHandle>/<slug>` (#122); since #175 group notes have another shape `/g/<groupId>/<slug>`.
+  // Neither segment is URL-encoded - the handle is a-z0-9-, the group id is a uuid, the slug has been through normalizeSlug;
+  // non-ASCII is left to the transport layer (same convention as the old /notes/<slug> shape).
+  it("-> /n/<ownerHandle>/<slug>", () => {
     expect(canonicalNotePath({ ownerHandle: "alice", groupId: null, slug: "hello-world" })).toBe("/n/alice/hello-world");
   });
 
-  it("非 ASCII slug 原樣輸出（不預編碼）", () => {
+  it("a non-ASCII slug is output as is (not pre-encoded)", () => {
     expect(canonicalNotePath({ ownerHandle: "alice", groupId: null, slug: "café" })).toBe("/n/alice/café");
   });
 
-  it("#175：群組筆記 → /g/<groupId>/<slug>（ownerHandle 為 null）", () => {
+  it("#175: group note -> /g/<groupId>/<slug> (ownerHandle is null)", () => {
     const groupId = "0b6c1a52-5f1e-4c8e-9d2a-3f4e5a6b7c8d";
     expect(canonicalNotePath({ ownerHandle: null, groupId, slug: "plan" })).toBe(`/g/${groupId}/plan`);
   });
 
-  it("#175：缺 groupId 欄（#175 前的舊物件，值為 undefined）→ 仍組 /n/ 形，不組 /g/undefined/…", () => {
+  it("#175: missing groupId field (an old object from before #175, value undefined) -> still builds the /n/ shape, not /g/undefined/...", () => {
     expect(canonicalNotePath({ ownerHandle: "alice", groupId: undefined as unknown as null, slug: "x" })).toBe("/n/alice/x");
   });
 
-  it("#175：ownerHandle 與 groupId 皆為 null → throw（XOR 下不可能；不組一條打不開的網址）", () => {
+  it("#175: ownerHandle and groupId both null -> throws (impossible under XOR; does not build a URL that cannot be opened)", () => {
     expect(() => canonicalNotePath({ ownerHandle: null, groupId: null, slug: "x" })).toThrow(/皆為 null/);
   });
 });
 
 describe("publicAliasPath", () => {
-  // #122：`/p/` 兩段形**頁面**網址組字點——ShareDialog
-  // 前綴/複製走它；API 網址另有 web 的 public-note-ref.ts（編碼政策不同、刻意
-  // 不共用，見 shared 的 JSDoc）。不編碼理由同 canonicalNotePath。
-  it("→ /p/<handle>/<slug>；非 ASCII 原樣", () => {
+  // #122: the `/p/` two-segment **page** URL builder - ShareDialog's prefix/copy use it; the API URL is built by
+  // web's public-note-ref.ts (different encoding policy, deliberately not shared; see the JSDoc in shared).
+  // Not encoding, for the same reason as canonicalNotePath.
+  it("-> /p/<handle>/<slug>; non-ASCII as is", () => {
     expect(publicAliasPath({ handle: "alice", slug: "team-doc" })).toBe("/p/alice/team-doc");
     expect(publicAliasPath({ handle: "alice", slug: "café" })).toBe("/p/alice/café");
   });

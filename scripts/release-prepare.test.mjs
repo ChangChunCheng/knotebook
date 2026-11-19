@@ -1,8 +1,4 @@
-// scripts/release-prepare.test.mjs
-//
-// release-prepare.mjs 的常駐測試（node:test）。每個測試在暫存目錄造一份假 repo（三個 package.json、
-// CHANGELOG、兩份 README），tag 清單與日期由參數注入，不碰真 repo、不呼叫 git。
-// 跑法：`pnpm test:scripts`（= `node --test scripts/*.test.mjs`）。
+// Each test builds a fake repo in a temp directory (three package.json files, CHANGELOG, two READMEs); the tag list and date are injected by parameters, so the real repo is untouched and git is not called.
 
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -76,7 +72,7 @@ function assertFails(root, args, messagePattern) {
   assert.deepEqual(snapshot(root), before, '失敗時不得改任何檔');
 }
 
-test('成功：三個 package.json、CHANGELOG、兩份 README 都更新，日期用注入值', () => {
+test('success: three package.json files, the CHANGELOG and both READMEs are updated, the date uses the injected value', () => {
   const root = makeRepo();
   const result = runReleasePrepare({ root, version: '0.12.0', date: '2026-10-20', tags: TAGS });
 
@@ -115,7 +111,7 @@ test('成功：三個 package.json、CHANGELOG、兩份 README 都更新，日�
   assert.match(read(root, 'README.zh-TW.md'), /最新版本為 v0\.12\.0（2026-10-20）。目前/);
 });
 
-test('CRLF 檔維持 CRLF（不出現單獨的 LF）', () => {
+test('a CRLF file stays CRLF (no lone LF appears)', () => {
   const root = makeRepo({ eol: '\r\n' });
   runReleasePrepare({ root, version: '0.12.0', date: '2026-10-20', tags: TAGS });
   for (const [path, bytes] of Object.entries(snapshot(root))) {
@@ -125,7 +121,7 @@ test('CRLF 檔維持 CRLF（不出現單獨的 LF）', () => {
   }
 });
 
-test('LF 檔維持 LF', () => {
+test('an LF file stays LF', () => {
   const root = makeRepo({ eol: '\n' });
   runReleasePrepare({ root, version: '0.12.0', date: '2026-10-20', tags: TAGS });
   for (const [path, bytes] of Object.entries(snapshot(root))) {
@@ -133,70 +129,70 @@ test('LF 檔維持 LF', () => {
   }
 });
 
-test('沒有任何 tag 時也能發第一版', () => {
+test('the first release can be made when there are no tags', () => {
   const root = makeRepo();
   runReleasePrepare({ root, version: '0.1.0', date: '2026-10-20', tags: [] });
   assert.equal(JSON.parse(read(root, 'apps/web/package.json')).version, '0.1.0');
 });
 
-test('失敗：版號形式不符（帶 v、少一段、前導零、預發布）不改檔', () => {
+test('failure: version format mismatch (with v, one segment short, leading zero, prerelease) -> files unchanged', () => {
   const root = makeRepo();
   for (const version of ['v0.12.0', '0.12', '0.012.0', '0.12.0-rc1', '', undefined]) {
     assertFails(root, { version }, /版號形式不符/);
   }
 });
 
-test('失敗：版號不大於既有最大 tag（相等或較小，以 semver 比而非字串）不改檔', () => {
+test('failure: version not greater than the existing largest tag (equal or smaller, compared as semver rather than strings) -> files unchanged', () => {
   const root = makeRepo();
   assertFails(root, { version: '0.11.1' }, /必須大於既有最大 tag v0\.11\.1/);
   assertFails(root, { version: '0.9.9' }, /必須大於既有最大 tag v0\.11\.1/);
 });
 
-test('失敗：日期形式不符不改檔', () => {
+test('failure: date format mismatch -> files unchanged', () => {
   const root = makeRepo();
   assertFails(root, { version: '0.12.0', date: '2026/10/20' }, /日期形式不符/);
 });
 
-test('失敗：[Unreleased] 是 _Nothing yet._ 不改檔', () => {
+test('failure: [Unreleased] is _Nothing yet._ -> files unchanged', () => {
   const root = makeRepo({ changelog: ['# Changelog', '', '## [Unreleased]', '', '_Nothing yet._', '', '## [0.11.1] - 2026-10-15', '', '- x', ''] });
   assertFails(root, { version: '0.12.0' }, /\[Unreleased\] 是空的/);
 });
 
-test('失敗：[Unreleased] 沒有內容不改檔', () => {
+test('failure: [Unreleased] has no content -> files unchanged', () => {
   const root = makeRepo({ changelog: ['# Changelog', '', '## [Unreleased]', '', '', '## [0.11.1] - 2026-10-15', '', '- x', ''] });
   assertFails(root, { version: '0.12.0' }, /\[Unreleased\] 是空的/);
 });
 
-test('失敗：找不到 [Unreleased] 標題不改檔', () => {
+test('failure: the [Unreleased] heading is not found -> files unchanged', () => {
   const root = makeRepo({ changelog: ['# Changelog', '', '## [0.11.1] - 2026-10-15', '', '- x', ''] });
   assertFails(root, { version: '0.12.0' }, /找不到 "## \[Unreleased\]"/);
 });
 
-test('失敗：CHANGELOG 已有該版段落不改檔', () => {
+test('failure: the CHANGELOG already has a section for that version -> files unchanged', () => {
   const root = makeRepo({ changelog: ['## [Unreleased]', '', '- y', '', '## [0.12.0] - 2026-10-01', '', '- x', ''] });
   assertFails(root, { version: '0.12.0', tags: ['v0.11.1'] }, /已經有 0\.12\.0 的段落/);
 });
 
-test('失敗：README 狀態行找不到（英文或中文）不改檔', () => {
+test('failure: the README status line is not found (English or Chinese) -> files unchanged', () => {
   const noEn = makeRepo({ readme: ['# Knotebook', '', 'Status: v0.11.1', ''] });
   assertFails(noEn, { version: '0.12.0' }, /README\.md 的狀態行應恰好 1 處，實際 0 處/);
   const noZh = makeRepo({ readmeZh: ['# Knotebook', '', '狀態：v0.11.1', ''] });
   assertFails(noZh, { version: '0.12.0' }, /README\.zh-TW\.md 的狀態行應恰好 1 處，實際 0 處/);
 });
 
-test('失敗：README 狀態行出現兩次不改檔', () => {
+test('failure: the README status line appears twice -> files unchanged', () => {
   const root = makeRepo({ readme: [...README, README[2], ''] });
   assertFails(root, { version: '0.12.0' }, /README\.md 的狀態行應恰好 1 處，實際 2 處/);
 });
 
-test('失敗：package.json 裡第一個 "version" 不是頂層的不改檔', () => {
+test('failure: the first "version" in package.json is not the top-level one -> files unchanged', () => {
   const root = makeRepo();
   const nested = ['{', '  "name": "@knotebook/web",', '  "engines": { "x": { "version": "1.0.0" } },', '  "version": "0.11.1"', '}', ''];
   writeFileSync(join(root, 'apps/web/package.json'), nested.join('\r\n'), 'utf8');
   assertFails(root, { version: '0.12.0' }, /apps\/web\/package\.json 的頂層 "version" 不是檔內第一個 "version"/);
 });
 
-test('失敗：package.json 沒有 version 或不是合法 JSON 不改檔', () => {
+test('failure: package.json has no version or is not valid JSON -> files unchanged', () => {
   const noVersion = makeRepo();
   writeFileSync(join(noVersion, 'packages/shared/package.json'), '{ "name": "x" }\r\n', 'utf8');
   assertFails(noVersion, { version: '0.12.0' }, /packages\/shared\/package\.json 沒有 "version" 欄位/);
@@ -205,17 +201,17 @@ test('失敗：package.json 沒有 version 或不是合法 JSON 不改檔', () =
   assertFails(broken, { version: '0.12.0' }, /apps\/server\/package\.json 不是合法 JSON/);
 });
 
-test('maxReleaseTag：只認 vX.Y.Z，以 semver 比大小', () => {
+test('maxReleaseTag: only vX.Y.Z counts, compared by semver', () => {
   assert.equal(maxReleaseTag(TAGS), 'v0.11.1');
   assert.equal(maxReleaseTag(['v0.9.0', 'v0.10.0']), 'v0.10.0');
   assert.equal(maxReleaseTag(['v2.0.0-rc1', 'latest']), null);
 });
 
-test('localDate：用本機時區的年月日', () => {
+test('localDate: uses the year/month/day in the local time zone', () => {
   assert.equal(localDate(new Date(2026, 0, 5, 23, 59)), '2026-01-05');
 });
 
-test('parseArgs：版號與 --date', () => {
+test('parseArgs: version and --date', () => {
   assert.deepEqual(parseArgs(['node', 's', '0.12.0']), { version: '0.12.0', date: undefined });
   assert.deepEqual(parseArgs(['node', 's', '--date', '2026-10-20', '0.12.0']), { version: '0.12.0', date: '2026-10-20' });
   assert.throws(() => parseArgs(['node', 's']), /用法/);

@@ -4,11 +4,10 @@ import { anchors, decide, matchesBase } from "../../src/transfer/decide.js";
 import type { Region } from "../../src/transfer/regions.js";
 
 /**
- * bulk transfer 判定（K1、K4、K5、K7、K8）。筆記自下載後動過就 409 `note_changed`，
- * `decide` 只在「現況＝基底」時被呼叫（`matchesBase`，MB）——外來 block、倖存者不見或被改、定位點全消失、衝突那幾組案已隨程式刪除。
+ * bulk transfer decision. A note changed since download gets a 409 `note_changed`, so `decide` is only called when the current state equals the base (`matchesBase`).
  */
 
-/** 段：每個名字一段（1 個 id、1 行）；`~名字` ＝ 0 行段。 */
+/** Segments: one per name (1 id, 1 line); `~name` = a 0-line segment. */
 function segsOf(...names: string[]): TransferSegment[] {
   let line = 0;
   return names.map(n => {
@@ -22,12 +21,12 @@ function segsOf(...names: string[]): TransferSegment[] {
 function region(segs: TransferSegment[], kind: Region["kind"], segIdx: number[], prevSeg: number, nextSeg: number, text = kind === "delete" ? "" : "x"): Region {
   return { kind, segIdx, baseIds: segIdx.flatMap(k => segs[k]!.ids), baseFps: segIdx.flatMap(k => segs[k]!.fps), text, prevSeg, nextSeg };
 }
-/** 現況＝基底（前提）：id 與段表同序。 */
+/** Current = base (precondition): ids in the same order as the segment table. */
 function curOf(segs: TransferSegment[], types: Record<string, string> = {}) {
   const ids = segs.flatMap(s => s.ids);
   return { ids, fps: segs.flatMap(s => s.fps), types: ids.map(id => types[id] ?? "paragraph") };
 }
-/** 假 canonical：id → `c:<id>`（可覆寫）；`pre[ri]`＝區 ri 的預解析序列。記下收到的區號。 */
+/** Fake canonical: id -> `c:<id>` (overridable); `pre[ri]` = the pre-parsed sequence of region ri. Records the region numbers received. */
 function sameWith(pre: string[][], canon: Record<string, string> = {}, log: number[] = []) {
   return (ri: number, against: string[]) => {
     log.push(ri);
@@ -36,13 +35,13 @@ function sameWith(pre: string[][], canon: Record<string, string> = {}, log: numb
   };
 }
 
-describe("MB matchesBase（note_changed 的結構判準）", () => {
+describe("matchesBase (the structural criterion for note_changed)", () => {
   const S = segsOf("A", "B", "~C");
-  it("逐顆相同 → true；空段表對空現況 → true", () => {
+  it("identical block by block -> true; empty segment table against empty current -> true", () => {
     expect(matchesBase(S, curOf(S))).toBe(true);
     expect(matchesBase([], { ids: [], fps: [] })).toBe(true);
   });
-  it("一顆指紋不同、id 不同、順序不同、多一顆、少一顆 → false", () => {
+  it("one fingerprint different, id different, order different, one extra, one fewer -> false", () => {
     const c = curOf(S);
     expect(matchesBase(S, { ids: c.ids, fps: ["f:A", "g:B", "f:C"] })).toBe(false);
     expect(matchesBase(S, { ids: ["A", "B2", "C"], fps: c.fps })).toBe(false);
@@ -50,33 +49,33 @@ describe("MB matchesBase（note_changed 的結構判準）", () => {
     expect(matchesBase(S, { ids: [...c.ids, "X"], fps: [...c.fps, "f:X"] })).toBe(false);
     expect(matchesBase(S, { ids: c.ids.slice(0, 2), fps: c.fps.slice(0, 2) })).toBe(false);
   });
-  it("一段多顆（群組段）攤平後比", () => {
+  it("one segment with several blocks (group segment) is compared flattened", () => {
     const G: TransferSegment[] = [{ ids: ["a", "b"], fps: ["f:a", "f:b"], start: 0, count: 2 }];
     expect(matchesBase(G, { ids: ["a", "b"], fps: ["f:a", "f:b"] })).toBe(true);
     expect(matchesBase(G, { ids: ["a"], fps: ["f:a"] })).toBe(false);
   });
 });
 
-describe("K1 決策表", () => {
+describe("decision table", () => {
   const S = segsOf("A", "B", "C");
-  it("改寫：預解析＝基底那幾顆 → same（不動）", () => {
+  it("rewrite: pre-parsed = those base blocks -> same (untouched)", () => {
     const [d] = decide(S, [region(S, "rewrite", [1], 0, 2)], curOf(S), sameWith([["c:B"]]));
     expect(d).toMatchObject({ mark: "same", survivors: ["B"], place: { replaceSurvivors: true } });
   });
-  it("改寫：預解析不同 → applied、插在第一顆基底 block 之前", () => {
+  it("rewrite: pre-parsed differs -> applied, inserted before the first base block", () => {
     const [d] = decide(S, [region(S, "rewrite", [1], 0, 2)], curOf(S), sameWith([["new"]]));
     expect(d).toMatchObject({ mark: "applied", survivors: ["B"], place: { ref: "B", where: "before" } });
   });
-  it("改寫兩段：survivors＝兩顆、放在第一顆之前", () => {
+  it("rewrite of two segments: survivors = two blocks, placed before the first", () => {
     const S4 = segsOf("A", "B", "C", "D");
     const [d] = decide(S4, [region(S4, "rewrite", [1, 2], 0, 3)], curOf(S4), sameWith([["new"]]));
     expect(d).toMatchObject({ mark: "applied", survivors: ["B", "C"], place: { ref: "B", where: "before" } });
   });
-  it("刪除 → applied", () => {
+  it("delete -> applied", () => {
     const [d] = decide(S, [region(S, "delete", [1], 0, 2)], curOf(S), sameWith([]));
     expect(d).toMatchObject({ mark: "applied", survivors: ["B"] });
   });
-  it("插入 → applied、插在 P 之後；不呼叫 same", () => {
+  it("insert -> applied, inserted after P; same is not called", () => {
     const S2 = segsOf("A", "C");
     const log: number[] = [];
     const [d] = decide(S2, [region(S2, "insert", [], 0, 1)], curOf(S2), sameWith([["c:A"]], {}, log));
@@ -85,49 +84,49 @@ describe("K1 決策表", () => {
   });
 });
 
-describe("K4 錨點", () => {
-  it("P、N 都無（空基底）→ 文件開頭", () => {
+describe("anchors", () => {
+  it("no P and no N (empty base) -> start of document", () => {
     const [d] = decide([], [region([], "insert", [], -1, -1)], { ids: [], types: [] }, sameWith([["new"]]));
     expect(d).toMatchObject({ P: null, N: null, place: { start: true } });
   });
-  it("P 那段也在區裡 → 往前找下一個沒改的段", () => {
+  it("the segment of P is also in a region -> look forward for the next unchanged segment", () => {
     const S = segsOf("A", "B", "C", "D");
     expect(anchors(S, [region(S, "rewrite", [1], 0, 2), region(S, "rewrite", [2], 1, 3)])).toEqual([
       { P: "A", N: "D" },
       { P: "A", N: "D" },
     ]);
   });
-  it("0 行段不當錨點：「A、結尾空段落」最後加一段 → 新段在空段落之前（P＝A）", () => {
+  it("0-line segments are not anchors: 'A, trailing empty paragraph' with one segment added at the end -> the new segment goes before the empty paragraph (P = A)", () => {
     const S = segsOf("A", "~E");
     const [d] = decide(S, [region(S, "insert", [], 0, 1)], curOf(S), sameWith([["new"]]));
     expect(d).toMatchObject({ P: "A", N: null, place: { ref: "A", where: "after" } });
   });
-  it("0 行段不當錨點：「開頭空段落、A」最前加一段 → 插在 A 之前（開頭的空段落留在最前）", () => {
+  it("0-line segments are not anchors: 'leading empty paragraph, A' with one segment added first -> inserted before A (the leading empty paragraph stays first)", () => {
     const S = segsOf("~Z", "A");
     const [d] = decide(S, [region(S, "insert", [], 0, 1)], curOf(S), sameWith([["new"]]));
     expect(d).toMatchObject({ P: null, N: "A", place: { ref: "A", where: "before" } });
   });
 });
 
-describe("K5 stripStart", () => {
+describe("stripStart", () => {
   const S = segsOf("A", "B", "C");
   const types = { A: "numberedListItem", B: "numberedListItem", C: "numberedListItem" };
-  it("插在 numbered 之後、預解析第一顆是 numbered → true", () => {
+  it("inserted after a numbered one, the first pre-parsed block is numbered -> true", () => {
     const [d] = decide(S, [region(S, "rewrite", [1], 0, 2)], curOf(S, types), sameWith([["new"]]), { firstTypes: ["numberedListItem"] });
     expect(d!.stripStart).toBe(true);
   });
-  it("清單第一項 → false", () => {
+  it("first list item -> false", () => {
     const [d] = decide(S, [region(S, "rewrite", [0], -1, 1)], curOf(S, types), sameWith([["new"]]), { firstTypes: ["numberedListItem"] });
     expect(d!.stripStart).toBe(false);
   });
-  it("插在 numbered 之後、但預解析第一顆不是 numbered → false", () => {
+  it("inserted after a numbered one, but the first pre-parsed block is not numbered -> false", () => {
     const [d] = decide(S, [region(S, "rewrite", [1], 0, 2)], curOf(S, types), sameWith([["new"]]), { firstTypes: ["paragraph"] });
     expect(d!.stripStart).toBe(false);
   });
 });
 
-describe("K8 效能：索引只建一次", () => {
-  it("8 000 顆、4 000 區（插入／改寫／刪除交錯）decide < 500 ms", () => {
+describe("performance: the index is built once", () => {
+  it("8 000 blocks, 4 000 regions (insert/rewrite/delete interleaved): decide < 500 ms", () => {
     const names = Array.from({ length: 8000 }, (_, i) => `b${i}`);
     const S = segsOf(...names);
     const regions: Region[] = [];
@@ -143,31 +142,31 @@ describe("K8 效能：索引只建一次", () => {
   });
 });
 
-describe("K7 刪除區錨點", () => {
-  it("(a) 有 P → P after", () => {
+describe("anchors of deletion regions", () => {
+  it("has P -> P after", () => {
     const S = segsOf("A", "B", "C");
     expect(decide(S, [region(S, "delete", [1], 0, 2)], curOf(S), sameWith([]))[0]!.anchor).toEqual({ block_id: "A", position: "after" });
   });
-  it("(b) 只有 N → N before", () => {
+  it("only N -> N before", () => {
     const S = segsOf("A", "B");
     expect(decide(S, [region(S, "delete", [0], -1, 1)], curOf(S), sameWith([]))[0]!.anchor).toEqual({ block_id: "B", position: "before" });
   });
-  it("(c) P、N 都沒有、前面是 0 行段 → 那顆 after（0 行段不當 P，但可當鄰居）", () => {
+  it("no P, no N, preceded by a 0-line segment -> that block, after (a 0-line segment is not P, but can be a neighbour)", () => {
     const S = segsOf("~Z", "B");
     expect(decide(S, [region(S, "delete", [1], 0, -1)], curOf(S), sameWith([]))[0]!.anchor).toEqual({ block_id: "Z", position: "after" });
   });
-  it("(d) 刪光全部頂層、沒有寫入內容的區 → replaceWithEmpty", () => {
+  it("everything at top level deleted, no region writes content -> replaceWithEmpty", () => {
     const S = segsOf("A", "B");
     const ds = decide(S, [region(S, "delete", [0, 1], -1, -1)], curOf(S), sameWith([]));
     expect(ds[0]!.anchor).toBe("replaceWithEmpty");
   });
-  it("(e) 刪光全部頂層、但另一區要寫入內容 → deferred（不會變空）", () => {
+  it("everything at top level deleted, but another region writes content -> deferred (does not become empty)", () => {
     const S = segsOf("A", "B");
     const ds = decide(S, [region(S, "rewrite", [0], -1, 1), region(S, "delete", [1], 0, -1)], curOf(S), sameWith([["new"]]));
     expect(ds[0]!.mark).toBe("applied");
     expect(ds[1]!.anchor).toBe("deferred");
   });
-  it("(g') 那個改寫區若是 same（不移除）→ 它的 block 可以當鄰居", () => {
+  it("if that rewrite region is same (not removed) -> its blocks can be neighbours", () => {
     const S = segsOf("A", "B");
     const ds = decide(S, [region(S, "rewrite", [0], -1, 1), region(S, "delete", [1], 0, -1)], curOf(S), sameWith([["c:A"]]));
     expect(ds[0]!.mark).toBe("same");

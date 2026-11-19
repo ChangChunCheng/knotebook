@@ -1,7 +1,8 @@
 /**
- * #386：段落內換行寫進筆記後，下一行開頭不得多一個空白；讀出 → 原樣寫回要穩定；本來就在行首的空白（網頁上打的、或修好前
- * 寫入多出來的）讀出 → 寫回也不能被吃掉。這裡在寫入管線（`parseMarkdownForNote`）與讀出（`readNoteContentFromDoc`）兩端直接驗；
- * 各條寫入路徑（REST／MCP／批次寫回／新增）的端到端在整合測試 `softbreak-write-paths.test.ts`。
+ * #386: a line break inside a paragraph, once written to a note, must not leave an extra space at the start of the next line; read -> write back unchanged must be stable;
+ * whitespace that is genuinely at a line start (typed on the web, or left over from writes before the fix) must not be eaten by read -> write back either.
+ * Verified directly at both ends, the write pipeline (`parseMarkdownForNote`) and the read side (`readNoteContentFromDoc`);
+ * the end-to-end cases for each write path (REST / MCP / batch write-back / create) are in the integration test `test/softbreak-write-paths.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -16,7 +17,6 @@ const ORIGIN = "http://localhost";
 type Inline = { type: string; text?: string; styles?: Record<string, unknown>; content?: Inline[] };
 type Blk = { type: string; content?: unknown; children?: Blk[] };
 
-/** markdown → 寫入管線的 blocks（失敗丟錯）。 */
 async function parse(md: string): Promise<Blk[]> {
   const s = await EditorSession.open(rt, new Y.Doc());
   try {
@@ -27,19 +27,18 @@ async function parse(md: string): Promise<Blk[]> {
     s.close();
   }
 }
-/** blocks 寫進新的 Y.Doc（經真編輯器正規化）。 */
+/** Normalised by a real editor. */
 async function docWith(blocks: unknown[]): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(rt, doc);
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
     s.editor.replaceBlocks(s.editor.document, blocks as any);
   } finally {
     s.close();
   }
   return doc;
 }
-/** 存進去之後編輯器看到的 blocks（id 拿掉）。 */
 async function storedBlocks(doc: Y.Doc): Promise<unknown> {
   const s = await EditorSession.open(rt, doc);
   try {
@@ -54,9 +53,7 @@ async function readMd(doc: Y.Doc): Promise<string> {
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 }
-/** 第一個 block（或它第一個子孫）的行內文字串起來。 */
 const textOf = (content: unknown): string => (Array.isArray(content) ? (content as Inline[]).map(c => c.text ?? textOf(c.content)).join("") : "");
-/** 寫入 → 讀出 → 原樣寫回 → 再讀：兩次讀出逐字相同、兩次存進去的 blocks 相同。 */
 async function roundTrip(md: string): Promise<{ md1: string; md2: string; b1: unknown; b2: unknown }> {
   const d1 = await docWith(await parse(md));
   const md1 = await readMd(d1);
@@ -64,28 +61,28 @@ async function roundTrip(md: string): Promise<{ md1: string; md2: string; b1: un
   return { md1, md2: await readMd(d2), b1: await storedBlocks(d1), b2: await storedBlocks(d2) };
 }
 
-describe("#386 寫入：段落內換行後不多空白", () => {
-  // 三種寫法：軟換行、`\` 換行、行尾兩空白——BlockNote 的 markdown → HTML 一律吐 `<br>\n`。
+describe("#386 write: no extra space after a line break inside a paragraph", () => {
+  // Three spellings: soft break, `\` break, two trailing spaces - BlockNote's markdown -> HTML emits `<br>\n` for all of them.
   it.each([
-    ["軟換行", "L1\nL2"],
-    ["\\ 換行", "L1\\\nL2"],
-    ["行尾兩空白", "L1  \nL2"],
-    ["續行開頭有縮排（markdown 本來就剝掉）", "L1\\\n   L2"],
-  ])("%s → 存成 L1⏎L2，讀出 L1\\⏎L2", async (_label, md) => {
+    ["soft break", "L1\nL2"],
+    ["backslash break", "L1\\\nL2"],
+    ["two trailing spaces", "L1  \nL2"],
+    ["continuation line with leading indent (markdown strips it anyway)", "L1\\\n   L2"],
+  ])("%s -> stored as L1 newline L2, read back as L1 backslash newline L2", async (_label, md) => {
     const [b] = await parse(md);
     expect(b!.type).toBe("paragraph");
     expect(textOf(b!.content)).toBe("L1\nL2");
     expect(await readMd(await docWith(await parse(md)))).toBe("L1\\\nL2\n");
   });
 
-  it("issue 原文：行一ABC⏎行二DEF（中文、兩種換行）", async () => {
+  it("verbatim case from the issue: line one ABC / line two DEF (Chinese, two kinds of line break)", async () => {
     for (const md of ["行一ABC\n行二DEF", "行一ABC\\\n行二DEF"]) {
       expect(await readMd(await docWith(await parse(md)))).toBe("行一ABC\\\n行二DEF\n");
     }
   });
 
-  // 清單項目、表格儲存格裡 BlockNote 的 parser 不認 `\` 換行（與 #386 無關），那裡只有行內 `<br>` 寫得出換行——讀出也寫成那個形（下面「往返」）。
-  it("連續兩個換行、引言、粗體跨換行、清單項目與表格裡的 <br>：都不多空白", async () => {
+  // BlockNote's parser does not recognise `\` breaks in list items and table cells (unrelated to #386); there only an inline `<br>` can write a line break - and reading writes that form too (see "round trip" below).
+  it("two consecutive line breaks, quote, bold spanning a line break, <br> in list items and tables: none gets an extra space", async () => {
     expect(textOf((await parse("a\\\n\\\nb"))[0]!.content)).toBe("a\n\nb");
     expect(textOf((await parse("> L1\\\n> L2"))[0]!.content)).toBe("L1\nL2");
     expect(textOf((await parse("* L1<br>L2"))[0]!.content)).toBe("L1\nL2");
@@ -93,35 +90,35 @@ describe("#386 寫入：段落內換行後不多空白", () => {
     expect(bold!.content).toEqual([{ type: "text", text: "L1\nL2", styles: { bold: true } }]);
   });
 
-  it("寫進原文的行內 <br> 後面的空白是原文的字，照留", async () => {
+  it("whitespace after an inline <br> written in the source is the source's own text and is kept", async () => {
     expect(textOf((await parse("L1<br> L2"))[0]!.content)).toBe("L1\n L2");
     expect(textOf((await parse("L1<br>  L2"))[0]!.content)).toBe("L1\n  L2");
     expect(textOf((await parse("L1<br>L2"))[0]!.content)).toBe("L1\nL2");
   });
 
-  // 原文手寫的 <pre> 裡換行有意義，`<br>` 後的 `\n` 不拿掉（換行數與修改前相同）。
-  it("手寫 <pre> 裡 <br> 後的換行照留", async () => {
+  // A hand-written <pre> gives line breaks meaning: the `\n` after `<br>` is not removed (same number of line breaks as before the change).
+  it("a line break after <br> inside a hand-written <pre> is kept", async () => {
     const [p] = await parse("<pre>a<br>\nb</pre>");
     expect(textOf(p!.content)).toBe("a\n\n\nb");
     const [c] = await parse("<pre><code>a<br>\nb</code></pre>");
     expect(c!.type).toBe("codeBlock");
     expect(textOf(c!.content)).toBe("a\n\n\nb");
-    // pre 外面的同一段照樣拿掉
+    // the same paragraph outside the pre is still stripped
     expect(textOf((await parse("<pre>x</pre>\n\nL1\nL2"))[1]!.content)).toBe("L1\nL2");
   });
 
-  // CRLF／CR 在入口換成 LF，`\r` 不再變成行尾空白。
+  // CRLF / CR are converted to LF at the entry, so `\r` no longer becomes trailing whitespace.
   it.each([
-    ["CRLF 軟換行", "L1\r\nL2", ["L1\nL2"]],
-    ["CRLF \\ 換行", "L1\\\r\nL2", ["L1\nL2"]],
-    ["CRLF 行尾兩空白", "L1  \r\nL2", ["L1\nL2"]],
-    ["CRLF 兩段", "p\r\n\r\nq", ["p", "q"]],
-    ["只有 CR", "p\r\rL1\rL2", ["p", "L1\nL2"]],
-  ])("%s → 文字沒有多的空白", async (_label, md, texts) => {
+    ["CRLF soft break", "L1\r\nL2", ["L1\nL2"]],
+    ["CRLF backslash break", "L1\\\r\nL2", ["L1\nL2"]],
+    ["CRLF two trailing spaces", "L1  \r\nL2", ["L1\nL2"]],
+    ["CRLF two paragraphs", "p\r\n\r\nq", ["p", "q"]],
+    ["CR only", "p\r\rL1\rL2", ["p", "L1\nL2"]],
+  ])("%s -> no extra whitespace in the text", async (_label, md, texts) => {
     expect((await parse(md)).map(b => textOf(b.content))).toEqual(texts);
   });
 
-  it("code block 裡的反斜線、換行與字面 <br> 都不受影響", async () => {
+  it("backslashes, line breaks and literal <br> inside a code block are unaffected", async () => {
     const [b] = await parse("```\nL1\\\n L2\n```");
     expect(b!.type).toBe("codeBlock");
     expect(textOf(b!.content)).toBe("L1\\\n L2");
@@ -130,20 +127,20 @@ describe("#386 寫入：段落內換行後不多空白", () => {
   });
 });
 
-describe("#386 讀出 → 原樣寫回穩定", () => {
-  it.each(["L1\nL2", "L1\\\nL2", "> L1\\\n> L2", "**L1\\\nL2**", "a\\\n\\\nb"])("%j：兩次讀出相同、blocks 相同", async md => {
+describe("#386 read -> write back unchanged is stable", () => {
+  it.each(["L1\nL2", "L1\\\nL2", "> L1\\\n> L2", "**L1\\\nL2**", "a\\\n\\\nb"])("%j: both reads identical, blocks identical", async md => {
     const r = await roundTrip(md);
     expect(r.md2).toBe(r.md1);
     expect(r.b2).toEqual(r.b1);
   });
 
-  // 清單項目、表格儲存格、標題裡的換行讀出寫成行內 `<br>`（`\` 換行在那裡寫不回來：清單項目斷成「`a\`」＋新段落、表格整列斷掉）。
+  // Line breaks in list items, table cells and headings are read out as inline `<br>` (a `\` break cannot be written back there: a list item splits into "`a\`" plus a new paragraph, a table row breaks).
   it.each([
-    ["項目符號清單", { type: "bulletListItem", content: "a\nb" }, "* a<br>b\n"],
-    ["編號清單", { type: "numberedListItem", content: "a\nb" }, "1. a<br>b\n"],
-    ["核取清單", { type: "checkListItem", content: "a\nb" }, "* [ ] a<br>b\n"],
-    ["標題", { type: "heading", props: { level: 2 }, content: "a\nb" }, "## a<br>b\n"],
-  ])("%s裡的換行 → 讀出 <br>、寫回 blocks 相同", async (_label, block, expected) => {
+    ["bullet list", { type: "bulletListItem", content: "a\nb" }, "* a<br>b\n"],
+    ["numbered list", { type: "numberedListItem", content: "a\nb" }, "1. a<br>b\n"],
+    ["check list", { type: "checkListItem", content: "a\nb" }, "* [ ] a<br>b\n"],
+    ["heading", { type: "heading", props: { level: 2 }, content: "a\nb" }, "## a<br>b\n"],
+  ])("line break in %s -> read out as <br>, written back to identical blocks", async (_label, block, expected) => {
     const doc = await docWith([block]);
     const md1 = await readMd(doc);
     expect(md1).toBe(expected);
@@ -152,27 +149,27 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(await readMd(d2)).toBe(md1);
   });
 
-  it("表格儲存格裡的換行 → 讀出 <br>、整張表往返一致", async () => {
+  it("a line break in a table cell -> read out as <br>, the whole table round-trips identically", async () => {
     const r = await roundTrip("| h |\n| - |\n| a<br>b |");
     expect(r.md1).toContain("| a<br>b");
     expect(r.md2).toBe(r.md1);
     expect(r.b2).toEqual(r.b1);
   });
 
-  it("表頭格（th）裡的換行 → 讀出 <br>、整張表往返一致", async () => {
+  it("a line break in a header cell (th) -> read out as <br>, the whole table round-trips identically", async () => {
     const r = await roundTrip("| h1<br>h2 |\n| - |\n| a |");
     expect(r.md1).toContain("| h1<br>h2");
     expect(r.md2).toBe(r.md1);
     expect(r.b2).toEqual(r.b1);
   });
 
-  // 行首本來就有空白（網頁上 Shift+Enter 後打了空白；或 #386 修好前寫入多出來的那一格，資料庫裡已有、不做資料修正）：
-  // `\` 換行的形寫不回來（續行開頭的空白 markdown 會剝掉），所以讀出改寫成行內 `<br>`，空白在同一行、寫回照留。
+  // Whitespace already at a line start (Shift+Enter then a space on the web; or the extra space written before #386 was fixed, already in the DB, no data fix):
+  // the `\` break form cannot be written back (markdown strips the whitespace at the start of a continuation line), so reading rewrites it as an inline `<br>`: the whitespace stays on the same line and is kept on write back.
   it.each([
-    ["一格（修好前寫入的舊內容）", "L1\n L2", "L1<br> L2\n"],
-    ["兩格", "L1\n  L2", "L1<br>  L2\n"],
+    ["one space (old content written before the fix)", "L1\n L2", "L1<br> L2\n"],
+    ["two spaces", "L1\n  L2", "L1<br>  L2\n"],
     ["tab", "L1\n\tL2", "L1<br>\tL2\n"],
-  ])("行首空白：%s → 讀出用 <br>，寫回 blocks 與原本相同", async (_label, text, expected) => {
+  ])("leading whitespace: %s -> read out with <br>, written-back blocks equal the original", async (_label, text, expected) => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: {} }] }]);
     const md1 = await readMd(doc);
     expect(md1).toBe(expected);
@@ -181,7 +178,7 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(await readMd(d2)).toBe(md1);
   });
 
-  it("同段兩個換行、只有一個後面行首有空白：只有那個改寫成 <br>；清單項目裡的行首空白也照留", async () => {
+  it("two line breaks in one paragraph, only one with leading whitespace after it: only that one is rewritten to <br>; leading whitespace inside list items is kept too", async () => {
     const blocks = [
       { type: "paragraph", content: [{ type: "text", text: "p1\n p2\np3", styles: {} }] },
       { type: "bulletListItem", content: [{ type: "text", text: "i1\n i2", styles: {} }] },
@@ -194,7 +191,7 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(await readMd(d2)).toBe(md1);
   });
 
-  it("上色段落（整段 HTML 讀出）裡的行首空白也往返一致", async () => {
+  it("leading whitespace inside a coloured paragraph (read out as whole-paragraph HTML) also round-trips identically", async () => {
     const doc = await docWith([{ type: "paragraph", props: { backgroundColor: "yellow" }, content: [{ type: "text", text: "L1\n L2", styles: {} }] }]);
     const md1 = await readMd(doc);
     expect(md1).toContain("<br> L2");
@@ -203,14 +200,14 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(await readMd(d2)).toBe(md1);
   });
 
-  // 換行佔位符要是整份 HTML（含網址）裡沒有的單一字元——舊版用重複的 ⸂、只比文字，會跟相鄰字元重疊、換進網址裡。
-  // U+E000 是現在第一個候選字元，⸂ 是舊版的佔位符。
+  // The line-break placeholder must be a single character absent from the whole HTML (URLs included) - the old version used a repeated U+2E02 and only compared text, so it overlapped adjacent characters and was swapped into URLs.
+  // U+E000 is now the first candidate character; U+2E02 was the old placeholder.
   it.each([
-    ["佔位符候選字元緊接換行前（段落）", [{ type: "paragraph", content: [{ type: "text", text: "\n b", styles: {} }] }]],
-    ["舊佔位符字元緊接換行前（段落）", [{ type: "paragraph", content: [{ type: "text", text: "⸂\n b⸂⸂", styles: {} }] }]],
-    ["佔位符候選字元緊接換行前（清單）", [{ type: "bulletListItem", content: [{ type: "text", text: "\nb", styles: {} }] }]],
-    ["文字中間有候選字元", [{ type: "paragraph", content: [{ type: "text", text: "xy\n z", styles: {} }] }]],
-  ])("%s → 讀出寫回 blocks 相同", async (_label, blocks) => {
+    ["placeholder candidate right before a line break (paragraph)", [{ type: "paragraph", content: [{ type: "text", text: "\n b", styles: {} }] }]],
+    ["old placeholder right before a line break (paragraph)", [{ type: "paragraph", content: [{ type: "text", text: "⸂\n b⸂⸂", styles: {} }] }]],
+    ["placeholder candidate right before a line break (list)", [{ type: "bulletListItem", content: [{ type: "text", text: "\nb", styles: {} }] }]],
+    ["candidate character in the middle of the text", [{ type: "paragraph", content: [{ type: "text", text: "xy\n z", styles: {} }] }]],
+  ])("%s -> read and write back to identical blocks", async (_label, blocks) => {
     const doc = await docWith(blocks);
     const md1 = await readMd(doc);
     const d2 = await docWith(await parse(md1));
@@ -219,9 +216,9 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
   });
 
   it.each([
-    ["連結網址", "https://example.com/x\uE000\uE000\uE000\uE000y"],
-    ["連結網址（舊佔位符）", "https://example.com/x⸂y"],
-  ])("佔位符候選字元出現在%s、文件裡又有要改寫的換行 → 網址不變", async (_label, href) => {
+    ["link URL", "https://example.com/x\uE000\uE000\uE000\uE000y"],
+    ["link URL (old placeholder)", "https://example.com/x⸂y"],
+  ])("placeholder candidate character in %s, and the document has a line break to rewrite -> URL unchanged", async (_label, href) => {
     const doc = await docWith([
       { type: "bulletListItem", content: "a\nb" },
       { type: "paragraph", content: [{ type: "link", href, content: "L" }] },
@@ -233,11 +230,11 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(await storedBlocks(d2)).toEqual(await storedBlocks(doc));
   });
 
-  // 圖片網址裡的私用區字元匯出時本來就被百分比編碼（與換行無關）；這裡比的是「文件裡有沒有要改寫的換行」兩種情形下圖片那一行逐字相同。
+  // Private-use characters in an image URL are percent-encoded on export anyway (unrelated to line breaks); this compares the image line verbatim between "the document has a line break to rewrite" and "it has none".
   it.each([
-    ["佔位符候選字元", "https://example.com/p\uE000q.png"],
-    ["舊佔位符字元", "https://example.com/p\u2E02q.png"],
-  ])("%s出現在圖片網址、文件裡又有要改寫的換行 → 圖片那一行與沒有換行時相同", async (_label, url) => {
+    ["placeholder candidate character", "https://example.com/p\uE000q.png"],
+    ["old placeholder character", "https://example.com/p\u2E02q.png"],
+  ])("%s in an image URL, and the document has a line break to rewrite -> the image line equals the one without the line break", async (_label, url) => {
     const image = { type: "image", props: { url } };
     const withBreak = await readMd(await docWith([{ type: "bulletListItem", content: "a\nb" }, image]));
     const without = await readMd(await docWith([{ type: "bulletListItem", content: "ab" }, image]));
@@ -247,29 +244,29 @@ describe("#386 讀出 → 原樣寫回穩定", () => {
     expect(withBreak).not.toMatch(/%3Cbr%3E/i);
   });
 
-  it("沒有行首空白的換行讀出不變（照舊是 \\ 換行，不出現 <br>）", async () => {
+  it("a line break without leading whitespace reads out unchanged (still a backslash break, no <br>)", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "L1\nL2", styles: {} }] }]);
     expect(await readMd(doc)).toBe("L1\\\nL2\n");
   });
 });
 
-// 樣式從空白開始（`<strong> b</strong>`）轉換器寫成 `** b**`，寫回變字面——讀出端把樣式開頭與結尾的空白移到
-// 標記外面。字不變（每個字的樣式除了那格空白都不變）、讀出 → 寫回 → 再讀逐字相同，寫回一次之後 blocks 也穩定。
-describe("樣式開頭、結尾的空白移到強調標記外面", () => {
-  /** 字與每個字的樣式（空白字元的樣式不比：移出去後那格空白不帶樣式）。 */
+// A style that starts with whitespace (`<strong> b</strong>`) is written by the converter as `** b**`, which turns literal on write back - the read side moves whitespace at the start and end of a style outside the marks.
+// The text is unchanged (every character's style is unchanged except that one space), read -> write back -> read is identical, and blocks are stable after one write back.
+describe("whitespace at the start/end of a style moves outside the emphasis marks", () => {
+  /** Whitespace characters are compared without style: after moving out, that space carries none. */
   const glyphs = (blocks: unknown): string[] =>
     (blocks as Array<{ content: Inline[] }>).flatMap(b => (b.content ?? []).flatMap(c => [...(c.text ?? "")].map(ch => (/[ \t]/.test(ch) ? ch : `${ch}:${JSON.stringify(c.styles ?? {})}`))));
   it.each([
-    ["粗體開頭空白", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { bold: true } }], "a **b**\n"],
-    ["斜體開頭空白", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { italic: true } }], "a *b*\n"],
-    ["刪除線開頭空白", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { strike: true } }], "a ~~b~~\n"],
-    ["粗斜體開頭空白", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { bold: true, italic: true } }], "a ***b***\n"],
-    ["粗體結尾空白接字", [{ type: "text", text: "b ", styles: { bold: true } }, { type: "text", text: "c", styles: {} }], "**b** c\n"],
-    // 粗體、斜體結尾的空白轉換器自己會移出去；刪除線不會（`~~b ~~`），要靠這裡
-    ["刪除線結尾空白接字", [{ type: "text", text: "b ", styles: { strike: true } }, { type: "text", text: "c", styles: {} }], "~~b~~ c\n"],
-    ["粗體兩頭都有空白", [{ type: "text", text: "a", styles: {} }, { type: "text", text: "  b  ", styles: { bold: true } }, { type: "text", text: "c", styles: {} }], "a  **b**  c\n"],
-    ["舊內容：粗體跨換行、下一行開頭空白", [{ type: "text", text: "a\n b", styles: { bold: true } }], "**a**<br> **b**\n"],
-    ["換行後接開頭空白的斜體", [{ type: "text", text: "L1\n", styles: {} }, { type: "text", text: " b", styles: { italic: true } }], "L1<br> *b*\n"],
+    ["bold, leading space", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { bold: true } }], "a **b**\n"],
+    ["italic, leading space", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { italic: true } }], "a *b*\n"],
+    ["strikethrough, leading space", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { strike: true } }], "a ~~b~~\n"],
+    ["bold italic, leading space", [{ type: "text", text: "a", styles: {} }, { type: "text", text: " b", styles: { bold: true, italic: true } }], "a ***b***\n"],
+    ["bold, trailing space before text", [{ type: "text", text: "b ", styles: { bold: true } }, { type: "text", text: "c", styles: {} }], "**b** c\n"],
+    // The converter moves trailing whitespace out of bold/italic itself, but not out of strikethrough (`~~b ~~`), which this handles
+    ["strikethrough, trailing space before text", [{ type: "text", text: "b ", styles: { strike: true } }, { type: "text", text: "c", styles: {} }], "~~b~~ c\n"],
+    ["bold with whitespace at both ends", [{ type: "text", text: "a", styles: {} }, { type: "text", text: "  b  ", styles: { bold: true } }, { type: "text", text: "c", styles: {} }], "a  **b**  c\n"],
+    ["old content: bold spanning a line break, leading space on the next line", [{ type: "text", text: "a\n b", styles: { bold: true } }], "**a**<br> **b**\n"],
+    ["italic with leading space after a line break", [{ type: "text", text: "L1\n", styles: {} }, { type: "text", text: " b", styles: { italic: true } }], "L1<br> *b*\n"],
   ])("%s", async (_label, content, expected) => {
     const doc = await docWith([{ type: "paragraph", content }]);
     const md1 = await readMd(doc);
@@ -281,14 +278,14 @@ describe("樣式開頭、結尾的空白移到強調標記外面", () => {
     expect(await storedBlocks(d3)).toEqual(await storedBlocks(d2));
   });
 
-  it("沒有邊緣空白的樣式讀出不變；行內 code 開頭的空白留在 code 裡", async () => {
+  it("a style without edge whitespace reads out unchanged; leading whitespace inside inline code stays inside the code", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "a ", styles: {} }, { type: "text", text: "b", styles: { bold: true } }, { type: "text", text: " c", styles: { code: true } }] }]);
     expect(await readMd(doc)).toBe("a **b**` c`\n");
   });
 });
 
-// 實際筆記上經 edit_note 重現三次的實例：引言裡粗體緊接 inline code、粗體跨換行、換行後多一格空白。
-describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
+// A real note reproduced three times through edit_note: bold right next to inline code in a quote, bold spanning a line break, one extra space after the line break.
+describe("real case: bold + inline code + line break round trip inside a quote", () => {
   const B = { bold: true };
   const C = { code: true };
   const I = { italic: true };
@@ -299,7 +296,7 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
     { type: "text", text: "包含發版 tag", styles: B },
     { type: "text", text: "。", styles: {} },
   ];
-  /** agent 寫 `**test 跟 lint 沒有 `soft_` 開關，是刻意的。**` 存成的形（code 不能同時是粗體，粗體在 code 兩側斷開）＋修好前多的那格空白。 */
+  /** The shape stored when an agent writes bold text containing inline code (code cannot also be bold, so bold breaks on both sides of the code), plus the extra space from before the fix. */
   const ORIGINAL = [
     { type: "text", text: "test 跟 lint 沒有 ", styles: B },
     { type: "text", text: "soft_", styles: C },
@@ -307,7 +304,7 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
     { type: "text", text: " ", styles: {} },
     ...TAIL,
   ];
-  /** 上面那份經修好前的讀出原樣寫回一次後存成的形：斜體吃進了字面的 `**`、`\n` 與下一個 code 的反引號（該筆記現在的樣子）。 */
+  /** The shape of the above after one write back through the pre-fix read: italic swallowed the literal `**`, `\n` and the next code's backtick (what that note looks like now). */
   const CORRUPTED = [
     { type: "text", text: "test 跟 lint 沒有", styles: B },
     { type: "text", text: " ", styles: {} },
@@ -317,7 +314,6 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
     { type: "text", text: "包含發版 tag", styles: B },
     { type: "text", text: "。", styles: {} },
   ];
-  /** 讀出 → 寫回 → 讀出 → 寫回：兩次讀出逐字相同，寫回後的 blocks 與原本的字與樣式相同（空白的樣式不比）、第二次寫回後 blocks 不再變。 */
   async function loop(content: unknown[]) {
     const d0 = await docWith([{ type: "quote", content }]);
     const md1 = await readMd(d0);
@@ -329,7 +325,7 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
   const glyphs = (blocks: unknown): string[] =>
     (blocks as Array<{ content: Inline[] }>).flatMap(b => (b.content ?? []).flatMap(c => [...(c.text ?? "")].map(ch => (/[ \t]/.test(ch) ? ch : `${ch}:${JSON.stringify(c.styles ?? {})}`))));
 
-  it("原始的形（粗體在 code 兩側、粗體跨換行、換行後一格空白）→ 讀出沒有 `** 開`，往返穩定、字與樣式不變", async () => {
+  it("original shape (bold on both sides of the code, bold spanning a line break, a space after the line break) -> no `** ` in the read-out; round trip stable, characters and styles unchanged", async () => {
     const r = await loop(ORIGINAL);
     expect(r.md1).toBe("> **test 跟 lint 沒有** `soft_` **開關，是刻意的。**<br> 其他每一道預設都是硬的，需要過渡期才調軟 —— 而且 `soft_*` 一開就是所有分支一起軟化，**包含發版 tag**。\n");
     expect(r.md2).toBe(r.md1);
@@ -337,17 +333,17 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
     expect(r.b2).toEqual(r.b1);
   });
 
-  it("已經走樣的形（斜體裡有字面的 ** 與反引號）→ 字面字元跳脫，往返穩定、字與樣式不變", async () => {
+  it("already-distorted shape (literal ** and backticks inside italic) -> literal characters are escaped; round trip stable, characters and styles unchanged", async () => {
     const r = await loop(CORRUPTED);
     expect(r.md1).toContain("\\*\\*");
     expect(r.md1).toContain("\\`soft\\_");
     expect(r.md2).toBe(r.md1);
-    // 換行後那格空白在斜體開頭，移到斜體外面（字一樣、那格空白不再是斜體）
+    // the space after the line break is at the start of the italic: moved outside the italic (same characters; that space is no longer italic)
     expect(glyphs(r.b1)).toEqual(glyphs(r.b0));
     expect(r.b2).toEqual(r.b1);
   });
 
-  it("實際讀到的 markdown 原樣寫回 → 之後讀出、寫回不再變（不再一輪多一個 *、不會變成清單）", async () => {
+  it("the markdown as actually read is written back unchanged -> later read and write back no longer change (no extra * per round, no turning into a list)", async () => {
     const REAL_NOTE = "> **test 跟 lint 沒有** `soft_`** 開關，是刻意的。**\\\n>  其他每一道預設都是硬的，需要過渡期才調軟 —— 而且 `soft_*` 一開就是所有分支一起軟化，**包含發版 tag**。\n";
     const d1 = await docWith(await parse(REAL_NOTE));
     const md1 = await readMd(d1);
@@ -359,15 +355,15 @@ describe("實例：引言裡的粗體＋inline code＋換行往返", () => {
   });
 });
 
-describe("文字裡的 markdown 標記字元跳脫", () => {
+describe("escaping of markdown marker characters in text", () => {
   it.each([
-    ["星號", "5 * 3 = 15，a*b*c"],
-    ["反引號", "用 ` 包起來"],
-    ["方括號", "[x] 與 [連結](不是)"],
-    ["底線：字中不跳、字邊跳", "snake_case 與 _前後_ 與 中_文"],
-    ["波浪號", "約 ~3 個、~~不是刪除線~~"],
-    ["反斜線", "C:\\Users 與 a\\*b 與結尾\\"],
-  ])("%s → 往返 blocks 相同", async (_label, text) => {
+    ["asterisk", "5 * 3 = 15，a*b*c"],
+    ["backtick", "用 ` 包起來"],
+    ["square brackets", "[x] 與 [連結](不是)"],
+    ["underscore: not escaped inside a word, escaped at word edges", "snake_case 與 _前後_ 與 中_文"],
+    ["tilde", "約 ~3 個、~~不是刪除線~~"],
+    ["backslash", "C:\\Users 與 a\\*b 與結尾\\"],
+  ])("%s -> blocks identical after round trip", async (_label, text) => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text, styles: {} }] }]);
     const md1 = await readMd(doc);
     const d2 = await docWith(await parse(md1));
@@ -375,12 +371,12 @@ describe("文字裡的 markdown 標記字元跳脫", () => {
     expect(await readMd(d2)).toBe(md1);
   });
 
-  it("沒有標記字元的文字、字中的底線、路徑裡的反斜線讀出不變", async () => {
+  it("text without marker characters, an underscore inside a word and backslashes in paths read out unchanged", async () => {
     const doc = await docWith([{ type: "paragraph", content: [{ type: "text", text: "snake_case C:\\Users 一般文字", styles: {} }] }]);
     expect(await readMd(doc)).toBe("snake_case C:\\Users 一般文字\n");
   });
 
-  it("行內 code 與程式碼區塊裡的字不跳脫", async () => {
+  it("characters inside inline code and code blocks are not escaped", async () => {
     const doc = await docWith([
       { type: "paragraph", content: [{ type: "text", text: "a*b_c", styles: { code: true } }] },
       { type: "codeBlock", content: "x * y [z]" },
