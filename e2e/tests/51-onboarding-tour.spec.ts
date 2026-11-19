@@ -232,7 +232,7 @@ function markdownReader(page: Page, noteId: string): () => Promise<string> {
   };
 }
 
-/** Starts the tour, waits for the sample content to be written to the server, and returns the note id, a function that reads the content, and the content from before the demo stops. */
+/** Starts the tour, waits for the sample content to be written to the server, and returns the note id, a function that reads the content, and the content from before the live stops. */
 async function startTourOnSample(page: Page): Promise<{ noteId: string; read: () => Promise<string>; before: string }> {
   await openTour(page, USER_NAME);
   const noteId = await noteIdFromUrl(page);
@@ -258,7 +258,7 @@ function overlapArea(a: Box, b: Box): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-/** The card does not cover `target` (the demo stops must let people read the menu). */
+/** The card does not cover `target` (the live stops must let people read the menu). */
 async function expectCardClearOf(page: Page, target: Locator): Promise<void> {
   await expect
     .poll(
@@ -595,7 +595,7 @@ test.describe("feature tour (manual start)", () => {
       return ((await res.json()) as { markdown: string }).markdown;
     };
 
-    // The sample content must be on the server before there is a baseline to compare. Take the baseline before reaching the demo stops so that any write caused by opening the menu counts.
+    // The sample content must be on the server before there is a baseline to compare. Take the baseline before reaching the live stops so that any write caused by opening the menu counts.
     await expect.poll(read, { timeout: 15_000 }).toContain("What a note can hold");
     const before = await read();
 
@@ -1082,7 +1082,7 @@ test.describe("feature tour (manual start)", () => {
         await expect(page.locator(".bn-suggestion-menu")).toHaveCount(0);
         await page.waitForTimeout(3_000);
         expect(await read()).toBe(before);
-        // The version is saved only once, for writing the sample content (when the machine is busy it may arrive after the reload): wait until it is exactly 1, then confirm the demo and the reload added no other.
+        // The version is saved only once, for writing the sample content (when the machine is busy it may arrive after the reload): wait until it is exactly 1, then confirm the live stops and the reload added no other.
         await expect.poll(versionCount, { timeout: 15_000 }).toBe(1);
         await page.waitForTimeout(3_000);
         expect(await versionCount()).toBe(1);
@@ -1267,7 +1267,7 @@ test.describe("feature tour (manual start)", () => {
     await expect(cardTitle(page)).toHaveText("Share and more");
     await expect(page).toHaveURL(SAMPLE_URL);
 
-    // Demo stops don't bring up the on-screen keyboard: at the [[ stop the editor is inputmode="none", and going back to the version stop removes it (it didn't have this attribute originally).
+    // Live stops don't bring up the on-screen keyboard: at the [[ stop the editor is inputmode="none", and going back to the version stop removes it (it didn't have this attribute originally).
     await goToTitle(page, "Link to another note");
     await expect(editorLocator(page)).toHaveAttribute("inputmode", "none");
     await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
