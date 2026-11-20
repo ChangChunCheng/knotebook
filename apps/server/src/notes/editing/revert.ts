@@ -24,8 +24,8 @@ export async function listEdits(deps: { db: Db; collab?: CollabServer }, noteId:
     agentLabelSnapshot: noteAiEdits.agentLabel, afterBlockIds: noteAiEdits.afterBlockIds, afterFingerprint: noteAiEdits.afterFingerprint,
     anchor: noteAiEdits.anchor, revertOf: noteAiEdits.revertOf, revertedAt: noteAiEdits.revertedAt, createdAt: noteAiEdits.createdAt,
     handle: users.handle, tokenName: apiTokens.name, tokenLabel: apiTokens.agentLabel,
-    // `editRevertable` needs only the ids of `before_blocks`, so extract them as text[] in SQL (CASE is lazy, so only delete_section rows pay the detoast). Same condition as `isDeleteShape`.
-    beforeBlockIds: sql<string[]>`case when ${noteAiEdits.op} = 'delete_section' or (${noteAiEdits.op} = 'file_sync' and ${noteAiEdits.anchor} is not null) then coalesce((select array_agg(b->>'id') from jsonb_array_elements(${noteAiEdits.beforeBlocks}) as b), '{}'::text[]) else '{}'::text[] end`,
+    // `editRevertable` needs only the ids of `before_blocks`, so extract them as text[] in SQL. Every op needs them: a rewrite that keeps ids is detected as already reverted by its before ids being back at top level (#551).
+    beforeBlockIds: sql<string[]>`coalesce((select array_agg(b->>'id') from jsonb_array_elements(${noteAiEdits.beforeBlocks}) as b), '{}'::text[])`,
   })
     .from(noteAiEdits).innerJoin(users, eq(users.id, noteAiEdits.userId)).leftJoin(apiTokens, eq(apiTokens.id, noteAiEdits.tokenId))
     .where(eq(noteAiEdits.noteId, noteId)).orderBy(desc(noteAiEdits.createdAt), desc(noteAiEdits.id));

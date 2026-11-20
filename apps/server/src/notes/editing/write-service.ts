@@ -1,6 +1,6 @@
 /**
  * All write paths for a note must share one `NoteWriteQueue` (`buildApp` creates it once): serialization underpins the #137 corruption fix and the revert idempotency guard (see `queue.ts`). Authorization and rate limiting are deliberately not here: they answer differently on REST and MCP.
- * Presence targets must come from `presenceTargetForWrite(op, afterBlockIds)`, never the request's `section_id` (a heading id that no longer exists after the write).
+ * Presence targets must come from `presenceTargetForWrite(op, afterBlockIds)`, never the request's `section_id` (a heading id that may no longer exist after the write).
  * Test gaps: `applyDeps()`'s throw is unreachable and unguarded (`create_note` skips the deployment-shape gate, so it's the only thing that speaks up); `write-body-limit.test.ts` derives its cases from `WRITE_BODY_LIMIT`, so only the hard-coded 300000 tests in `note-edits.test.ts`/`mcp-endpoint.test.ts` notice the value changing, and only upwards.
  */
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
@@ -237,7 +237,7 @@ export class NoteWriteService {
       throw err;
     }
     if (!result.ok) return { ok: false, kind: "apply", code: result.code, ...(result.detail ? { detail: result.detail } : {}) };
-    // Target from post-edit `afterBlockIds`, not `sectionId` (a heading id that replace_section/delete_section replaced).
+    // Target from post-edit `afterBlockIds`, not `sectionId` (a heading id that replace_section/delete_section may have replaced).
     this.touch(input.noteId, input.tokenId, input.userHandle, agentLabel, presenceTargetForWrite(input.op, result.afterBlockIds));
     return { ok: true, result, agentLabel };
   }

@@ -21,7 +21,7 @@ export const NOTE_NOT_FOUND_MESSAGE = "No note with that id. It may not exist, i
 /**
  * Don't say "section ids change when the note is edited": the id is the section's first
  * top-level block id, which `append`/`insert_after` leave untouched. Only `replace_all`,
- * `replace_section` and `delete_section` change ids.
+ * `replace_section` and `delete_section` can change ids.
  */
 export const SECTION_NOT_FOUND_MESSAGE =
   "This note has no section with that id. Call read_note_outline again — an edit can change a section's id.";

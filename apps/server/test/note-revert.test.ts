@@ -137,8 +137,9 @@ describe("revert", () => {
     // Failure shape (revert path): the record transaction runs after the merge, so a mid-way failure means content restored, no revert row,
     // original row not marked `reverted_at`. This case guards that the row therefore becomes unrevertable and a second press is 409 stale.
     // The two ops hold for different reasons, so both cells run:
-    //   - the four non-delete ops: the criterion compares the fingerprint of `after_block_ids`, and the restore replaces exactly those
-    //     blocks, so `revertable` turns false by itself.
+    //   - the four non-delete ops: the criterion compares the fingerprint of `after_block_ids`, and the restore replaces those blocks
+    //     with the old content, so `revertable` turns false by itself. A rewrite that kept every after id and only removed blocks
+    //     is covered by the case below (the fingerprint alone would match again).
     //   - `delete_section`: the criterion is "anchor still exists" and the restore does not remove the anchor. Without the condition that no `before_blocks` id is already at top level
     //     (`editRevertable`, revert-core.ts) the row would stay revertable, and a second revert
     //     would return 201 and insert the whole section again, creating duplicate top-level block ids (BlockNote keeps supplied ids)
@@ -170,6 +171,26 @@ describe("revert", () => {
       const top = ids(s.ctx.collab.hocuspocus.documents.get(s.note.id)!);
       expect(new Set(top).size, kind).toBe(top.length);
     }
+  });
+
+  it("a replace_section that only deletes a paragraph keeps the other ids: when its revert's record step fails, a second revert is 409 stale and top-level ids stay unique (#551)", async () => {
+    let boom = true;
+    const s = await setup("# A\n\n一\n\n二\n\n# B\n\n三", { editingTestHooks: { beforeRevertRecord: async () => { if (boom) throw new Error("boom"); } } });
+    const c = await s.content();
+    const a = c.outline[1];
+    expect((await s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\n一", if_match: a.fingerprint })).statusCode).toBe(201);
+    const [edit] = await s.list();
+    expect((await s.revert(edit!.id)).statusCode).toBe(500);
+    expect((await s.content()).fingerprint).toBe(c.fingerprint);
+    const failed = (await s.list())[0]!;
+    expect(failed.revertable).toBe(false);
+    expect(failed.revertedAt).toBeNull();
+    boom = false;
+    const second = await s.revert(edit!.id);
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe("stale");
+    const top = ids(s.ctx.collab.hocuspocus.documents.get(s.note.id)!);
+    expect(new Set(top).size).toBe(top.length);
   });
 
   it("/revert queue timeout -> 503 server_busy (not 500) and nothing touched", async () => {

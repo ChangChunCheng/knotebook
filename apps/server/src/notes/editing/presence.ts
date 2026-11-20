@@ -37,7 +37,7 @@ export function presenceTargetForRead(section: string | undefined): PresenceTarg
 }
 
 /**
- * Use only post-edit `afterBlockIds`, never the request's `section_id`: it is a heading id that replace_section/delete_section replace, so the lookup would silently fall back to doc start. `insert_after` deliberately lands on the first inserted block, not the heading; `delete_section` has no landing block (afterIds always empty) and goes to doc start.
+ * Use only post-edit `afterBlockIds`, never the request's `section_id`: it is a heading id that replace_section/delete_section can replace, so the lookup would silently fall back to doc start. `insert_after` deliberately lands on the first inserted block, not the heading; `delete_section` has no landing block (afterIds always empty) and goes to doc start.
  */
 export function presenceTargetForWrite(op: EditOp, afterBlockIds: readonly string[]): PresenceTarget {
   if (op === "replace_all") return { kind: "doc-start" };
