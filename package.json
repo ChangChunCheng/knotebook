@@ -15,6 +15,7 @@
     "test": "pnpm --filter @knotebook/shared build && pnpm -r test",
     "test:scripts": "node --test scripts/*.test.mjs",
     "check-licenses": "node scripts/check-licenses.mjs",
+    "check-doc-links": "node scripts/check-doc-links.mjs",
     "release:prepare": "node scripts/release-prepare.mjs"
   },
   "devDependencies": {
