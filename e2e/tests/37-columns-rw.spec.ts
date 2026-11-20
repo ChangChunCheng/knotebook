@@ -108,16 +108,17 @@ async function pasteSized(page: Page, noteId: string, paragraph: string): Promis
   await expect.poll(() => firstColWidth(page)).toBe("120px");
 }
 
-/** Block ids of the image and the table (the ids change when a write or an AI apply replaces the blocks - used to prove they really were rewritten, not left untouched). */
+/** Block ids of the image and the table (an in-app AI apply gives them new ids; an unchanged block in an API rewrite keeps its id (#551)). */
 async function sizedBlockIds(page: Page): Promise<Array<string | null>> {
   const editor = editorLocator(page);
   const idOf = (el: Element) => el.closest("[data-id]")?.getAttribute("data-id") ?? null;
   return [await editor.locator(IMAGE).first().evaluate(idOf), await editor.locator("table").first().evaluate(idOf)];
 }
 
-async function expectSizesKept(page: Page, before: Array<string | null>): Promise<void> {
+async function expectSizesKept(page: Page, before: Array<string | null>, ids: "new" | "same"): Promise<void> {
   const editor = editorLocator(page);
-  await expect.poll(async () => (await sizedBlockIds(page)).map((id) => id !== null && !before.includes(id))).toEqual([true, true]);
+  if (ids === "new") await expect.poll(async () => (await sizedBlockIds(page)).map((id) => id !== null && !before.includes(id))).toEqual([true, true]);
+  else await expect.poll(async () => sizedBlockIds(page)).toEqual(before);
   await expect(editor.locator(IMAGE)).toHaveCount(1);
   await expect(editor.locator(IMAGE)).toHaveAttribute("data-preview-width", "300");
   await expect(editor.locator("table")).toHaveCount(1);
@@ -148,12 +149,12 @@ test("E1: REST reads the div form -> replace_all writes it back unchanged with 2
   expect(lines.filter((l) => l.startsWith("<div data-kb-column "))).toEqual([columnOpenTag("1"), columnOpenTag("1.5")]);
   expect(original.markdown).toContain(figure(url, "A 點"));
 
-  // Write back unchanged: 201; replace_all replaces every block's id, so wait until the row's data-id changes = the page received this write, then check the row and both columns' content
+  // Write back unchanged: 201; identical blocks keep their ids (#551), so the row's data-id stays; check the row and both columns' content
   const rowIdBefore = await rows.first().getAttribute("data-id");
   expect(rowIdBefore).toBeTruthy();
   const same = await postEdit(page, noteId, { op: "replace_all", markdown: original.markdown, if_match: original.fingerprint });
   expect(same.status(), await same.text()).toBe(201);
-  await expect.poll(() => rows.first().getAttribute("data-id"), { timeout: 10_000 }).not.toBe(rowIdBefore);
+  await expect(rows.first()).toHaveAttribute("data-id", rowIdBefore!);
   await expect(rows).toHaveCount(1);
   const cols = editor.locator(`${ROW} > ${COL}`);
   await expect(cols).toHaveCount(2);
@@ -212,7 +213,7 @@ test("E2 (#305): paste a figure with width 300 and a table with first column 120
   const editor = editorLocator(page);
   await expect(editor.getByText("new words", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(editor).not.toContainText("old words");
-  await expectSizesKept(page, idsBefore);
+  await expectSizesKept(page, idsBefore, "same");
   expectNoPageErrors(errors);
 });
 
@@ -301,7 +302,7 @@ test.describe("in-app AI (ai-stub /echo)", () => {
 
     await expect(editor.getByText("Rewritten words", { exact: true })).toBeVisible();
     await expect(editor).not.toContainText("Original words");
-    await expectSizesKept(page, idsBefore);
+    await expectSizesKept(page, idsBefore, "new");
     expectNoPageErrors(errors);
   });
 
