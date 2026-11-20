@@ -1,5 +1,5 @@
 /**
- * A `.transaction(` callback here must be one `xInTx(tx, …)` call (`test/unit/s14-structure.test.ts`).
+ * A `.transaction(` callback here must be one `xInTx(tx, …)` call (`test/unit/tx-nested-pool-borrow-structure.test.ts`).
  * Callers pass ids already lowercased (routes, MCP `FOLDER_ID`); only the UUID shape is checked here, and the transactions compare ids with plain `===`.
  */
 import { and, asc, isNull, sql } from "drizzle-orm";

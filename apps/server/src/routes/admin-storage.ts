@@ -1,4 +1,4 @@
-// No transactions in this file (enforced by test/unit/s14-structure.test.ts; to add one, extract an `*InTx` and list the file there).
+// No transactions in this file (enforced by test/unit/tx-nested-pool-borrow-structure.test.ts; to add one, extract an `*InTx` and list the file there).
 // All routes requireAdmin; bodies are strict zod answered with the fixed "Invalid request body." (never zod's own text); a non-UUID id gets the endpoint's 404 code.
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";

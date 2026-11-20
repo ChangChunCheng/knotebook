@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 
-// walk/code have the same shape as in s14-structure.test.ts (copied; that file doesn't export them).
+// walk/code have the same shape as in tx-nested-pool-borrow-structure.test.ts (copied; that file doesn't export them).
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
     const p = path.join(dir, e.name);

@@ -1,5 +1,5 @@
 /**
- * Structural guard for storage quota: scans `src/` with comments stripped (same stripping as `code()` in s14-structure.test.ts).
+ * Structural guard for storage quota: scans `src/` with comments stripped (same stripping as `code()` in tx-nested-pool-borrow-structure.test.ts).
  * Literal scan only: renamed re-exports, aliased calls and hand-offs through another module are deliberate evasions it can't catch;
  * behaviour is covered by storage-quota-race.test.ts.
  * - `insert(uploads)` appears only in upload (`insertUploadInTx`) and copy (`copyNoteInTx`); any new path that adds `uploads` rows

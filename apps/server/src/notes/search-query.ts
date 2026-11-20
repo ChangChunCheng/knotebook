@@ -1,4 +1,4 @@
-// The `.transaction(` callback must be exactly `runNoteSearchInTx(tx, input)` with no second argument (test/unit/s14-structure.test.ts); the isolation level is in the body's first statement.
+// The `.transaction(` callback must be exactly `runNoteSearchInTx(tx, input)` with no second argument (test/unit/tx-nested-pool-borrow-structure.test.ts); the isolation level is in the body's first statement.
 import type { Db } from "../db/index.js";
 import type { SearchMatchRow } from "./search-sql.js";
 import { runNoteSearchInTx, type NoteSearchInput, type NoteSearchResult } from "./tx/search-query.js";

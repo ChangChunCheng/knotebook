@@ -110,7 +110,7 @@ describe("deleting a group (delete mode) does not deadlock on a small pool", () 
       const groupIds: string[] = [];
       const noteIds: string[] = [];
       for (const [i, u] of users.entries()) {
-        const g = await seedGroup(target.db, `S14-a-${i}`, [{ userId: u.id, role: "admin" }]);
+        const g = await seedGroup(target.db, `nested-a-${i}`, [{ userId: u.id, role: "admin" }]);
         groupIds.push(g.id);
         for (let k = 0; k < 2; k++) {
           const n = await seedNote(target.db, { groupId: g.id });
@@ -142,7 +142,7 @@ describe("deleting a group (delete mode) does not deadlock on a small pool", () 
     });
     try {
       const admin = await seedUser(target.db);
-      const g = await seedGroup(target.db, "S14-a2", [{ userId: admin.id, role: "admin" }]);
+      const g = await seedGroup(target.db, "nested-a2", [{ userId: admin.id, role: "admin" }]);
       const ids = [(await seedNote(target.db, { groupId: g.id })).id, (await seedNote(target.db, { groupId: g.id })).id];
       const results = await Promise.all(Array.from({ length: 4 }, () => del(app, admin.id, g.id)));
       const codes = results.map(r => r.statusCode).sort();
@@ -184,7 +184,7 @@ describe("deleting a group (delete mode) does not deadlock on a small pool", () 
     });
     try {
       const admin = await seedUser(target.db);
-      const g = await seedGroup(target.db, "S14-b", [{ userId: admin.id, role: "admin" }]);
+      const g = await seedGroup(target.db, "nested-b", [{ userId: admin.id, role: "admin" }]);
       await seedNote(target.db, { groupId: g.id });
       await seedNote(target.db, { groupId: g.id });
       const cookies = await cookieOf(admin.id);
