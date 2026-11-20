@@ -54,12 +54,12 @@ describe("call sites of conversions (read-out and apply moved off the main threa
     expect(mentioning("editOnFork")).toEqual(["notes/editing/apply.ts", "notes/editing/doc-jobs.ts"]);
     expect(mentioning("prepareEdit")).toEqual(["notes/editing/apply-version.ts", "notes/editing/apply.ts"]);
   });
-  it("EditorSession.open (mount): the ones doc-jobs.ts calls, plus the link conversion", () => {
-    const re = /EditorSession\.open\(/;
+  it("EditorSession.open or withForkEditor (mount): the ones doc-jobs.ts calls, plus the link conversion", () => {
+    const re = /EditorSession\.open\(|withForkEditor\(/;
     const hits = files(src)
       .filter(f => re.test(readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")))
       .map(f => path.relative(src, f).replaceAll("\\", "/"))
       .sort();
-    expect(hits).toEqual(["notes/editing/doc-jobs.ts", "notes/editing/read.ts", "notes/editing/revert-core.ts", "notes/link-conversion.ts", "transfer/export-note.ts", "transfer/sync-apply.ts", "transfer/sync-plan.ts"]);
+    expect(hits).toEqual(["notes/editing/doc-jobs.ts", "notes/editing/read.ts", "notes/editing/revert-core.ts", "notes/editing/session.ts", "notes/link-conversion.ts", "transfer/export-note.ts", "transfer/sync-apply.ts", "transfer/sync-plan.ts"]);
   });
 });

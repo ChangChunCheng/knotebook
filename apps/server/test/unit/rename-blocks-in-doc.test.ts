@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
-import { EditorSession, forkFrom, renameBlocksInDoc, replaceBlocksFresh } from "../../src/notes/editing/session.js";
+import { EditorSession, ForkEdits, forkFrom, removeBlocksInDoc, renameBlocksInDoc, withForkEditor } from "../../src/notes/editing/session.js";
 import { expectLinear, timeIt, yieldToLoop } from "../perf-helpers.js";
 import { allBlockIds, topIds, totalClock } from "./fixtures/block-ids.js";
 
@@ -58,17 +58,14 @@ interface Written {
   applied: Map<string, string>;
   diff: Uint8Array;
 }
-/** fork -> session -> replaceBlocksFresh -> close -> (rename) -> diff; one session at a time (`acquire()` isn't reentrant). */
+/** fork -> insert, close, remove, (rename) -> diff; one session at a time (`acquire()` isn't reentrant). */
 async function write(fork: Y.Doc, sv: Uint8Array, ids: string[], blocks: unknown[], rename: ((ins: { id: string }[]) => Map<string, string>) | null): Promise<Written> {
-  const s = await EditorSession.open(rt, fork);
-  let ins: { id: string }[];
-  try {
-    ins = replaceBlocksFresh(s.editor, ids, blocks as never);
-  } finally {
-    s.close();
-  }
-  const applied = rename ? renameBlocksInDoc(fork, rename(ins)) : new Map<string, string>();
-  return { fork, sv, ins, applied, diff: Y.encodeStateAsUpdate(fork, sv) };
+  const w = await withForkEditor(rt, fork, sv, (_ed, edits) => {
+    const ins = edits.replace(ids, blocks as never);
+    if (rename) edits.rename(rename(ins));
+    return ins;
+  });
+  return { fork, sv, ins: w.value, applied: w.renamed, diff: w.diff };
 }
 const keepB = (ins: { id: string }[]) => new Map([[ins[0]!.id, "hB"], [ins[1]!.id, "b1"], [ins[2]!.id, "b2"]]);
 const rewriteB = [NH("B"), NP("b1 text"), NP("AI-NEW")];
@@ -97,11 +94,15 @@ describe("renameBlocksInDoc (#551)", () => {
     const { fork, sv } = forkFrom(live);
     const s = await EditorSession.open(rt, fork);
     let ins: { id: string }[];
+    let removals: readonly string[];
     try {
-      ins = replaceBlocksFresh(s.editor, ["hB", "b1", "b2"], rewriteB as never);
+      const edits = new ForkEdits(s.editor);
+      ins = edits.replace(["hB", "b1", "b2"], rewriteB as never);
+      removals = edits.removals;
     } finally {
       s.close();
     }
+    removeBlocksInDoc(fork, removals);
     const before = totalClock(fork);
     const applied = renameBlocksInDoc(fork, keepB(ins));
     const after = totalClock(fork);
@@ -117,11 +118,15 @@ describe("renameBlocksInDoc (#551)", () => {
     const { fork, sv } = forkFrom(live);
     const s = await EditorSession.open(rt, fork);
     let ins: { id: string }[];
+    let removals: readonly string[];
     try {
-      ins = replaceBlocksFresh(s.editor, ["hB", "b1", "b2"], rewriteB as never);
+      const edits = new ForkEdits(s.editor);
+      ins = edits.replace(["hB", "b1", "b2"], rewriteB as never);
+      removals = edits.removals;
     } finally {
       s.close();
     }
+    removeBlocksInDoc(fork, removals);
     expect(new Set(allBlockIds(fork)).size).toBe(allBlockIds(fork).length);
     renameBlocksInDoc(fork, keepB(ins));
     const diff = Y.encodeStateAsUpdate(fork, sv);
@@ -248,8 +253,7 @@ describe("renameBlocksInDoc cost (#551)", () => {
   }, 360_000);
 
   it("renameBlocksInDoc of 5,000/40,000 pairs is linear", async () => {
-    // The state after a whole-note rewrite is n fresh blocks with the old ones already deleted; replaceBlocksFresh over a whole 10,000-block
-    // note is itself quadratic (about 20 s), so the n fresh blocks are built directly and only the rename is timed.
+    // The state after a whole-note rewrite is n fresh blocks with the old ones already deleted; the n fresh blocks are built directly, so only the rename is timed.
     const states = new Map<number, Uint8Array>();
     for (const n of [5_000, 40_000]) states.set(n, Y.encodeStateAsUpdate(await docOf(Array.from({ length: n }, (_, i) => P(`q${i}`, `p${i}`)))));
     await expectLinear("#551 rename count", async n => {
