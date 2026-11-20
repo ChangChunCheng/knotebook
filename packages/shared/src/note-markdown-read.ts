@@ -29,14 +29,14 @@ const colorStyleType = (el: Element): keyof typeof STYLE_CSS | null => {
 };
 /** File blocks export as links and HTML can't restore them, so their background color is dropped. */
 const isFileBlock = (el: Element): boolean => el.hasAttribute("data-url") && (el.tagName === "A" || el.tagName === "DIV");
-const shown = (v: string | null): v is string => v !== null && isShownColor(v);
+const isDisplayableColor = (v: string | null): v is string => v !== null && isShownColor(v);
 /** The parser drops empty `<p>`, so a color on an empty block can't round-trip; empty table cells are kept. */
 const hasContent = (el: Element): boolean => el.matches("td,th") || (el.textContent ?? "").trim() !== "" || el.matches("img,video,audio,table") || el.querySelector("img,video,audio,table") !== null;
-const blockColorShown = (el: Element, a: (typeof BLOCK_COLOR_ATTRS)[number]): boolean => !isFileBlock(el) && shown(el.getAttribute(a)) && hasContent(el);
+const blockColorShown = (el: Element, a: (typeof BLOCK_COLOR_ATTRS)[number]): boolean => !isFileBlock(el) && isDisplayableColor(el.getAttribute(a)) && hasContent(el);
 
 const elementsOf = (root: Element): Element[] => [root, ...Array.from(root.querySelectorAll("*"))];
 const hasBlockColor = (root: Element): boolean => elementsOf(root).some(el => !colorStyleType(el) && BLOCK_COLOR_ATTRS.some(a => blockColorShown(el, a)));
-const colorSpans = (root: Element): Element[] => elementsOf(root).filter(el => colorStyleType(el) && shown(el.getAttribute("data-value")));
+const colorSpans = (root: Element): Element[] => elementsOf(root).filter(el => colorStyleType(el) && isDisplayableColor(el.getAttribute("data-value")));
 
 // Rows with data-nesting-level (indented under a paragraph) are invalid and flatten like ordinary nodes.
 const isRow = (el: Element): boolean => el.matches("div[data-kb-columns]") && !el.hasAttribute("data-nesting-level");
@@ -73,7 +73,7 @@ function normalizeSizes(box: Element): void {
     const fig = img.parentElement?.tagName === "FIGURE" ? img.parentElement : null;
     const cap = fig ? Array.from(fig.children).find(c => c.tagName === "FIGCAPTION") : undefined;
     const figure = document.createElement("figure");
-    const bg = [img, fig].map(e => e?.getAttribute("data-background-color") ?? null).find(shown);
+    const bg = [img, fig].map(e => e?.getAttribute("data-background-color") ?? null).find(isDisplayableColor);
     if (bg) figure.setAttribute("data-background-color", bg);
     const out = document.createElement("img");
     const alt = img.getAttribute("alt") ?? "";
@@ -100,7 +100,7 @@ function rewrite(box: Element): void {
     const st = colorStyleType(el);
     if (st) {
       const v = el.getAttribute("data-value");
-      if (!shown(v)) {
+      if (!isDisplayableColor(v)) {
         el.replaceWith(...Array.from(el.childNodes));
         continue;
       }
@@ -149,7 +149,7 @@ function tokenizeInlineColors(root: Element, tokens: Map<string, string>): void 
     const inner = elementsOf(top).filter(el => colorStyleType(el));
     const css: string[] = [];
     for (const st of ["textColor", "backgroundColor"] as const) {
-      const v = inner.find(el => colorStyleType(el) === st && shown(el.getAttribute("data-value")))?.getAttribute("data-value");
+      const v = inner.find(el => colorStyleType(el) === st && isDisplayableColor(el.getAttribute("data-value")))?.getAttribute("data-value");
       if (v) css.push(`${STYLE_CSS[st]}:${v}`);
     }
     const open = `${TOKEN_OPEN}${tokens.size}${TOKEN_CLOSE}`;

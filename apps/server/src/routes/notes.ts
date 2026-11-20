@@ -1,50 +1,33 @@
-import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import {
   MAX_LINK_TARGETS,
-  normalizeEmail,
   normalizeHandle,
   normalizeSlug,
-  NOTE_WIDTHS,
-  PALETTE_COLORS,
   type BacklinkDto,
-  type ErrorCode,
-  type NoteContentDto,
   type NoteDto,
-  type NoteEditDto,
-  type NoteEditResultDto,
-  type NoteSectionDto,
-  type ShareDto,
 } from "@knotebook/shared";
-import { WRITE_BODY_LIMIT } from "../http/body-limits.js";
 import { sendError, sendInTrash, sendNoteTooLarge, sendStorageQuotaExceeded } from "../http/errors.js";
-import { NOTE_WRITE_TOO_COMPLEX_MESSAGE, sendDocReadError, sendParserBusy, TOO_COMPLEX_MESSAGE } from "../http/parse-errors.js";
-import type { ParseDetail } from "../notes/editing/markdown.js";
+import { parseErrorMessage, sendParserBusy } from "../http/parse-errors.js";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/index.js";
-import { readAvatarRefs } from "../avatars/read.js";
 import type { SiteLimits } from "../site-limits/store.js";
-import { groups, notePlacements, noteShares, notes, users } from "../db/schema.js";
+import { groups, notePlacements, notes, users } from "../db/schema.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
-import { TxAbort } from "../http/tx-abort.js";
 import type { CollabHooks } from "../collab/hooks.js";
 import type { CollabServer } from "../collab/server.js";
 import type { VersionService } from "../collab/versions.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
-import { loadLastEdited, readNoteContent } from "../notes/editing/read.js";
-import { listEdits } from "../notes/editing/revert.js";
-import { presenceIdentity, presenceTargetForRead, type PresenceRegistry } from "../notes/editing/presence.js";
+import type { PresenceRegistry } from "../notes/editing/presence.js";
 import { accessFromListRow, editor, visibleNoteBranches } from "../notes/list-query.js";
 import { loadNoteFields, noteFieldsSelection, noteSizeBytesSql, placementJoinOn, toNoteDto, viewerFolderIdFor, type NoteFields } from "../notes/note-dto.js";
-import { createBodySchema, editBodySchema, SEC, updateBodySchema } from "../notes/schemas.js";
+import { createBodySchema, updateBodySchema } from "../notes/schemas.js";
 import { renameNoteTitle } from "../notes/rename-note.js";
 import { loadCreateTarget } from "../notes/create-target.js";
 import { type NoteWriteService } from "../notes/editing/write-service.js";
 import { insertNoteWithAutoSlug, type NoteCreateHooks } from "../notes/create.js";
-import { currentAgentLabel } from "../auth/agent-label.js";
 import {
   groupNotePermissions,
   OWNER_PERMISSIONS,
@@ -55,7 +38,6 @@ import {
   UUID_RE,
   type NoteAccess,
 } from "../notes/service.js";
-import { upsertShareInTx } from "../notes/tx/shares.js";
 import { trashNote } from "../trash/service.js";
 import { moveNoteToGroup } from "../notes/move-note.js";
 import { copyNote } from "../notes/copy-note.js";
@@ -75,24 +57,22 @@ import {
 import { fetchBacklinks, normalizeLinkTargets, writeNoteLinks, type WriteNoteLinksHooks } from "../notes/links.js";
 import { schemaVersionFromBody, signCollabToken } from "../collab/token.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
-import { isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError, uniqueViolationConstraint } from "../db/pg-errors.js";
+import { isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError } from "../db/pg-errors.js";
 import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_CROSS_SPACE_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../folders/messages.js";
 import { resolveFolderAccess, type FolderAccess } from "../folders/queries.js";
 import { newNoteFolderConsistent } from "../folders/space.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
 import { precheckDetail, quotaErrorDetail } from "../storage/usage.js";
+import { noteContentRoutes } from "./note-content.js";
+import { noteSharingRoutes } from "./note-sharing.js";
 
 
-const putShareBodySchema = z.object({ email: z.string().email(), role: z.enum(["viewer", "editor"]) });
 // A non-UUID id is 404 from the route, byte-identical to a nonexistent one.
 const moveBodySchema = z.object({ groupId: z.string(), folderId: z.string().optional() }).strict();
 const copyBodySchema = z.object({ groupId: z.string().optional(), folderId: z.string().optional() }).strict();
-const publicWidthBodySchema = z.object({ width: z.enum(NOTE_WIDTHS) }).strict();
 
 // `.max(MAX_LINK_TARGETS * 2)` is only a coarse performance gate before uuid validation; the real limit is in normalizeLinkTargets (after dedup and self-link removal).
 const linksBodySchema = z.object({ link_target_ids: z.array(z.string().uuid()).max(MAX_LINK_TARGETS * 2) });
-
-const contentQuerySchema = z.object({ section: SEC.optional() }).strict();
 
 /**
  * Errors other than FK 23503, KF001 and retryable ones (40001/40P01/lock timeout) → null (caller rethrows). With a folder, a vanished group necessarily means the folder left
@@ -106,20 +86,6 @@ function sendCreateInsertFailure(reply: FastifyReply, err: unknown, withFolder: 
   if (withFolder && (isNoteFolderSpaceViolation(err) || isForeignKeyViolation(err))) return sendError(reply, 404, "folder_not_found", FOLDER_NOT_FOUND_MESSAGE);
   if (isForeignKeyViolation(err)) return sendError(reply, 404, "group_not_found", "No group with that id.");
   return null;
-}
-
-const UNSUPPORTED_COLOR_MESSAGE = `That markdown uses a color this editor cannot show, so nothing was written. Use one of: ${PALETTE_COLORS.join(", ")}, or a hex color written #rgb or #rrggbb, such as #ff6600.`;
-// Same trigger conditions as MCP `writeFailureMessage`.
-const UNSUPPORTED_COLUMNS_MESSAGE =
-  "That markdown has layout or editor-internal HTML this editor cannot store, so nothing was written. Write side-by-side columns exactly as GET /api/notes/:id/content returns them: <div data-kb-columns style=\"display:flex;gap:16px\"> holding 2 to 4 <div data-kb-column style=\"flex:N\"> columns, N from 0.1 to 10 with at most two decimal places, with a blank line after each column's opening tag and another before its </div>, at the top level of the markdown, not nested inside a list, a quote or anything else. Other <div> elements cannot use display:flex or display:grid, and no element can carry data-node-type.";
-const UNSUPPORTED_SIZE_MESSAGE =
-  "An image width or table column width in that markdown is not in a form this editor can store, so nothing was written. Write sizes exactly as GET /api/notes/:id/content returns them, as whole numbers of pixels from 32 to 4000: an image's width on the <img> inside a <figure> that is outside any table, the <img> carrying only alt (optional), src and width, in that order, and a table's column widths as colwidth on its first row's cells, one comma-separated value for each column a cell spans, left empty for a column with no width.";
-export function parseErrorMessage(code: ErrorCode, fallback: string, detail?: ParseDetail): string {
-  if (code === "unsupported_block" && detail === "too_complex") return TOO_COMPLEX_MESSAGE;
-  if (code === "unsupported_color") return UNSUPPORTED_COLOR_MESSAGE;
-  if (code === "unsupported_columns") return UNSUPPORTED_COLUMNS_MESSAGE;
-  if (code === "unsupported_size") return UNSUPPORTED_SIZE_MESSAGE;
-  return fallback;
 }
 
 
@@ -152,9 +118,9 @@ export interface NotesRouteDeps {
 export function notesRoutes(deps: NotesRouteDeps) {
   // The write queue is shared with MCP (one instance from buildApp); separate instances wouldn't serialize.
   return async function register(app: FastifyInstance): Promise<void> {
-    // Routes using authenticateAny accept Bearer; every other notes route is cookie-only, and collab-token deliberately takes none. An omitted challenge equals the required
-    // scope; only /api/mcp declares a wider set.
-    app.post("/api/notes", { preHandler: app.authenticateAny("notes:write") }, async (request, reply) => {
+    // Routes using authenticateTokenOrSession (here and in routes/note-content.ts) accept Bearer; every other notes route, including all of routes/note-sharing.ts, is cookie-only,
+    // and collab-token deliberately takes none. An omitted challenge equals the required scope; only /api/mcp declares a wider set.
+    app.post("/api/notes", { preHandler: app.authenticateTokenOrSession("notes:write") }, async (request, reply) => {
       const parsed = createBodySchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
@@ -239,7 +205,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         .send(toNoteDto({ ...created, ownerHandle: target.ownerHandle, editorHandle: null, groupName: target.groupName, viewerFolderId: created.folderId }, target.access));
     });
 
-    app.get("/api/notes", { preHandler: app.authenticateAny("notes:read") }, async request => {
+    app.get("/api/notes", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => {
       const userId = request.user!.id;
 
       // UNION ALL instead of one query with `owner_id=$u OR note_shares.user_id=$u`: an OR across an outer join forces a full notes scan, while each branch uses its own index.
@@ -334,7 +300,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
     });
 
     // Renamed from GET /api/notes/:id: registering GET twice at one path throws in fastify. :ref is a uuid, a frozen legacy slug or an old <vanity>-<uuid> (see resolveNoteIdFromRef).
-    app.get("/api/notes/:ref", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
+    app.get("/api/notes/:ref", { preHandler: app.authenticateTokenOrSession("notes:read") }, async (request, reply) => {
       const { ref } = request.params as { ref: string };
       const userId = request.user!.id;
 
@@ -349,145 +315,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return authorizeRow(reply, userId, note);
     });
 
-    // Without a live-doc source "read the latest content" has no meaning, so the route isn't registered (404) rather than answering halfway (production always has both).
-    if (deps.collab && deps.editing) {
-      const collab = deps.collab;
-      const editing = deps.editing;
-      /**
-       * Read-only, zero side effects: loadNoteDoc only forks the live doc or decodes the DB snapshot, never opens a direct connection (exception: #387 remembers shown link text in memory).
-       * ⚠ Authorization is complete here: like the direct connection of the AI write path, this path doesn't go through collab's onAuthenticate.
-       * The limiter comes after the role check so "none" 404s don't consume (see CONTENT_READ_LIMIT).
-       */
-      app.get("/api/notes/:id/content", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
-        const { id } = request.params as { id: string };
-        // Redundant with resolveRole's guard; kept so "no invalid uuid reaches SQL" doesn't rest on another module's private choice.
-        if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
-        const q = contentQuerySchema.safeParse(request.query ?? {});
-        if (!q.success) return sendError(reply, 400, "invalid_body", "Invalid query parameters.");
-        const userId = request.user!.id;
-        const role = await resolveRole(deps.db, userId, id);
-        if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
-        if (!deps.limiters.contentRead.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many reads. Wait a moment and try again.");
-        // Only token readers show presence (a cookie read is the user's own browser). touch acts only on loaded documents, so with nobody online it is a no-op and the read
-        // stays side-effect free.
-        if (request.tokenId) {
-          const label = await currentAgentLabel(deps.db, request.tokenId);
-          if (label) {
-            deps.presence?.touch(id, request.tokenId, presenceIdentity(request.user!.handle, label), presenceTargetForRead(q.data.section));
-          }
-        }
-        let result: Awaited<ReturnType<typeof readNoteContent>>;
-        try {
-          result = await readNoteContent({ db: deps.db, collab, shownLinks: deps.writes.shownLinks }, editing, id, request.user!.id, q.data.section);
-        } catch (err) {
-          const sent = sendDocReadError(reply, err);
-          if (sent) return sent;
-          throw err;
-        }
-        if (result === "section_not_found") return sendError(reply, 404, "section_not_found", "No section with that id.");
-        // `satisfies` pins read.ts's result to the shared DTO so shape drift fails at compile time.
-        const body = { ...result, lastEdited: await loadLastEdited(deps.db, id) } satisfies NoteContentDto | NoteSectionDto;
-        return reply.send(body);
-      });
-
-      /** The limiter comes after the role check (404/403 don't consume) but before any mount or direct connection: a 429 must leave nothing written or recorded. bodyLimit (shared with POST /api/mcp) 413 → content_too_large; the same number as MD's .max(262_144) but in bytes, so over-long markdown hits it before zod's 400. */
-      app.post("/api/notes/:id/edits", { preHandler: app.authenticateAny("notes:write"), bodyLimit: WRITE_BODY_LIMIT }, async (request, reply) => {
-        const { id } = request.params as { id: string };
-        if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
-        const parsed = editBodySchema.safeParse(request.body ?? {});
-        if (!parsed.success) return sendError(reply, 400, "invalid_body", "Invalid request body.");
-        const userId = request.user!.id;
-        const role = await resolveRole(deps.db, userId, id);
-        if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
-        if (role === "viewer") return sendError(reply, 403, "forbidden", "You don't have edit access to this note.");
-        if (!deps.limiters.edit.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many writes. Wait a moment and try again.");
-        const out = await deps.writes.applyToNote(request.log, {
-          noteId: id,
-          userId,
-          userHandle: request.user!.handle,
-          tokenId: request.tokenId ?? null,
-          op: parsed.data.op,
-          sectionId: "section_id" in parsed.data ? parsed.data.section_id : undefined,
-          markdown: "markdown" in parsed.data ? parsed.data.markdown : undefined,
-          ifMatch: "if_match" in parsed.data ? parsed.data.if_match : undefined,
-        });
-        if (!out.ok) {
-          if (out.kind === "busy") return sendError(reply, 503, "server_busy", "The note is being written right now. Try again in a moment.");
-          if (out.kind === "parser_busy") return sendParserBusy(reply);
-          if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
-          if (out.kind === "gone") return sendError(reply, 404, "not_found", "No note with that id.");
-          if (out.code === "fingerprint_mismatch") {
-            // Runs outside the transact, after the direct connection has disconnected. Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
-            let current: Awaited<ReturnType<typeof readNoteContent>>;
-            try {
-              current = await readNoteContent({ db: deps.db, collab, shownLinks: deps.writes.shownLinks }, editing, id, request.user!.id);
-            } catch (err) {
-              const sent = sendDocReadError(reply, err);
-              if (sent) return sent;
-              throw err;
-            }
-            if (current === "section_not_found") throw new Error("readNoteContent 未帶 section 卻回哨兵值");
-            const body = { ...current, lastEdited: await loadLastEdited(deps.db, id) } satisfies NoteContentDto | NoteSectionDto;
-            return reply.code(409).send({ error: { code: "fingerprint_mismatch", message: "The content changed since you read it, so nothing was written. The response's current field has the content as it is now." }, current: body });
-          }
-          if (out.code === "too_complex") return sendError(reply, 500, "too_complex", NOTE_WRITE_TOO_COMPLEX_MESSAGE);
-          return sendError(reply, out.code === "section_not_found" ? 404 : 400, out.code, parseErrorMessage(out.code, "Couldn't apply the edit.", out.detail));
-        }
-        const result = out.result;
-        return reply.code(201).send({ editId: result.editId, fingerprint: result.fingerprint, outline: result.outline, unboundWikilinks: result.unboundWikilinks } satisfies NoteEditResultDto);
-      });
-
-      /** Read path: never opens a direct connection or reloads an unloaded document. */
-      app.get("/api/notes/:id/edits", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
-        const { id } = request.params as { id: string };
-        if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
-        const userId = request.user!.id;
-        const role = await resolveRole(deps.db, userId, id);
-        if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
-        if (!deps.limiters.contentRead.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many reads. Wait a moment and try again.");
-        // Deliberately no presence touch: viewing history shouldn't refresh the AI's presence.
-        const edits = await listEdits({ db: deps.db, collab }, id) satisfies NoteEditDto[];
-        return reply.send({ edits });
-      });
-
-      /** No body, so the input check is on editId: a non-uuid is 404 before SQL (pg's cast error would be a 500). Uses the same queue as the /edits write. */
-      app.post("/api/notes/:id/edits/:editId/revert", { preHandler: app.authenticateAny("notes:write") }, async (request, reply) => {
-        const { id, editId } = request.params as { id: string; editId: string };
-        if (!UUID_RE.test(id)) return sendError(reply, 404, "not_found", "No note with that id.");
-        if (!UUID_RE.test(editId)) return sendError(reply, 404, "not_found", "No edit with that id.");
-        const userId = request.user!.id;
-        const role = await resolveRole(deps.db, userId, id);
-        if (role === "none") return sendError(reply, 404, "not_found", "No note with that id.");
-        if (role === "viewer") return sendError(reply, 403, "forbidden", "You don't have edit access to this note.");
-        if (!deps.limiters.edit.consume(userId)) return sendError(reply, 429, "too_many_requests", "Too many writes. Wait a moment and try again.");
-        const out = await deps.writes.revert(request.log, { noteId: id, editId, userId, userHandle: request.user!.handle, tokenId: request.tokenId ?? null });
-        if (!out.ok) {
-          if (out.kind === "busy") return sendError(reply, 503, "server_busy", "The note is being written right now. Try again in a moment.");
-          if (out.kind === "parser_busy") return sendParserBusy(reply);
-          if (out.kind === "too_large") return sendNoteTooLarge(reply, out.limitBytes);
-          if (out.kind === "gone") return sendError(reply, 404, "not_found", "No note with that id.");
-          if (out.code === "stale") {
-            // Runs outside the transact, after the direct connection has disconnected. Without a section "section_not_found" can't happen, but the sentinel is in the return union; unnarrowed, spreading a string would send {0:"s",1:"e",…}.
-            let current: Awaited<ReturnType<typeof readNoteContent>>;
-            try {
-              current = await readNoteContent({ db: deps.db, collab, shownLinks: deps.writes.shownLinks }, editing, id, request.user!.id);
-            } catch (err) {
-              const sent = sendDocReadError(reply, err);
-              if (sent) return sent;
-              throw err;
-            }
-            if (current === "section_not_found") throw new Error("readNoteContent 未帶 section 卻回哨兵值");
-            const body = { ...current, lastEdited: await loadLastEdited(deps.db, id) } satisfies NoteContentDto | NoteSectionDto;
-            return reply.code(409).send({ error: { code: "stale", message: "The note changed after this edit, so it can't be reverted. The response's current field has the content as it is now." }, current: body });
-          }
-          if (out.code === "already_reverted") return sendError(reply, 409, "already_reverted", "This edit has already been reverted.");
-          if (out.code === "too_complex") return sendError(reply, 500, "too_complex", NOTE_WRITE_TOO_COMPLEX_MESSAGE);
-          return sendError(reply, 404, "not_found", "No edit with that id.");
-        }
-        const result = out.result;
-        return reply.code(201).send({ editId: result.editId, fingerprint: result.fingerprint, outline: result.outline });
-      });
-    }
+    await noteContentRoutes(deps)(app);
 
     // ⚠ A closure over deps.db: must not be called inside a transaction (at ~10 concurrent requests the pool deadlocks permanently). A group note has no owner → null.
     async function ownerHandleOf(ownerId: string | null): Promise<string | null> {
@@ -815,255 +643,6 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return { token, role };
     });
 
-    // permissions.manageShares is owner-of-personal-note only; group notes are always 403 (#175).
-    app.get("/api/notes/:id/shares", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-
-      const access = await resolveNoteAccess(deps.db, userId, id);
-      if (access.role === "none") {
-        return sendError(reply, 404, "not_found", "No note with that id.");
-      }
-      if (!access.permissions.manageShares) {
-        return sendError(reply, 403, "forbidden", "Only the note's owner can see who it's shared with.");
-      }
-
-      const rows = await deps.db
-        .select({ userId: noteShares.userId, email: users.email, displayName: users.displayName, role: noteShares.role })
-        .from(noteShares)
-        .innerJoin(users, eq(users.id, noteShares.userId))
-        .where(eq(noteShares.noteId, id))
-        .orderBy(users.email);
-
-      const avatars = await readAvatarRefs(deps.db, rows.map(r => r.userId));
-      return rows.map((row): ShareDto => ({
-        userId: row.userId, email: row.email, displayName: row.displayName, role: row.role as ShareDto["role"], avatar: avatars.get(row.userId) ?? null,
-      }));
-    });
-
-    app.put("/api/notes/:id/shares", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-
-      const parsed = putShareBodySchema.safeParse(request.body);
-      if (!parsed.success) {
-        return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
-      }
-
-      const access = await resolveNoteAccess(deps.db, userId, id);
-      if (access.role === "none") {
-        return sendError(reply, 404, "not_found", "No note with that id.");
-      }
-      if (!access.permissions.manageShares) {
-        return sendError(reply, 403, "forbidden", "Only the note's owner can manage sharing.");
-      }
-
-      const [target] = await deps.db
-        .select()
-        .from(users)
-        .where(sql`lower(${users.email}) = ${normalizeEmail(parsed.data.email)}`)
-        .orderBy(users.createdAt, users.id)
-        .limit(1);
-      if (!target) {
-        return sendError(reply, 404, "user_not_found", "No user with that email.");
-      }
-      if (target.id === userId) {
-        return sendError(reply, 400, "cannot_share_with_self", "You can't share a note with yourself.");
-      }
-
-      await deps.groupTestHook?.("share-authorized", { noteId: id });
-      try {
-        await deps.db.transaction(tx => upsertShareInTx(tx, { noteId: id, targetUserId: target.id, role: parsed.data.role }, deps.groupTestHook));
-      } catch (err) {
-        if (err instanceof TxAbort) return sendError(reply, err.status, err.errCode, err.message);
-        // An FK violation means the note or target user vanished after authorization: 404 without saying which. The catch is outside the transaction (an error inside leaves it aborted).
-        if (isForeignKeyViolation(err)) {
-          return sendError(reply, 404, "not_found", "No note with that id.");
-        }
-        throw err;
-      }
-
-      // Always called, without looking up the old role: a redundant call is a harmless re-handshake, but missing a downgrade would let a revoked user keep editing.
-      deps.collabHooks.onShareChanged(id, target.id);
-
-      const avatars = await readAvatarRefs(deps.db, [target.id]);
-      const dto: ShareDto = { userId: target.id, email: target.email, displayName: target.displayName, role: parsed.data.role, avatar: avatars.get(target.id) ?? null };
-      return dto;
-    });
-
-    app.delete("/api/notes/:id/shares/:userId", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id, userId: targetUserId } = request.params as { id: string; userId: string };
-      const userId = request.user!.id;
-
-      const access = await resolveNoteAccess(deps.db, userId, id);
-      if (access.role === "none") {
-        return sendError(reply, 404, "not_found", "No note with that id.");
-      }
-      if (!access.permissions.manageShares) {
-        return sendError(reply, 403, "forbidden", "Only the note's owner can manage sharing.");
-      }
-
-      // A malformed :userId would make pg throw (500); same 404 as no share row.
-      if (!UUID_RE.test(targetUserId)) {
-        return sendError(reply, 404, "share_not_found", "This note isn't shared with that user.");
-      }
-
-      const [deleted] = await deps.db
-        .delete(noteShares)
-        .where(and(eq(noteShares.noteId, id), eq(noteShares.userId, targetUserId)))
-        .returning();
-      if (!deleted) {
-        return sendError(reply, 404, "share_not_found", "This note isn't shared with that user.");
-      }
-
-      deps.collabHooks.onShareChanged(id, targetUserId);
-
-      return reply.code(204).send();
-    });
-
-    /**
-     * Three limiters side by side, on purpose: token PUT/DELETE = publicLink, consumed before authorization and before resolveRole's query like collab-token (key=userId, so strangers
-     * guessing noteIds only drain their own; 403/404 count too); alias PUT/DELETE = slugPatch (shared with PATCH's slug branch, 10 per 10 min), authorize first then charge, malformed
-     * bodies count (no zod pre-parse); width PUT = publicWidth, parse → authorize → charge (not publicLink: rapid width clicks would push an unpublish into 429).
-     * Width needs no public link and isn't reset by unpublish, move or transfer.
-     * None of these touch updated_at (sharing isn't a content change). GET/PUT token and alias responses carry the full {token, slug, width} because the web writes them straight into its cache; width PUT returns only {width}.
-     * Token PUT regenerates every time (not idempotent, and PUT may be auto-retried per RFC 9110; client convention: GET first, PUT only if null): if an auto-retrying middleware
-     * appears, split it into create-if-absent + rotate.
-     */
-    const resolvePublicLinkAccess = async (reply: FastifyReply, userId: string, noteId: string): Promise<NoteAccess | null> => {
-      const access = await resolveNoteAccess(deps.db, userId, noteId);
-      if (access.role === "none") {
-        sendError(reply, 404, "not_found", "No note with that id.");
-        return null;
-      }
-      if (!access.permissions.managePublicLink) {
-        sendError(reply, 403, "forbidden", "You don't have permission to manage this note's public link.");
-        return null;
-      }
-      return access;
-    };
-
-    app.get("/api/notes/:id/public-link", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      if (!(await resolvePublicLinkAccess(reply, request.user!.id, id))) return reply;
-      const [row] = await deps.db
-        .select({ publicToken: notes.publicToken, publicSlug: notes.publicSlug, publicWidth: notes.publicWidth })
-        .from(notes)
-        .where(eq(notes.id, id))
-        .limit(1);
-      if (!row) return sendError(reply, 404, "not_found", "No note with that id.");
-      return { token: row.publicToken, slug: row.publicSlug, width: row.publicWidth };
-    });
-
-    app.put("/api/notes/:id/public-link", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-      if (!deps.limiters.publicLink.consume(userId)) {
-        return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
-      }
-      const access = await resolvePublicLinkAccess(reply, userId, id);
-      if (!access) return reply;
-      const token = randomBytes(32).toString("base64url");
-      // An UPDATE miss means the note was deleted after the decision → 404 (not a 200 with a never-persisted token). The predicate carries the authorization-time ownership and
-      // excludes trashed notes (else a public link could be opened inside the trash). Regeneration keeps alias and width.
-      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
-      const updated = await deps.db
-        .update(notes)
-        .set({ publicToken: token })
-        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`, isNull(notes.deletedAt)))
-        .returning({ id: notes.id, publicSlug: notes.publicSlug, publicWidth: notes.publicWidth });
-      if (updated.length === 0) return ownershipChanged(reply, id);
-      return { token, slug: updated[0].publicSlug, width: updated[0].publicWidth };
-    });
-
-    app.delete("/api/notes/:id/public-link", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-      if (!deps.limiters.publicLink.consume(userId)) {
-        return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
-      }
-      if (!(await resolvePublicLinkAccess(reply, userId, id))) return reply;
-      // Only a miss of the note itself is 404; a null token is an idempotent 204. The same UPDATE clears public_slug (a leftover alias would hold the unique index and revive on regeneration). A trashed note is a miss (404) and keeps token and alias, so the link returns on restore (#181).
-      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
-      const cleared = await deps.db
-        .update(notes)
-        .set({ publicToken: null, publicSlug: null })
-        .where(and(eq(notes.id, id), isNull(notes.deletedAt)))
-        .returning({ id: notes.id });
-      if (cleared.length === 0) return sendError(reply, 404, "not_found", "No note with that id.");
-      return reply.code(204).send();
-    });
-
-    app.put("/api/notes/:id/public-width", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-      const parsed = publicWidthBodySchema.safeParse(request.body ?? {});
-      if (!parsed.success) return sendError(reply, 400, "invalid_body", "Invalid request body: send only width, set to standard, wide or full.");
-      const access = await resolvePublicLinkAccess(reply, userId, id);
-      if (!access) return reply;
-      if (!deps.limiters.publicWidth.consume(userId)) {
-        return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
-      }
-      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
-      const updated = await deps.db
-        .update(notes)
-        .set({ publicWidth: parsed.data.width })
-        .where(and(eq(notes.id, id), sql`${notes.groupId} is not distinct from ${access.groupId}`, isNull(notes.deletedAt)))
-        .returning({ publicWidth: notes.publicWidth });
-      if (updated.length === 0) return ownershipChanged(reply, id);
-      return { width: updated[0].publicWidth };
-    });
-
-    /** "Note is public" is not pre-read: the conditional UPDATE's `public_token IS NOT NULL` predicate closes the set-alias/unpublish TOCTOU. Rowcount 0 → 400 (not public, group note, ownership changed, or deleted
-     * after authorization; the last deliberately isn't 404 like elsewhere: the window is tiny, 400 leaks nothing more, and telling them apart would need another read). */
-    app.put("/api/notes/:id/public-link/slug", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-      if (!(await resolvePublicLinkAccess(reply, userId, id))) return reply;
-      if (!deps.limiters.slugPatch.consume(userId)) {
-        return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
-      }
-      const body = request.body as { slug?: unknown } | null;
-      if (!body || typeof body.slug !== "string") {
-        return sendError(reply, 400, "invalid_body", "slug must be a string.");
-      }
-      const result = prepareSlugForPatch(body.slug);
-      if (!result.ok) {
-        return sendError(reply, 400, "invalid_body", result.message);
-      }
-      // `owner_id = me` covers group notes without any race (a group member with managePublicLink on a published group note would otherwise hit notes_group_no_public_slug_chk
-      // → 500) and both directions of ownership change after authorization; checking only group_id IS NULL would let a former member's alias land in a new owner's /p/ namespace.
-      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
-      let updated;
-      try {
-        updated = await deps.db
-          .update(notes)
-          .set({ publicSlug: result.value })
-          .where(and(eq(notes.id, id), sql`${notes.publicToken} is not null`, eq(notes.ownerId, userId), isNull(notes.deletedAt)))
-          .returning({ publicToken: notes.publicToken, publicSlug: notes.publicSlug, publicWidth: notes.publicWidth });
-      } catch (err) {
-        if (uniqueViolationConstraint(err) === "notes_owner_public_slug_idx") {
-          return sendError(reply, 409, "public_slug_taken", "Another of your notes already uses that public URL.");
-        }
-        throw err;
-      }
-      if (updated.length === 0) {
-        return sendError(reply, 400, "invalid_body", "Can't set a public URL: the note has no public link, is a group note, or changed owner after you sent this.");
-      }
-      return { token: updated[0].publicToken, slug: updated[0].publicSlug, width: updated[0].publicWidth };
-    });
-
-    app.delete("/api/notes/:id/public-link/slug", { preHandler: app.authenticate }, async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.id;
-      if (!(await resolvePublicLinkAccess(reply, userId, id))) return reply;
-      if (!deps.limiters.slugPatch.consume(userId)) {
-        return sendError(reply, 429, "too_many_requests", "Too many requests. Wait a moment and try again.");
-      }
-      // DELETE is vacuous on rowcount 0 (204), unlike DELETE /public-link (404): each keeps its own convention (pinned by the public-link-authorized hook in trash-rereads.test.ts). Trashed notes keep the alias.
-      await deps.groupTestHook?.("public-link-authorized", { noteId: id });
-      await deps.db.update(notes).set({ publicSlug: null }).where(and(eq(notes.id, id), isNull(notes.deletedAt)));
-      return reply.code(204).send();
-    });
+    await noteSharingRoutes({ ...deps, ownershipChanged })(app);
   };
 }

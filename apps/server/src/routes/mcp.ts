@@ -80,7 +80,7 @@ export function mcpRoutes(deps: McpRouteDeps) {
     const endpointUrl = `${publicOrigin}/api/mcp`;
     const publicHost = deps.config.publicUrl.host;
 
-    const authenticate = app.authenticateAny("notes:read", "notes:read notes:write notes:move notes:delete");
+    const authenticate = app.authenticateTokenOrSession("notes:read", "notes:read notes:write notes:move notes:delete");
 
     // After authentication so unauthenticated requests get 401 first; attached to all three routes, else GET with a bad Origin would be 405 instead of 403.
     const originGuard = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {

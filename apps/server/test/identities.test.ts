@@ -51,7 +51,7 @@ describe("GET /api/auth/identities (#187)", () => {
   it("Bearer (PAT) -> 401; not logged in -> 401", async () => {
     const { app, db } = await buildTestApp();
     expect((await app.inject({ method: "GET", url: "/api/auth/identities" })).statusCode).toBe(401);
-    // Valid PAT (scope enough for authenticateAny) with no cookie: the 401 can only come from the endpoint accepting sessions only.
+    // Valid PAT (scope enough for authenticateTokenOrSession) with no cookie: the 401 can only come from the endpoint accepting sessions only.
     const { token } = await seedTokenForUser(db, (await seedUser(db)).id);
     expect((await app.inject({ method: "GET", url: "/api/auth/identities", headers: bearer(token) })).statusCode).toBe(401);
   });

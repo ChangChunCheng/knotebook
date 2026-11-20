@@ -159,7 +159,7 @@ describe("#108 /api/mcp transport-layer shape", () => {
     expect(body.error.message).toContain("Not Acceptable");
   });
 
-  // Origin guard: all four calls carry a valid token, because the guard runs after `authenticateAny`; without a token you would always get 401 first and wrongly conclude the guard isn't wired.
+  // Origin guard: all four calls carry a valid token, because the guard runs after `authenticateTokenOrSession`; without a token you would always get 401 first and wrongly conclude the guard isn't wired.
   it("Origin = Host = evil.example (neither is the PUBLIC_URL host) -> 403", async () => {
     const { app, token } = await appWithToken();
     // Kills implementations that only compare Origin against request.host: they would let this call through (the two are equal).

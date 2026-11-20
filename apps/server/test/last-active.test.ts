@@ -38,7 +38,7 @@ async function waitUntil(label: string, timeoutMs: number, check: () => Promise<
 }
 
 describe("users.last_active_at (#267)", () => {
-  it("session-cookie requests (the session paths of authenticate and authenticateAny) write; requests without a session don't", async () => {
+  it("session-cookie requests (the session paths of authenticate and authenticateTokenOrSession) write; requests without a session don't", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const v = await seedUser(db);

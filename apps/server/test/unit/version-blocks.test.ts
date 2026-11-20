@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { blocksFromSnapshot } from "../../src/notes/editing/apply-version.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
@@ -27,7 +27,7 @@ describe("blocksFromSnapshot (no mount, no lease, one synchronous section)", () 
     const blocks = blocksFromSnapshot(BASE, Y.encodeStateAsUpdate(src));
     expect(blocks.map(b => b.type)).toEqual(["heading", "paragraph"]);
     expect(JSON.stringify(blocks[1])).toContain(OTHER);
-    expect(blocks.map(b => b.id)).toEqual(topLevelContainers(src.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id")));
+    expect(blocks.map(b => b.id)).toEqual(topLevelBlocks(src.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id")));
     expect(rt.mounts).toBe(mountsBefore);
     expect(rt.inFlight).toBe(0);
   });

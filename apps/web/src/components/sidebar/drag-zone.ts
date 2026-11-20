@@ -20,8 +20,8 @@ export interface DragSource {
 }
 
 export interface DropLookup {
-  /** `folderDepth` is the depth of the containing folder with root level = 0 (unlike `folders[].depth`, where root-level folders are 1); `placeable` = `canDragNote`. */
-  notes: ReadonlyMap<string, { space: FolderSpaceKey; folderId: string | null; folderDepth: number; placeable: boolean; title: string }>;
+  /** `parentDepth` is the depth of the containing folder with root level = 0 (unlike `folders[].depth`, where root-level folders are 1); `placeable` = `canDragNote`. */
+  notes: ReadonlyMap<string, { space: FolderSpaceKey; folderId: string | null; parentDepth: number; placeable: boolean; title: string }>;
   folders: ReadonlyMap<string, { space: FolderSpaceKey; depth: number }>;
 }
 
@@ -44,7 +44,7 @@ export function buildDropLookup(nodes: readonly SidebarNode[], tab: DragTab, gro
         folders.set(node.id, { space, depth: node.depth });
         walk(node.children, space, node.id, node.depth);
       } else if (node.kind === "note") {
-        notes.set(node.id, { space, folderId: parentFolderId, folderDepth: parentDepth, placeable: canDragNote(node.note, space), title: node.note.title });
+        notes.set(node.id, { space, folderId: parentFolderId, parentDepth, placeable: canDragNote(node.note, space), title: node.note.title });
       }
     }
   };
@@ -144,7 +144,7 @@ export function evaluateDragOver(input: {
     const note = lookup.notes.get(target.id);
     if (note === undefined) return NONE;
     if (note.space !== source.space) return { zone: null, row, hold: null };
-    const canStack = target.id !== source.noteId && note.placeable && note.folderDepth < FOLDER_DEPTH_MAX;
+    const canStack = target.id !== source.noteId && note.placeable && note.parentDepth < FOLDER_DEPTH_MAX;
     return {
       zone: zoneIn(source, tab, note.folderId),
       row,

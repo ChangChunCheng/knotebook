@@ -1,6 +1,6 @@
 /**
  * Since #108 `GET /api/mcp` returns `405` (+ `Allow: POST`) after authentication passes, not 501: this file uses it as the "auth passed" sentinel
- * (405 still goes through `authenticateAny` and the `tokenRead` charge).
+ * (405 still goes through `authenticateTokenOrSession` and the `tokenRead` charge).
  *
  * Guards three silent breakages: the `WWW-Authenticate` shape of 401/403 (MCP clients discover the authorization server through it; a missing field and the OAuth flow can't start);
  * which failures count toward BEARER_MISS and which deliberately don't; token plaintext and the `Authorization` header never reaching the log.
@@ -251,7 +251,7 @@ describe("/api/mcp method shape and Bearer challenge", () => {
     // On the token path request.user is what the three notes routes use for ownership decisions - setting it to the DB api_tokens row
     // (instead of the gate's user) wouldn't turn the tests red, so it is pinned explicitly here.
     const { app, db } = await buildTestApp();
-    app.get("/__test/whoami-auth", { preHandler: app.authenticateAny("notes:read") }, async request => ({
+    app.get("/__test/whoami-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => ({
       id: request.user?.id,
       email: request.user?.email,
       authKind: request.authKind,
@@ -318,9 +318,9 @@ describe("/api/mcp method shape and Bearer challenge", () => {
       },
     });
     const { app, db } = await buildTestApp({}, { logger: { level: "info", stream: sink } });
-    // `withTestRoutes`'s /__test/throw is the existing "throw an exception" route; authKind only exists once authenticateAny is attached,
+    // `withTestRoutes`'s /__test/throw is the existing "throw an exception" route; authKind only exists once authenticateTokenOrSession is attached,
     // so a same-shaped route is mounted separately here.
-    app.get("/__test/throw-auth", { preHandler: app.authenticateAny("notes:read") }, async () => {
+    app.get("/__test/throw-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async () => {
       throw new Error("boom");
     });
     await app.ready();

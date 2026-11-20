@@ -13,7 +13,7 @@ import { publicUrlIssuer, type AppConfig } from "./config.js";
 import type { Db } from "./db/index.js";
 import { resolveSessionUser as resolveSessionUserFromCookies, type GateUser, type ResolvedSession, type UserGate } from "./auth/session.js";
 import { LastActiveTracker } from "./auth/last-active.js";
-import { createAuthenticateAny } from "./auth/bearer.js";
+import { createAuthenticateTokenOrSession } from "./auth/bearer.js";
 import type { LoginThrottle } from "./auth/rate-limit.js";
 import type { CollabHooks } from "./collab/hooks.js";
 import type { CollabServer } from "./collab/server.js";
@@ -93,7 +93,7 @@ declare module "fastify" {
     /** No-op when there is no collab server. */
     linkConversion: LinkConversion;
     /** Accepts a Bearer token or a cookie session; see `auth/bearer.ts`. */
-    authenticateAny(
+    authenticateTokenOrSession(
       required: RequiredScope,
       challenge?: string
     ): (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -150,8 +150,8 @@ export interface AppDeps {
   searchIndexHooks?: SearchIndexHooks;
   /** Milliseconds; test-only (no env var). */
   storageLockTimeoutMs?: number;
-  /** Also starts the auto-version scan. Tests leave it off and call `sweep`/`scanDue` directly. */
-  startVersionSweep?: boolean;
+  /** Tests leave it off and call `sweep`/`scanDue` directly. */
+  startVersionJobs?: boolean;
   startTrashPurge?: boolean;
   trashPurgeFirstDelayMs?: number;
   trashPurgeIntervalMs?: number;
@@ -400,7 +400,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   const storageLockTimeoutMs = deps.storageLockTimeoutMs ?? DEFAULT_STORAGE_LOCK_TIMEOUT_MS;
   // Without collab, an unbound service: REST reads note_states as the live state.
   const versions = deps.collab?.versions ?? createVersionService({ db: deps.db, log: app.log });
-  if (deps.startVersionSweep) {
+  if (deps.startVersionJobs) {
     const runSweep = (): void => {
       void versions.sweep(new Date()).catch(err => app.log.warn({ err }, "版本清除背景掃描失敗"));
     };
@@ -439,10 +439,10 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
-  // Before any route registration: route plugins call app.authenticateAny.
+  // Before any route registration: route plugins call app.authenticateTokenOrSession.
   app.decorate(
-    "authenticateAny",
-    createAuthenticateAny({
+    "authenticateTokenOrSession",
+    createAuthenticateTokenOrSession({
       db: deps.db,
       gate: deps.gate,
       // Origin, not href: href's trailing slash yields `…3000//.well-known/…`.
@@ -609,7 +609,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       config: deps.config,
       siteLimits: deps.siteLimits,
       gate: deps.gate,
-      // Same instances as authenticateAny's, so misses count against one budget.
+      // Same instances as authenticateTokenOrSession's, so misses count against one budget.
       limiters: { upload: limiters.upload, bearerMiss: limiters.bearerMiss, tokenRead: limiters.tokenRead },
       uploadsDir: deps.uploadsDir,
       groupTestHook: deps.groupTestHook,

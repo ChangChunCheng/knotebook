@@ -171,7 +171,7 @@ describe("POST /api/notes/:id/uploads x transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("transfer tokens hitting authenticateAny routes are always 401 and do not query the DB; cookie-only routes ignore the header (no cookie -> 401)", async () => {
+  it("transfer tokens hitting authenticateTokenOrSession routes are always 401 and do not query the DB; cookie-only routes ignore the header (no cookie -> 401)", async () => {
     const ctx = await buildCollabTestApp();
     const o = await ownerWithPat(ctx.db);
     const t = await issueDirect(ctx.db, o.patId, o.noteId, "download");
@@ -702,7 +702,7 @@ describe("GET /api/uploads/:id x transfer token", () => {
     expect((await download(app, randomUUID(), { token: t.token })).statusCode).toBe(404);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(200);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(429);
-    // Same ledger: the same user's PAT hitting authenticateAny routes is blocked too (same key).
+    // Same ledger: the same user's PAT hitting authenticateTokenOrSession routes is blocked too (same key).
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${o.pat}` } })).statusCode).toBe(429);
   });
 

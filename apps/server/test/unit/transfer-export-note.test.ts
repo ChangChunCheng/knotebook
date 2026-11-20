@@ -2,7 +2,7 @@ import { stat } from "node:fs";
 import { createServer, connect, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { fingerprintForIds, topLevelFingerprints } from "../../src/notes/editing/fingerprint.js";
 import { readNoteContentFromDoc } from "../../src/notes/editing/read.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -55,7 +55,7 @@ describe("exportNoteForTransfer: 129 shapes", () => {
       if (typeof mcp === "string" || !("markdown" in mcp)) throw new Error("unexpected read shape");
       expect(ex.body).toBe(mcp.markdown);
       expect(ex.fps).toEqual(ex.ids.map(id => fingerprintForIds(frag(doc), [id])));
-      expect(ex.ids).toEqual(topLevelContainers(frag(doc)).map(c => c.getAttribute("id")));
+      expect(ex.ids).toEqual(topLevelBlocks(frag(doc)).map(c => c.getAttribute("id")));
     },
   );
 
@@ -93,13 +93,13 @@ describe("exportNoteForTransfer: other", () => {
 
   it("topLevelFingerprints: a top-level block missing its id -> throws (same as outlineOf)", async () => {
     const doc = await docWith(paras(2));
-    topLevelContainers(frag(doc))[1]!.removeAttribute("id");
+    topLevelBlocks(frag(doc))[1]!.removeAttribute("id");
     expect(() => topLevelFingerprints(frag(doc))).toThrow(/缺 id/);
   });
 
   it("top-level ids differ before and after mount -> degrade: body is still produced (= MCP read-out), segments null, lineKinds all 0, lease returned (a document with duplicate ids: BlockNote rewrites the duplicate ids on mount)", async () => {
     const doc = await docWith(paras(3));
-    const cs = topLevelContainers(frag(doc));
+    const cs = topLevelBlocks(frag(doc));
     cs[1]!.setAttribute("id", cs[0]!.getAttribute("id")!);
     expect(topLevelFingerprints(frag(doc)).ids[0]).toBe(topLevelFingerprints(frag(doc)).ids[1]);
     const m0 = rt.mounts;

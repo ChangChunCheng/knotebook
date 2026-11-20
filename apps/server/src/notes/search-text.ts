@@ -3,7 +3,7 @@
  */
 import { createHash } from "node:crypto";
 import * as Y from "yjs";
-import { SECTION_ID_RE, sectionize, topLevelContainers } from "@knotebook/shared";
+import { SECTION_ID_RE, sectionize, topLevelBlocks } from "@knotebook/shared";
 import { truncateCodeUnits } from "../mcp/limits.js";
 
 export const SEARCH_EXTRACTOR_VERSION = 2;
@@ -84,7 +84,7 @@ function finish(rows: SearchSectionRow[], indexedUnits: number, capped: boolean)
 }
 
 export function extractSearchSections(fragment: Y.XmlFragment): SearchExtract {
-  const containers = topLevelContainers(fragment);
+  const containers = topLevelBlocks(fragment);
   for (const c of containers) {
     const id: unknown = c.getAttribute("id");
     if (typeof id !== "string" || id === "") return finish([], 0, true);

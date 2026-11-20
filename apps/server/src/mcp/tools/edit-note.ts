@@ -35,7 +35,7 @@ export const EDIT_NOTE_DESCRIPTION =
   "`append` needs `if_match`, the " +
   "fingerprint of what you are replacing — a section's from read_note_section (once you have " +
   "read to its end) or from a previous edit_note reply; the whole note's from a previous " +
-  // Revert is allowed for editors, not only the owner (`routes/notes.ts`). The subject is
+  // Revert is allowed for editors, not only the owner (`routes/note-content.ts`). The subject is
   // "a change to the content" so rename isn't included. Rename needs `if_match` too, so
   // "last title written wins" no longer applies to MCP (web title edits are still last-write-wins;
   // that isn't this tool's behavior). Don't make "can undo it" unconditional: the full conditions

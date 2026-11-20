@@ -1,0 +1,17 @@
+# Keyboard shortcuts and the feature tour
+
+Keyboard shortcuts, the Help window and the guided feature tour. Part of [Known limitations](../known-limitations.md).
+
+## Keyboard shortcuts
+
+- **On a keyboard where `/` needs Shift, Ctrl+/ may not open the Help window while the cursor is in a note.** A German layout, for example, types `/` with Shift+7, so Ctrl+/ reaches the editor as Ctrl+Shift+7, which the editor takes as "turn this paragraph into a numbered list": the paragraph with the cursor becomes a numbered list item and the window doesn't open. Outside the text of a note, and from **Help** in the user menu, it works as usual. This was seen in Chromium with the key sent the way such a layout sends it; it hasn't been tried on a real German keyboard.
+- **Whether ⌘/ and ⌘, reach Knotebook in Safari, Chrome and Firefox on a Mac hasn't been checked.** The shortcuts were tried only in Chromium on Linux (with Ctrl). If a browser keeps one of them for itself, it won't open the Help window or the settings there; the user menu items still work.
+
+## Feature tour
+
+- **At the stops that show a live menu (the `[[` and `/` stops), a few key combinations still move the cursor, and that closes the menu.** The tour holds back typing and most shortcuts at these stops so the sample note can't change, but moving by word or to the start or end of the note (for example Ctrl+← and Ctrl+→, Ctrl+Home and Ctrl+End, or Option+← and Option+→, ⌘↑ and ⌘↓ on a Mac) is still done by the browser. When one of them moves the cursor out of the menu's place, the menu closes and the stop points at the finished example in the sample note instead. Nothing in the note changes; press → to carry on.
+- **Each tour that gets to its first stop and doesn't end with Delete leaves a sample note in My notes.** Starting the tour always creates a new sample note instead of reusing an old one, so keeping it, closing the tour early or leaving the sample note adds one more note to My notes each time. Starting the tour in two browser tabs at the same time creates one in each.
+- **If the tour has to stop at the very moment the sample note's page is opening, you may see "This note has been deleted." and land on the home page instead of the page you started from.** The empty sample note is moved to the trash just as the page is about to show it. It takes the 15-second limit for starting the tour running out at exactly that moment.
+- **A blank sample note can be left in My notes.** It happens when the tab is closed or the page reloaded while the tour is getting ready (after the note is created and before its content is written), when the tour runs into an error before its content is written, when the tab is closed just after the content is written and before it has reached the server, and when moving an unfinished sample note to the trash fails, which is only written to the browser console, with no message. Move the blank note to the trash yourself.
+- **On a phone, turning the device back and forth across the 640 px width while the tour is moving between the list and the sample note can end the tour.** The tour then behaves as if you had left it: the sample note stays in My notes. Start the tour again from Help.
+- **On a phone, if the sample note takes more than 5 seconds to show when the tour moves to it (on a slow connection, for example), the tour ends.** The sample note stays in My notes, and you can start the tour again from Help.

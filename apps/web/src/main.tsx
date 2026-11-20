@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
-import { clearStaleOneTimeTokens } from "./auth/resetTokenStorage";
+import { clearStaleOneTimeTokens } from "./auth/oneTimeTokenStorage";
 import { installCustomColors } from "./lib/custom-colors";
 import { installPublicPageInstallPromptGuard } from "./lib/install-prompt";
 import { installUpdateCheck, showUpdateAvailableToast } from "./lib/update-check";

@@ -278,8 +278,8 @@ describe("stackFolderName", () => {
 
 describe("buildDropLookup", () => {
   it("position is taken from the tree (after fallback): a missing folder -> root, depth 0; a note in GF -> depth 1, space group:G", () => {
-    expect(LOOKUP.myNotes.notes.get("O")).toEqual({ space: "personal", folderId: null, folderDepth: 0, placeable: true, title: "O" });
-    expect(LOOKUP.workspace.notes.get("g2")).toEqual({ space: "group:G", folderId: "GF", folderDepth: 1, placeable: true, title: "g2" });
+    expect(LOOKUP.myNotes.notes.get("O")).toEqual({ space: "personal", folderId: null, parentDepth: 0, placeable: true, title: "O" });
+    expect(LOOKUP.workspace.notes.get("g2")).toEqual({ space: "group:G", folderId: "GF", parentDepth: 1, placeable: true, title: "g2" });
     expect(LOOKUP.workspace.folders.get("GF")).toEqual({ space: "group:G", depth: 1 });
     expect(LOOKUP.myNotes.folders.get("Z")).toEqual({ space: "personal", depth: 2 });
   });

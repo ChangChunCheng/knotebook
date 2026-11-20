@@ -25,7 +25,7 @@ async function editorDoc(blocks: Array<Record<string, unknown>>): Promise<Y.Doc>
   }
   return doc;
 }
-// golden values captured by running the code before topLevelContainers was changed
+// golden values captured by running the code before topLevelBlocks was changed
 const GOLDEN_HASH = "01dbcb87f9d4075de27636b598be9980503470e31176ba28a45069a7cad984d6";
 const colRow = (id: string, cols: Array<Array<Record<string, unknown>>>) => ({
   id,

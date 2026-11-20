@@ -11,7 +11,7 @@ import { exportedLinkTextOf, linkTextHash } from "../../../src/transfer/link-tex
 import { bodyLines, normalizeBody } from "../../../src/transfer/normalize.js";
 import { findRegions, makeBoundaryCheck, type CheckBoundary, type RegionsResult } from "../../../src/transfer/regions.js";
 import type { TransferSegment } from "../../../src/db/schema.js";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { topLevelSnapshot } from "../../../src/notes/editing/fingerprint.js";
 import { applySync } from "../../../src/transfer/sync-apply.js";
 import { planSync } from "../../../src/transfer/sync-plan.js";
@@ -108,7 +108,7 @@ export async function planInMemory(
   const cur = topLevelSnapshot(curFragment);
   const exported = exportedLinkTextOf(b.base.segments!, TEST_KEY, b.base.salt);
   const r = await planSync(rt, {
-    owner: "test-user",
+    writerId: "test-user",
     segments: b.base.segments!,
     baseLineCount: b.lines.length,
     agentLines,
@@ -151,7 +151,7 @@ export async function applyInMemory(
 /** Merged top level: each block's id, type and plain text (for comparing results). */
 export function topOf(doc: Y.Doc): Array<{ id: string; text: string; type: string }> {
   const snap = topLevelSnapshot(doc.getXmlFragment(YDOC_FRAGMENT));
-  return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map((c, i) => ({ id: snap.ids[i]!, type: snap.types[i]!, text: textOf(c) }));
+  return topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map((c, i) => ({ id: snap.ids[i]!, type: snap.types[i]!, text: textOf(c) }));
 }
 function textOf(n: Y.XmlElement | Y.XmlText): string {
   if (n instanceof Y.XmlText) return n.toString().replace(/<[^>]*>/g, "");

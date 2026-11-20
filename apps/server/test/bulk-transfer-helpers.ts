@@ -8,7 +8,7 @@ import type { Db } from "../src/db/index.js";
 import { transferBases } from "../src/db/schema.js";
 import { EditorSession, directTarget, withDirectConnection } from "../src/notes/editing/session.js";
 import { loadNoteDoc, readNoteContentFromDoc } from "../src/notes/editing/read.js";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import type { CollabServer } from "../src/collab/server.js";
 import { seedDoc } from "./copy-helpers.js";
 import { testEditingRuntime } from "./helpers.js";
@@ -137,7 +137,7 @@ export async function humanEdit(ctx: { db: Db; collab: CollabServer }, noteId: s
 /** Current top-level block ids (read from the Y.Doc without opening an editor session; for checking whether ids are reused). */
 export async function topIdsOf(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<string[]> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
-  return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") as string);
+  return topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") as string);
 }
 
 /** Current top-level block id, type, plain text (inline content joined) and child block count (read in a session opened on a fork; not written back). */

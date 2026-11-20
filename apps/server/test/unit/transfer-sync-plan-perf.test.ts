@@ -7,10 +7,10 @@ import { sameCanonicalStats } from "../../src/transfer/same-canonical.js";
 import { yieldToLoop } from "../../src/transfer/yield.js";
 import { docWith, forkOf, makeBaseInMemory, planInMemory, withEditor } from "./fixtures/transfer-sync.js";
 
-// Guard that does not depend on time: count how many times `topLevelContainers` is called (the same top-level index entry as sameCanonical; wrapped in a counter that still calls the original).
+// Guard that does not depend on time: count how many times `topLevelBlocks` is called (the same top-level index entry as sameCanonical; wrapped in a counter that still calls the original).
 vi.mock("@knotebook/shared", async importOriginal => {
   const m = await importOriginal<typeof import("@knotebook/shared")>();
-  return { ...m, topLevelContainers: vi.fn(m.topLevelContainers) };
+  return { ...m, topLevelBlocks: vi.fn(m.topLevelBlocks) };
 });
 
 /**
@@ -57,8 +57,8 @@ describe("tail of planning", () => {
     expect(maxGap).toBeLessThan(1500);
   }, 180_000);
 
-  it("the number of topLevelContainers calls does not depend on the number of regions (the index is built once per fragment)", async () => {
-    const spy = vi.mocked(shared.topLevelContainers);
+  it("the number of topLevelBlocks calls does not depend on the number of regions (the index is built once per fragment)", async () => {
+    const spy = vi.mocked(shared.topLevelBlocks);
     const counts: number[] = [];
     for (const n of [20, 200]) {
       const { b, live, body } = await scene(n);
