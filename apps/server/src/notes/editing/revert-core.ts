@@ -3,7 +3,7 @@ import type * as Y from "yjs";
 import { topLevelBlocks } from "@knotebook/shared";
 import { fingerprintForIds } from "./fingerprint.js";
 import type { EditingRuntime } from "./runtime.js";
-import { EditorSession, replaceBlocksFresh } from "./session.js";
+import { pickBlocks, topLevelBlocksById, withForkEditor } from "./session.js";
 
 export type Anchor = { block_id: string; position: "before" | "after"; placeholder?: boolean };
 
@@ -58,26 +58,21 @@ export async function prepareRevertOnFork(
   othersShareAnchor = false,
 ): Promise<{ diff: Uint8Array; reinsertedIds: string[]; removedSnapshot: AnyBlock[] }> {
   const anchor = row.anchor;
-  const s = await EditorSession.open(runtime, fork);
-  try {
-    const ed = s.editor;
-    const before = row.beforeBlocks as AnyPartialBlock[];
-    const removedSnapshot: AnyBlock[] = row.afterBlockIds.map(id => ed.getBlock(id)).filter((b): b is AnyBlock => b !== undefined);
+  const before = row.beforeBlocks as AnyPartialBlock[];
+  const w = await withForkEditor(runtime, fork, sv, (ed, edits) => {
+    const removedSnapshot = pickBlocks(topLevelBlocksById(ed), row.afterBlockIds);
     let reinsertedIds: string[] = [];
-    const wouldBeEmpty = (removing: string[]) => ed.document.every(b => removing.includes(b.id));
     const revertReplace = () => {
-      if (before.length === 0 && wouldBeEmpty(row.afterBlockIds)) ed.replaceBlocks(row.afterBlockIds, [{ type: "paragraph" }]);
-      else reinsertedIds = replaceBlocksFresh(ed, row.afterBlockIds, before).map(b => b.id);
+      if (before.length === 0) edits.remove(row.afterBlockIds);
+      else reinsertedIds = edits.replace(row.afterBlockIds, before, removedSnapshot).map(b => b.id);
     };
-    const revertInsert = () => {
-      // No test fails if this becomes an unconditional `removeBlocks` (normalization re-adds a paragraph), but "top level is never empty" is this path's own invariant; relying on normalization write-back is a known trap (#100).
-      if (wouldBeEmpty(row.afterBlockIds)) ed.replaceBlocks(row.afterBlockIds, [{ type: "paragraph" }]); else ed.removeBlocks(row.afterBlockIds);
-    };
+    // `ForkEdits.remove` keeps the top level non-empty itself; relying on the editor's normalization write-back for that is a known trap (#100).
+    const revertInsert = () => void edits.remove(row.afterBlockIds);
     const revertDelete = (removeAnchor: (isEmptyParagraph: boolean) => boolean) => {
       reinsertedIds = ed.insertBlocks(before, anchor!.block_id, anchor!.position).map(b => b.id);
       const a = ed.getBlock(anchor!.block_id);
       const isEmptyParagraph = a !== undefined && a.type === "paragraph" && (!Array.isArray(a.content) || a.content.length === 0) && (!Array.isArray(a.children) || a.children.length === 0);
-      if (removeAnchor(isEmptyParagraph)) ed.removeBlocks([anchor!.block_id]);
+      if (removeAnchor(isEmptyParagraph)) edits.remove([anchor!.block_id]);
     };
     switch (row.op) {
       case "replace_all": case "replace_section": revertReplace(); break;
@@ -91,8 +86,7 @@ export async function prepareRevertOnFork(
         break;
       }
     }
-    return { diff: s.diffSince(sv), reinsertedIds, removedSnapshot };
-  } finally {
-    s.close();
-  }
+    return { reinsertedIds, removedSnapshot };
+  });
+  return { diff: w.diff, reinsertedIds: w.value.reinsertedIds, removedSnapshot: w.value.removedSnapshot };
 }

@@ -2,7 +2,7 @@
  * #398: heavy content that is accepted (tens of thousands of inline nodes in one paragraph) must not be quadratic on the main thread.
  * - Y types are not walked with `get(i)` indexing (`note-sections.ts`, `same-canonical.ts`, `decide.ts`).
  * - three quadratic spots in jsdom (`jsdom-perf.ts`): semantics unchanged, and linear.
- * - replacing a large chunk of content inserts first and deletes after (`replaceBlocksFresh`), with the same result as `replaceBlocks`.
+ * - replacing a large chunk of content inserts first and removes after the editor is closed (`ForkEdits.replace`), with the same result as `replaceBlocks`.
  * Only guards against going quadratic again, not absolute speed: the same shape is measured at N/8 and N, ratio < 24 (linear is about 8-16,
  * quadratic about 64; `expectLinear`); when N is fast it passes outright, and there is a loose absolute cap. Documents built for measurement are reused, not re-parsed.
  */
@@ -11,14 +11,14 @@ import * as Y from "yjs";
 import { YDOC_FRAGMENT, blocksToNoteMarkdown, topLevelBlocks } from "@knotebook/shared";
 import { canonicalizeElements } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
-import { EditorSession, forkFrom, replaceBlocksFresh } from "../../src/notes/editing/session.js";
+import { EditorSession, forkFrom, withForkEditor } from "../../src/notes/editing/session.js";
 import { editOnFork } from "../../src/notes/editing/doc-jobs.js";
 import { outlineOf, topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { sameCanonicalOf } from "../../src/transfer/same-canonical.js";
 import { isLoneEmptyParagraph } from "../../src/transfer/decide.js";
 import { patchJsdomForLargeTrees } from "../../src/notes/editing/jsdom-perf.js";
 import { normalizeBody } from "../../src/transfer/normalize.js";
-import { expectLinear, yieldToLoop } from "../perf-helpers.js";
+import { expectLinear, timeIt, yieldToLoop } from "../perf-helpers.js";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
@@ -38,12 +38,9 @@ const parse = async (md: string) => {
 async function docOfBlocks(blocks: unknown[]): Promise<Y.Doc> {
   await yieldToLoop();
   const doc = new Y.Doc();
-  const s = await EditorSession.open(rt, doc);
-  try {
-    replaceBlocksFresh(s.editor, s.editor.document.map(b => b.id), blocks as never);
-  } finally {
-    s.close();
-  }
+  await withForkEditor(rt, doc, Y.encodeStateVector(doc), (ed, edits) => {
+    edits.replace(ed.document.map(b => b.id), blocks as never);
+  });
   return doc;
 }
 const docOf = async (md: string): Promise<Y.Doc> => docOfBlocks(await parse(md));
@@ -170,7 +167,7 @@ describe("jsdom patch (live lists recompute immediately, extra index work on ins
   }, 240_000);
 });
 
-describe("replaceBlocksFresh (insert first, delete after)", () => {
+describe("ForkEdits.replace (insert first, remove after close)", () => {
   it("same result as replaceBlocks (document, inserted ids)", async () => {
     for (const [from, to] of [["# A\n\nb\n\nc", "x\n\n- y\n\nz"], ["a\n\nb\n\nc", ""], ["a\n\nb", "**c**"]] as const) {
       // (Replacing with empty, which empties the document, isn't compared: the editor normalizes to a new empty paragraph with a new id, so the ids
@@ -190,7 +187,18 @@ describe("replaceBlocksFresh (insert first, delete after)", () => {
         }
       };
       const ra = await run(a, (ed, ids) => ed.replaceBlocks(ids, blocks).insertedBlocks.map(x => x.id));
-      const rb = await run(b, (ed, ids) => replaceBlocksFresh(ed, ids, blocks).map(x => x.id));
+      const rb = await (async () => {
+        let inserted: string[] = [];
+        await withForkEditor(rt, b, Y.encodeStateVector(b), (ed, edits) => {
+          inserted = edits.replace(ed.document.slice(0, 2).map(x => x.id), blocks as never).map(x => x.id);
+        });
+        const s = await EditorSession.open(rt, b);
+        try {
+          return { inserted, document: s.editor.document };
+        } finally {
+          s.close();
+        }
+      })();
       expect(rb.inserted).toEqual(ra.inserted);
       expect(rb.document).toEqual(ra.document);
     }
@@ -220,16 +228,15 @@ describe("replaceBlocksFresh (insert first, delete after)", () => {
     const inputs = new Map<number, { state: Uint8Array; blocks: unknown[] }>();
     const base = Y.encodeStateAsUpdate(await docOf("x<br>".repeat(2_000)));
     for (const n of [48_000 / 8, 48_000]) inputs.set(n, { state: base, blocks: formatted(n) });
-    await expectLinear("#398 replaceBlocksFresh", async n => {
+    await expectLinear("#398 ForkEdits.replace", async n => {
       const { state, blocks } = inputs.get(n)!;
       const doc = new Y.Doc();
       Y.applyUpdate(doc, state);
-      const s = await EditorSession.open(rt, doc);
-      try {
-        return timed(() => replaceBlocksFresh(s.editor, s.editor.document.map(b => b.id), blocks as never))[1];
-      } finally {
-        s.close();
-      }
+      return timeIt(() =>
+        withForkEditor(rt, doc, Y.encodeStateVector(doc), (ed, edits) => {
+          edits.replace(ed.document.map(b => b.id), blocks as never);
+        })
+      );
     }, 48_000);
   }, 360_000);
 
