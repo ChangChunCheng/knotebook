@@ -11,7 +11,7 @@ import type { Db } from "../src/db/index.js";
 import { transferBases } from "../src/db/schema.js";
 import { EditorSession, directTarget, withDirectConnection } from "../src/notes/editing/session.js";
 import { loadNoteDoc, readNoteContentFromDoc } from "../src/notes/editing/read.js";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import type { CollabServer } from "../src/collab/server.js";
 import { seedDoc } from "./copy-helpers.js";
 import { testEditingRuntime } from "./helpers.js";
@@ -143,7 +143,7 @@ export async function humanEdit(ctx: { db: Db; collab: CollabServer }, noteId: s
 /** 現況頂層 block 的 id 與型別（未 mount；比對 id 是否沿用）。 */
 export async function topIdsOf(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<string[]> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
-  return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") as string);
+  return topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") as string);
 }
 
 /** 現況頂層 block 的 id、型別、純文字（行內內容串起來）與子 block 數（fork 上開一次 session 讀；不寫回）。 */

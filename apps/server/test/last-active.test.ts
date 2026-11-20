@@ -39,7 +39,7 @@ async function waitUntil(label: string, timeoutMs: number, check: () => Promise<
 }
 
 describe("users.last_active_at（#267）", () => {
-  it("session cookie 的請求（authenticate 與 authenticateAny 的 session 路徑）寫入；沒 session 的請求不寫", async () => {
+  it("session cookie 的請求（authenticate 與 authenticateTokenOrSession 的 session 路徑）寫入；沒 session 的請求不寫", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const v = await seedUser(db);
@@ -48,7 +48,7 @@ describe("users.last_active_at（#267）", () => {
     const t0 = await dbNow(db);
     expect((await app.inject({ method: "GET", url: "/api/auth/me", cookies: await cookieOf(u.id) })).statusCode).toBe(200);
     expect(await activeSince(db, u.id, t0)).toBe(true);
-    // authenticateAny（收 Bearer 的路由）沒帶 Authorization 時走 session：一樣算
+    // authenticateTokenOrSession（收 Bearer 的路由）沒帶 Authorization 時走 session：一樣算
     expect((await app.inject({ method: "GET", url: "/api/notes", cookies: await cookieOf(v.id) })).statusCode).toBe(200);
     expect(await activeSince(db, v.id, t0)).toBe(true);
   });

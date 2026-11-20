@@ -154,7 +154,7 @@ async function main(): Promise<void> {
       collab,
       uploadsDir,
       ai,
-      startVersionSweep: true,
+      startVersionJobs: true,
       startTrashPurge: true,
       ...(config.testHooks ? { versionAutoScanIntervalMs: 1000 } : {}),
     },

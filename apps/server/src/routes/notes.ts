@@ -118,9 +118,9 @@ export interface NotesRouteDeps {
 export function notesRoutes(deps: NotesRouteDeps) {
   // The write queue is shared with MCP (one instance from buildApp); separate instances wouldn't serialize.
   return async function register(app: FastifyInstance): Promise<void> {
-    // Routes using authenticateAny (here and in routes/note-content.ts) accept Bearer; every other notes route, including all of routes/note-sharing.ts, is cookie-only,
+    // Routes using authenticateTokenOrSession (here and in routes/note-content.ts) accept Bearer; every other notes route, including all of routes/note-sharing.ts, is cookie-only,
     // and collab-token deliberately takes none. An omitted challenge equals the required scope; only /api/mcp declares a wider set.
-    app.post("/api/notes", { preHandler: app.authenticateAny("notes:write") }, async (request, reply) => {
+    app.post("/api/notes", { preHandler: app.authenticateTokenOrSession("notes:write") }, async (request, reply) => {
       const parsed = createBodySchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
@@ -205,7 +205,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         .send(toNoteDto({ ...created, ownerHandle: target.ownerHandle, editorHandle: null, groupName: target.groupName, viewerFolderId: created.folderId }, target.access));
     });
 
-    app.get("/api/notes", { preHandler: app.authenticateAny("notes:read") }, async request => {
+    app.get("/api/notes", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => {
       const userId = request.user!.id;
 
       // UNION ALL instead of one query with `owner_id=$u OR note_shares.user_id=$u`: an OR across an outer join forces a full notes scan, while each branch uses its own index.
@@ -300,7 +300,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
     });
 
     // Renamed from GET /api/notes/:id: registering GET twice at one path throws in fastify. :ref is a uuid, a frozen legacy slug or an old <vanity>-<uuid> (see resolveNoteIdFromRef).
-    app.get("/api/notes/:ref", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
+    app.get("/api/notes/:ref", { preHandler: app.authenticateTokenOrSession("notes:read") }, async (request, reply) => {
       const { ref } = request.params as { ref: string };
       const userId = request.user!.id;
 

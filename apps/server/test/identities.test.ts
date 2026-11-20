@@ -51,7 +51,7 @@ describe("GET /api/auth/identities（#187）", () => {
   it("Bearer（PAT）→ 401；未登入 → 401", async () => {
     const { app, db } = await buildTestApp();
     expect((await app.inject({ method: "GET", url: "/api/auth/identities" })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // 有效 PAT（scope 足以通過 authenticateTokenOrSession）、不帶 cookie：401 只能來自「只認 session」。
     const { token } = await seedTokenForUser(db, (await seedUser(db)).id);
     expect((await app.inject({ method: "GET", url: "/api/auth/identities", headers: bearer(token) })).statusCode).toBe(401);
   });

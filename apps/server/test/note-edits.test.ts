@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm"; // `sql` 只給 note_links 故障那案的觸發器用（一律樣板，不串字串）
 import * as Y from "yjs";
-import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { docClock } from "../src/collab/store.js";
 import { noteAiEdits, noteLinks, noteStates, notes } from "../src/db/schema.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
@@ -35,7 +35,7 @@ async function setup(md: string | null = "# A\n\n第一段\n\n# B\n\n第二段",
       .from(notes).where(eq(notes.id, note.id)))[0]!;
   return { ctx, u, note, session, client, token, tokenId, content, post, rows, stateBytes, lastEdited };
 }
-const ids = (doc: Y.Doc) => topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+const ids = (doc: Y.Doc) => topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signTestSession({ userId, tv: 0 })}`;
 /**
  * provider 側用 server 的 EditorSession 對 client.doc 做一次編輯（模擬人在瀏覽器打字），
@@ -212,7 +212,7 @@ describe("並排", () => {
     const res = await s.post({ op: "append", markdown: "追加" });
     expect(res.statusCode).toBe(201);
     await waitFor("provider 收到追加", 3_000, () => docText(s.client.doc).includes("追加"));
-    const top = topLevelContainers(s.client.doc.getXmlFragment(YDOC_FRAGMENT));
+    const top = topLevelBlocks(s.client.doc.getXmlFragment(YDOC_FRAGMENT));
     expect(top.map(c => c.nodeName)).toEqual(["columnList", "blockContainer"]);
     expect(top[0]!.getAttribute("id")).toBe("r");
     expect(docText(s.client.doc)).toContain("左欄文字");

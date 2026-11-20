@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, blocksToNoteMarkdown, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, blocksToNoteMarkdown, topLevelBlocks } from "@knotebook/shared";
 import { canonicalizeElements } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession, replaceBlocksFresh } from "../../src/notes/editing/session.js";
@@ -60,7 +60,7 @@ describe("Y 型別走訪是線性的（`get(i)` 每次從頭走）", () => {
     for (const [name, f] of steps) {
       await expectLinear(`#398 ${name}`, n => {
         const frag = docs.get(n)!.getXmlFragment(YDOC_FRAGMENT);
-        const top = topLevelContainers(frag);
+        const top = topLevelBlocks(frag);
         expect(top).toHaveLength(1);
         return timed(() => f(frag, top))[1];
       }, 12_000);

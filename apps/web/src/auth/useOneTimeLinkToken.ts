@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import type { UserDto } from "@knotebook/shared";
-import { readSessionToken, removeSessionToken, writeSessionToken } from "@/auth/resetTokenStorage";
+import { readSessionToken, removeSessionToken, writeSessionToken } from "@/auth/oneTimeTokenStorage";
 
 function parseFragmentParam(hash: string, param: string): string | null {
   const value = new URLSearchParams(hash.replace(/^#/, "")).get(param);

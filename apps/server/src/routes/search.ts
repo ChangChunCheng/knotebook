@@ -90,7 +90,7 @@ export interface SearchRouteDeps {
 
 export function searchRoutes(deps: SearchRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    app.get("/api/search", { preHandler: app.authenticateAny("notes:read") }, async (request, reply) => {
+    app.get("/api/search", { preHandler: app.authenticateTokenOrSession("notes:read") }, async (request, reply) => {
       const parsed = searchQuerySchema.safeParse(request.query ?? {});
       if (!parsed.success) return sendError(reply, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
       const { q } = parsed.data;

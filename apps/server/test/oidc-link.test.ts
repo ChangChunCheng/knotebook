@@ -78,7 +78,7 @@ describe("POST /api/auth/oidc/link/:providerId（#187、B7）", () => {
     const t = await twoProviders({ limiters: freshLimiters({ oidcLogin: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const id = t.provider("b").id;
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {} })).statusCode).toBe(401);
-    // 有效 PAT（scope 足以通過 authenticateAny）、不帶 cookie：401 只能來自「只認 session」。
+    // 有效 PAT（scope 足以通過 authenticateTokenOrSession）、不帶 cookie：401 只能來自「只認 session」。
     const { token } = await seedTokenForUser(t.db, (await insertPasswordUser(t.db)).id);
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {}, headers: bearer(token) })).statusCode).toBe(401);
     const flagged = await insertPasswordUser(t.db, { mustChangePassword: true });

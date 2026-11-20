@@ -2,7 +2,7 @@
 // Without a watch the main thread compares snapshots, not just state vectors: an update that only deletes doesn't change the state vector.
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
-import { MAX_LINK_TARGETS, YDOC_FRAGMENT, extractLinkTargets, topLevelContainers, type EditOp, type NoteContentDto, type NoteOutlineEntry, type NoteSectionDto } from "@knotebook/shared";
+import { MAX_LINK_TARGETS, YDOC_FRAGMENT, extractLinkTargets, topLevelBlocks, type EditOp, type NoteContentDto, type NoteOutlineEntry, type NoteSectionDto } from "@knotebook/shared";
 import type { TransferSegment } from "../../db/schema.js";
 import { hmacOf } from "../../transfer/base-hash.js";
 import { isLoneEmptyParagraph, matchesBase } from "../../transfer/decide.js";
@@ -270,7 +270,7 @@ async function editOp(runtime: EditingRuntime, op: EditDocOp): Promise<EditDocRe
   const base = baseOf(fork, op.state);
   const fragment = fork.getXmlFragment(YDOC_FRAGMENT);
   const { outline, whole } = outlineOf(fragment);
-  const isEmptyDoc = topLevelContainers(fragment).length === 0;
+  const isEmptyDoc = topLevelBlocks(fragment).length === 0;
   const section = op.sectionId === undefined ? undefined : outline.find(o => o.sectionId === op.sectionId);
   if (op.sectionId !== undefined && !section) return { ok: false, code: "section_not_found" };
   const expect = op.ifMatch ?? null;
@@ -329,7 +329,7 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
   // Charge the quota before parsing; retries on the main thread don't charge again.
   if (!((await ask({ kind: "charge" })) as boolean)) return { kind: "rate_limited", budgetLeft: left() };
   const planned = await planSync(runtime, {
-    owner: op.owner,
+    writerId: op.owner,
     fileBudget: budget,
     segments: op.segments,
     baseLineCount: op.baseLineCount,

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { markPending } from "../src/collab/versions.js";
 import { noteAiEdits, noteLinks, noteStates, noteVersions, notes } from "../src/db/schema.js";
 import type { EditingTestHooks } from "../src/notes/editing/apply.js";
@@ -52,7 +52,7 @@ async function setBlocks(s: S, client: TestClient, blocks: unknown[], sentinel: 
   }
   await waitFor(`server 收到（${sentinel}）`, 5_000, () => docText(s.live()).includes(sentinel));
 }
-const ids = (d: Y.Doc) => topLevelContainers(d.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+const ids = (d: Y.Doc) => topLevelBlocks(d.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
 
 /** v1＝「第一版」＋連到 other 的 wikilink；v2＝「第二版」沒有連結。回 v1、v2 的列與 other。 */
 async function twoVersions(s: S) {
@@ -269,7 +269,7 @@ describe("套用", () => {
     await s.save();
     if (!empty.ok) throw new Error("前置失敗");
     expect(await s.apply(1, empty.row.id)).toMatchObject({ ok: true });
-    expect(topLevelContainers(s.live().getXmlFragment(YDOC_FRAGMENT))).toHaveLength(1);
+    expect(topLevelBlocks(s.live().getXmlFragment(YDOC_FRAGMENT))).toHaveLength(1);
     expect(await s.ctx.collab.versions.currentOf(s.note.id)).toMatchObject({ baseSeq: 1, dirty: false });
     client.disconnect();
   });

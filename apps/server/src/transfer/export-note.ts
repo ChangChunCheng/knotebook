@@ -6,7 +6,7 @@
  * the same as MCP reads. Group exports run synchronously in the same mount (no yield, no new session).
  */
 import type * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
 import { topLevelFingerprints } from "../notes/editing/fingerprint.js";
 import { toNoteMarkdown } from "../notes/editing/read.js";
@@ -40,7 +40,7 @@ export interface ExportNoteOptions {
 /** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`); an empty doc returns "" without mounting, as there. */
 export async function exportNoteBody(runtime: EditingRuntime, doc: Y.Doc, titles: ReadonlyMap<string, string>): Promise<string> {
   // Mounting would normalize an empty doc into one empty paragraph; return "" without mounting, as `exportNoteForTransfer` does.
-  if (topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).length === 0) return "";
+  if (topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).length === 0) return "";
   const s = await EditorSession.open(runtime, doc);
   try {
     return toNoteMarkdown(s.editor, s.editor.document, titles);

@@ -10,7 +10,7 @@ import { noteStateBackups, noteStates, notes } from "../db/schema.js";
 import { isForeignKeyViolation } from "../db/pg-errors.js";
 import { bumpSearchIndexVersion, extractForIndex, writeSearchIndex, type SearchIndexOutcome } from "../notes/search-index.js";
 import type { SearchExtract } from "../notes/search-text.js";
-import { crossesBucketBoundary, selectPrunable } from "./backup-policy.js";
+import { crossesFifteenMinuteBoundary, selectPrunable } from "./backup-policy.js";
 
 // Defined here, not in server.ts, because server.ts imports this file.
 // Monotonic (state-vector entries only grow, merges take the max, GC keeps the vector), so it can
@@ -188,7 +188,7 @@ export function createNoteStore(deps: NoteStoreDeps): NoteStore {
 
   async function maybeBackup(noteId: string, doc: Y.Doc, at: Date): Promise<void> {
     const lastBackupAt = lastBackupAtCache.get(noteId) ?? null;
-    if (!crossesBucketBoundary(lastBackupAt, at)) return;
+    if (!crossesFifteenMinuteBoundary(lastBackupAt, at)) return;
 
     const sv = Y.encodeStateVector(doc);
     const cachedSv = svCache.get(noteId);

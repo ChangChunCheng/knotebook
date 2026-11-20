@@ -27,7 +27,7 @@ async function editorDoc(blocks: Array<Record<string, unknown>>): Promise<Y.Doc>
   }
   return doc;
 }
-// 在未改 topLevelContainers 的碼上實跑取得
+// 在未改 topLevelBlocks 的碼上實跑取得
 const GOLDEN_HASH = "01dbcb87f9d4075de27636b598be9980503470e31176ba28a45069a7cad984d6";
 const colRow = (id: string, cols: Array<Array<Record<string, unknown>>>) => ({
   id,

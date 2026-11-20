@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { crossesBucketBoundary, selectPrunable } from "../../src/collab/backup-policy.js";
+import { crossesFifteenMinuteBoundary, selectPrunable } from "../../src/collab/backup-policy.js";
 
-describe("crossesBucketBoundary（15 分桶邊界；半開區間 [start, end)、對齊 UTC 時鐘）", () => {
+describe("crossesFifteenMinuteBoundary（15 分桶邊界；半開區間 [start, end)、對齊 UTC 時鐘）", () => {
   it("同一個 [10:00,10:15) 桶內 → false", () => {
     const last = new Date("2026-08-06T10:07:00Z");
     const now = new Date("2026-08-06T10:11:00Z");
-    expect(crossesBucketBoundary(last, now)).toBe(false);
+    expect(crossesFifteenMinuteBoundary(last, now)).toBe(false);
   });
 
   it("跨到下一個桶 [10:15,10:30) → true", () => {
     const last = new Date("2026-08-06T10:14:00Z");
     const now = new Date("2026-08-06T10:16:00Z");
-    expect(crossesBucketBoundary(last, now)).toBe(true);
+    expect(crossesFifteenMinuteBoundary(last, now)).toBe(true);
   });
 
   it("lastBackupAt 為 null → true（從未備份過）", () => {
     const now = new Date("2026-08-06T10:16:00Z");
-    expect(crossesBucketBoundary(null, now)).toBe(true);
+    expect(crossesFifteenMinuteBoundary(null, now)).toBe(true);
   });
 });
 

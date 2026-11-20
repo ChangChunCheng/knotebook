@@ -108,9 +108,9 @@ export interface VersionService {
   isDirty(noteId: string, doc: Y.Doc, transient?: Y.Doc): Promise<boolean>;
   cutIfDirty(noteId: string, doc: Y.Doc, opts: CutOptions): Promise<CutResult>;
   beginApply(noteId: string): void;
-  // With `r`: after the base write-back, before disconnect; keeps `applying`. Without: the outer
+  // With `baseUpdate`: after the base write-back, before disconnect; keeps `applying`. Without: the outer
   // `finally` after disconnect clears it, so the scanner skips the note until pending is cleared (#272).
-  endApply(noteId: string, r?: { seq: number; fingerprint: string } | { reset: true }): void;
+  endApply(noteId: string, baseUpdate?: { seq: number; fingerprint: string } | { reset: true }): void;
   docFor(noteId: string): Promise<{ doc: Y.Doc; transient?: Y.Doc }>;
   currentOf(noteId: string): Promise<VersionCurrentCore | null>;
   pruneNote(noteId: string, now?: Date): Promise<number>;
@@ -416,20 +416,20 @@ export function createVersionService(deps: VersionServiceDeps): VersionService {
     if (s) s.applying = true;
   }
 
-  function endApply(noteId: string, r?: { seq: number; fingerprint: string } | { reset: true }): void {
+  function endApply(noteId: string, baseUpdate?: { seq: number; fingerprint: string } | { reset: true }): void {
     const s = states.get(noteId);
-    if (r === undefined) {
+    if (baseUpdate === undefined) {
       applyingSet.delete(noteId);
       if (s) s.applying = false;
       return;
     }
     if (!s) return;
-    if ("reset" in r) {
+    if ("reset" in baseUpdate) {
       s.baseFingerprint = null;
       s.loadFingerprint = null; // next cut follows the no-base rule: anything non-vacuum counts as changed
       return;
     }
-    s.baseFingerprint = r.fingerprint;
+    s.baseFingerprint = baseUpdate.fingerprint;
     s.editors.clear();
   }
 

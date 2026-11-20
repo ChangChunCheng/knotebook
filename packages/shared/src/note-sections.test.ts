@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "./ydoc.js";
-import { canonicalizeElements, canonicalizeSection, sectionize, TOP_SECTION_ID, topLevelContainers } from "./note-sections.js";
+import { canonicalizeElements, canonicalizeSection, sectionize, TOP_SECTION_ID, topLevelBlocks } from "./note-sections.js";
 
 /** 手工造 BlockNote 結構：fragment > blockGroup > blockContainer(id) > <type …>text */
 function makeDoc(blocks: Array<{ id: string; type: "paragraph" | "heading"; text: string; level?: number; nested?: Array<{ id: string; type: "heading"; text: string; level: number }> }>): Y.Doc {
@@ -89,7 +89,7 @@ describe("sectionize", () => {
     const c = new Y.XmlElement("blockcontainer"); c.setAttribute("id", "x");
     group.insert(0, [c]);
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [group]);
-    expect(topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))).toEqual([]);
+    expect(topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))).toEqual([]);
   });
 
   it("chars 算純文字：heading 文字算，bold 標記不算", () => {
@@ -107,7 +107,7 @@ describe("sectionize", () => {
 describe("canonicalize", () => {
   const withId = (id: string, text: string, attrs: Record<string, string> = {}) => {
     const doc = makeDoc([{ id, type: "paragraph", text }]);
-    const el = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[0]!;
+    const el = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[0]!;
     for (const [k, v] of Object.entries(attrs)) (el.get(0) as Y.XmlElement).setAttribute(k, v);
     return el;
   };
@@ -116,7 +116,7 @@ describe("canonicalize", () => {
     const g = new Y.XmlElement("blockGroup"); const c = new Y.XmlElement("blockContainer"); c.setAttribute("id", "a");
     const p = new Y.XmlElement("paragraph"); const t = new Y.XmlText(); fn(t); p.insert(0, [t]); c.insert(0, [p]); g.insert(0, [c]);
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [g]);
-    return topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[0]!;
+    return topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[0]!;
   };
 
   it("同內容不同 id → 相同；改一字 → 不同", () => {
@@ -173,7 +173,7 @@ function refTextOf(node: Y.XmlElement | Y.XmlText): string {
 function refSectionize(fragment: Y.XmlFragment): Array<{ sectionId: string; heading: string; chars: number }> {
   const out: Array<{ sectionId: string; level: number; heading: string; chars: number }> = [{ sectionId: TOP_SECTION_ID, level: 0, heading: "", chars: 0 }];
   let current = out[0]!;
-  for (const c of topLevelContainers(fragment)) {
+  for (const c of topLevelBlocks(fragment)) {
     const first = c.get(0);
     const content = first instanceof Y.XmlElement && first.nodeName !== "blockGroup" ? first : null;
     const level = content && content.nodeName === "heading" ? (Number.isFinite(Number(content.getAttribute("level") ?? "1")) ? Number(content.getAttribute("level") ?? "1") : 1) : null;
@@ -359,9 +359,9 @@ function makeRowDoc(top: Array<{ kind: "p" | "h"; id: string; text: string; leve
 describe("並排列是頂層單位", () => {
   const row: RowSpec = { kind: "row", id: "r", cols: [[{ type: "paragraph", id: "a1", text: "甲乙" }], [{ type: "heading", id: "h", text: "欄內" }]] };
 
-  it("NS1：topLevelContainers 依序收 blockContainer、columnList；不攤平欄內", () => {
+  it("NS1：topLevelBlocks 依序收 blockContainer、columnList；不攤平欄內", () => {
     const doc = makeRowDoc([{ kind: "p", id: "p1", text: "x" }, row, { kind: "h", id: "H2", text: "B" }, { kind: "p", id: "p2", text: "y" }]);
-    const tops = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT));
+    const tops = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT));
     expect(tops.map(c => c.nodeName)).toEqual(["blockContainer", "columnList", "blockContainer", "blockContainer"]);
     expect(tops.map(c => c.getAttribute("id"))).toEqual(["p1", "r", "H2", "p2"]);
   });

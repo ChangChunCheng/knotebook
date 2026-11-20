@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { noteStates } from "../src/db/schema.js";
 import { versionFingerprint } from "../src/notes/version-fingerprint.js";
 import { seedDoc } from "./copy-helpers.js";
@@ -55,14 +55,14 @@ async function legacySetup() {
 async function rewriteParagraphAttrs(s: Awaited<ReturnType<typeof legacySetup>>, attrs: Record<string, string>) {
   const c = await s.session.connect(s.note.id);
   await waitFor("版本狀態初始化", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.initialized === true);
-  const p = topLevelContainers(c.doc.getXmlFragment(YDOC_FRAGMENT))[1]!.get(0) as Y.XmlElement;
+  const p = topLevelBlocks(c.doc.getXmlFragment(YDOC_FRAGMENT))[1]!.get(0) as Y.XmlElement;
   expect(p.nodeName).toBe("paragraph");
   expect(p.getAttributes()).toEqual({});
   c.doc.transact(() => {
     for (const [k, v] of Object.entries(attrs)) p.setAttribute(k, v);
   });
   const serverDoc = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
-  const serverPara = () => topLevelContainers(serverDoc.getXmlFragment(YDOC_FRAGMENT))[1]!.get(0) as Y.XmlElement;
+  const serverPara = () => topLevelBlocks(serverDoc.getXmlFragment(YDOC_FRAGMENT))[1]!.get(0) as Y.XmlElement;
   await waitFor("server 收到屬性回寫", 5_000, () => serverPara().getAttribute("textColor") === attrs.textColor);
   expect(serverPara().getAttributes()).toEqual(attrs);
   expect(serverPara().toString()).toContain("Legacy paragraph");

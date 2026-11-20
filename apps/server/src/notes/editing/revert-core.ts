@@ -1,6 +1,6 @@
 import type { Block, PartialBlock } from "@blocknote/core";
 import type * as Y from "yjs";
-import { topLevelContainers } from "@knotebook/shared";
+import { topLevelBlocks } from "@knotebook/shared";
 import { fingerprintForIds } from "./fingerprint.js";
 import type { EditingRuntime } from "./runtime.js";
 import { EditorSession, replaceBlocksFresh } from "./session.js";
@@ -24,7 +24,7 @@ export interface RevertRow {
   anchor: Anchor | null;
 }
 
-export const topLevelIds = (fragment: Y.XmlFragment): (string | null)[] => topLevelContainers(fragment).map(c => c.getAttribute("id") ?? null);
+export const topLevelIds = (fragment: Y.XmlFragment): (string | null)[] => topLevelBlocks(fragment).map(c => c.getAttribute("id") ?? null);
 
 export type RevertableRow = {
   op: string;

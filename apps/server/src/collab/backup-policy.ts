@@ -25,7 +25,7 @@ function bucketStart(epochMs: number, sizeMs: number): number {
 }
 
 /** Only the 15-minute tier gates writing a backup; the other tiers only affect pruning. */
-export function crossesBucketBoundary(lastBackupAt: Date | null, now: Date): boolean {
+export function crossesFifteenMinuteBoundary(lastBackupAt: Date | null, now: Date): boolean {
   if (lastBackupAt === null) return true;
   return bucketStart(lastBackupAt.getTime(), FIFTEEN_MIN_MS) !== bucketStart(now.getTime(), FIFTEEN_MIN_MS);
 }

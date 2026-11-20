@@ -9,7 +9,7 @@ import { completePasswordReset, inspectPasswordReset } from "@/api/passwordReset
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SESSION_QUERY_KEY, useSession, type UseSessionResult } from "@/auth/useSession";
-import { RESET_TOKEN_KEY } from "@/auth/resetTokenStorage";
+import { RESET_TOKEN_KEY } from "@/auth/oneTimeTokenStorage";
 import { useOneTimeLinkToken } from "@/auth/useOneTimeLinkToken";
 
 type InspectState =

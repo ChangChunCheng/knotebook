@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, canonicalizeElements, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, canonicalizeElements, topLevelBlocks } from "@knotebook/shared";
 import { fingerprintOf, topLevelFingerprints, topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
@@ -49,7 +49,7 @@ async function scratchOf(md: string, stripStart: boolean): Promise<{ frag: Y.Xml
   return { frag: frag(doc), ids };
 }
 const fpsOf = (f: Y.XmlFragment, ids: string[]) => {
-  const byId = new Map(topLevelContainers(f).map(c => [c.getAttribute("id"), c]));
+  const byId = new Map(topLevelBlocks(f).map(c => [c.getAttribute("id"), c]));
   return ids.map(id => fingerprintOf(canonicalizeElements([byId.get(id)!])));
 };
 const paras = (n: number): ShapeBlock[] => Array.from({ length: n }, (_, i) => ({ type: "paragraph", content: `p${i}` }));
@@ -101,7 +101,7 @@ describe("C3 人已經做了同樣修改 → sameCanonical 相等、指紋不等
     if (opts.browser) {
       // 瀏覽器建的形：numbered 沒有 `start` 屬性（直接改 Y 結構）
       doc.transact(() => {
-        for (const c of topLevelContainers(frag(doc))) {
+        for (const c of topLevelBlocks(frag(doc))) {
           const content = c.get(0);
           if (content instanceof Y.XmlElement && content.nodeName === "numberedListItem") content.removeAttribute("start");
         }
@@ -143,7 +143,7 @@ describe("C3 人已經做了同樣修改 → sameCanonical 相等、指紋不等
 
 describe("C4 不吞真修改", () => {
   const wl = (props: Record<string, unknown>): ShapeBlock => ({ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: SHAPE_LINK_TARGET, snapshotTitle: "Other", ...props } }] });
-  const one = async (b: ShapeBlock) => sameCanonicalOf(topLevelContainers(frag(await docWith([b])))[0]!);
+  const one = async (b: ShapeBlock) => sameCanonicalOf(topLevelBlocks(frag(await docWith([b])))[0]!);
   it.each([
     ["wikilink 改自訂文字（label）", wl({ label: "mine" }), wl({ label: "yours" })],
     ["wikilink 加上 label", wl({}), wl({ label: "mine" })],
@@ -158,12 +158,12 @@ describe("C4 不吞真修改", () => {
   // `""` vs `"text"` 不管空字串丟不丟都不等，擋不住「對所有元素丟空字串屬性」。
   it("非 wikilink 的空字串屬性：code language \"\" vs 沒有 language 屬性 → 不相等", async () => {
     const doc = await docWith([{ type: "codeBlock", props: { language: "" }, content: "x" }]);
-    const a = sameCanonicalOf(topLevelContainers(frag(doc))[0]!);
+    const a = sameCanonicalOf(topLevelBlocks(frag(doc))[0]!);
     doc.transact(() => {
-      const content = topLevelContainers(frag(doc))[0]!.get(0) as Y.XmlElement;
+      const content = topLevelBlocks(frag(doc))[0]!.get(0) as Y.XmlElement;
       content.removeAttribute("language");
     });
-    expect(sameCanonicalOf(topLevelContainers(frag(doc))[0]!)).not.toBe(a);
+    expect(sameCanonicalOf(topLevelBlocks(frag(doc))[0]!)).not.toBe(a);
   });
   it("對照：wikilink 只差 snapshotTitle → 相等", async () => {
     expect(await one(wl({ snapshotTitle: "A" }))).toBe(await one(wl({ snapshotTitle: "B" })));
