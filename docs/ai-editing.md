@@ -40,9 +40,27 @@ A note is a list of **top-level blocks**. Sections are derived from those blocks
 - A *deeper* heading does not open a new section. In `# A` followed by `## B`, the `## B` heading and everything under it belong to section `A` — there is no section `B`. A section is only opened by a heading at the same level or shallower than the current one.
 - Nested content (list items' children, blocks inside a block) is part of its top-level parent's block, not a section of its own.
 
-So section ids are **block ids, not names**. Any operation that replaces or removes a section's heading gives that section a different id, or removes it — including your own `replace_section`. Do not cache a `section_id` across writes; take the fresh `outline` that every successful write returns.
+So section ids are **block ids, not names**. An operation that removes a section's heading, or replaces it with a block that doesn't keep its id (see [Which blocks keep their ids](#which-blocks-keep-their-ids)), gives that section a different id or removes it — including your own `replace_section`. Do not cache a `section_id` across writes; take the fresh `outline` that every successful write returns.
 
 `_top` is the exception: it is a fixed string, and it is always present in the outline.
+
+### Which blocks keep their ids
+
+`replace_section` and `replace_all`, and the places a file sent back changes (see [Sending a file back](#sending-a-file-back)), don't give every block they write a new id. The blocks that were there and the blocks that replace them are compared, and a new block takes over an old block's id when:
+
+1. **It has the same type and the same text as an old block**, and the blocks that match this way stay in the order they had.
+2. **It is the one edited block** of the same type between two blocks that matched by rule 1, or between one end of the replaced range and the nearest block that matched: exactly one old block and exactly one new block lie in that stretch. This also covers a range in which nothing matched but one old and one new block of the same type.
+
+Everything else gets a new id: a block that is split or merged, one whose type changed, a larger reorder, and two or more edited blocks next to each other (a stretch with more than one old or more than one new block in it).
+
+- **Text is compared, not formatting.** Bold or italic, colors, a heading's level and other block attributes don't count. A link is compared by its text and a link to a note by its label (when it has one). A table is compared by the text of its cells. A block with no inline text (a divider, an image) is compared by its attributes.
+- **Nested blocks** (list children, blocks inside columns) keep their ids only under an outer block that matched by rule 1, which also needs everything nested in it to be the same. Under an edited block (rule 2) they get new ids.
+- **A very large rewrite** isn't compared in the middle: when (changed old blocks + 1) × (changed new blocks + 1) is over 1,000,000, roughly a thousand blocks on each side, only the unchanged blocks at the start and at the end of the range keep their ids.
+- **Keeping an id is not keeping the block.** The block is still a new element in the note, so somebody typing inside a block that is being rewritten still has their cursor moved.
+- **Other ways of replacing blocks aren't covered.** Applying a version to the note gives every block a new id, and so does the in-app AI when it replaces a selection in the editor.
+- **A person can bring an old block back.** If someone drags a block that was rewritten, or restores it with undo, after the rewrite was merged (in a tab that was offline, for example), the note can hold two blocks with one id; the editor then gives both new ids, so a link to that id stops working, but never leads to another block.
+
+A `section_id` can therefore survive a write, but isn't guaranteed to: use the `outline` the last write returned.
 
 ## Fingerprints and 409
 
@@ -67,10 +85,10 @@ Two writes to the same note are serialised (see `server_busy` under [Limits](#li
 |---|---|
 | `replace_all`, `append` | `409 fingerprint_mismatch` (the whole-note fingerprint moved) |
 | `insert_after` | `409 fingerprint_mismatch` (the heading survives, the section's blocks changed) |
-| `replace_section`, `delete_section` on a heading section | **`404 section_not_found`** |
+| `replace_section`, `delete_section` on a heading section | `409 fingerprint_mismatch` when the winning write kept the heading's id, otherwise **`404 section_not_found`** |
 | `replace_section`, `delete_section` on `_top` | `409 fingerprint_mismatch` |
 
-`replace_section` and `delete_section` replace or remove the section's heading, and the heading's block id *is* the section id — so by the time the second request runs, the id it addressed does not exist any more, and addressing fails before the fingerprint is ever compared. `_top` is the exception only because its id is a fixed string.
+`replace_section` and `delete_section` replace or remove the section's heading, and the heading's block id *is* the section id. If the winning write gave the heading a new id or removed it (see [Which blocks keep their ids](#which-blocks-keep-their-ids)), the id the second request addressed does not exist any more, and addressing fails before the fingerprint is ever compared. If the winning write kept the heading's id, the section is still found and its changed fingerprint is what refuses the second request. `_top` is always found because its id is a fixed string.
 
 **Handle both codes.** The recovery is identical: re-read the outline (or the `current` body a 409 already gave you), decide again against what is there now, and retry. A `404 section_not_found` on these endpoints never means "the note is gone" — that is `404 not_found`.
 
@@ -78,7 +96,7 @@ Two writes to the same note are serialised (see `server_busy` under [Limits](#li
 
 | `op` | `section_id` | `markdown` | `if_match` | What it does |
 |---|---|---|---|---|
-| `replace_all` | not accepted | required | required — whole note | Replaces the entire note. Every block id changes. |
+| `replace_all` | not accepted | required | required — whole note | Replaces the entire note. Blocks that keep their id are described in [Which blocks keep their ids](#which-blocks-keep-their-ids); the others get new ids. |
 | `replace_section` | required | required | required — that section | Replaces the section **including its heading**. |
 | `insert_after` | required | required | required — that section | Inserts after the section's last top-level block. |
 | `append` | not accepted | required | optional — whole note | Adds to the end of the note. |
@@ -102,7 +120,7 @@ The top-level block list is **never empty**. If an operation (or a revert) would
 
 `replace_section` replaces the heading too. If the Markdown you send does not start with a heading of the same level, that section stops existing: its `section_id` disappears from the outline and its content is absorbed into the **preceding** section. That is not an error — it is the direct consequence of "the heading is part of the section".
 
-If you meant to keep the section, restate its heading as the first line of the Markdown you send, **at the same level** (`# Summary`, not `## Summary` — a deeper heading is absorbed by the section above it, as described in [Structure and addressing](#structure-and-addressing)). The section's id changes anyway, because the heading block is a new block.
+If you meant to keep the section, restate its heading as the first line of the Markdown you send, **at the same level** (`# Summary`, not `## Summary` — a deeper heading is absorbed by the section above it, as described in [Structure and addressing](#structure-and-addressing)). The section's id stays only if the heading you send still matches the old one by the rules in [Which blocks keep their ids](#which-blocks-keep-their-ids); if it doesn't, it changes.
 
 ## Revert
 
@@ -127,14 +145,14 @@ A revert is refused with `409 already_reverted` (already undone, or the row is i
 
 **How "stale" is decided** differs by operation, and this is the part worth knowing:
 
-- For `replace_all`, `replace_section`, `insert_after` and `append`, the server compares a fingerprint over exactly the blocks that edit wrote. Touch or delete any of them and the edit stops being revertable.
+- For `replace_all`, `replace_section`, `insert_after` and `append`, the server compares a fingerprint over exactly the blocks that edit wrote. Touch or delete any of them and the edit stops being revertable. A later write that leaves them exactly as they were, ids included, doesn't make it stale — which is what a later `replace_section` or `replace_all` does to the blocks it keeps (see [Which blocks keep their ids](#which-blocks-keep-their-ids)). Such an edit also stops being revertable when blocks it removed are back at the top level, for example because an earlier revert of it was merged.
 - **`delete_section` has no such fingerprint** — the blocks it wrote are the ones it removed. It is judged by an **anchor**: the neighbouring top-level block the section is put back next to. So a `delete_section` stays revertable even when the text *around* the anchor has been rewritten in the meantime; only the anchor block disappearing (or the deletion having already been undone) takes it away. Restoring it can therefore drop a section back into a paragraph that no longer reads the way it did.
 - **`file_sync` rows come in both kinds.** A row for a part a file rewrote or added is judged like the first four, by a fingerprint over the blocks it wrote; a row for a part a file only removed is judged like `delete_section`, by an anchor.
 
 **If the record fails to be written**, the content has already changed. Content is merged first and recorded afterwards, on purpose (a database transaction is never held across the merge), so a failure in between answers `500` with the content already applied and no row recorded. There are two shapes of this, and they differ:
 
 - For a **write**, the content is in the note and no row exists — so it cannot be reverted through the API, and a retry is refused by `if_match` rather than duplicating the edit.
-- For a **revert**, the content is already restored, but no revert row was written and the original row was not marked. **That row becomes non-revertable**, and pressing revert again answers `409 stale`. The two operation families reach that state differently: for the four non-`delete_section` ops the fingerprint check does it automatically (the restore replaced exactly the blocks it compares), while `delete_section` — which has no fingerprint and whose anchor survives a restore — is caught by a separate idempotency rule: an edit whose `before_blocks` are back at the top level counts as already restored. Without that rule a retry would insert the same blocks a second time, leaving two top-level blocks with the same id.
+- For a **revert**, the content is already restored, but no revert row was written and the original row was not marked. **That row becomes non-revertable**, and pressing revert again answers `409 stale`. Every operation is caught by the same idempotency rule: an edit whose removed blocks (all of its `before_blocks` for `delete_section`; for the others, the ones the edit didn't write back with the same id) are back at the top level counts as already restored. For the four non-`delete_section` ops the fingerprint check can also do it by itself, when the restore replaced exactly the blocks it compares; `delete_section` has no fingerprint, and its anchor survives a restore. Without the rule a retry would insert the same blocks a second time, leaving two top-level blocks with the same id.
 
 Neither shape is recoverable by retrying; both are consequences of merging before recording.
 
@@ -145,14 +163,14 @@ Neither shape is recoverable by retrying; both are consequences of merging befor
 The MCP tool `open_notes_as_files` (see [MCP](./mcp.md#open_notes_as_files)) lets an assistant download notes as markdown files and send a changed file back with `PUT /api/transfer/notes`. Sending a file back is not one of the five operations, and it takes no `if_match`: the server compares the file with the copy that was downloaded and writes only what the file changed.
 
 - **The unit is a top-level block** — a paragraph, a heading, a list item, a table and so on, together with the blocks nested inside it. A run of list items that includes colored items is one unit, because the file has it as one block of HTML.
-- **Only the blocks the file changed are written.** The blocks it didn't change keep their ids. An added part goes after the nearest block before it, or before the nearest block after it, that the file didn't change.
+- **Only the blocks the file changed are written.** The blocks it didn't change keep their ids. In a part the file rewrote, a block keeps its id by the rules in [Which blocks keep their ids](#which-blocks-keep-their-ids); the other blocks of that part get new ids. An added part goes after the nearest block before it, or before the nearest block after it, that the file didn't change.
 - **A note that has changed since the download refuses a changed file.** Before writing, the server checks that the note is still what the copy was downloaded with: its title, and its blocks — the same blocks with the same ids, each with the same text, formatting, attributes and nested blocks. Links to other notes are compared as they are stored, so renaming a linked note, or the linked note going out of your sight, doesn't count. (A note marked `mergeable: false` has no such list of blocks; for it, which can only be renamed with a file, the note's text as it downloads is compared instead — so there a linked note's new title, or a link whose note went out of your sight, does count.) If anything differs — someone typed in it, `edit_note` changed it, another file was sent back to it — the whole file is refused with `409 base_unavailable` (`reason: "note_changed"`) and nothing is written, not even the title; download the note again and redo the change in the new copy. The check of the text and the writing of the text happen together: if the note changes after the check, before the file's changes are merged in, they aren't merged, and the server checks again. The title is changed only if it is still the one the server checked. A file's text is never put over a change that had reached the server (see [Known limitations](./known-limitations/bulk-transfer.md) for text still being typed), so sending a file back doesn't save a version first. A file that is the same as the copy downloaded answers `unchanged` however the note has changed.
 - **A link to another note with no text of its own keeps following that note's title when the file leaves its text as downloaded.** Such a link is written to the file as it read at download time — normally the linked note's title then. If that note has been renamed since, that text in a changed block still counts as no text of its own, so the link goes on showing whatever the note is called, as long as you can still see that note. Link text changed to anything else is handled as for `edit_note` (see [Links to notes](./mcp.md#links-to-notes)), except that what reading over MCP or the API showed you, or what you wrote there, doesn't count: the note's current title, or the URL, follows the note; other text is kept as the link's own text.
 - **Some notes can't be written back as a file.** When a note's blocks can't be lined up with its markdown at download time, the download's manifest marks it `mergeable: false`, and a file that changes its content is refused with `409 not_mergeable`; change it with `edit_note`.
 - **Each changed place is one row** in the AI edit history, with `op: "file_sync"`, and the **AI edit history** dialog shows it as `file_sync`. Renaming a note with a file isn't recorded. A file that changes more than 100 places in a note leaves only the 100 latest of its rows, and the reply's `editIds` lists only those.
 - **A toggle becomes a bullet.** A toggle is written to the file as a bullet item, so when the file changes it, it comes back as a bullet list item. `edit_note` does the same with a toggle read with `read_note_section` and written back.
 - **Blocks nested under a list item come out of it.** A list item with a paragraph nested under it is written to the file as one item; when the file changes that item, the nested paragraph comes back as a block of its own, after it.
-- **HTML comments are dropped**, and text after one, on its line and on the lines right below it, becomes plain text that can run on into the text after a later comment; leave a blank line after each comment, with nothing after it on its line, to keep the lines below it as markdown. A block whose text has a comment inside it is replaced by one without the comment, with a new id. A comment the file opens with `<!--` and doesn't close can hide the text after it; when that leaves a changed part with nothing in it, the whole file is refused with `400 empty_content`. `edit_note` parses markdown the same way.
+- **HTML comments are dropped**, and text after one, on its line and on the lines right below it, becomes plain text that can run on into the text after a later comment; leave a blank line after each comment, with nothing after it on its line, to keep the lines below it as markdown. A block whose text has a comment inside it is replaced by one without the comment, which keeps the old block's id only by the rules in [Which blocks keep their ids](#which-blocks-keep-their-ids). A comment the file opens with `<!--` and doesn't close can hide the text after it; when that leaves a changed part with nothing in it, the whole file is refused with `400 empty_content`. `edit_note` parses markdown the same way.
 - Some cases where a block is replaced although the file didn't change it, and other blocks that come back different from how they went out, are in [Known limitations](./known-limitations/bulk-transfer.md).
 
 ## Limits
@@ -354,7 +372,7 @@ Two things worth knowing:
 ## Troubleshooting
 
 - **`409 fingerprint_mismatch` right after a read.** Somebody (a person in the browser, or another program) changed the note between your read and your write. The error body's `current` is the note as it is now — rebase on that and retry. If it keeps happening on a note being actively typed in, target a narrower section, or use `append` without `if_match` if position does not matter.
-- **`404 section_not_found` on a section that was there a moment ago.** Its heading was replaced or removed — by a person, or by your own previous `replace_section`/`delete_section`. Section ids are block ids ([Structure and addressing](#structure-and-addressing)). Re-read the outline; do not retry with the old id.
+- **`404 section_not_found` on a section that was there a moment ago.** Its heading was replaced or removed — by a person, or by your own previous `replace_section`/`delete_section` — and, if replaced, the new heading didn't keep its id ([Which blocks keep their ids](#which-blocks-keep-their-ids)). Section ids are block ids ([Structure and addressing](#structure-and-addressing)). Re-read the outline; do not retry with the old id.
 - **`503 server_busy`.** Another write to the same note held the queue for longer than 10 seconds, or — with `Retry-After` — the server was busy reading other writes' Markdown for longer than `PARSE_QUEUE_WAIT_MS` or already had 100 writes waiting (see [Self-hosting](./self-hosting.md#parse-workers)). Nothing was applied and nothing was recorded. Retry.
 - **`400 unsupported_block` saying the content is too complex.** Reading the Markdown took longer than the site's time limit or more memory than its limit (see [Limits](#limits)). Nothing was written. Split it into smaller writes, or write less formatting into one paragraph or into deeply nested quotes.
 - **`400 empty_section`.** `delete_section` was pointed at a section with no blocks — usually `_top` on a note that starts with a heading, or a note with no content at all.
