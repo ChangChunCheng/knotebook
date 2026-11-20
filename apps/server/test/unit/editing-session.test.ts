@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import type { Hocuspocus } from "@hocuspocus/server";
-import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelBlocks } from "@knotebook/shared";
 import type { CollabContext } from "../../src/collab/server.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession, NoteGoneError, forkFrom, withDirectConnection, type DirectCtx, type DirectTarget } from "../../src/notes/editing/session.js";
@@ -25,7 +25,7 @@ async function seeded(): Promise<Y.Doc> {
   s.close();
   return doc;
 }
-const ids = (doc: Y.Doc): Array<string | null> => topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") ?? null);
+const ids = (doc: Y.Doc): Array<string | null> => topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id") ?? null);
 
 describe("EditorSession", () => {
   it("replaceBlocks on a fork -> diff applied back to the original doc: ids outside the segment unchanged, the replaced segment gets a new id, concurrent edits survive on both sides", async () => {

@@ -35,7 +35,7 @@ export interface SyncPlan {
 
 export interface PlanSyncInput {
   /** The writer's user id: the parse queue key (not the note owner). */
-  owner: string;
+  writerId: string;
   segments: TransferSegment[];
   baseLineCount: number;
   agentLines: string[];
@@ -82,7 +82,7 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
     return titles.get(id.toLowerCase());
   };
   const fileBudget = input.fileBudget ?? runtime.parser.fileBudget();
-  const parseMd = (markdown: string) => runtime.parser.parse({ owner: input.owner, markdown, candidates: input.candidates, siteOrigin: input.siteOrigin, budget: fileBudget });
+  const parseMd = (markdown: string) => runtime.parser.parse({ owner: input.writerId, markdown, candidates: input.candidates, siteOrigin: input.siteOrigin, budget: fileBudget });
   {
     await yieldFn();
     last = now();
@@ -95,7 +95,7 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
     });
     let rr: Awaited<ReturnType<typeof findRegions>>;
     try {
-      rr = await findRegions(input.segments, input.baseLineCount, input.agentLines, input.diff, check, lines => runtime.parser.openFenceLine(input.owner, lines, fileBudget), { yieldFn, now });
+      rr = await findRegions(input.segments, input.baseLineCount, input.agentLines, input.diff, check, lines => runtime.parser.openFenceLine(input.writerId, lines, fileBudget), { yieldFn, now });
     } catch (err) {
       if (err instanceof TooComplexAbort) return { ok: false, code: "unsupported_block", detail: "too_complex" };
       throw err;

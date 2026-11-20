@@ -63,7 +63,7 @@ describe("POST /api/auth/password/set (#187)", () => {
     expect((await setPw(app, await cookieOf(u.id), { newPassword: "short" })).json().error.code).toBe("password_too_short");
     expect((await setPw(app, await cookieOf(u.id), { newPassword: NEW_PW, extra: 1 })).json().error.code).toBe("invalid_body");
     expect((await app.inject({ method: "POST", url: "/api/auth/password/set", payload: { newPassword: NEW_PW } })).statusCode).toBe(401);
-    // Valid PAT (scope enough for authenticateAny), no cookie: the 401 can only come from "session only".
+    // Valid PAT (scope enough for authenticateTokenOrSession), no cookie: the 401 can only come from "session only".
     const { token } = await seedTokenForUser(db, u.id);
     expect(
       (await app.inject({ method: "POST", url: "/api/auth/password/set", headers: bearer(token), payload: { newPassword: NEW_PW } })).statusCode,

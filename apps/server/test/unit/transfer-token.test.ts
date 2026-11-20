@@ -2,7 +2,7 @@
  * #200：transfer token 的明文格式與 401 的 challenge 組字。純函式，無 DB。
  *
  * 守衛重點：`knbt_` 的第 4 字元是 `t` 不是 `_`，所以 `isAccessTokenShape("knbt_…")` 為假——transfer token 送到任何
- * `authenticateAny` 路由（`routes/notes.ts` 七處、`/api/mcp`）都在前綴那關 401、不進 DB（同 `knbr_` 的手法，
+ * `authenticateTokenOrSession` 路由（`routes/notes.ts` 三處、`routes/note-content.ts` 四處、`/api/mcp`）都在前綴那關 401、不進 DB（同 `knbr_` 的手法，
  * `test/unit/api-token.test.ts` 的 refresh 案）。
  */
 import { describe, expect, it } from "vitest";

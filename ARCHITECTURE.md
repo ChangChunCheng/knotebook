@@ -16,7 +16,7 @@ Knotebook is a pnpm workspace (`pnpm-workspace.yaml`) with three packages and an
 | `e2e` | `@knotebook/e2e`: the Playwright suite, run against a Docker Compose stack (`docker-compose.yml` plus `docker-compose.e2e.yml`). `e2e/stubs` holds a fake OIDC provider and an AI stub. |
 | `docker/Dockerfile` | The app image: builds all packages, deploys the server, and copies the web build next to it as `web-dist`. |
 | `docker-compose.yml` | The self-hosting stack: the `app` service and a bundled PostgreSQL (`db`, the `pgvector/pgvector:pg17` image). |
-| `scripts` | Repository scripts: license check, bundle-size check, release preparation, CHANGELOG section extraction, PWA icon generation, and the WSL wrappers for integration and e2e tests. Each `.mjs` has a `.test.mjs` next to it (`pnpm test:scripts`). |
+| `scripts` | Repository scripts: license check, bundle-size check, Markdown link check, release preparation, CHANGELOG section extraction, PWA icon generation, and the WSL wrappers for integration and e2e tests. Each `.mjs` has a `.test.mjs` next to it (`pnpm test:scripts`). |
 | `patches` | Patches applied to third-party packages with `pnpm patch` (see [Patched dependencies](#patched-dependencies)). |
 | `docs` | User, operator and contributor documentation. |
 
@@ -40,7 +40,7 @@ On `SIGTERM`/`SIGINT` it stops background scans, then calls `collab.destroy()` *
 
 `buildApp` in `apps/server/src/app.ts` wires everything together. It sets up cookie, multipart and form parsing, a global `onRequest` guard that requires `application/json` on bodies (with exemptions for uploads, `text/markdown` file write-backs and the OAuth form endpoints), the shared error format, security headers, `/healthz`, and the rate limiters (`apps/server/src/http/limiters.ts`). Then it registers one Fastify plugin per area from `apps/server/src/routes/`, for example:
 
-- `routes/notes.ts`: notes, their content (`GET /api/notes/:id/content`), edits and reverts (`/api/notes/:id/edits`), and the collab token;
+- `routes/notes.ts`: notes and the collab token; it also registers `routes/note-content.ts` (a note's content, `GET /api/notes/:id/content`, and edits and reverts, `/api/notes/:id/edits`) and `routes/note-sharing.ts` (shares, the public link and its alias and width);
 - `routes/note-versions.ts`, `routes/trash.ts`, `routes/folders.ts`, `routes/favorites.ts`, `routes/groups.ts`, `routes/search.ts`, `routes/uploads.ts`;
 - `routes/auth.ts`, `routes/oidc*.ts`, `routes/api-tokens.ts`, `routes/oauth*.ts`: sign-in and credentials (next section);
 - `routes/admin-*.ts`: Site admin;
@@ -59,7 +59,7 @@ There are four kinds of credentials:
 
 - **Web sessions.** Signing in (password: `routes/auth.ts`; OIDC: `routes/oidc.ts`) inserts a row in the `sessions` table and sets a signed JWT cookie that names it (`apps/server/src/auth/session.ts`, `apps/server/src/auth/sessions.ts`). `UserGate` in `auth/session.ts` checks every request against the user and session rows, with a small in-memory cache, so signing out, disabling an account or changing a password takes effect on the next request. Routes use the `app.authenticate` decorator (cookie only) or `app.requireAdmin`.
 - **OIDC sign-in.** Identity providers are configured in Site admin and stored in the database (`auth_providers`, `user_identities`). The flow uses `openid-client` (`apps/server/src/auth/oidc-*.ts`, `apps/server/src/auth/tx/oidc-login.ts`).
-- **API tokens and OAuth grants.** Both live in the `api_tokens` table as hashes (`kind` tells them apart). A personal token is created in Settings (`routes/api-tokens.ts`). MCP clients can instead use OAuth with dynamic client registration and PKCE: `routes/oauth.ts` serves `/oauth/register`, `/oauth/authorize` and `/oauth/token`, `routes/oauth-metadata.ts` the `/.well-known/` metadata, and `routes/oauth-api.ts` the consent page's API. Only routes that opt in with `app.authenticateAny(scope)` (`apps/server/src/auth/bearer.ts`) accept a bearer token; everything else stays cookie-only, so a leaked token can read or write notes but cannot take over the account.
+- **API tokens and OAuth grants.** Both live in the `api_tokens` table as hashes (`kind` tells them apart). A personal token is created in Settings (`routes/api-tokens.ts`). MCP clients can instead use OAuth with dynamic client registration and PKCE: `routes/oauth.ts` serves `/oauth/register`, `/oauth/authorize` and `/oauth/token`, `routes/oauth-metadata.ts` the `/.well-known/` metadata, and `routes/oauth-api.ts` the consent page's API. Only routes that opt in with `app.authenticateTokenOrSession(scope)` (`apps/server/src/auth/bearer.ts`) accept a bearer token; everything else stays cookie-only, so a leaked token can read or write notes but cannot take over the account.
 - **Collab tokens.** A short-lived JWT for one note, signed with a key separate from the session key (`apps/server/src/collab/token.ts`), issued by `POST /api/notes/:id/collab-token` (cookie only). See [Real-time collaboration](#real-time-collaboration).
 
 ### Database and migrations
@@ -139,9 +139,7 @@ Markdown conversion itself (what syntax maps to which block, colors, columns, es
 
 ### End to end: an agent calls `edit_note` and an open tab updates
 
-Function and file names are as of v0.17.1.
-
-1. The MCP client sends `POST /api/mcp`. The global JSON guard in `app.ts` runs, then `app.authenticateAny` (`auth/bearer.ts`) resolves the bearer token from `api_tokens` and its scope.
+1. The MCP client sends `POST /api/mcp`. The global JSON guard in `app.ts` runs, then `app.authenticateTokenOrSession` (`auth/bearer.ts`) resolves the bearer token from `api_tokens` and its scope.
 2. The handler in `apps/server/src/routes/mcp.ts` creates a stateless `McpServer` for this one request, registers the tools allowed by the token's scope (`registerMcpTools` in `apps/server/src/mcp/register.ts`), and hands the request to the SDK's `WebStandardStreamableHTTPServerTransport` (the Fastify/Web bridge is `apps/server/src/mcp/transport.ts`).
 3. The SDK calls `editNote` in `apps/server/src/mcp/tools/edit-note.ts` (through `runTool`, which turns unexpected exceptions into a tool error). In order, it checks the token's write scope (`requireWriteScope`, `apps/server/src/mcp/write-scope.ts`), validates the arguments against the same schema as REST `POST /api/notes/:id/edits` (`apps/server/src/notes/schemas.ts`; a `rename` branches off here and never touches the document), resolves the caller's role (`resolveRole` in `apps/server/src/notes/service.ts`), and takes from the `edit` rate limiter.
 4. `NoteWriteService.applyToNote` (`notes/editing/write-service.ts`) works out the agent label and the notes that wikilinks may point to, and parses the Markdown in a parse worker (`editing.parser.parse`) **before** entering the per-note queue, so a slow parse doesn't hold up other writes to the note. It then runs `applyEdit` inside `NoteWriteQueue.run(noteId, …)`, passing the result as `preparsed`.
@@ -151,7 +149,7 @@ Function and file names are as of v0.17.1.
 8. The direct connection disconnects, which triggers `onStoreDocument` (`collab/store.ts`): `note_states` is saved, a backup may be written, the search index is rewritten, and `collab/versions.ts` marks the note as pending for an automatic version.
 9. Back in `applyEdit`, `insertEditRecord` writes the `note_ai_edits` row (trimming the note's history to `RETENTION` rows) and `updateNoteLinks` refreshes `note_links`. When `applyEdit` returns, `applyToNote` updates the agent's presence, so its cursor shows at the changed section in open tabs. The tool replies with the `editId`, the new fingerprint and the outline.
 
-REST `POST /api/notes/:id/edits` (`routes/notes.ts`) takes the same path from step 4 on.
+REST `POST /api/notes/:id/edits` (`routes/note-content.ts`) takes the same path from step 4 on.
 
 ## Search
 
@@ -197,7 +195,7 @@ The integration tests build a real app with `buildApp` against a fresh database.
 
 CI is `.github/workflows/ci.yml`. It runs on pull requests, on pushes to `main`, and when started manually:
 
-- `build-unit`: install, `pnpm build`, the bundle-size check, `pnpm typecheck`, `pnpm lint`, `pnpm check-licenses`, `pnpm test:scripts`, then the shared, web and server unit tests;
+- `build-unit`: install, `pnpm build`, the bundle-size check, `pnpm typecheck`, `pnpm lint`, `pnpm check-licenses`, `pnpm check-doc-links`, `pnpm test:scripts`, then the shared, web and server unit tests;
 - `integration`: the server integration tests in 3 shards;
 - `e2e`: the Playwright suite in 4 shards against the Compose stack;
 - `ci`: succeeds only when all of the above did. It is the required status check on `main`.

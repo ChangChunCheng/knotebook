@@ -36,7 +36,7 @@ export interface McpToolCtx {
   userId: string;
   userHandle: string;
   tokenId: string | null;
-  /** Read tools need only `notes:read`, which `authenticateAny` guarantees; `write-scope.ts` uses these two to decide write/move/delete. A session skips scope checks and the token limiter. */
+  /** Read tools need only `notes:read`, which `authenticateTokenOrSession` guarantees; `write-scope.ts` uses these two to decide write/move/delete. A session skips scope checks and the token limiter. */
   authKind: "token" | "session";
   /** null = session (full rights). */
   tokenScope: TokenScope | null;

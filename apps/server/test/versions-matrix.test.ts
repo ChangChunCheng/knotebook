@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { createVersionService } from "../src/collab/versions.js";
 import { groups, siteSettings, users } from "../src/db/schema.js";
 import { bearer, docText, seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
@@ -22,7 +22,7 @@ async function setup() {
 type S = Awaited<ReturnType<typeof setup>>;
 
 async function typeFirst(ctx: CollabTestCtx, noteId: string, client: TestClient, fn: (t: Y.XmlText) => void, until: (s: string) => boolean): Promise<void> {
-  const p = topLevelContainers(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
+  const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
   client.doc.transact(() => fn(p.get(0) as Y.XmlText));
   await waitFor("server 收到", 5_000, () => until(docText(ctx.collab.hocuspocus.documents.get(noteId)!)));
 }

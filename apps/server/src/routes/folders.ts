@@ -24,7 +24,7 @@ const deleteBodySchema = z.object({ onlyIfEmpty: z.boolean().optional() }).stric
 
 export function foldersRoutes(deps: FolderServiceDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
-    app.get("/api/folders", { preHandler: app.authenticateAny("notes:read") }, async request => {
+    app.get("/api/folders", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => {
       return { folders: await listFolders(deps.db, request.user!.id) } satisfies FolderListDto;
     });
 

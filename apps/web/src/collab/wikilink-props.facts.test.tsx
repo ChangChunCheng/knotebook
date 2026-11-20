@@ -6,7 +6,7 @@ import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { BlockNoteView } from "@blocknote/mantine";
-import { YDOC_FRAGMENT, canonicalizeElements, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, canonicalizeElements, topLevelBlocks } from "@knotebook/shared";
 import "@/i18n";
 import { noteSchema } from "./schema";
 
@@ -112,7 +112,7 @@ const MEASURED_CANONICAL: Record<"open" | "move", boolean> = { open: false, move
 
 function p1WikilinkAttrKeys(doc: Y.Doc): string[][] {
   const out: string[][] = [];
-  for (const c of topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).filter((x) => x.getAttribute("id") === "p1")) {
+  for (const c of topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).filter((x) => x.getAttribute("id") === "p1")) {
     for (const node of c.createTreeWalker((n) => n instanceof Y.XmlElement && n.nodeName === "wikilink")) {
       out.push(Object.keys((node as Y.XmlElement).getAttributes()).sort());
     }
@@ -128,7 +128,7 @@ async function measure(op: Op): Promise<{
   p1OriginalAttrKeys: string[][];
 }> {
   const doc = legacyDoc();
-  const canonicalP1 = () => canonicalizeElements(topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).filter((c) => c.getAttribute("id") === "p1"));
+  const canonicalP1 = () => canonicalizeElements(topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).filter((c) => c.getAttribute("id") === "p1"));
   const before = canonicalP1();
   const editor = collabEditor(doc);
   const view = mountInView(editor);

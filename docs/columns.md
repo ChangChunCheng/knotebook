@@ -77,7 +77,7 @@ image can't get wider than that allows. In a row that has stacked, the image sto
 again: drag the divider for that.
 
 Rows show the same way on a note's public page, in presentations and in version comparisons (see
-[Known limitations](./known-limitations.md#side-by-side-columns) for how presentations and
+[Known limitations](./known-limitations/side-by-side-columns.md) for how presentations and
 comparisons differ).
 
 ## Removing columns
@@ -97,7 +97,7 @@ Empty paragraphs are dropped; a row with nothing in it leaves one empty paragrap
   into the paragraphs *a* and *b*.
 - Delete at the end of a block that has blocks nested under it, or in a code block, is left to the
   editor's usual behavior, and so is Backspace at the start of a heading (the first press turns it back
-  into a paragraph). See [Known limitations](./known-limitations.md#side-by-side-columns) for the
+  into a paragraph). See [Known limitations](./known-limitations/side-by-side-columns.md) for the
   keys at the edges of a row.
 
 **Deleting what is in a column doesn't remove the column.** When ⋮⋮ **Delete**, or the delete button

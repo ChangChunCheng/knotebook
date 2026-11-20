@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { crossesBucketBoundary, selectPrunable } from "../../src/collab/backup-policy.js";
+import { crossesFifteenMinuteBoundary, selectPrunable } from "../../src/collab/backup-policy.js";
 
-describe("crossesBucketBoundary (15-minute buckets; half-open [start, end), aligned to the UTC clock)", () => {
+describe("crossesFifteenMinuteBoundary (15-minute buckets; half-open [start, end), aligned to the UTC clock)", () => {
   it("within the same [10:00,10:15) bucket -> false", () => {
     const last = new Date("2026-08-06T10:07:00Z");
     const now = new Date("2026-08-06T10:11:00Z");
-    expect(crossesBucketBoundary(last, now)).toBe(false);
+    expect(crossesFifteenMinuteBoundary(last, now)).toBe(false);
   });
 
   it("crossing into the next bucket [10:15,10:30) -> true", () => {
     const last = new Date("2026-08-06T10:14:00Z");
     const now = new Date("2026-08-06T10:16:00Z");
-    expect(crossesBucketBoundary(last, now)).toBe(true);
+    expect(crossesFifteenMinuteBoundary(last, now)).toBe(true);
   });
 
   it("lastBackupAt null -> true (never backed up)", () => {
     const now = new Date("2026-08-06T10:16:00Z");
-    expect(crossesBucketBoundary(null, now)).toBe(true);
+    expect(crossesFifteenMinuteBoundary(null, now)).toBe(true);
   });
 });
 

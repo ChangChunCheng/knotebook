@@ -1,7 +1,7 @@
 import { and, desc, eq, notInArray } from "drizzle-orm";
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
-import { AI_EDITS_RETENTION, YDOC_FRAGMENT, topLevelContainers, type EditOp, type NoteOutlineEntry } from "@knotebook/shared";
+import { AI_EDITS_RETENTION, YDOC_FRAGMENT, topLevelBlocks, type EditOp, type NoteOutlineEntry } from "@knotebook/shared";
 import type { CollabServer } from "../../collab/server.js";
 import type { VersionService } from "../../collab/versions.js";
 import { docClock } from "../../collab/store.js";
@@ -101,7 +101,7 @@ export async function mergeDiff(
       if (live === null || live !== input.expectFingerprint) throw new FingerprintMismatch(); // null = id missing or order changed: no fallback to the whole fingerprint
     }
     // Anchor recheck inside transact (revert only). No test fails if removed (`revertEdit` has no injection point for that interleaving); without it `insertBlocks` would target a vanished anchor (benign: nothing lost, the CRDT picks the position, but unguarded).
-    if (input.anchorId !== null && !topLevelContainers(fragment).some(c => c.getAttribute("id") === input.anchorId)) throw new FingerprintMismatch();
+    if (input.anchorId !== null && !topLevelBlocks(fragment).some(c => c.getAttribute("id") === input.anchorId)) throw new FingerprintMismatch();
     const clock = docClock(doc);
     Y.applyUpdate(doc, input.diff);
     ctx.applied = true;
@@ -160,7 +160,7 @@ export async function mergeAtBase(
   const absent = post.guard.kind === "blocks" ? (post.guard.absent ?? []) : [];
   const stillAbsent = (doc: Y.Doc): boolean => {
     if (absent.length === 0) return true;
-    const top = new Set(topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id")));
+    const top = new Set(topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id")));
     return !absent.some(id => top.has(id));
   };
   const mergeable = (doc: Y.Doc): boolean => stillAbsent(doc) && (watch !== undefined && watch.doc === doc ? !watch.conflicts(post.guard) : stateEquals(doc, post.baseSnapshot));
@@ -212,7 +212,7 @@ export async function forkAndCheck(deps: ApplyDeps, noteId: string): Promise<For
   const sv = Y.encodeStateVector(fork);
   const fragment = fork.getXmlFragment(YDOC_FRAGMENT);
   const { outline, whole } = outlineOf(fragment);
-  return { fork, sv, outline, whole, isEmptyDoc: topLevelContainers(fragment).length === 0 };
+  return { fork, sv, outline, whole, isEmptyDoc: topLevelBlocks(fragment).length === 0 };
 }
 
 async function prepareBlocks(

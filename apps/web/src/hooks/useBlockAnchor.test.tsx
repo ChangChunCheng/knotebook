@@ -345,10 +345,10 @@ describe("#269 useBlockAnchor (public page)", () => {
     expect(scrolls).toEqual(["path:h/b:x"]);
   });
 
-  it("presenting (ignore): cold open ...?present#b-x sets nothing and does not scroll", () => {
+  it("presenting (ignoreInitialAnchor): cold open ...?present#b-x sets nothing and does not scroll", () => {
     function PresentingHost() {
       const [root, setRoot] = useState<HTMLElement | null>(null);
-      useBlockAnchor({ noteKey: "path:h/b", ready: true, root, ignore: true, currentNoteId: null });
+      useBlockAnchor({ noteKey: "path:h/b", ready: true, root, ignoreInitialAnchor: true, currentNoteId: null });
       return (
         <div ref={setRoot}>
           <div className="bn-block-outer" data-id="x" data-note="path:h/b" />

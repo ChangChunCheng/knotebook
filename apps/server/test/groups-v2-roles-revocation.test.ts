@@ -194,7 +194,7 @@ describe("#175 role change revocation (real connections)", () => {
     const contributors = await createRole(admin.session, groupId, "Contributors", { ...NONE, create: true });
     await assignRole(admin.session, groupId, member.id, contributors);
 
-    // The cookie session goes through `authenticateAny("notes:write")`; buildCollabTestApp has the collab component, so the deployment gate lets content through.
+    // The cookie session goes through `authenticateTokenOrSession("notes:write")`; buildCollabTestApp has the collab component, so the deployment gate lets content through.
     const created = await api(member.session, "POST", "/api/notes", { groupId, title: "Pitch", content: "contributed-text" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ role: "viewer", groupId, ownerId: null, permissions: { read: true, edit: false } });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { apiTokens, noteAiEdits } from "../src/db/schema.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 import type { EditingTestHooks } from "../src/notes/editing/apply.js";
@@ -32,8 +32,8 @@ async function setup(md = "# A\n\n第一段\n\n# B\n\n第二段", opts: Paramete
   return { ctx, u, note, client, token, tokenId, content, post, list, revert };
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
-const ids = (doc: Y.Doc) => topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
-/** Reads the raw Y top level directly (not shared's topLevelContainers) so the oracle doesn't break together with the function under test. */
+const ids = (doc: Y.Doc) => topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+/** Reads the raw Y top level directly (not shared's topLevelBlocks) so the oracle doesn't break together with the function under test. */
 const rawTop = (doc: Y.Doc) =>
   (doc.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement).toArray().map(n => `${(n as Y.XmlElement).nodeName}:${(n as Y.XmlElement).getAttribute("id")}`);
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signTestSession({ userId, tv: 0 })}`;
@@ -437,7 +437,7 @@ describe("revert", () => {
 
   it("GET /edits guards: non-member -> 404; CONTENT_READ_LIMIT is consumed only after the role check; exhausted -> 429", async () => {
     // The route claims three guards (scope, role, rate limit) with no assertion. The scope guard is deliberately not given its own
-    // case: it is the shared `authenticateAny("notes:read")` mechanism, already pinned by `api-token-auth.test.ts` ("read token POST
+    // case: it is the shared `authenticateTokenOrSession("notes:read")` mechanism, already pinned by `api-token-auth.test.ts` ("read token POST
     // /api/notes -> 403 insufficient_scope"), and every token in this file contains `notes:read`, so no meaningful variant exists.
     // This case guards the role and rate-limit ones.
     const s = await setup(undefined, { limiters: { contentRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) } });

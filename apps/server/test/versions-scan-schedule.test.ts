@@ -15,8 +15,8 @@ async function duePending(db: Db, ownerId: string, text: string): Promise<string
 }
 
 describe("auto-cut scan schedule", () => {
-  it("startVersionSweep + versionAutoScanIntervalMs -> periodic scan cuts due notes; no more scans after app.close()", async () => {
-    const { app, db } = await buildTestApp({ startVersionSweep: true, versionAutoScanIntervalMs: 50 });
+  it("startVersionJobs + versionAutoScanIntervalMs -> periodic scan cuts due notes; no more scans after app.close()", async () => {
+    const { app, db } = await buildTestApp({ startVersionJobs: true, versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "排程切的");
     await expect.poll(async () => (await versionsOf(db, a)).length, { timeout: 5_000 }).toBe(1);
@@ -26,7 +26,7 @@ describe("auto-cut scan schedule", () => {
     expect(await versionsOf(db, b)).toEqual([]);
   });
 
-  it("without startVersionSweep (the test app default) -> nothing scheduled", async () => {
+  it("without startVersionJobs (the test app default) -> nothing scheduled", async () => {
     const { app, db } = await buildTestApp({ versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "沒有排程");

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearStaleOneTimeTokens, INVITE_TOKEN_KEY, ONE_TIME_TOKEN_PAGES, readSessionToken, RESET_TOKEN_KEY, writeSessionToken } from "./resetTokenStorage";
+import { clearStaleOneTimeTokens, INVITE_TOKEN_KEY, ONE_TIME_TOKEN_PAGES, readSessionToken, RESET_TOKEN_KEY, writeSessionToken } from "./oneTimeTokenStorage";
 
 describe("clearStaleOneTimeTokens (#286; main.tsx calls it before render)", () => {
   beforeEach(() => {

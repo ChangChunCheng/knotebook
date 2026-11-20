@@ -6,7 +6,7 @@
  * (parse rebinds to the current title). Other empty-string attributes compare normally.
  */
 import * as Y from "yjs";
-import { topLevelContainers } from "@knotebook/shared";
+import { topLevelBlocks } from "@knotebook/shared";
 
 function stable(value: unknown): string {
   if (value === null) return "null";
@@ -57,7 +57,7 @@ export interface SameIndex {
 /** Index and per-block cache built once per fragment: rebuilding per region is O(regions × blocks). Only valid on fragments that no longer change. */
 export function indexTopLevel(fragment: Y.XmlFragment): SameIndex {
   const byId = new Map<string, Y.XmlElement>();
-  for (const c of topLevelContainers(fragment)) {
+  for (const c of topLevelBlocks(fragment)) {
     const id = c.getAttribute("id");
     if (typeof id === "string") byId.set(id, c);
   }

@@ -78,7 +78,7 @@ describe("POST /api/auth/oidc/link/:providerId (#187)", () => {
     const t = await twoProviders({ limiters: freshLimiters({ oidcLogin: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const id = t.provider("b").id;
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {} })).statusCode).toBe(401);
-    // Valid PAT (scope sufficient for authenticateAny), no cookie: the 401 can only come from "only accepts a session".
+    // Valid PAT (scope sufficient for authenticateTokenOrSession), no cookie: the 401 can only come from "only accepts a session".
     const { token } = await seedTokenForUser(t.db, (await insertPasswordUser(t.db)).id);
     expect((await t.app.inject({ method: "POST", url: `/api/auth/oidc/link/${id}`, payload: {}, headers: bearer(token) })).statusCode).toBe(401);
     const flagged = await insertPasswordUser(t.db, { mustChangePassword: true });

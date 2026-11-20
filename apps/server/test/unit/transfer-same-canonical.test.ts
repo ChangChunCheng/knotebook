@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, canonicalizeElements, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, canonicalizeElements, topLevelBlocks } from "@knotebook/shared";
 import { fingerprintOf, topLevelFingerprints, topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
@@ -45,7 +45,7 @@ async function scratchOf(md: string, stripStart: boolean): Promise<{ frag: Y.Xml
   return { frag: frag(doc), ids };
 }
 const fpsOf = (f: Y.XmlFragment, ids: string[]) => {
-  const byId = new Map(topLevelContainers(f).map(c => [c.getAttribute("id"), c]));
+  const byId = new Map(topLevelBlocks(f).map(c => [c.getAttribute("id"), c]));
   return ids.map(id => fingerprintOf(canonicalizeElements([byId.get(id)!])));
 };
 const paras = (n: number): ShapeBlock[] => Array.from({ length: n }, (_, i) => ({ type: "paragraph", content: `p${i}` }));
@@ -97,7 +97,7 @@ describe("a human already made the same edit -> sameCanonical equal, fingerprint
     if (opts.browser) {
       // the shape the browser builds: numbered has no `start` attribute (changing the Y structure directly)
       doc.transact(() => {
-        for (const c of topLevelContainers(frag(doc))) {
+        for (const c of topLevelBlocks(frag(doc))) {
           const content = c.get(0);
           if (content instanceof Y.XmlElement && content.nodeName === "numberedListItem") content.removeAttribute("start");
         }
@@ -139,7 +139,7 @@ describe("a human already made the same edit -> sameCanonical equal, fingerprint
 
 describe("real edits are not swallowed", () => {
   const wl = (props: Record<string, unknown>): ShapeBlock => ({ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: SHAPE_LINK_TARGET, snapshotTitle: "Other", ...props } }] });
-  const one = async (b: ShapeBlock) => sameCanonicalOf(topLevelContainers(frag(await docWith([b])))[0]!);
+  const one = async (b: ShapeBlock) => sameCanonicalOf(topLevelBlocks(frag(await docWith([b])))[0]!);
   it.each([
     ["wikilink custom text (label) changed", wl({ label: "mine" }), wl({ label: "yours" })],
     ["wikilink label added", wl({}), wl({ label: "mine" })],
@@ -154,12 +154,12 @@ describe("real edits are not swallowed", () => {
   // The previous case's `""` vs `"text"` differs whether or not empty strings are dropped, so it cannot catch "drop empty-string properties on all elements".
   it("empty-string property on a non-wikilink: code language \"\" vs no language property -> not equal", async () => {
     const doc = await docWith([{ type: "codeBlock", props: { language: "" }, content: "x" }]);
-    const a = sameCanonicalOf(topLevelContainers(frag(doc))[0]!);
+    const a = sameCanonicalOf(topLevelBlocks(frag(doc))[0]!);
     doc.transact(() => {
-      const content = topLevelContainers(frag(doc))[0]!.get(0) as Y.XmlElement;
+      const content = topLevelBlocks(frag(doc))[0]!.get(0) as Y.XmlElement;
       content.removeAttribute("language");
     });
-    expect(sameCanonicalOf(topLevelContainers(frag(doc))[0]!)).not.toBe(a);
+    expect(sameCanonicalOf(topLevelBlocks(frag(doc))[0]!)).not.toBe(a);
   });
   it("contrast: wikilinks differing only in snapshotTitle -> equal", async () => {
     expect(await one(wl({ snapshotTitle: "A" }))).toBe(await one(wl({ snapshotTitle: "B" })));
