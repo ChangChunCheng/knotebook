@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { noteAiEdits, notes, users } from "../src/db/schema.js";
 import { directTarget, withDirectConnection, type DirectCtx } from "../src/notes/editing/session.js";
 import { VACUUM_VERSION_FINGERPRINT } from "../src/notes/version-fingerprint.js";
@@ -32,7 +32,7 @@ const hasAgent = (userId: string) => (e: { user_id: string; agent_label: string 
 
 /** 在 client.doc 第一顆段落的文字上做一次編輯（模擬瀏覽器打字），等 server 收到。 */
 async function typeFirst(ctx: CollabTestCtx, noteId: string, client: TestClient, fn: (t: Y.XmlText) => void, until: (s: string) => boolean): Promise<void> {
-  const p = topLevelContainers(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
+  const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
   client.doc.transact(() => fn(p.get(0) as Y.XmlText));
   await waitFor("server 收到", 5_000, () => until(docText(ctx.collab.hocuspocus.documents.get(noteId)!)));
 }
@@ -241,7 +241,7 @@ describe("拆分後的守衛", () => {
     expect(res.statusCode).toBe(201);
     await waitFor("provider 收到", 3_000, () => docText(client.doc).includes("新內容"));
     expect((await s.content()).fingerprint).toBe(res.json().fingerprint);
-    expect(topLevelContainers(client.doc.getXmlFragment(YDOC_FRAGMENT)).length).toBeGreaterThan(0);
+    expect(topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT)).length).toBeGreaterThan(0);
     client.disconnect();
   });
 });

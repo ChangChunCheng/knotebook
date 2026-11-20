@@ -280,7 +280,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
   const tokenSyncCallbacks = new Map<string, Set<() => void>>();
   /** noteId → users who could see it when deletion started (`null`: lookup failed). Kept in memory until the TTL (a long list for a widely shared note). Blocking depends only on
    * the key and the user's current role; the audience only decides who hears `note-deleting` instead of `no-role`. */
-  const deleting = new Map<string, { epoch: number; audience: ReadonlySet<string> | null }>();
+  const deletingGates = new Map<string, { epoch: number; audience: ReadonlySet<string> | null }>();
   let deletingEpoch = 0;
   const sockets = new Set<WsWebSocket>();
 
@@ -313,7 +313,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
   /** `null` never means everyone: any user can sign a token for any UUID, so a failed lookup would reveal that
    * the id was just deleted. onAuthenticate falls back to the user's current role. */
   function deletingAudienceHas(noteId: string, userId: string): boolean {
-    const audience = deleting.get(noteId)?.audience;
+    const audience = deletingGates.get(noteId)?.audience;
     return audience !== undefined && audience !== null && audience.has(userId);
   }
   const noteStore = createNoteStore({ ...deps.storeSearchHooks, db: deps.db, log });
@@ -472,7 +472,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
         // Slow path: anyone who still has a role may hear note-deleting. Covers a failed audience
         // lookup, a fast-path read racing `markDeleting`, and users granted access during deletion.
         // Everyone else gets `no-role`, same as for an existing note that isn't theirs.
-        if (deleting.has(documentName) && (role !== "none" || deletingAudienceHas(documentName, claims.userId))) {
+        if (deletingGates.has(documentName) && (role !== "none" || deletingAudienceHas(documentName, claims.userId))) {
           rejectAuth("note-deleting", { noteId: documentName, userId: claims.userId });
         }
         if (role === "none") {
@@ -509,7 +509,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
     connected: async ({ connection, socketId, documentName, context }) => {
       // Hocuspocus already applies messages between onAuthenticate and here. A connection that
       // passed before `markDeleting` must not register, or the deletion sweep can't find it.
-      if (deleting.has(documentName)) {
+      if (deletingGates.has(documentName)) {
         connection.close({ code: APP_CLOSE_CODE, reason: COLLAB_CLOSE_NOTE_DELETED });
         return;
       }
@@ -568,7 +568,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
           handle.close(reason);
         };
 
-        if (deleting.has(documentName)) {
+        if (deletingGates.has(documentName)) {
           closeWith("note-deleting", COLLAB_CLOSE_NOTE_DELETED);
           return;
         }
@@ -737,7 +737,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
     byUser.clear();
     byNote.clear();
     tokenSyncCallbacks.clear();
-    deleting.clear();
+    deletingGates.clear();
   }
 
   return {
@@ -792,7 +792,7 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
       }
       // Merge, don't overwrite: a concurrent second DELETE may load an empty audience after the
       // first commits. A known list wins over `null`.
-      const existing = deleting.get(noteId)?.audience;
+      const existing = deletingGates.get(noteId)?.audience;
       const merged =
         existing === undefined || existing === null
           ? audience
@@ -800,13 +800,13 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
             ? existing
             : new Set([...existing, ...audience]);
       const epoch = (deletingEpoch += 1);
-      deleting.set(noteId, { epoch, audience: merged });
+      deletingGates.set(noteId, { epoch, audience: merged });
       return epoch;
     },
 
     async releaseDeletingGate(noteId: string, epoch: number): Promise<boolean> {
       // A failed concurrent DELETE must not close the gate a successful one opened.
-      if (deleting.get(noteId)?.epoch !== epoch) return false;
+      if (deletingGates.get(noteId)?.epoch !== epoch) return false;
 
       // Also require a live row (#181), or a concurrent DELETE that got 404 releases the gate of
       // the one that moved the note to the trash.
@@ -818,17 +818,17 @@ export function createCollabServer(deps: CollabDeps): CollabServer {
       }
 
       // Another gate may have opened during the await.
-      if (deleting.get(noteId)?.epoch !== epoch) return false;
-      deleting.delete(noteId);
+      if (deletingGates.get(noteId)?.epoch !== epoch) return false;
+      deletingGates.delete(noteId);
       return true;
     },
 
     unmarkDeleting(noteId: string): void {
-      deleting.delete(noteId);
+      deletingGates.delete(noteId);
     },
 
     isDeleting(noteId: string): boolean {
-      return deleting.has(noteId);
+      return deletingGates.has(noteId);
     },
 
     async destroy(): Promise<void> {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { noteAiEdits, noteLinkConversion, noteLinks, notes, users } from "../src/db/schema.js";
 import { LINK_CONVERSION_VERSION_NAME, runLinkConversion, type LinkConversionDeps } from "../src/notes/link-conversion.js";
 import { buildCollabTestApp, testConfig, type CollabTestCtx } from "./helpers.js";
@@ -41,7 +41,7 @@ function linkHrefs(doc: Y.Doc): string[] {
 }
 /** 頂層 block 的 Yjs item id（client:clock）——同一個 id ＝ 沒被重寫。 */
 function itemIdOf(doc: Y.Doc, index: number): string {
-  const c = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[index] as unknown as { _item: { id: { client: number; clock: number } } };
+  const c = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[index] as unknown as { _item: { id: { client: number; clock: number } } };
   return `${c._item.id.client}:${c._item.id.clock}`;
 }
 async function linksOf(ctx: Ctx, noteId: string): Promise<string[]> {

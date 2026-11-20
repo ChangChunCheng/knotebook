@@ -1,4 +1,4 @@
-// #272：app.ts 的自動切版掃描排程——startVersionSweep 開著才排；每個間隔一輪；onClose 清計時器並等進行中那一輪。
+// #272：app.ts 的自動切版掃描排程——startVersionJobs 開著才排；每個間隔一輪；onClose 清計時器並等進行中那一輪。
 import { describe, expect, it } from "vitest";
 import { markPending } from "../src/collab/versions.js";
 import type { Db } from "../src/db/index.js";
@@ -16,8 +16,8 @@ async function duePending(db: Db, ownerId: string, text: string): Promise<string
 }
 
 describe("自動切版掃描排程", () => {
-  it("startVersionSweep＋versionAutoScanIntervalMs → 定時掃描切到期的筆記；app.close() 之後不再掃", async () => {
-    const { app, db } = await buildTestApp({ startVersionSweep: true, versionAutoScanIntervalMs: 50 });
+  it("startVersionJobs＋versionAutoScanIntervalMs → 定時掃描切到期的筆記；app.close() 之後不再掃", async () => {
+    const { app, db } = await buildTestApp({ startVersionJobs: true, versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "排程切的");
     await expect.poll(async () => (await versionsOf(db, a)).length, { timeout: 5_000 }).toBe(1);
@@ -27,7 +27,7 @@ describe("自動切版掃描排程", () => {
     expect(await versionsOf(db, b)).toEqual([]);
   });
 
-  it("沒有 startVersionSweep（測試 app 的預設）→ 不排程", async () => {
+  it("沒有 startVersionJobs（測試 app 的預設）→ 不排程", async () => {
     const { app, db } = await buildTestApp({ versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "沒有排程");

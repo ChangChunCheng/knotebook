@@ -279,8 +279,8 @@ describe("stackFolderName", () => {
 
 describe("buildDropLookup", () => {
   it("DZ16 位置取樹上（兜底後）的：不存在的資料夾 → 根層深度 0；GF 裡的筆記深度 1、空間 group:G", () => {
-    expect(LOOKUP.myNotes.notes.get("O")).toEqual({ space: "personal", folderId: null, folderDepth: 0, placeable: true, title: "O" });
-    expect(LOOKUP.workspace.notes.get("g2")).toEqual({ space: "group:G", folderId: "GF", folderDepth: 1, placeable: true, title: "g2" });
+    expect(LOOKUP.myNotes.notes.get("O")).toEqual({ space: "personal", folderId: null, parentDepth: 0, placeable: true, title: "O" });
+    expect(LOOKUP.workspace.notes.get("g2")).toEqual({ space: "group:G", folderId: "GF", parentDepth: 1, placeable: true, title: "g2" });
     expect(LOOKUP.workspace.folders.get("GF")).toEqual({ space: "group:G", depth: 1 });
     expect(LOOKUP.myNotes.folders.get("Z")).toEqual({ space: "personal", depth: 2 });
   });

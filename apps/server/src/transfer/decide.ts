@@ -11,7 +11,7 @@
  * anchors; P and N are outside every region, so this sync never removes them.
  */
 import * as Y from "yjs";
-import { topLevelContainers } from "@knotebook/shared";
+import { topLevelBlocks } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
 import type { Region } from "./regions.js";
 
@@ -40,7 +40,7 @@ export function matchesBase(segments: readonly TransferSegment[], cur: { ids: re
 
 /** A never-opened note (0 base blocks) shows this shape after the browser normalizes it on open: treated as untouched. Empty text nodes left after deleting count as empty; paragraph attributes (color, alignment) are ignored. */
 export function isLoneEmptyParagraph(fragment: Y.XmlFragment): boolean {
-  const top = topLevelContainers(fragment);
+  const top = topLevelBlocks(fragment);
   if (top.length !== 1) return false;
   const c = top[0]!;
   if (c.length !== 1) return false;

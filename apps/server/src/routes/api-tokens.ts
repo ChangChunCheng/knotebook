@@ -48,7 +48,7 @@ export interface ApiTokensRouteDeps {
 }
 
 /**
- * Cookie-session only (not authenticateAny): a token must not issue, re-scope or revoke tokens, or a leaked one could perpetuate itself or raise its own scope
+ * Cookie-session only (not authenticateTokenOrSession): a token must not issue, re-scope or revoke tokens, or a leaked one could perpetuate itself or raise its own scope
  * through PATCH. The list includes OAuth grants too: it is the only place to see and revoke every credential.
  */
 export function apiTokensRoutes(deps: ApiTokensRouteDeps) {

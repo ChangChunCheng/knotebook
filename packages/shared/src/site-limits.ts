@@ -16,7 +16,7 @@ export interface SiteLimitDef {
   input: { unit: "mib" | "seconds" | "hours" | "count"; step: number };
 }
 
-/** Separate constant: index.ts reading SITE_LIMITS at module top level would stop Rollup tree-shaking the registry out of the web bundle. */
+/** Separate constant: limits.ts reading SITE_LIMITS at module top level would stop Rollup tree-shaking the registry out of the web bundle. */
 export const UPLOAD_MAX_BYTES_DEFAULT = 10_485_760;
 
 export const SITE_LIMITS = {

@@ -1,5 +1,5 @@
 // Trash DTOs only gain fields; never change their shape.
-import type { NoteDto } from "./index.js";
+import type { NoteDto } from "./note-dto.js";
 
 export const TRASH_RETENTION_DAYS_DEFAULT = 7;
 export const TRASH_RETENTION_DAYS_MIN = 1;

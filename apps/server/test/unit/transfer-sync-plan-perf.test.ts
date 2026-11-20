@@ -7,10 +7,10 @@ import { sameCanonicalStats } from "../../src/transfer/same-canonical.js";
 import { yieldToLoop } from "../../src/transfer/yield.js";
 import { docWith, forkOf, makeBaseInMemory, planInMemory, withEditor } from "./fixtures/transfer-sync.js";
 
-// 不靠時間的守衛：數 `topLevelContainers` 被呼叫幾次（同 sameCanonical 的頂層索引入口；包一層計數、內部仍呼叫原函式）。
+// 不靠時間的守衛：數 `topLevelBlocks` 被呼叫幾次（同 sameCanonical 的頂層索引入口；包一層計數、內部仍呼叫原函式）。
 vi.mock("@knotebook/shared", async importOriginal => {
   const m = await importOriginal<typeof import("@knotebook/shared")>();
-  return { ...m, topLevelContainers: vi.fn(m.topLevelContainers) };
+  return { ...m, topLevelBlocks: vi.fn(m.topLevelBlocks) };
 });
 
 /**
@@ -57,8 +57,8 @@ describe("規劃尾段", () => {
     expect(maxGap).toBeLessThan(1500);
   }, 180_000);
 
-  it("topLevelContainers 的呼叫次數與區數無關（每個 fragment 只建一次索引）", async () => {
-    const spy = vi.mocked(shared.topLevelContainers);
+  it("topLevelBlocks 的呼叫次數與區數無關（每個 fragment 只建一次索引）", async () => {
+    const spy = vi.mocked(shared.topLevelBlocks);
     const counts: number[] = [];
     for (const n of [20, 200]) {
       const { b, live, body } = await scene(n);

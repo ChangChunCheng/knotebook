@@ -1,6 +1,5 @@
 // The single site-link check for client and server: don't write another "is this a site URL" test elsewhere.
-// The import from ./index.js is circular; safe because those functions are only called, never used during module evaluation.
-import { extractRefUuid, normalizeHandle, normalizeSlug } from "./index.js";
+import { extractRefUuid, normalizeHandle, normalizeSlug } from "./slug.js";
 import { UUID_RE } from "./note-markdown.js";
 
 /** Same shape as SECTION_ID_RE; invalid values read as "" everywhere. */

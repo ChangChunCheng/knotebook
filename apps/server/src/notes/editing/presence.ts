@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Hocuspocus } from "@hocuspocus/server";
 import * as Y from "yjs";
 import {
-  AGENT_PRESENCE_COLOR, PRESENCE_FIELD, YDOC_FRAGMENT, sectionize, topLevelContainers,
+  AGENT_PRESENCE_COLOR, PRESENCE_FIELD, YDOC_FRAGMENT, sectionize, topLevelBlocks,
   type AgentPresenceField, type EditOp,
 } from "@knotebook/shared";
 import type { CollabContext } from "../../collab/server.js";
@@ -79,7 +79,7 @@ export class PresenceRegistry {
   /** Must be the JSON form (`Y.relativePositionToJSON`), not the `Uint8Array` encoding: awareness JSON.stringify's it and y-prosemirror reads `createRelativePositionFromJSON`; the wrong shape throws "Unexpected case" client-side. */
   private cursorFor(doc: Y.Doc, target: PresenceTarget): { anchor: unknown; head: unknown } | null {
     const fragment = doc.getXmlFragment(YDOC_FRAGMENT);
-    const containers = topLevelContainers(fragment);
+    const containers = topLevelBlocks(fragment);
     const byId = (id: string | undefined) => containers.find(c => c.getAttribute("id") === id);
     let block: Y.XmlElement | undefined = containers[0];
     if (target.kind === "section") {

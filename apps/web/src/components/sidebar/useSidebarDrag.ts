@@ -127,7 +127,7 @@ export function useSidebarDrag(args: {
     const latest = latestRef.current;
     const anchor = latest.lookup?.notes.get(hold.anchorNoteId);
     if (source === null || source !== ownSourceRef.current || anchor === undefined) return;
-    if (!anchor.placeable || anchor.space !== source.space || anchor.folderId !== hold.parentFolderId || anchor.folderDepth >= FOLDER_DEPTH_MAX) return;
+    if (!anchor.placeable || anchor.space !== source.space || anchor.folderId !== hold.parentFolderId || anchor.parentDepth >= FOLDER_DEPTH_MAX) return;
     setPreview({
       anchorNoteId: hold.anchorNoteId,
       parentFolderId: hold.parentFolderId,

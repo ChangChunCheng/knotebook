@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { notes } from "../src/db/schema.js";
 import { EditorSession } from "../src/notes/editing/session.js";
 import { versionFingerprint } from "../src/notes/version-fingerprint.js";
@@ -25,7 +25,7 @@ async function setup(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
 }
 /** 在 client.doc 第一顆段落的文字上做一次編輯（模擬瀏覽器打字），等 server 收到。 */
 async function typeInFirst(ctx: Awaited<ReturnType<typeof setup>>["ctx"], noteId: string, doc: Y.Doc, fn: (t: Y.XmlText) => void, sentinel: (s: string) => boolean): Promise<void> {
-  const p = topLevelContainers(doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
+  const p = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as Y.XmlElement;
   doc.transact(() => fn(p.get(0) as Y.XmlText));
   await waitFor("server 收到編輯", 5_000, () => sentinel(docText(ctx.collab.hocuspocus.documents.get(noteId)!)));
 }
@@ -122,7 +122,7 @@ describe("沒有憑空出現的版本（WS 形；離開後掃描）", () => {
     } finally {
       ed.close();
     }
-    await waitFor("server 收到正規化段落", 5_000, () => topLevelContainers(s.ctx.collab.hocuspocus.documents.get(s.note.id)!.getXmlFragment(YDOC_FRAGMENT)).length === 1);
+    await waitFor("server 收到正規化段落", 5_000, () => topLevelBlocks(s.ctx.collab.hocuspocus.documents.get(s.note.id)!.getXmlFragment(YDOC_FRAGMENT)).length === 1);
     c.disconnect();
     await s.unloaded();
     expect(await pendingOf(s.ctx.db, s.note.id)).toEqual(NO_PENDING);

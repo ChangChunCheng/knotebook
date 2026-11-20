@@ -347,10 +347,10 @@ describe("#269 W8 useBlockAnchor（公開頁）", () => {
     expect(scrolls).toEqual(["path:h/b:x"]);
   });
 
-  it("簡報播放中（ignore）冷開 …?present#b-x：不設定、不捲", () => {
+  it("簡報播放中（ignoreInitialAnchor）冷開 …?present#b-x：不設定、不捲", () => {
     function PresentingHost() {
       const [root, setRoot] = useState<HTMLElement | null>(null);
-      useBlockAnchor({ noteKey: "path:h/b", ready: true, root, ignore: true, currentNoteId: null });
+      useBlockAnchor({ noteKey: "path:h/b", ready: true, root, ignoreInitialAnchor: true, currentNoteId: null });
       return (
         <div ref={setRoot}>
           <div className="bn-block-outer" data-id="x" data-note="path:h/b" />

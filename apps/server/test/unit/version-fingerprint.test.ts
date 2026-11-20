@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { BlockNoteEditor, defaultProps } from "@blocknote/core";
 import { yXmlFragmentToBlocks } from "@blocknote/core/yjs";
-import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelContainers } from "@knotebook/shared";
+import { YDOC_FRAGMENT, createHeadlessNoteSchema, topLevelBlocks } from "@knotebook/shared";
 import { fingerprintOf, outlineOf } from "../../src/notes/editing/fingerprint.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession, forkFrom } from "../../src/notes/editing/session.js";
@@ -28,7 +28,7 @@ async function make(blocks: unknown[]): Promise<Y.Doc> {
 }
 /** 第 i 顆頂層區塊的內容節點底下的 XmlText；沒有就建一顆（新建空段落沒有 XmlText）。 */
 function textOfBlock(doc: Y.Doc, i: number): Y.XmlText {
-  const content = topLevelContainers(F(doc))[i]!.get(0) as Y.XmlElement;
+  const content = topLevelBlocks(F(doc))[i]!.get(0) as Y.XmlElement;
   const t = content.get(0);
   if (t instanceof Y.XmlText) return t;
   const created = new Y.XmlText();
@@ -201,7 +201,7 @@ describe("內容與歷史（對照向量）", () => {
       (F(d).get(0) as Y.XmlElement).insert(1, [c]);
       textOfBlock(d, 1).insert(0, "new");
     })).not.toBe(w0);
-    expect(variant(d => (topLevelContainers(F(d))[1]!.get(0) as Y.XmlElement).setAttribute("textAlignment", "center"))).not.toBe(w0);
+    expect(variant(d => (topLevelBlocks(F(d))[1]!.get(0) as Y.XmlElement).setAttribute("textAlignment", "center"))).not.toBe(w0);
     expect(variant(d => textOfBlock(d, 1).format(0, 2, { bold: true }))).not.toBe(w0);
     expect(variant(d => {
       const t = textOfBlock(d, 1);
@@ -300,7 +300,7 @@ describe("屬性值等於 schema 預設視同缺席（方案二，V2）", () => 
   it("值為 undefined 一律視同缺席（numberedListItem.start 的預設就是 undefined，不在表裡）；start:3 不等", () => {
     expect(DEFAULT_PROPS_BY_TYPE.numberedListItem).not.toHaveProperty("start");
     const withUndef = blockDoc("numberedListItem", { start: undefined });
-    const li = topLevelContainers(F(withUndef))[0]!.get(0) as Y.XmlElement;
+    const li = topLevelBlocks(F(withUndef))[0]!.get(0) as Y.XmlElement;
     expect(Object.hasOwn(li.getAttributes(), "start")).toBe(true); // 真的寫進了 Yjs（不是被 setAttribute 丟掉）
     expect(vfp(withUndef)).toBe(bfp("numberedListItem", {}));
     expect(bfp("numberedListItem", { start: 3 })).not.toBe(bfp("numberedListItem", {}));

@@ -11,7 +11,7 @@ import { acceptInvite, inspectInvite } from "@/api/invites";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SESSION_QUERY_KEY, useSession } from "@/auth/useSession";
-import { INVITE_TOKEN_KEY } from "@/auth/resetTokenStorage";
+import { INVITE_TOKEN_KEY } from "@/auth/oneTimeTokenStorage";
 import { useOneTimeLinkToken } from "@/auth/useOneTimeLinkToken";
 
 /**

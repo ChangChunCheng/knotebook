@@ -1,4 +1,4 @@
-// Keys for every one-time-link page (reset and invite), despite the file name. Not in a lazy chunk: main.tsx clears
+// Keys for every one-time-link page (reset and invite). Not in a lazy chunk: main.tsx clears
 // stale keys before render, since React cleanup doesn't run when the user leaves by a full page load.
 export const RESET_TOKEN_KEY = "knotebook:reset-token";
 

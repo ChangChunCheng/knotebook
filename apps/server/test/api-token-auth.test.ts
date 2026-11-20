@@ -1,10 +1,10 @@
 /**
- * #130：`authenticateAny`（Bearer／session 雙路徑認證）與 `/api/mcp` 的
+ * #130：`authenticateTokenOrSession`（Bearer／session 雙路徑認證）與 `/api/mcp` 的
  * Bearer challenge。
  *
  * ⚠ #108 之後 `GET /api/mcp` 不再是 501，而是**認證通過後**的 `405`（＋`Allow: POST`）——
  * 本檔用它當「認證這一關過了」的哨兵，狀態碼換了但語意不變（405 一樣走完
- * `authenticateAny` 與 `tokenRead` 扣點）。
+ * `authenticateTokenOrSession` 與 `tokenRead` 扣點）。
  *
  * 這一族守的是三件會靜默壞掉的事：①401／403 的 `WWW-Authenticate` 形狀（MCP client
  * 靠它發現授權伺服器，少一個欄位整條 OAuth 流程起不了頭）；②哪些失敗計入
@@ -256,7 +256,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     // token 路徑的 request.user 是三條 notes 路由做擁有權判定的依據——把它
     // 設成 DB 的 api_tokens 列（而非 gate 的 user）測試不會紅，這裡用探針釘住。
     const { app, db } = await buildTestApp();
-    app.get("/__test/whoami-auth", { preHandler: app.authenticateAny("notes:read") }, async request => ({
+    app.get("/__test/whoami-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => ({
       id: request.user?.id,
       email: request.user?.email,
       authKind: request.authKind,
@@ -323,9 +323,9 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
       },
     });
     const { app, db } = await buildTestApp({}, { logger: { level: "info", stream: sink } });
-    // `withTestRoutes` 的 /__test/throw 是既有的「丟例外」探針；掛上 authenticateAny
+    // `withTestRoutes` 的 /__test/throw 是既有的「丟例外」探針；掛上 authenticateTokenOrSession
     // 才會有 authKind，所以這裡另掛一條同形的探針路由。
-    app.get("/__test/throw-auth", { preHandler: app.authenticateAny("notes:read") }, async () => {
+    app.get("/__test/throw-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async () => {
       throw new Error("boom");
     });
     await app.ready();
