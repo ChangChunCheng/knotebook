@@ -24,25 +24,25 @@ describe("iconKind of PATCH /api/admin/auth/providers/:id", () => {
     const { app, db, admin } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
-    await expectAdminOnly(app, db, "PATCH", `/api/admin/auth/providers/${p.id}`, { iconKind: "gitlab" });
+    await expectAdminOnly(app, db, "PATCH", `/api/admin/auth/providers/${p.id}`, { iconKind: "template" });
     const { token } = await seedTokenForUser(db, admin.id);
-    const viaPat = await app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${p.id}`, headers: bearer(token), payload: { iconKind: "gitlab" } });
+    const viaPat = await app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${p.id}`, headers: bearer(token), payload: { iconKind: "template" } });
     expect(viaPat.statusCode).toBe(401);
     expect(await providerRow(db, p.id)).toEqual(before);
   });
 
-  it("after upload, PATCH {iconKind:'gitlab'} -> data/mime cleared, icon_version/config_version/enabled unchanged; response carries the derived icon and no image bytes", async () => {
+  it("after upload, PATCH {iconKind:'template'} -> data/mime cleared, icon_version/config_version/enabled unchanged; response carries the derived icon and no image bytes", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     // updated_at is first set to a past time so a PATCH that fails to update it is detectable (within one transaction now() is too close to the seed time for a >= assertion to catch it).
     await db.update(authProviders).set({ updatedAt: new Date("2020-01-01T00:00:00Z") }).where(eq(authProviders.id, p.id));
     const before = await providerRow(db, p.id);
-    const res = await patch(app, cookies, p.id, { iconKind: "gitlab" });
+    const res = await patch(app, cookies, p.id, { iconKind: "template" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: p.id, iconKind: "gitlab", icon: { type: "builtin", name: "gitlab" }, enabled: true });
+    expect(res.json()).toMatchObject({ id: p.id, iconKind: "template", icon: { type: "builtin", name: "generic" }, enabled: true });
     expectNoIconBytes(res.body);
     const after = await providerRow(db, p.id);
-    expect(after).toMatchObject({ iconKind: "gitlab", iconData: null, iconMime: null, iconVersion: 3, configVersion: before!.configVersion, enabled: true });
+    expect(after).toMatchObject({ iconKind: "template", iconData: null, iconMime: null, iconVersion: 3, configVersion: before!.configVersion, enabled: true });
     expect(after!.updatedAt.getTime()).toBeGreaterThan(before!.updatedAt.getTime());
   });
 
@@ -64,17 +64,17 @@ describe("iconKind of PATCH /api/admin/auth/providers/:id", () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
-    const res = await patch(app, cookies, p.id, { issuerUrl: "https://other-issuer.example", iconKind: "gitlab" });
+    const res = await patch(app, cookies, p.id, { issuerUrl: "https://other-issuer.example", iconKind: "none" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ iconKind: "gitlab", icon: { type: "builtin", name: "gitlab" }, enabled: false, hasSecret: false });
+    expect(res.json()).toMatchObject({ iconKind: "none", icon: null, enabled: false, hasSecret: false });
     const after = await providerRow(db, p.id);
-    expect(after).toMatchObject({ iconKind: "gitlab", iconData: null, iconMime: null, clientSecretEncrypted: null, resolvedIssuer: null, enabled: false, configVersion: before!.configVersion + 1 });
+    expect(after).toMatchObject({ iconKind: "none", iconData: null, iconMime: null, clientSecretEncrypted: null, resolvedIssuer: null, enabled: false, configVersion: before!.configVersion + 1 });
   });
 
-  it("template/google/none each take effect (none -> icon null); iconKind alone is valid", async () => {
+  it("template/none each take effect (none -> icon null); iconKind alone is valid", async () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedAuthProvider(db, { issuerUrl: "https://g.example", template: "google" });
-    for (const [kind, icon] of [["none", null], ["gitlab", { type: "builtin", name: "gitlab" }], ["template", { type: "builtin", name: "google" }]] as const) {
+    for (const [kind, icon] of [["none", null], ["template", { type: "builtin", name: "generic" }]] as const) {
       const res = await patch(app, cookies, p.id, { iconKind: kind });
       expect(res.statusCode, kind).toBe(200);
       expect(res.json(), kind).toMatchObject({ iconKind: kind, icon });
@@ -86,7 +86,7 @@ describe("iconKind of PATCH /api/admin/auth/providers/:id", () => {
     const { app, db, cookies } = await adminApp();
     const p = await seedUploaded(db);
     const before = await providerRow(db, p.id);
-    for (const iconKind of ["upload", "svg", null, 1]) {
+    for (const iconKind of ["upload", "gitlab", "google", "svg", null, 1]) {
       const res = await patch(app, cookies, p.id, { iconKind });
       expect(res.statusCode, String(iconKind)).toBe(400);
       expect(res.json().error, String(iconKind)).toEqual({ code: "invalid_body", message: "Invalid request body." });

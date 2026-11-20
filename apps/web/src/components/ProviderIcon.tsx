@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { ProviderIconDto } from "@knotebook/shared";
-import { GitLabLogo, GoogleLogo } from "@/components/ui/brand-icons";
 import { SignInGeneric } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 
@@ -23,8 +22,6 @@ export function ProviderIcon({ icon, className }: { icon: ProviderIconDto | unde
       />
     );
   }
-  const name = icon.type === "builtin" ? icon.name : "generic";
-  if (name === "gitlab") return <GitLabLogo className={cls} aria-hidden="true" focusable="false" data-provider-icon="gitlab" />;
-  if (name === "google") return <GoogleLogo className={cls} aria-hidden="true" focusable="false" data-provider-icon="google" />;
+  // No vendor logos are bundled (trademark guidelines); admins upload their own.
   return <SignInGeneric className={cls} aria-hidden="true" focusable="false" data-provider-icon="generic" />;
 }

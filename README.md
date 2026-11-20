@@ -240,6 +240,12 @@ For contributors and maintainers:
 
 Bug reports and feature requests go in the [issue tracker](https://github.com/sw-willie-wu/knotebook/issues); planning lives in [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones). Pull requests are welcome; to run the end-to-end tests locally, see [Running the e2e suite locally](docs/e2e-local.md). Before your first pull request, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Trademarks
+
+GITLAB is a trademark of GitLab Inc. in the United States and other countries and regions. Google is a trademark of Google LLC. Knotebook is not affiliated with or endorsed by GitLab or Google.
+
+The GitLab and Google sign-in templates only use those names to prefill the issuer URL and display name. Knotebook bundles no vendor logo; an admin can upload their own icon for a service.
+
 ## License
 
 MIT, see [LICENSE](./LICENSE). Bundled third-party components (a font asset, jsdiff, BlockNote, Lucide icon paths) carry their own licenses, see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

@@ -19,10 +19,10 @@ function LocationProbe() {
 }
 const BASE: IdentitiesDto = {
   identities: [
-    { id: "i1", issuer: "https://gitlab.example", providers: [{ id: "p1", displayName: "<b>GitLab</b>", icon: { type: "builtin", name: "gitlab" } }], createdAt: "2026-10-01T00:00:00.000Z", lastLoginAt: "2026-10-05T00:00:00.000Z", unlinkable: true },
+    { id: "i1", issuer: "https://gitlab.example", providers: [{ id: "p1", displayName: "<b>GitLab</b>", icon: { type: "builtin", name: "generic" } }], createdAt: "2026-10-01T00:00:00.000Z", lastLoginAt: "2026-10-05T00:00:00.000Z", unlinkable: true },
     { id: "i2", issuer: "https://gone.example/realms/x", providers: [], createdAt: "2026-10-02T00:00:00.000Z", lastLoginAt: null, unlinkable: false },
   ],
-  linkable: [{ providerId: "p2", displayName: "Google", template: "google", icon: { type: "builtin", name: "google" } }],
+  linkable: [{ providerId: "p2", displayName: "Google", template: "google", icon: { type: "builtin", name: "generic" } }],
   hasPassword: true,
   passwordLoginEnabled: true,
 };
@@ -229,8 +229,8 @@ describe("SignInMethodsSection (#187)", () => {
           id: "i3",
           issuer: "https://multi.example",
           providers: [
-            { id: "p3", displayName: "First", icon: { type: "builtin", name: "google" } },
-            { id: "p4", displayName: "Second", icon: { type: "builtin", name: "gitlab" } },
+            { id: "p3", displayName: "First", icon: { type: "upload", url: "/api/auth/providers/p3/icon?v=1" } },
+            { id: "p4", displayName: "Second", icon: { type: "builtin", name: "generic" } },
           ],
           createdAt: "2026-10-03T00:00:00.000Z",
           lastLoginAt: null,
@@ -241,12 +241,14 @@ describe("SignInMethodsSection (#187)", () => {
     });
     const iconBeforeName = (row: HTMLElement) => document.getElementById(row.getAttribute("aria-labelledby")!)!.previousElementSibling;
     // Wait point: rows appear only after identities land.
-    expect(iconBeforeName(await screen.findByRole("row", { name: "<b>GitLab</b>" }))).toHaveAttribute("data-provider-icon", "gitlab");
+    expect(iconBeforeName(await screen.findByRole("row", { name: "<b>GitLab</b>" }))).toHaveAttribute("data-provider-icon", "generic");
     expect(iconBeforeName(screen.getByRole("row", { name: /gone\.example/ }))).toHaveAttribute("data-provider-icon", "generic");
-    expect(iconBeforeName(screen.getByRole("row", { name: "First / Second" }))).toHaveAttribute("data-provider-icon", "google");
+    const multi = iconBeforeName(screen.getByRole("row", { name: "First / Second" }));
+    expect(multi).toHaveAttribute("data-provider-icon", "upload");
+    expect(multi).toHaveAttribute("src", "/api/auth/providers/p3/icon?v=1");
     expect(screen.getByRole("row", { name: "Hidden" }).querySelector("[data-provider-icon]")).toBeNull();
     const link = screen.getByRole("button", { name: "Link Google" });
-    expect(link.firstChild).toBe(link.querySelector('[data-provider-icon="google"]'));
+    expect(link.firstChild).toBe(link.querySelector('[data-provider-icon="generic"]'));
   });
 });
 

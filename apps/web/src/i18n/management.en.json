@@ -114,9 +114,7 @@
         "title": "Sign-in service icon",
         "description": "Shown before this service's name on the sign-in buttons and lists.",
         "options": {
-          "template": "Template default",
-          "gitlab": "GitLab logo",
-          "google": "Google logo",
+          "template": "Default icon",
           "upload": "Upload an image",
           "none": "None"
         },

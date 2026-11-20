@@ -25,7 +25,7 @@ const BASE: AdminAuthProviderDto = {
   issuerResolved: true,
   createdAt: "2026-10-07T00:00:00.000Z",
   iconKind: "template",
-  icon: { type: "builtin", name: "gitlab" },
+  icon: { type: "builtin", name: "generic" },
 };
 const UPLOADED_URL = `/api/auth/providers/${ID}/icon?v=2`;
 const UPLOADED: AdminAuthProviderDto = { ...BASE, iconKind: "upload", icon: { type: "upload", url: UPLOADED_URL } };
@@ -117,16 +117,27 @@ describe("ProviderIconDialog", () => {
     URL.revokeObjectURL = originalRevoke;
   });
 
-  it("five options each have a preview; the initial selection = the current iconKind; the \"from template\" preview is the computed result (not the current icon)", async () => {
-    // google template, currently GitLab logo selected: the from-template preview must be Google (using provider.icon as the preview would wrongly show GitLab).
-    setup({ ...BASE, template: "google", iconKind: "gitlab", icon: { type: "builtin", name: "gitlab" } });
+  it("three options each have a preview, and neither GitLab nor Google is offered; the \"from template\" preview is the generic icon", async () => {
+    setup(BASE);
     const dialog = await openDialog();
-    expect(radio(dialog, "GitLab logo")).toBeChecked();
-    expect(previewOf(dialog, "Template default")).toHaveAttribute("data-provider-icon", "google");
-    expect(previewOf(dialog, "GitLab logo")).toHaveAttribute("data-provider-icon", "gitlab");
-    expect(previewOf(dialog, "Google logo")).toHaveAttribute("data-provider-icon", "google");
+    expect(within(dialog).getAllByRole("radio")).toHaveLength(3);
+    expect(within(dialog).queryByLabelText(/gitlab|google/i)).toBeNull();
+    expect(radio(dialog, "Default icon")).toBeChecked();
+    expect(previewOf(dialog, "Default icon")).toHaveAttribute("data-provider-icon", "generic");
     expect(previewOf(dialog, "Upload an image")).toBeNull();
     expect(previewOf(dialog, "None")).toBeNull();
+  });
+
+  it("a row still stored with the old gitlab or google kind starts on the template default, and saving it sends PATCH {iconKind: template}", async () => {
+    for (const iconKind of ["gitlab", "google"] as const) {
+      const { calls } = setup({ ...BASE, iconKind });
+      const dialog = await openDialog();
+      expect(radio(dialog, "Default icon")).toBeChecked();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mutations(calls)).toEqual([{ method: "PATCH", url: `/api/admin/auth/providers/${ID}`, body: JSON.stringify({ iconKind: "template" }) }]);
+      cleanup();
+    }
   });
 
   it("currently upload: \"Upload an image\" is selected and the preview is the DTO's uploaded image URL", async () => {
@@ -134,6 +145,7 @@ describe("ProviderIconDialog", () => {
     const dialog = await openDialog();
     expect(radio(dialog, "Upload an image")).toBeChecked();
     expect(previewOf(dialog, "Upload an image")).toHaveAttribute("src", UPLOADED_URL);
+    expect(previewOf(dialog, "Default icon")).toHaveAttribute("data-provider-icon", "generic");
   });
 
   it("clicking outside doesn't close (clickOutside); Esc closes", async () => {
@@ -183,7 +195,7 @@ describe("ProviderIconDialog", () => {
   it("failure -> role=alert in the dialog shows errors.<code>, stays open, can be pressed again", async () => {
     setup(BASE, () => fakeResponse(400, { error: { code: "invalid_body", message: "Invalid request body." } }));
     const dialog = await openDialog();
-    fireEvent.click(radio(dialog, "Google logo"));
+    fireEvent.click(radio(dialog, "None"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(i18n.t("errors.invalid_body"));
     expect(screen.getByRole("dialog")).toBe(dialog);
@@ -337,7 +349,7 @@ describe("ProviderIconDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     dialog = await openDialog();
-    expect(radio(dialog, "Template default")).toBeChecked();
+    expect(radio(dialog, "Default icon")).toBeChecked();
     expect(previewOf(dialog, "Upload an image")).toBeNull();
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
