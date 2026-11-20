@@ -8,55 +8,17 @@ const URL_V1 = "/api/auth/providers/11111111-1111-4111-8111-111111111111/icon?v=
 const URL_V2 = "/api/auth/providers/11111111-1111-4111-8111-111111111111/icon?v=2";
 
 describe("ProviderIcon", () => {
-  it("three builtin names each render their SVG: data-provider-icon, aria-hidden, focusable=false, 16px, no text content", () => {
-    for (const name of ["gitlab", "google", "generic"] as const) {
-      const { container, unmount } = render(<ProviderIcon icon={{ type: "builtin", name }} />);
-      const svg = container.querySelector("svg");
-      expect(svg, name).toHaveAttribute("data-provider-icon", name);
-      expect(svg, name).toHaveAttribute("aria-hidden", "true");
-      expect(svg, name).toHaveAttribute("focusable", "false");
-      expect(svg, name).toHaveClass("h-4", "w-4", "shrink-0");
-      expect(container.textContent, name).toBe("");
-      expect(container.querySelector("title, text, desc"), name).toBeNull();
-      unmount();
-    }
-  });
-
-  it("the three builtin icons are different shapes; GitLab has all three colors, Google has the official gradient colors, the generic icon uses currentColor", () => {
-    const html = (name: "gitlab" | "google" | "generic") => render(<ProviderIcon icon={{ type: "builtin", name }} />).container.innerHTML;
-    const [gitlab, google, generic] = [html("gitlab"), html("google"), html("generic")];
-    expect(new Set([gitlab, google, generic]).size).toBe(3);
-    for (const c of ["#E24329", "#FC6D26", "#FCA326"]) expect(gitlab, c).toContain(c);
-    for (const c of ["#3186FF", "#FF4641", "#FF5B8B"]) expect(google, c).toContain(c);
-    expect(generic).toContain('stroke="currentColor"');
-    expect(generic).not.toMatch(/fill="#/);
-  });
-
-  it("Google icon has no button frame or backplate (the official package's square and the #747775 outline are removed)", () => {
-    const { container } = render(<ProviderIcon icon={{ type: "builtin", name: "google" }} />);
-    expect(container.querySelector("rect")).toBeNull();
-    expect(container.innerHTML).not.toContain("#747775");
-    expect(container.innerHTML).not.toMatch(/fill="white"/);
-    expect(container.querySelector("svg")).toHaveAttribute("viewBox", "10 10 20 20");
-  });
-
-  it("two Google icons on one page: ids don't repeat, and each url(#...) points to an id inside its own svg", () => {
-    const { container } = render(
-      <div>
-        <ProviderIcon icon={{ type: "builtin", name: "google" }} />
-        <ProviderIcon icon={{ type: "builtin", name: "google" }} />
-      </div>,
-    );
-    const svgs = Array.from(container.querySelectorAll("svg"));
-    expect(svgs).toHaveLength(2);
-    const ids = svgs.map((svg) => Array.from(svg.querySelectorAll("[id]")).map((e) => e.id));
-    expect(ids[0]!.length).toBeGreaterThanOrEqual(9);
-    expect(new Set([...ids[0]!, ...ids[1]!]).size).toBe(ids[0]!.length + ids[1]!.length);
-    svgs.forEach((svg, i) => {
-      const refs = Array.from(svg.innerHTML.matchAll(/url\(#([^)]+)\)/g)).map((m) => m[1]!);
-      expect(refs.length).toBeGreaterThanOrEqual(9);
-      for (const r of refs) expect(ids[i], r).toContain(r);
-    });
+  it("builtin generic renders its SVG: data-provider-icon, aria-hidden, focusable=false, 16px, no text content, currentColor, no fixed fills", () => {
+    const { container } = render(<ProviderIcon icon={{ type: "builtin", name: "generic" }} />);
+    const svg = container.querySelector("svg");
+    expect(svg).toHaveAttribute("data-provider-icon", "generic");
+    expect(svg).toHaveAttribute("aria-hidden", "true");
+    expect(svg).toHaveAttribute("focusable", "false");
+    expect(svg).toHaveClass("h-4", "w-4", "shrink-0");
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("title, text, desc")).toBeNull();
+    expect(container.innerHTML).toContain('stroke="currentColor"');
+    expect(container.innerHTML).not.toMatch(/fill="#/);
   });
 
   it("upload -> <img alt='' aria-hidden> src = url, object-contain, not draggable", () => {
@@ -95,8 +57,8 @@ describe("ProviderIcon", () => {
     }
   });
 
-  it("placing it in a button doesn't change the accessible name (same for all four shapes)", () => {
-    const icons: ProviderIconDto[] = [{ type: "builtin", name: "gitlab" }, { type: "builtin", name: "google" }, { type: "builtin", name: "generic" }, { type: "upload", url: URL_V1 }];
+  it("placing it in a button doesn't change the accessible name (same for both shapes)", () => {
+    const icons: ProviderIconDto[] = [{ type: "builtin", name: "generic" }, { type: "upload", url: URL_V1 }];
     for (const icon of icons) {
       const { unmount } = render(
         <button type="button">

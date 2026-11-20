@@ -41,10 +41,10 @@ describe("GET /api/auth/identities (#187)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.identities).toEqual([
-      { id: idA, issuer: A, providers: [{ id: pa.id, displayName: "A", icon: { type: "builtin", name: "gitlab" } }], createdAt: expect.any(String), lastLoginAt: null, unlinkable: true },
+      { id: idA, issuer: A, providers: [{ id: pa.id, displayName: "A", icon: { type: "builtin", name: "generic" } }], createdAt: expect.any(String), lastLoginAt: null, unlinkable: true },
     ]);
     expect(JSON.stringify(body)).not.toContain("sa");
-    expect(body.linkable).toEqual([{ providerId: pb.id, displayName: "B", template: "google", icon: { type: "builtin", name: "google" } }]);
+    expect(body.linkable).toEqual([{ providerId: pb.id, displayName: "B", template: "google", icon: { type: "builtin", name: "generic" } }]);
     expect(body).toMatchObject({ hasPassword: true, passwordLoginEnabled: true });
   });
 

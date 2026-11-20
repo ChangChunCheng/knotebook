@@ -11,17 +11,14 @@ const ID = "11111111-1111-4111-8111-111111111111";
 const r = (template: string, iconKind: string, iconVersion = 0) => resolveProviderIcon({ id: ID, template, iconKind, iconVersion });
 
 describe("resolveProviderIcon (lookup table)", () => {
-  it("template: gitlab template -> GitLab logo, google template -> Google logo, oidc and any other template value -> generic icon", () => {
-    expect(r("gitlab", "template")).toEqual({ type: "builtin", name: "gitlab" });
-    expect(r("google", "template")).toEqual({ type: "builtin", name: "google" });
-    expect(r("oidc", "template")).toEqual({ type: "builtin", name: "generic" });
-    expect(r("github", "template")).toEqual({ type: "builtin", name: "generic" });
+  it("template: every template, including gitlab and google, and any other template value -> generic icon", () => {
+    for (const template of ["gitlab", "google", "oidc", "github"]) expect(r(template, "template"), template).toEqual({ type: "builtin", name: "generic" });
   });
 
-  it("gitlab / google regardless of template", () => {
+  it("gitlab / google kinds still stored in old rows -> generic icon regardless of template", () => {
     for (const template of ["gitlab", "google", "oidc"]) {
-      expect(r(template, "gitlab"), template).toEqual({ type: "builtin", name: "gitlab" });
-      expect(r(template, "google"), template).toEqual({ type: "builtin", name: "google" });
+      expect(r(template, "gitlab"), template).toEqual({ type: "builtin", name: "generic" });
+      expect(r(template, "google"), template).toEqual({ type: "builtin", name: "generic" });
     }
   });
 
@@ -35,7 +32,7 @@ describe("resolveProviderIcon (lookup table)", () => {
   });
 
   it("an unknown iconKind is treated as template (the DB CHECK guarantees the domain; this is a defensive shape)", () => {
-    expect(r("google", "svg")).toEqual({ type: "builtin", name: "google" });
+    expect(r("google", "svg")).toEqual({ type: "builtin", name: "generic" });
     expect(r("oidc", "")).toEqual({ type: "builtin", name: "generic" });
   });
 });

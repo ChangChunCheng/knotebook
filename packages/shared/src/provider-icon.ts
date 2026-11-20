@@ -1,10 +1,15 @@
-/** Must match DB CHECK auth_providers_icon_kind_chk. */
+/** Must match DB CHECK auth_providers_icon_kind_chk. "gitlab" and "google" only remain as values stored in old rows; they can no longer be chosen. */
 export type ProviderIconKind = "template" | "gitlab" | "google" | "upload" | "none";
 
-export type ProviderIconBuiltinName = "gitlab" | "google" | "generic";
+/** The kinds PATCH accepts; `upload` goes through PUT, and `gitlab` / `google` can no longer be set. */
+export type SettableProviderIconKind = "template" | "none";
+
+export type ProviderIconBuiltinName = "generic";
 
 /** null: the admin chose no icon. */
 export type ProviderIconDto = { type: "builtin"; name: ProviderIconBuiltinName } | { type: "upload"; url: string } | null;
+
+const GENERIC_ICON: ProviderIconDto = { type: "builtin", name: "generic" };
 
 /** Same literal as DB CHECK auth_providers_icon_size_chk. */
 export const MAX_PROVIDER_ICON_BYTES = 262144;
@@ -18,24 +23,14 @@ export function providerIconUrl(id: string, version: number): string {
   return `/api/auth/providers/${id}/icon?v=${version}`;
 }
 
-function templateIcon(template: string): ProviderIconDto {
-  if (template === "gitlab") return { type: "builtin", name: "gitlab" };
-  if (template === "google") return { type: "builtin", name: "google" };
-  return { type: "builtin", name: "generic" };
-}
-
-/** Unknown `iconKind` values fall back to the template. */
+/** Only the generic icon ships; "gitlab" and "google" are values old rows may still hold and they render as generic. Unknown values fall back the same way. */
 export function resolveProviderIcon(p: { id: string; template: string; iconKind: string; iconVersion: number }): ProviderIconDto {
   switch (p.iconKind) {
-    case "gitlab":
-      return { type: "builtin", name: "gitlab" };
-    case "google":
-      return { type: "builtin", name: "google" };
     case "upload":
       return { type: "upload", url: providerIconUrl(p.id, p.iconVersion) };
     case "none":
       return null;
     default:
-      return templateIcon(p.template);
+      return GENERIC_ICON;
   }
 }

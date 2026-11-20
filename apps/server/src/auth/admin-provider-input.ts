@@ -89,8 +89,8 @@ export const patchProviderSchema = z
     enabled: z.boolean().optional(),
     autoCreateEnabled: z.boolean().optional(),
     sortOrder: z.number().int().min(0).max(100_000).optional(),
-    // `upload` is only possible via PUT .../icon, not here; the values must equal CHECK `auth_providers_icon_kind_chk` minus upload.
-    iconKind: z.enum(["template", "gitlab", "google", "none"]).optional(),
+    // `upload` is only possible via PUT .../icon, not here; the values must equal CHECK `auth_providers_icon_kind_chk` minus upload, gitlab and google (still stored in old rows, no longer settable).
+    iconKind: z.enum(["template", "none"]).optional(),
   })
   .strict()
   .refine(body => Object.keys(body).length > 0, "Invalid request body: send at least one field.");

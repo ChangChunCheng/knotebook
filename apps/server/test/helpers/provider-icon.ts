@@ -34,11 +34,9 @@ export interface IconCase {
 export function expectedIcon(c: Pick<IconCase, "id" | "template" | "kind" | "version">): ProviderIconDto {
   switch (c.kind) {
     case "template":
-      return c.template === "oidc" ? GENERIC : { type: "builtin", name: c.template };
     case "gitlab":
-      return { type: "builtin", name: "gitlab" };
     case "google":
-      return { type: "builtin", name: "google" };
+      return GENERIC;
     case "upload":
       return { type: "upload", url: `/api/auth/providers/${c.id}/icon?v=${c.version}` };
     case "none":

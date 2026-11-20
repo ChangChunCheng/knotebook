@@ -672,7 +672,7 @@ describe("AvatarSection: sign-in service avatars", () => {
   describe("source icon", () => {
     it("an OIDC candidate overlays the matching sign-in service's icon; uploaded candidates and unlinked OIDC candidates don't", async () => {
       setup({
-        identities: [identityWith(SSO, { type: "builtin", name: "gitlab" })],
+        identities: [identityWith(SSO, { type: "builtin", name: "generic" })],
         list: {
           candidates: [
             candidate(ID_A, { source: "oidc", providerName: SSO, current: true }),
@@ -686,7 +686,7 @@ describe("AvatarSection: sign-in service avatars", () => {
       await ready();
       await waitFor(() => expect(screen.getAllByTestId("avatar-source-icon")).toHaveLength(1));
       const [, oidc, unlinked, upload] = radios();
-      expect(oidc!.querySelector('[data-provider-icon="gitlab"]')).not.toBeNull();
+      expect(oidc!.querySelector('[data-provider-icon="generic"]')).not.toBeNull();
       expect(within(unlinked!).queryByTestId("avatar-source-icon")).toBeNull();
       expect(within(upload!).queryByTestId("avatar-source-icon")).toBeNull();
     });

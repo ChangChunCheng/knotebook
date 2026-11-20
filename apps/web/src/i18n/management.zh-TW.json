@@ -114,9 +114,7 @@
         "title": "登入服務圖示",
         "description": "顯示在登入按鈕與清單中這個服務名稱的前面。",
         "options": {
-          "template": "依範本",
-          "gitlab": "GitLab logo",
-          "google": "Google logo",
+          "template": "預設圖示",
           "upload": "上傳圖片",
           "none": "不顯示"
         },

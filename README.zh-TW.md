@@ -242,6 +242,12 @@ Claude Desktop 與其他用戶端怎麼接、每項工具做什麼，見 [MCP](d
 
 問題回報與功能建議請開在 [issue tracker](https://github.com/sw-willie-wu/knotebook/issues)；規劃記在 [GitHub Milestones](https://github.com/sw-willie-wu/knotebook/milestones)。歡迎發 pull request；在本機跑端對端測試的方式見 [在本機跑 e2e 測試](docs/e2e-local.md)。第一次發 pull request 之前，請先讀 [CONTRIBUTING.md](CONTRIBUTING.md)（英文）。
 
+## 商標
+
+GITLAB is a trademark of GitLab Inc. in the United States and other countries and regions. Google is a trademark of Google LLC.
+
+Knotebook 與 GitLab、Google 沒有隸屬關係，也未獲其背書。登入服務範本只用到這兩個名稱，內建不含任何廠商的標誌；管理員可以自行上傳。
+
 ## 授權
 
 MIT，見 [LICENSE](./LICENSE)。隨附的第三方元件（一個字型資源、jsdiff、BlockNote）各有自己的授權，見 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

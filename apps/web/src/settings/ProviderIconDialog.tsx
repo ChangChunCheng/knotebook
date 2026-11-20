@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { resolveProviderIcon, type AdminAuthProviderDto, type ProviderIconDto, type ProviderIconKind } from "@knotebook/shared";
+import { type AdminAuthProviderDto, type ProviderIconDto, type ProviderIconKind } from "@knotebook/shared";
 import { ADMIN_AUTH_PROVIDERS_QUERY_KEY, usePatchAuthProvider, useUploadAuthProviderIcon } from "@/api/adminAuth";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,18 @@ import { authErrorMessage } from "./auth-error-message";
 import { PROVIDER_ICON_ACCEPT, ProviderIconResizeError, resizeProviderIcon } from "./provider-icon-resize";
 import "@/i18n/management-strings";
 
-const CHOICES: ProviderIconKind[] = ["template", "gitlab", "google", "upload", "none"];
-const GITLAB_ICON: ProviderIconDto = { type: "builtin", name: "gitlab" };
-const GOOGLE_ICON: ProviderIconDto = { type: "builtin", name: "google" };
+const CHOICES = ["template", "upload", "none"] as const;
+type Choice = (typeof CHOICES)[number];
+
+// Stored gitlab/google can't be re-saved, so the dialog starts on the default icon.
+function initialChoice(kind: ProviderIconKind): Choice {
+  return kind === "gitlab" || kind === "google" ? "template" : kind;
+}
+
+const GENERIC_ICON: ProviderIconDto = { type: "builtin", name: "generic" };
 
 /**
- * Five options with previews; Save applies (upload via PUT, others PATCH {iconKind}); no change just closes. A form, so
+ * Three options with previews; Save applies (upload via PUT, others PATCH {iconKind}); no change just closes. A form, so
  * `dismissOnOutside={false}`. Opening or closing resets to the current iconKind; the thumbnail's `blob:` is released when replaced or closed.
  * `generation` bumps on every open/close so a thumbnail still resizing after a close is discarded (no `blob:`, no state write); otherwise it
  * would leak into the next open.
@@ -34,7 +40,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
   const fileInput = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState<ProviderIconKind>(provider.iconKind);
+  const [choice, setChoice] = useState<Choice>(initialChoice(provider.iconKind));
   const [picked, setPicked] = useState<{ blob: Blob; url: string } | null>(null);
   const [reading, setReading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -49,7 +55,7 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
 
   function handleOpenChange(next: boolean): void {
     generation.current += 1;
-    setChoice(provider.iconKind);
+    setChoice(initialChoice(provider.iconKind));
     setPicked(null);
     setReading(false);
     setError(null);
@@ -108,15 +114,10 @@ export function ProviderIconDialog({ provider }: { provider: AdminAuthProviderDt
     }
   }
 
-  function preview(kind: ProviderIconKind): ProviderIconDto {
+  function preview(kind: Choice): ProviderIconDto {
     switch (kind) {
       case "template":
-        // The template branch doesn't read the version.
-        return resolveProviderIcon({ id: provider.id, template: provider.template, iconKind: "template", iconVersion: 0 });
-      case "gitlab":
-        return GITLAB_ICON;
-      case "google":
-        return GOOGLE_ICON;
+        return GENERIC_ICON;
       case "upload":
         return picked !== null ? { type: "upload", url: picked.url } : provider.iconKind === "upload" ? provider.icon : null;
       case "none":

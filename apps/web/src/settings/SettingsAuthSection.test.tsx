@@ -53,7 +53,7 @@ const CUSTOM: AdminAuthProviderDto = {
   issuerResolved: false,
   createdAt: "2026-10-06T00:00:00.000Z",
   iconKind: "template",
-  icon: { type: "builtin", name: "gitlab" },
+  icon: { type: "builtin", name: "generic" },
 };
 
 const LIMITS: SiteLimitsDto = siteLimitsDto();

@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import type { SettableProviderIconKind } from "@knotebook/shared";
 import type { Tx } from "../../db/tx.js";
 import { authProviders } from "../../db/schema.js";
 import type { EncryptedSecret } from "../../lib/sealed-secret.js";
@@ -55,7 +56,7 @@ export interface UpdateAuthProviderInput {
   enabled?: boolean;
   autoCreateEnabled?: boolean;
   /** Setting it clears the uploaded image (data/mime NULL) in the same UPDATE; `icon_version` and `config_version` are untouched. */
-  iconKind?: "template" | "gitlab" | "google" | "none";
+  iconKind?: SettableProviderIconKind;
   actorUserId: string;
   /** Sealed outside the transaction (AAD bound to the id); undefined means no new secret. */
   newSecretSealed?: EncryptedSecret;

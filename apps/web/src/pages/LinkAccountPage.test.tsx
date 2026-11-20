@@ -20,7 +20,7 @@ const PENDING: PendingLinkDto = {
   pendingId: "pid-1",
   email: "u@example.com",
   providerDisplayName: "Corp IdP",
-  methods: { password: true, providers: [{ id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } }] },
+  methods: { password: true, providers: [{ id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "generic" } }] },
 };
 const USER = { id: "u1", email: "u@example.com", handle: "u", displayName: "U", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null } satisfies UserDto;
 
@@ -298,7 +298,7 @@ describe("LinkAccountPage (#187 /link-account)", () => {
           methods: {
             password: true,
             providers: [
-              { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } },
+              { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "generic" } },
               { id: "22222222-2222-2222-2222-222222222222", displayName: "Plain", icon: null },
             ],
           },
@@ -306,7 +306,7 @@ describe("LinkAccountPage (#187 /link-account)", () => {
     });
     renderAt("/link-account");
     const gitlab = await screen.findByRole("button", { name: "Confirm by signing in with GitLab" });
-    expect(gitlab.firstChild).toBe(gitlab.querySelector('[data-provider-icon="gitlab"]'));
+    expect(gitlab.firstChild).toBe(gitlab.querySelector('[data-provider-icon="generic"]'));
     expect(gitlab.textContent).toBe("Confirm by signing in with GitLab");
     expect(screen.getByRole("button", { name: "Confirm by signing in with Plain" }).querySelector("[data-provider-icon]")).toBeNull();
   });

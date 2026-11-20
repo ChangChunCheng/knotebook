@@ -31,9 +31,9 @@ const SSO_ADMIN: UserDto = { ...ADMIN, id: "u-sso", hasPassword: false };
 
 const IDENTITIES: IdentitiesDto = {
   identities: [
-    { id: "i1", issuer: "https://gitlab.example", providers: [{ id: "p1", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } }], createdAt: "2026-10-01T00:00:00.000Z", lastLoginAt: null, unlinkable: true },
+    { id: "i1", issuer: "https://gitlab.example", providers: [{ id: "p1", displayName: "GitLab", icon: { type: "builtin", name: "generic" } }], createdAt: "2026-10-01T00:00:00.000Z", lastLoginAt: null, unlinkable: true },
   ],
-  linkable: [{ providerId: "p2", displayName: "Google", template: "google", icon: { type: "builtin", name: "google" } }],
+  linkable: [{ providerId: "p2", displayName: "Google", template: "google", icon: { type: "builtin", name: "generic" } }],
   hasPassword: true,
   passwordLoginEnabled: true,
 };

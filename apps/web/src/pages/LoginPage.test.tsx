@@ -30,8 +30,8 @@ const AUTH_CONFIG_URL = "/api/auth/config";
 const NO_PROVIDERS: AuthConfigDto = { providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: true };
 const TWO: AuthConfigDto = {
   providers: [
-    { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } },
-    { id: "22222222-2222-2222-2222-222222222222", displayName: "Google", icon: { type: "builtin", name: "google" } },
+    { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "generic" } },
+    { id: "22222222-2222-2222-2222-222222222222", displayName: "Google", icon: { type: "builtin", name: "generic" } },
   ],
   registration: { enabled: true, providerIds: ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"] },
   passwordLogin: { enabled: true },
@@ -416,7 +416,7 @@ describe("#131 return to next after login", () => {
   });
 });
 
-const PROVIDERS: AuthProviderPublicDto[] = [{ id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } }];
+const PROVIDERS: AuthProviderPublicDto[] = [{ id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "generic" } }];
 const NO_METHODS_TEXT = "There's no way to sign in right now. Please contact the site administrator.";
 
 describe("LoginPage - #187: password toggle, register button, zero methods", () => {
@@ -586,7 +586,7 @@ describe("LoginPage - #187: password toggle, register button, zero methods", () 
       "/login",
       fetchMockWithAuthConfig({
         providers: [
-          { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "gitlab" } },
+          { id: "11111111-1111-1111-1111-111111111111", displayName: "GitLab", icon: { type: "builtin", name: "generic" } },
           { id: "22222222-2222-2222-2222-222222222222", displayName: "Corp", icon: { type: "upload", url: corpUrl } },
           { id: "33333333-3333-3333-3333-333333333333", displayName: "Plain", icon: null },
         ],
@@ -600,7 +600,7 @@ describe("LoginPage - #187: password toggle, register button, zero methods", () 
     );
     // Wait point: that provider's link appears only after the config lands.
     const gitlab = await screen.findByRole("link", { name: "Sign in with GitLab" });
-    expect(gitlab.firstChild).toBe(gitlab.querySelector('[data-provider-icon="gitlab"]'));
+    expect(gitlab.firstChild).toBe(gitlab.querySelector('[data-provider-icon="generic"]'));
     expect(gitlab.textContent).toBe("Sign in with GitLab");
     const corp = screen.getByRole("link", { name: "Sign in with Corp" });
     expect(corp.firstChild).toBe(corp.querySelector('img[data-provider-icon="upload"]'));
