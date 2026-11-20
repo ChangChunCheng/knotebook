@@ -1,5 +1,4 @@
--- #175 群組 v2：drizzle-kit 兩段產出後人工重排。單一交易（drizzle migrator 的整批交易）；見 migrate.test.ts 的輔助 grep。
--- 步驟 1：group_roles（七旗標、六條 CHECK、三把唯一索引）
+-- Hand-reordered from drizzle-kit's two-part output; runs in drizzle's single transaction (see the helper grep in migrate.test.ts).
 CREATE TABLE "group_roles" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"group_id" uuid NOT NULL,
@@ -25,12 +24,10 @@ ALTER TABLE "group_roles" ADD CONSTRAINT "group_roles_group_id_groups_id_fk" FOR
 CREATE UNIQUE INDEX "group_roles_group_id_id_idx" ON "group_roles" USING btree ("group_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "group_roles_builtin_idx" ON "group_roles" USING btree ("group_id","builtin") WHERE "group_roles"."builtin" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "group_roles_name_idx" ON "group_roles" USING btree ("group_id",lower("name")) WHERE "group_roles"."builtin" is null;--> statement-breakpoint
--- 步驟 2：每個群組兩個內建角色（name 恆 NULL）
 INSERT INTO "group_roles" ("group_id", "builtin", "can_read", "can_create", "can_edit", "can_delete", "can_manage_public_link", "can_manage_members", "can_manage_group")
 SELECT "id", 'admin', true, true, true, true, true, true, true FROM "groups";--> statement-breakpoint
 INSERT INTO "group_roles" ("group_id", "builtin", "can_read", "can_create", "can_edit")
 SELECT "id", 'member', true, true, true FROM "groups";--> statement-breakpoint
--- 步驟 3：group_members.role → role_id
 ALTER TABLE "group_members" ADD COLUMN "role_id" uuid;--> statement-breakpoint
 UPDATE "group_members" AS gm SET "role_id" = r."id" FROM "group_roles" AS r WHERE r."group_id" = gm."group_id" AND r."builtin" = gm."role";--> statement-breakpoint
 ALTER TABLE "group_members" ALTER COLUMN "role_id" SET NOT NULL;--> statement-breakpoint
@@ -38,7 +35,7 @@ ALTER TABLE "group_members" ADD CONSTRAINT "group_members_role_fk" FOREIGN KEY (
 CREATE INDEX "group_members_role_idx" ON "group_members" USING btree ("role_id");--> statement-breakpoint
 ALTER TABLE "group_members" DROP CONSTRAINT "group_members_role_chk";--> statement-breakpoint
 ALTER TABLE "group_members" DROP COLUMN "role";--> statement-breakpoint
--- 步驟 4：note_redirects＋既有群組筆記的現行 slug 轉址（用轉換前的 owner handle；不寫 prev_slug 路徑）
+-- Redirect the current slug of existing group notes, using the owner handle from before the ownership transfer below; prev_slug paths get no redirect.
 CREATE TABLE "note_redirects" (
 	"old_path" text PRIMARY KEY NOT NULL,
 	"note_id" uuid NOT NULL,
@@ -53,13 +50,13 @@ INSERT INTO "note_redirects" ("old_path", "note_id", "expires_at")
 SELECT '/n/' || u."handle" || '/' || n."slug", n."id", now() + interval '1 month'
 FROM "notes" AS n JOIN "users" AS u ON u."id" = n."owner_id"
 WHERE n."group_id" IS NOT NULL;--> statement-breakpoint
--- 步驟 5：群組筆記上殘留的分享列與公開別名
+-- Group notes carry no shares or public alias; clear leftovers (notes_group_no_public_slug_chk below needs the latter).
 DELETE FROM "note_shares" AS s USING "notes" AS n WHERE n."id" = s."note_id" AND n."group_id" IS NOT NULL;--> statement-breakpoint
 UPDATE "notes" SET "public_slug" = NULL WHERE "group_id" IS NOT NULL AND "public_slug" IS NOT NULL;--> statement-breakpoint
--- 步驟 6：擁有權轉移（必須在去重之前）
+-- Ownership transfer; must run before the slug dedupe below.
 ALTER TABLE "notes" ALTER COLUMN "owner_id" DROP NOT NULL;--> statement-breakpoint
 UPDATE "notes" SET "owner_id" = NULL, "prev_slug" = NULL WHERE "group_id" IS NOT NULL;--> statement-breakpoint
--- 步驟 7：群組內 slug 去重（基底＝現行 slug；-2..-21；重截 ≤60；退 untitled-<uuid8>）
+-- Make slugs unique per group before the unique index below: later duplicates (by created_at, id) get -2..-21 (re-cut to <= 60), else untitled-<uuid8>.
 DO $mig$
 DECLARE r record; cand text; suffix text; k int; found boolean;
 BEGIN
@@ -83,7 +80,7 @@ BEGIN
     UPDATE "notes" SET "slug" = cand WHERE "id" = r."id";
   END LOOP;
 END $mig$;--> statement-breakpoint
--- 步驟 8：XOR／別名 CHECK、FK 改 RESTRICT、群組 slug 索引（兼任 #103 單欄 notes_group_idx 的用途，後者刪除）、廢 group_role
+-- notes_group_slug_idx also covers what #103's single-column notes_group_idx did, so that index is dropped.
 ALTER TABLE "notes" ADD CONSTRAINT "notes_owner_xor_group_chk" CHECK (("notes"."owner_id" is null) <> ("notes"."group_id" is null));--> statement-breakpoint
 ALTER TABLE "notes" ADD CONSTRAINT "notes_group_no_public_slug_chk" CHECK ("notes"."group_id" is null or "notes"."public_slug" is null);--> statement-breakpoint
 ALTER TABLE "notes" DROP CONSTRAINT "notes_group_id_groups_id_fk";--> statement-breakpoint

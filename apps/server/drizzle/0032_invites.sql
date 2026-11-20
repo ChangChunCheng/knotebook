@@ -1,4 +1,3 @@
--- #285 邀請註冊：kind_chk 擴充 'invite'（先 DROP 再 ADD）、加 label／used_by_id 兩欄與一條 FK（ON DELETE SET NULL）、四條邀請 CHECK；單一交易、無非交易式 DDL。
 ALTER TABLE "one_time_links" DROP CONSTRAINT "one_time_links_kind_chk";--> statement-breakpoint
 ALTER TABLE "one_time_links" ADD COLUMN "label" text;--> statement-breakpoint
 ALTER TABLE "one_time_links" ADD COLUMN "used_by_id" uuid;--> statement-breakpoint

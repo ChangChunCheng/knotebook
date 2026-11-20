@@ -1,2 +1,3 @@
--- bulk transfer：transfer_bases 加 applied_edit_ids（寫回這份檔時記下的 note_ai_edits 列 id）。同檔重送時其中任一列已撤回 → 409 base_unavailable（reason reverted），不再回 unchanged。只加可 NULL 欄、不回填（舊列＝NULL＝沒有紀錄可查，照「沒撤回」處理）；回滾到前一版：舊碼不讀這欄。
+-- applied_edit_ids: ids of the note_ai_edits rows recorded when this file was written back. Resending the same file when any of them has been reverted gives 409 base_unavailable (reason reverted) instead of unchanged.
+-- Nullable, no backfill: an old row is NULL = no record to check, treated as not reverted. Rollback: old code doesn't read this column.
 ALTER TABLE "transfer_bases" ADD COLUMN "applied_edit_ids" uuid[];

@@ -1,4 +1,3 @@
--- #200 transfer token：新表 transfer_tokens，兩條 cascade FK、三條 CHECK、三個索引。單一交易（drizzle migrator 整批），無非交易式 DDL（migrate.test.ts 有輔助 grep）。
 CREATE TABLE "transfer_tokens" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"token_hash" text NOT NULL,

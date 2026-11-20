@@ -10,17 +10,15 @@ CREATE TABLE "handles" (
 --> statement-breakpoint
 CREATE INDEX "handles_user_idx" ON "handles" USING btree ("user_id");--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "handle" text;--> statement-breakpoint
--- #122 backfill（drizzle-kit generate 草稿經手改為「加欄(nullable)→backfill→
--- SET NOT NULL/DEFAULT→ADD CONSTRAINT」段式——generate 的一句式對既有列會直接套隨機
--- default，派生自 email 的 handle 就沒了；snapshot 描述的是最終態，不受此手改影響）。
---
--- 逐列指派（created_at, id 排序＝確定性）：候選＝email local-part 的 SQL 簡化派生
--- （ASCII-only：lower → 非 [a-z0-9] 段轉 '-' → 去頭尾 dash → uuid 形/空 → user-<uuid8>
--- → 截 30 再 trim 尾 dash）；`WHILE EXISTS(handles)` 遞增 `-N` 尾碼（重截基底使總長
--- ≤32；上限 100 後退 user-<uuid8>）。逐列查已寫入值＝跨組撞名（foo＋既有 foo-2＋第二個
--- foo）天然正確——migrate.test.ts 的資料案例守著。uuid 形判斷在**截斷前**（截 30 後的
--- uuid 前綴已非 uuid 形，判不到）。
--- 整支 migration 由 drizzle 包在單一 transaction 內執行；本檔不得出現 COMMIT 或並行建索引語法。
+-- Hand-edited from the generated output (add nullable column, backfill, SET NOT NULL/DEFAULT, ADD CONSTRAINT): the generated
+-- one-statement form would apply the random default to existing rows, losing the email-derived handle. The snapshot describes the
+-- final state, so this edit doesn't affect it.
+-- Per-row backfill in (created_at, id) order, so it is deterministic. Candidate = ASCII-only SQL simplification of the email local part:
+-- lower, runs of non-[a-z0-9] to '-', trim leading/trailing dashes, empty or uuid-shaped -> user-<uuid8>, cut to 30, trim trailing dash.
+-- WHILE EXISTS(handles) appends a -N suffix (base re-cut so the total stays <= 32; after 100 tries falls back to user-<uuid8>).
+-- Checking each row against already-written values makes collisions across bases (foo, an existing foo-2, a second foo) come out right;
+-- the data cases in migrate.test.ts pin this. The uuid-shape test runs before the cut to 30, since a cut uuid prefix is no longer uuid-shaped.
+-- No commit statement or concurrent-index syntax in this file: drizzle runs the whole migration in one transaction.
 DO $$
 DECLARE
   u RECORD;
