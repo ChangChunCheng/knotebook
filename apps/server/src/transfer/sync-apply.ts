@@ -2,7 +2,7 @@
  * Holds the fork lease with zero DB; runs before/after scratch planning, never nested. Same
  * precondition as `decide.ts`. Yields once before the mount (one synchronous stretch, not to
  * be chained onto the tail of planning) and after it. Neighbours for `deferred` deletes are
- * found before `diffSince`/merge, so we never write content and then hit `anchor_chk`. With
+ * found before the diff is taken, so we never write content and then hit `anchor_chk`. With
  * zero top-level blocks, the empty paragraph mount normalizes is replaced once; an empty
  * note has a single insert region, equal to `replace_all`.
  */
@@ -11,7 +11,7 @@ import * as Y from "yjs";
 import type { noteAiEdits } from "../db/schema.js";
 import { keptIdRenames } from "../notes/editing/block-align.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
-import { EditorSession, renameBlocksInDoc } from "../notes/editing/session.js";
+import { pickBlocks, topLevelBlocksById, withForkEditor } from "../notes/editing/session.js";
 import { chainKeyOf, type Anchor } from "./decide.js";
 import type { SyncPlan } from "./sync-plan.js";
 import { YIELD_AFTER_MS, yieldToLoop } from "./yield.js";
@@ -74,9 +74,7 @@ export async function applySync(
 
   // The fork mount can't be split; without this yield it would extend the tail of planning into a longer stall.
   await yieldFn();
-  const renames = new Map<string, string>();
-  const s = await EditorSession.open(runtime, fork);
-  try {
+  const w = await withForkEditor(runtime, fork, sv, async (ed, edits) => {
     await yieldFn();
     let last = now();
     const budget = async () => {
@@ -85,8 +83,8 @@ export async function applySync(
         last = now();
       }
     };
-    const ed = s.editor;
-    const snapshot = (ids: string[]): AnyBlock[] => ids.map(id => ed.getBlock(id)).filter((b): b is AnyBlock => b !== undefined);
+    // Survivors are unchanged base blocks and inserting other regions doesn't alter them, so one pass serves every region.
+    const byId = topLevelBlocksById(ed);
 
     // Throws before diffSince/merge, so nothing is written (never content merged and then a CHECK failing).
     const assertTopLevel = () => {
@@ -122,9 +120,9 @@ export async function applySync(
       if (key !== null && inserted.length > 0) chain.set(key, inserted[inserted.length - 1]!.id);
       perRegion[ri]!.afterIds = inserted.map(b => b.id);
       if (d.kind === "rewrite" && d.survivors.length > 0) {
-        perRegion[ri]!.beforeBlocks = snapshot(d.survivors);
-        for (const [newId, oldId] of keptIdRenames(perRegion[ri]!.beforeBlocks, inserted)) renames.set(newId, oldId);
-        ed.removeBlocks(d.survivors);
+        perRegion[ri]!.beforeBlocks = pickBlocks(byId, d.survivors);
+        edits.rename(keptIdRenames(perRegion[ri]!.beforeBlocks, inserted));
+        edits.remove(d.survivors);
       }
       await budget();
     }
@@ -132,13 +130,13 @@ export async function applySync(
     const deleting = new Set<string>();
     for (const d of decisions) if (d.kind === "delete" && d.mark !== "same") for (const id of d.survivors) deleting.add(id);
     const toEmpty: number[] = [];
-    // Valid for all deletes: removed blocks are in `deleting` and skipped while scanning.
+    // Valid for all deletes: removed blocks are in `deleting` and skipped while scanning. Rewrite survivors are only queued, still in the document, so they are skipped too.
     let topIds: string[] | null = null;
     let topPos: Map<string, number> | null = null;
     for (let ri = 0; ri < regions.length; ri++) {
       const d = decisions[ri]!;
       if (d.kind !== "delete" || d.mark === "same") continue;
-      perRegion[ri]!.beforeBlocks = snapshot(d.survivors);
+      perRegion[ri]!.beforeBlocks = pickBlocks(byId, d.survivors);
       let anchor: Anchor | null = typeof d.anchor === "object" ? d.anchor : null;
       if (d.anchor === "deferred") {
         topIds ??= ed.document.map(b => b.id);
@@ -146,36 +144,34 @@ export async function applySync(
         const top = topIds;
         const first = topPos.get(d.survivors[0]!)!;
         const lastIdx = topPos.get(d.survivors[d.survivors.length - 1]!)!;
-        for (let i = first - 1; i >= 0 && anchor === null; i--) if (!deleting.has(top[i]!)) anchor = { block_id: top[i]!, position: "after" };
-        for (let i = lastIdx + 1; i < top.length && anchor === null; i++) if (!deleting.has(top[i]!)) anchor = { block_id: top[i]!, position: "before" };
+        for (let i = first - 1; i >= 0 && anchor === null; i--) if (!deleting.has(top[i]!) && !edits.isQueued(top[i]!)) anchor = { block_id: top[i]!, position: "after" };
+        for (let i = lastIdx + 1; i < top.length && anchor === null; i++) if (!deleting.has(top[i]!) && !edits.isQueued(top[i]!)) anchor = { block_id: top[i]!, position: "before" };
       }
       if (anchor === null) {
         toEmpty.push(ri);
         continue;
       }
       perRegion[ri]!.anchor = anchor;
-      ed.removeBlocks(d.survivors);
+      edits.remove(d.survivors);
       await budget();
     }
     if (toEmpty.length > 0) {
       // The last removal becomes one empty paragraph (the top level is never empty, as in `delete_section`); these regions anchor on it as a placeholder. Survivors of the first region (document order) go "before" it, the rest "after", so a revert restores the order (3+ regions reverted out of order is only approximate, known-limitations).
       const ids = toEmpty.flatMap(ri => decisions[ri]!.survivors);
-      const empty = ed.replaceBlocks(ids, [{ type: "paragraph" }]).insertedBlocks[0]!;
+      const empty = edits.remove(ids);
+      if (empty === null) throw new Error("applySync: removing every top-level block left one standing");
       toEmpty.forEach((ri, i) => {
         perRegion[ri]!.anchor = { block_id: empty.id, position: i === 0 ? "before" : "after", placeholder: true };
       });
     }
     assertTopLevel();
-  } finally {
-    s.close();
-  }
-  // Renamed after close() because a ProseMirror attribute step per block costs O(note size) each. Ids are mapped through what was applied, since a rename can be skipped.
-  const applied = renameBlocksInDoc(fork, renames);
-  if (applied.size > 0) {
+  });
+  // Ids are mapped through what was applied, since a rename can be skipped.
+  if (w.renamed.size > 0) {
     for (const pr of perRegion) {
-      pr.afterIds = pr.afterIds.map(id => applied.get(id) ?? id);
-      if (pr.anchor !== null) pr.anchor = { ...pr.anchor, block_id: applied.get(pr.anchor.block_id) ?? pr.anchor.block_id };
+      pr.afterIds = pr.afterIds.map(id => w.renamed.get(id) ?? id);
+      if (pr.anchor !== null) pr.anchor = { ...pr.anchor, block_id: w.renamed.get(pr.anchor.block_id) ?? pr.anchor.block_id };
     }
   }
-  return { diff: Y.encodeStateAsUpdate(fork, sv), perRegion };
+  return { diff: w.diff, perRegion };
 }
