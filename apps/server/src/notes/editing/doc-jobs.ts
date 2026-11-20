@@ -23,7 +23,7 @@ import { readNoteContentFromDoc } from "./read.js";
 import { editRevertable, isDeleteShape, prepareRevertOnFork, removedIds, topLevelIds, type RevertRow } from "./revert-core.js";
 import { containerItems, type MergeGuard } from "./live-watch.js";
 import type { EditingRuntime } from "./runtime.js";
-import { EditorSession, renameBlocksInDoc, replaceBlocksFresh } from "./session.js";
+import { pickBlocks, topLevelBlocksById, withForkEditor } from "./session.js";
 import type { ShownLinks } from "./shown-link-texts.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention
@@ -203,23 +203,18 @@ export async function editOnFork(
   blocks: AnyPartialBlock[],
 ): Promise<{ diff: Uint8Array; beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null }> {
   const { op, isEmptyDoc, section } = plan;
-  let renames = new Map<string, string>();
-  const keep = (before: readonly AnyBlock[], inserted: readonly AnyBlock[]): void => {
-    if (plan.keepIds) renames = keptIdRenames(before, inserted);
-  };
-  const s = await EditorSession.open(runtime, fork);
-  let r: { beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null };
-  try {
-    const ed = s.editor;
+  const w = await withForkEditor(runtime, fork, sv, (ed, edits) => {
     const top = ed.document;
-    const snapshot = (idList: string[]): AnyBlock[] => idList.map(id => ed.getBlock(id)).filter((b): b is AnyBlock => b !== undefined);
+    const keep = (before: readonly AnyBlock[], inserted: readonly AnyBlock[]): void => {
+      if (plan.keepIds) edits.rename(keptIdRenames(before, inserted));
+    };
     let beforeBlocks: AnyBlock[] = [];
     let afterIds: string[] = [];
     let anchor: Anchor | null = null;
     switch (op) {
       case "replace_all": {
         beforeBlocks = isEmptyDoc ? [] : top;
-        const inserted = replaceBlocksFresh(ed, top.map(b => b.id), blocks) as AnyBlock[]; // insert first, then delete (see `replaceBlocksFresh`)
+        const inserted = edits.replace(top.map(b => b.id), blocks);
         afterIds = inserted.map(b => b.id);
         // On an empty doc the only old block is the paragraph the mount normalized, never part of the note.
         if (!isEmptyDoc) keep(beforeBlocks, inserted);
@@ -229,8 +224,8 @@ export async function editOnFork(
         const sectionIds = section!.blockIds;
         if (sectionIds.length === 0) afterIds = ed.insertBlocks(blocks, top[0]!.id, "before").map(b => b.id);
         else {
-          beforeBlocks = snapshot(sectionIds);
-          const inserted = replaceBlocksFresh(ed, sectionIds, blocks) as AnyBlock[];
+          beforeBlocks = pickBlocks(topLevelBlocksById(ed), sectionIds);
+          const inserted = edits.replace(sectionIds, blocks);
           afterIds = inserted.map(b => b.id);
           keep(beforeBlocks, inserted);
         }
@@ -247,28 +242,19 @@ export async function editOnFork(
       }
       case "delete_section": {
         const sectionIds = section!.blockIds;
-        beforeBlocks = snapshot(sectionIds);
+        beforeBlocks = pickBlocks(topLevelBlocksById(ed), sectionIds);
         const idx = top.findIndex(b => b.id === sectionIds[0]);
         const prev = top[idx - 1];
         const next = top[idx + sectionIds.length];
-        if (sectionIds.length === top.length) {
-          // Section covers the whole doc: never leave it empty → end with an empty paragraph, id not recorded.
-          const inserted = ed.replaceBlocks(sectionIds, [{ type: "paragraph" }]).insertedBlocks;
-          anchor = { block_id: inserted[0]!.id, position: "before" };
-        } else {
-          ed.replaceBlocks(sectionIds, []);
-          anchor = prev ? { block_id: prev.id, position: "after" } : { block_id: next!.id, position: "before" };
-        }
+        // Removing the whole doc leaves one empty paragraph (id not recorded).
+        const placeholder = edits.remove(sectionIds);
+        anchor = placeholder ? { block_id: placeholder.id, position: "before" } : prev ? { block_id: prev.id, position: "after" } : { block_id: next!.id, position: "before" };
         break;
       }
     }
-    r = { beforeBlocks, afterIds, anchor };
-  } finally {
-    s.close();
-  }
-  // After close(): with the editor bound, each ProseMirror attribute step copies the whole top-level array. Before the diff, so the diff carries the kept ids (#551).
-  const applied = renameBlocksInDoc(fork, renames);
-  return { diff: Y.encodeStateAsUpdate(fork, sv), beforeBlocks: r.beforeBlocks, afterIds: r.afterIds.map(id => applied.get(id) ?? id), anchor: r.anchor };
+    return { beforeBlocks, afterIds, anchor };
+  });
+  return { diff: w.diff, beforeBlocks: w.value.beforeBlocks, afterIds: w.value.afterIds.map(id => w.renamed.get(id) ?? id), anchor: w.value.anchor };
 }
 
 async function readOp(runtime: EditingRuntime, op: ReadDocOp, ask: AskFn): Promise<ReadDocResult> {
