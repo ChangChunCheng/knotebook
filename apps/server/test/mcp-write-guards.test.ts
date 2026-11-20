@@ -121,12 +121,12 @@ async function snapshot(ctx: CollabTestCtx, noteId: string): Promise<SideEffectS
 
 async function expectNoSideEffects(ctx: CollabTestCtx, noteId: string, before: SideEffectSnapshot): Promise<void> {
   const after = await snapshot(ctx, noteId);
-  expect(after.editsCount, "M6：無新 note_ai_edits 列").toBe(before.editsCount);
-  expect(after.docText, "M6：live doc 內容位元組不變").toBe(before.docText);
-  expect(after.documentsSize, "M6：hocuspocus.documents 未因此新增文件").toBe(before.documentsSize);
+  expect(after.editsCount, "無新 note_ai_edits 列").toBe(before.editsCount);
+  expect(after.docText, "live doc 內容位元組不變").toBe(before.docText);
+  expect(after.documentsSize, "hocuspocus.documents 未因此新增文件").toBe(before.documentsSize);
   // Key-set comparison only discriminates when awareness was empty at `before`; where an earlier successful call made it non-empty
   // (see the fingerprint_mismatch case), a stray touch would only update that clientId's state in place, so that case compares deeply. In the side-by-side cases that call this after a successful append, the key-set comparison can't see such an in-place touch either.
-  expect(after.awarenessKeys, "M6：無新名牌加入 awareness（本檔全是拒絕案，見檔頭）").toEqual(before.awarenessKeys);
+  expect(after.awarenessKeys, "無新名牌加入 awareness（本檔全是拒絕案）").toEqual(before.awarenessKeys);
 }
 
 describe("rejections: four zero-side-effect checks per case", () => {
@@ -316,7 +316,7 @@ describe("rejections: four zero-side-effect checks per case", () => {
       const before = await countNotes(s.ctx, s.ownerId);
 
       const call = await createNote(s.ctx.app, s.token, { title: "T", content: "內容" });
-      expect(await countNotes(s.ctx, s.ownerId), "M6：notes 表零新增列").toBe(before);
+      expect(await countNotes(s.ctx, s.ownerId), "notes 表零新增列").toBe(before);
 
       const err = errorOf(call);
       expect(err.code).toBe("too_many_requests");

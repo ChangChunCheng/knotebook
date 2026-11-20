@@ -7,11 +7,11 @@ import { loadConfig, parsePasswordLoginForceEnable, parseTrustProxy, publicUrlIs
 import { oidcRedirectUri } from "../../src/auth/oidc-client.js";
 const valid = { DATABASE_URL: "postgres://u:p@localhost:5432/db", APP_SECRET: "a".repeat(64), PUBLIC_URL: "https://notes.example.com" };
 describe("loadConfig", () => {
-  it("合法設定；cookieSecure 依 PUBLIC_URL scheme", () => {
+  it("valid config; cookieSecure follows the PUBLIC_URL scheme", () => {
     expect(loadConfig(valid).cookieSecure).toBe(true);
     expect(loadConfig({ ...valid, PUBLIC_URL: "http://localhost:3000" }).cookieSecure).toBe(false);
   });
-  it("完整物件回傳 - https", () => {
+  it("returns the full object - https", () => {
     const config = loadConfig(valid);
     expect(config).toEqual({
       databaseUrl: "postgres://u:p@localhost:5432/db",
@@ -25,12 +25,12 @@ describe("loadConfig", () => {
       databasePoolConnectionTimeoutMs: 10000,
       testHooks: false,
       testHooksIgnored: false,
-      // #397：env 設的站台限制、機器資訊（解析 worker 的生效值由 SiteLimits 算，不在 config 裡）
+      // #397: site limits set via env and machine info (effective parse-worker values come from SiteLimits, not config)
       limitEnv: {},
       machine: expect.objectContaining({ cpus: expect.any(Number) }),
     });
   });
-  it("#175 pool 保險絲：兩個 env 覆寫；空字串視同未設；非正整數 → throw", () => {
+  it("#175 pool fuses: both env overrides apply; empty string counts as unset; non-positive-integer -> throw", () => {
     const c = loadConfig({ ...valid, DATABASE_POOL_MAX: "3", DATABASE_POOL_CONNECTION_TIMEOUT_MS: "250" });
     expect([c.databasePoolMax, c.databasePoolConnectionTimeoutMs]).toEqual([3, 250]);
     const d = loadConfig({ ...valid, DATABASE_POOL_MAX: "", DATABASE_POOL_CONNECTION_TIMEOUT_MS: "" });
@@ -40,77 +40,77 @@ describe("loadConfig", () => {
       expect(() => loadConfig({ ...valid, DATABASE_POOL_CONNECTION_TIMEOUT_MS: bad }), bad).toThrow(/DATABASE_POOL_CONNECTION_TIMEOUT_MS/);
     }
   });
-  it("#175 pool 逾時上限：超過 Node 計時器上限 2147483647 → throw 點名變數；恰等於上限接受", () => {
+  it("#175 pool timeout cap: above the Node timer limit 2147483647 -> throw naming the variable; exactly the limit is accepted", () => {
     expect(() => loadConfig({ ...valid, DATABASE_POOL_CONNECTION_TIMEOUT_MS: "3000000000" })).toThrow(/DATABASE_POOL_CONNECTION_TIMEOUT_MS/);
     expect(loadConfig({ ...valid, DATABASE_POOL_CONNECTION_TIMEOUT_MS: "2147483647" }).databasePoolConnectionTimeoutMs).toBe(2147483647);
   });
-  it("APP_SECRET 太短 → throw 含 openssl 指引", () => {
+  it("APP_SECRET too short -> throw with an openssl hint", () => {
     expect(() => loadConfig({ ...valid, APP_SECRET: "short" })).toThrow(/openssl rand -hex 32/);
   });
-  it("缺 PUBLIC_URL → throw", () => {
+  it("missing PUBLIC_URL -> throw", () => {
     const { PUBLIC_URL, ...rest } = valid;
     expect(() => loadConfig(rest)).toThrow(/PUBLIC_URL/);
   });
-  it("http 非 localhost → 接受但 insecureHttpWarning=true，cookieSecure 仍為 false（trusted-LAN 拓撲）", () => {
+  it("http on a non-localhost host -> accepted with insecureHttpWarning=true, cookieSecure stays false (trusted-LAN topology)", () => {
     const config = loadConfig({ ...valid, PUBLIC_URL: "http://notes.example.com" });
     expect(config.insecureHttpWarning).toBe(true);
     expect(config.cookieSecure).toBe(false);
   });
-  it("http localhost → insecureHttpWarning=false", () => {
+  it("http localhost -> insecureHttpWarning=false", () => {
     expect(loadConfig({ ...valid, PUBLIC_URL: "http://localhost:3000" }).insecureHttpWarning).toBe(false);
   });
-  it("https → insecureHttpWarning=false", () => {
+  it("https -> insecureHttpWarning=false", () => {
     expect(loadConfig(valid).insecureHttpWarning).toBe(false);
   });
-  it("無 scheme → throw", () => {
+  it("no scheme -> throw", () => {
     expect(() => loadConfig({ ...valid, PUBLIC_URL: "localhost:3000" })).toThrow(/http\/https/);
   });
-  describe("ADMIN_EMAIL / ADMIN_PASSWORD（env bootstrap admin）", () => {
-    it("皆未設 → 通過，adminEmail/adminPassword 皆 undefined", () => {
+  describe("ADMIN_EMAIL / ADMIN_PASSWORD (env bootstrap admin)", () => {
+    it("neither set -> passes, adminEmail/adminPassword both undefined", () => {
       const config = loadConfig(valid);
       expect(config.adminEmail).toBeUndefined();
       expect(config.adminPassword).toBeUndefined();
     });
 
-    it("只設 ADMIN_EMAIL → fail-fast", () => {
+    it("only ADMIN_EMAIL set -> fail-fast", () => {
       expect(() => loadConfig({ ...valid, ADMIN_EMAIL: "admin@example.com" })).toThrow(
         /ADMIN_EMAIL 與 ADMIN_PASSWORD 必須同時設定/
       );
     });
 
-    it("只設 ADMIN_PASSWORD → fail-fast", () => {
+    it("only ADMIN_PASSWORD set -> fail-fast", () => {
       expect(() => loadConfig({ ...valid, ADMIN_PASSWORD: "correct-horse-battery" })).toThrow(
         /ADMIN_EMAIL 與 ADMIN_PASSWORD 必須同時設定/
       );
     });
 
-    it("皆設但密碼 <12 字元 → fail-fast", () => {
+    it("both set but password under 12 characters -> fail-fast", () => {
       expect(() =>
         loadConfig({ ...valid, ADMIN_EMAIL: "admin@example.com", ADMIN_PASSWORD: "short" })
       ).toThrow(/ADMIN_PASSWORD 至少需要 12 字元/);
     });
 
-    it("皆設但 ADMIN_EMAIL 格式錯誤 → fail-fast", () => {
+    it("both set but ADMIN_EMAIL malformed -> fail-fast", () => {
       expect(() =>
         loadConfig({ ...valid, ADMIN_EMAIL: "not-an-email", ADMIN_PASSWORD: "correct-horse-battery" })
       ).toThrow(/ADMIN_EMAIL 格式錯誤/);
     });
 
-    it("皆設且合法 → 通過，config 帶出兩個欄位", () => {
+    it("both set and valid -> passes, config carries both fields", () => {
       const config = loadConfig({ ...valid, ADMIN_EMAIL: "admin@example.com", ADMIN_PASSWORD: "correct-horse-battery" });
       expect(config.adminEmail).toBe("admin@example.com");
       expect(config.adminPassword).toBe("correct-horse-battery");
     });
 
-    it("ADMIN_EMAIL 空字串 + ADMIN_PASSWORD 有值 → 視同半套，fail-fast（空字串等同未設）", () => {
+    it("empty ADMIN_EMAIL + ADMIN_PASSWORD set -> counts as half-configured, fail-fast (empty string equals unset)", () => {
       expect(() =>
         loadConfig({ ...valid, ADMIN_EMAIL: "", ADMIN_PASSWORD: "correct-horse-battery" })
       ).toThrow(/ADMIN_EMAIL 與 ADMIN_PASSWORD 必須同時設定/);
     });
   });
 
-  describe("殘留的舊 OIDC_*（匯入機制已移除）", () => {
-    it("三件齊或半套的 OIDC_ISSUER_URL／CLIENT_ID／CLIENT_SECRET 都被忽略：不 throw、config 不帶任何 OIDC 欄位", () => {
+  describe("leftover OIDC_* variables (the import mechanism was removed)", () => {
+    it("OIDC_ISSUER_URL / CLIENT_ID / CLIENT_SECRET, complete or partial, are ignored: no throw, config has no OIDC fields", () => {
       const three = { OIDC_ISSUER_URL: "https://idp.example.com", OIDC_CLIENT_ID: "abc", OIDC_CLIENT_SECRET: "s" };
       for (const extra of [three, { OIDC_ISSUER_URL: "ftp://bad" }, {}]) {
         const c = loadConfig({ ...valid, ...extra });
@@ -121,8 +121,8 @@ describe("loadConfig", () => {
   });
 });
 
-describe("parseTrustProxy（issue #13）", () => {
-  it("未設／空字串／false → false（client 可直連的拓撲唯一安全的預設）", () => {
+describe("parseTrustProxy (issue #13)", () => {
+  it("unset / empty string / false -> false (the safe default when clients can connect directly)", () => {
     expect(parseTrustProxy(undefined)).toBe(false);
     expect(parseTrustProxy("")).toBe(false);
     expect(parseTrustProxy("  ")).toBe(false);
@@ -130,18 +130,17 @@ describe("parseTrustProxy（issue #13）", () => {
     expect(parseTrustProxy("FALSE")).toBe(false);
   });
 
-  it("true → true（等同修這條 issue 之前的行為，由部署者自己選）", () => {
+  it("true -> true (same as the behaviour before this issue was fixed; the deployer opts in)", () => {
     expect(parseTrustProxy("true")).toBe(true);
     expect(parseTrustProxy(" True ")).toBe(true);
   });
 
-  it("非負整數 → hop 數", () => {
+  it("non-negative integer -> hop count", () => {
     expect(parseTrustProxy("1")).toBe(1);
     expect(parseTrustProxy("2")).toBe(2);
-    // 0 正規化成 false，見下面那條專屬測試。
   });
 
-  it("IP／CIDR／具名網段 → 逐項驗過的字串陣列", () => {
+  it("IP / CIDR / named ranges -> array of individually validated strings", () => {
     expect(parseTrustProxy("127.0.0.1")).toEqual(["127.0.0.1"]);
     expect(parseTrustProxy("10.0.0.0/8, 172.16.0.0/12")).toEqual(["10.0.0.0/8", "172.16.0.0/12"]);
     expect(parseTrustProxy("loopback,uniquelocal")).toEqual(["loopback", "uniquelocal"]);
@@ -149,21 +148,20 @@ describe("parseTrustProxy（issue #13）", () => {
     expect(parseTrustProxy("fd00::/8")).toEqual(["fd00::/8"]);
   });
 
-  it("語法錯誤在啟動時就丟錯，不留到每個請求才炸", () => {
+  it("syntax errors throw at startup instead of failing on each request", () => {
     expect(() => parseTrustProxy("not-an-ip")).toThrow(/TRUST_PROXY/);
     expect(() => parseTrustProxy("10.0.0.0/999")).toThrow(/TRUST_PROXY/);
     expect(() => parseTrustProxy("10.0.0.0/8/8")).toThrow(/TRUST_PROXY/);
     expect(() => parseTrustProxy("10.0.0.0/abc")).toThrow(/TRUST_PROXY/);
     expect(() => parseTrustProxy("999.1.1.1")).toThrow(/TRUST_PROXY/);
-    // IPv6 的網段上限是 128，IPv4 是 32——不能混用。
+    // The prefix limit is 128 for IPv6 and 32 for IPv4; they must not be mixed.
     expect(() => parseTrustProxy("10.0.0.0/64")).toThrow(/TRUST_PROXY/);
     expect(parseTrustProxy("fd00::/64")).toEqual(["fd00::/64"]);
   });
 
-  // ⚠ 這條是本組測試裡唯一擋得住「我們自己驗過、fastify 卻不收」的形狀。實測抓到
-  // 兩個真例：具名網段沒轉小寫（proxy-addr 用精確比對，`Loopback` 直接丟
-  // `invalid IP address`）、以及 `/0`（proxy-addr 的 `range <= 0` 一律拒）。兩者都會在
-  // `buildApp` 的 Fastify 建構子炸掉，訊息還指不出是哪個環境變數——形同 fail-fast 破功。
+  // Catches shapes we validate but fastify rejects. Two real cases: named ranges that are not lowercase (proxy-addr matches exactly, so
+  // `Loopback` throws `invalid IP address`) and `/0` (proxy-addr rejects `range <= 0`). Both blow up in the Fastify constructor in
+  // buildApp without naming the env variable, which defeats fail-fast.
   it.each([
     "true",
     "1",
@@ -176,26 +174,26 @@ describe("parseTrustProxy（issue #13）", () => {
     "::1",
     "fd00::/8",
     "fd00::/64",
-  ])("我們接受的 %s，fastify 也接受（round-trip）", value => {
+  ])("%s accepted by us is also accepted by fastify (round-trip)", value => {
     const trustProxy = parseTrustProxy(value);
     expect(() => Fastify({ logger: false, trustProxy })).not.toThrow();
   });
 
-  it("`/0` 在我們這裡就被擋掉（proxy-addr 也不收，訊息要指向 TRUST_PROXY=true）", () => {
+  it("`/0` is rejected here (proxy-addr rejects it too; the message must point to TRUST_PROXY=true)", () => {
     expect(() => parseTrustProxy("0.0.0.0/0")).toThrow(/TRUST_PROXY/);
     expect(() => parseTrustProxy("::/0")).toThrow(/TRUST_PROXY/);
   });
 
-  it("具名網段一律正規化成小寫（proxy-addr 只認小寫）", () => {
+  it("named ranges are normalised to lowercase (proxy-addr expects lowercase)", () => {
     expect(parseTrustProxy("Loopback")).toEqual(["loopback"]);
     expect(parseTrustProxy("LOOPBACK, 10.0.0.0/8")).toEqual(["loopback", "10.0.0.0/8"]);
   });
 
-  it("hop 數 0 正規化成 false（寫 0 的人表達的是關閉）", () => {
+  it("hop count 0 normalises to false (writing 0 means off)", () => {
     expect(parseTrustProxy("0")).toBe(false);
   });
 
-  it("loadConfig 帶出這個欄位，未設時是 false", () => {
+  it("loadConfig carries this field, false when unset", () => {
     const base = {
       DATABASE_URL: "postgres://u:p@localhost:5432/test",
       APP_SECRET: "a".repeat(64),
@@ -207,25 +205,24 @@ describe("parseTrustProxy（issue #13）", () => {
   });
 });
 
-describe("OAuth issuer 取 origin、PUBLIC_URL 帶其他成分只警告", () => {
-  it("publicUrlIssuer：保留 port、丟掉 path／query／fragment／userinfo，scheme 與 host 小寫", () => {
-    // port 是這個 repo 最常見的自架形（例如 http://192.168.1.50:3000）——
-    // 手工組 issuer 的實作（protocol + "//" + hostname）會在這裡紅。
+describe("OAuth issuer uses the origin; extra PUBLIC_URL components only warn", () => {
+  it("publicUrlIssuer: keeps the port, drops path / query / fragment / userinfo, lowercases scheme and host", () => {
+    // A port is the common self-hosted form (e.g. http://192.168.1.50:3000); building the issuer as protocol + "//" + hostname would lose it.
     expect(publicUrlIssuer(new URL("http://192.168.1.50:3000/knb"))).toBe("http://192.168.1.50:3000");
     expect(publicUrlIssuer(new URL("https://example.com/knb?q=1#f"))).toBe("https://example.com");
     expect(publicUrlIssuer(new URL("https://u:p@example.com/knb"))).toBe("https://example.com");
     expect(publicUrlIssuer(new URL("HTTPS://Notes.Example.com"))).toBe("https://notes.example.com");
-    // 不得回 href——那會多一個尾斜線，之後組出 `…//.well-known/…`
+    // Must not return href: it adds a trailing slash, which later yields `…//.well-known/…`.
     expect(publicUrlIssuer(new URL("http://localhost:3000"))).toBe("http://localhost:3000");
   });
 
-  it("publicUrlPathWarning：純 origin（含尾斜線、含 port）不警告", () => {
+  it("publicUrlPathWarning: a bare origin (with trailing slash or port) does not warn", () => {
     expect(publicUrlPathWarning(new URL("https://notes.example.com"))).toBeNull();
     expect(publicUrlPathWarning(new URL("https://notes.example.com/"))).toBeNull();
     expect(publicUrlPathWarning(new URL("http://192.168.1.50:3000/"))).toBeNull();
   });
 
-  it("publicUrlPathWarning：path／query／fragment／userinfo 都要警告（都是被 origin 丟掉的成分）", () => {
+  it("publicUrlPathWarning: path / query / fragment / userinfo each warn (all are components the origin drops)", () => {
     for (const url of [
       "https://example.com/knb",
       "https://example.com/knb/",
@@ -237,27 +234,27 @@ describe("OAuth issuer 取 origin、PUBLIC_URL 帶其他成分只警告", () => 
     }
   });
 
-  it("警告訊息點名維運者要改什麼、以及現在就壞掉的是什麼", () => {
+  it("the warning message tells the operator what to change and what is already broken", () => {
     const message = publicUrlPathWarning(new URL("https://example.com/knb"));
-    // 不用 stringContaining("origin") —— 任何含這六個字母的字串都會過，等於沒守。
+    // Not stringContaining("origin"): any string containing those letters would pass.
     expect(message).toContain("PUBLIC_URL");
     expect(message).toContain("sub-path");
-    // #187：每個 provider 一條 redirect URI（/api/auth/oidc/callback[/<id>]）——是**現在就對不上**的那一組
+    // #187: one redirect URI per provider (/api/auth/oidc/callback[/<id>]); these are the ones that already fail to match.
     expect(message).toContain("OIDC redirect URIs");
     expect(message).toContain("will not match");
   });
 
-  it("訊息是編譯期常數（插值進去會讓 pino 的 msg 每個部署都不同，日誌聚合與告警失效）", () => {
+  it("the message is a compile-time constant (interpolating would make pino's msg differ per deployment and break log aggregation and alerts)", () => {
     const first = publicUrlPathWarning(new URL("https://a.example.com/knb"));
-    // 先釘住「有訊息」——只比對相等的話，兩邊同時是 null 也會綠（判定壞掉時的假綠）
+    // Pin that a message exists first: comparing only equality would also pass when both sides are null.
     expect(first).toBeTypeOf("string");
     expect(first).toBe(publicUrlPathWarning(new URL("https://b.example.com/other?q=1")));
   });
 
-  it("警告的前提：sub-path 從 issuer 與 OIDC redirect URI **兩邊**都被丟掉，userinfo 只從 issuer 丟", () => {
-    // 這一案釘住訊息措辭所依據的事實。訊息說「server 丟掉 sub-path，所以與 IdP 端註冊的
-    // <PUBLIC_URL>/api/auth/oidc/callback… 對不上」——若哪天 oidcRedirectUri 改成保留 sub-path，這裡會紅，
-    // 逼人回頭重讀那句話（訊息寫反過的前科）。#187 起 legacy 與一般 provider 兩種形各斷言一次。
+  it("precondition of the warning: the sub-path is dropped from both the issuer and the OIDC redirect URI, userinfo only from the issuer", () => {
+    // Pins the facts the message wording relies on: the server drops the sub-path, so it does not match the
+    // <PUBLIC_URL>/api/auth/oidc/callback… registered at the IdP. If oidcRedirectUri ever keeps the sub-path this fails,
+    // forcing a re-read of that sentence. Both the legacy and the regular provider shapes are asserted.
     const subpath = loadConfig({ ...valid, PUBLIC_URL: "https://example.com/knb" });
     expect(publicUrlIssuer(subpath.publicUrl)).toBe("https://example.com");
     expect(oidcRedirectUri(subpath, { id: "p1", legacyCallback: true })).toBe("https://example.com/api/auth/oidc/callback");
@@ -268,14 +265,14 @@ describe("OAuth issuer 取 origin、PUBLIC_URL 帶其他成分只警告", () => 
     expect(oidcRedirectUri(withCreds, { id: "p1", legacyCallback: true })).toBe("https://u:p@example.com/api/auth/oidc/callback");
   });
 
-  it("結構守衛：index.ts 真的有呼叫 publicUrlPathWarning，且在 listen 之前", () => {
-    // 純函式有測試不代表接線有——把 index.ts 的那個區塊整段刪掉，其餘測試全都照樣綠。
-    // 錨定**呼叫點**字面而不是函式名：只找名字會先命中檔頭的 import，呼叫刪掉也不會紅
-    // （比照 test/handle.test.ts 的 backfillHandleRegistry 結構守衛）。
+  it("structure guard: index.ts calls publicUrlPathWarning, before listen", () => {
+    // Unit tests of the pure function stay green if the call is deleted from index.ts.
+    // Anchored on the call-site literal, not the function name, which would match the import first
+    // (same approach as the backfillHandleRegistry structure test in handle.test.ts).
     //
-    // ⚠ 這條守的是「原始碼裡有這個呼叫字面、且位置早於 listen」，**不是**「警告真的
-    // 印得出來」：死碼分支、算了不 log、甚至字面只出現在註解裡都照樣綠。要真的守住
-    // 輸出得靠 e2e 抓 stdout，代價遠高於收益——與既有那條同一組限制，明示接受。
+    // This checks that the call literal exists before listen, not that the warning is printed: a dead branch, a missing log
+    // call, or the literal appearing only in a comment all still pass. Asserting real output would need an e2e stdout capture,
+    // which costs far more than it returns.
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/index.ts"), "utf8");
     const callAt = src.indexOf("publicUrlPathWarning(config.publicUrl");
     const listenAt = src.indexOf(".listen(");
@@ -284,9 +281,9 @@ describe("OAuth issuer 取 origin、PUBLIC_URL 帶其他成分只警告", () => 
     expect(callAt, "警告要在 listen 之前印出來").toBeLessThan(listenAt);
   });
 
-  it("結構守衛（#187）：index.ts 的舊欄補登呼叫在 initializeInstance 之後、listen 之前", () => {
+  it("structure guard (#187): index.ts calls the legacy-column backfill after initializeInstance and before listen", () => {
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/index.ts"), "utf8");
-    // 錨定呼叫點字面（含引數開頭），不是函式名——只找名字會先命中檔頭 import。
+    // Anchored on the call-site literal (with the start of its arguments), not the function name, which would match the import first.
     const initAt = src.indexOf("await initializeInstance(");
     const backfillAt = src.indexOf("await backfillLegacyOidcIdentities(db");
     const listenAt = src.indexOf(".listen(");
@@ -296,7 +293,7 @@ describe("OAuth issuer 取 origin、PUBLIC_URL 帶其他成分只警告", () => 
   });
 });
 
-describe("PASSWORD_LOGIN_FORCE_ENABLE（#187）", () => {
+describe("PASSWORD_LOGIN_FORCE_ENABLE (#187)", () => {
   it.each([
     [undefined, false],
     ["", false],
@@ -306,21 +303,21 @@ describe("PASSWORD_LOGIN_FORCE_ENABLE（#187）", () => {
     ["true", true],
     ["TRUE", true],
     [" True ", true],
-  ] as const)("%j → %s", (raw, expected) => {
+  ] as const)("%j -> %s", (raw, expected) => {
     expect(parsePasswordLoginForceEnable(raw)).toBe(expected);
   });
 
-  it.each(["1", "yes", "on", "0", "tru", "true,false"])("%j → throw（以為開了救援、實際沒開不可靜默發生）", raw => {
+  it.each(["1", "yes", "on", "0", "tru", "true,false"])("%j -> throw (believing the rescue switch is on while it is off must not happen silently)", raw => {
     expect(() => parsePasswordLoginForceEnable(raw)).toThrow(/PASSWORD_LOGIN_FORCE_ENABLE/);
   });
 
-  it("loadConfig 帶出這個欄位；不合法值擋啟動", () => {
+  it("loadConfig carries this field; an invalid value blocks startup", () => {
     expect(loadConfig(valid).passwordLoginForceEnable).toBe(false);
     expect(loadConfig({ ...valid, PASSWORD_LOGIN_FORCE_ENABLE: "True" }).passwordLoginForceEnable).toBe(true);
     expect(() => loadConfig({ ...valid, PASSWORD_LOGIN_FORCE_ENABLE: "yes" })).toThrow(/PASSWORD_LOGIN_FORCE_ENABLE/);
   });
 
-  it("結構守衛：開機檢查在舊欄補登之後、listen 之前", () => {
+  it("structure guard: the startup check runs after the legacy-column backfill and before listen", () => {
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/index.ts"), "utf8");
     const backfillAt = src.indexOf("await backfillLegacyOidcIdentities(db");
     const checkAt = src.indexOf("await warnPasswordLoginAtBoot(db");
@@ -330,9 +327,9 @@ describe("PASSWORD_LOGIN_FORCE_ENABLE（#187）", () => {
   });
 });
 
-describe("#269 結構守衛：app.ts 的轉換工作 onClose", () => {
-  it("onClose 以 2 s 寬限（SCAN_STOP_GRACE_MS，與 #272 的掃描 onClose、index.ts 的關機上限共用）race 等 linkConversion.stop()（在途那一篇不得把 app.close()／pool.end() 拖到 SIGKILL）", () => {
-    // 剔掉註解行再找：註解裡的字面不得成為唯一的命中來源。
+describe("#269 structure guard: app.ts onClose for the link-conversion job", () => {
+  it("onClose races linkConversion.stop() against a 2 s grace (SCAN_STOP_GRACE_MS, shared with the #272 scan onClose and the index.ts shutdown cap), so an in-flight conversion cannot hold app.close() / pool.end() until SIGKILL", () => {
+    // Strip comment lines first so a literal in a comment cannot satisfy the match.
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/app.ts"), "utf8").replace(/^\s*\/\/.*$/gm, "");
     expect(src).toMatch(
       /app\.addHook\("onClose", async \(\) => \{\s*await Promise\.race\(\[linkConversion\.stop\(\), new Promise<void>\(resolve => setTimeout\(resolve, SCAN_STOP_GRACE_MS\)\.unref\(\)\)\]\);\s*\}\);/,
@@ -340,11 +337,11 @@ describe("#269 結構守衛：app.ts 的轉換工作 onClose", () => {
   });
 });
 
-describe("KNOTEBOOK_E2E_TEST_HOOKS（#272，案 27）", () => {
+describe("KNOTEBOOK_E2E_TEST_HOOKS (#272)", () => {
   const pick = (c: AppConfig) => ({ testHooks: c.testHooks, testHooksIgnored: c.testHooksIgnored });
   const local = { ...valid, PUBLIC_URL: "http://localhost:3100" };
 
-  it("只認字面 \"1\"，且只在 PUBLIC_URL 是 localhost／127.0.0.1／[::1] 時成立；其他主機 → 忽略（testHooksIgnored）", () => {
+  it("only the literal \"1\" counts, and only when PUBLIC_URL is localhost / 127.0.0.1 / [::1]; other hosts -> ignored (testHooksIgnored)", () => {
     expect(pick(loadConfig(local))).toEqual({ testHooks: false, testHooksIgnored: false });
     for (const url of ["http://localhost:3100", "http://127.0.0.1:3000", "http://[::1]:3000"]) {
       expect(pick(loadConfig({ ...valid, PUBLIC_URL: url, KNOTEBOOK_E2E_TEST_HOOKS: "1" })), url).toEqual({ testHooks: true, testHooksIgnored: false });
@@ -357,36 +354,38 @@ describe("KNOTEBOOK_E2E_TEST_HOOKS（#272，案 27）", () => {
     }
   });
 
-  it("testHooksStartupWarning：開著 → 提醒這是 e2e 測試疊；被忽略 → 提醒沒有生效；都沒有 → null", () => {
+  it("testHooksStartupWarning: enabled -> says this is an e2e test stack; ignored -> says it has no effect; neither -> null", () => {
     expect(testHooksStartupWarning({ testHooks: false, testHooksIgnored: false })).toBeNull();
     expect(testHooksStartupWarning({ testHooks: true, testHooksIgnored: false })).toContain("e2e 測試縫已開啟");
     expect(testHooksStartupWarning({ testHooks: false, testHooksIgnored: true })).toContain("已忽略");
   });
 
-  it("結構守衛：index.ts 在 listen 之前印 testHooksStartupWarning；測試縫開著才把掃描間隔壓成 1 秒；關機先 stopScan（至多 2 s）再 collab.destroy()", () => {
-    // 守的是原始碼字面與先後（同上方 publicUrlPathWarning 的結構守衛，限制相同：守不到「真的印出來」）。
+  it("structure guard: index.ts logs testHooksStartupWarning before listen; shortens the scan interval to 1 s only when the test hooks are on; on shutdown runs stopScan (at most 2 s) before collab.destroy()", () => {
+    // Checks source literals and their order only; same limit as the publicUrlPathWarning structure test: it can't prove the warning is printed.
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/index.ts"), "utf8");
     const warnAt = src.indexOf("testHooksStartupWarning(config)");
     const listenAt = src.indexOf(".listen(");
     expect(warnAt, "index.ts 必須呼叫 testHooksStartupWarning(config)").toBeGreaterThan(-1);
     expect(warnAt, "警告要在 listen 之前").toBeLessThan(listenAt);
     expect(src).toContain("...(config.testHooks ? { versionAutoScanIntervalMs: 1000 } : {})");
-    // 只在 SIGTERM handler（`process.once(` 之後）裡找：上方的關機註解本身就寫著 `collab.destroy()`（比照 search-backfill-wiring.test.ts）。
+    // Search only inside the SIGTERM handler (after `process.once(`): the shutdown comment above it also mentions `collab.destroy()`
+    // (same approach as unit/search-backfill-wiring.test.ts).
     const onceAt = src.indexOf("process.once(");
     expect(onceAt, "index.ts 要有 process.once( 關機 handler").toBeGreaterThan(-1);
-    const handler = src.slice(onceAt).replace(/^\s*\/\/.*$/gm, ""); // 剔掉註解行：只看程式碼
+    const handler = src.slice(onceAt).replace(/^\s*\/\/.*$/gm, ""); // Strip comment lines so a literal in a comment inside the handler can't match.
     const stopAt = handler.indexOf("collab.versions.stopScan()");
     const destroyAt = handler.indexOf("collab.destroy()");
     expect(stopAt, "關機要呼叫 collab.versions.stopScan()").toBeGreaterThan(-1);
     expect(destroyAt, "關機要呼叫 collab.destroy()").toBeGreaterThan(-1);
     expect(stopAt, "stopScan 要在 collab.destroy() 之前").toBeLessThan(destroyAt);
-    // 等掃描停下有 2 s 上限（卡住的那一篇不得吃掉 docker stop 的寬限期，留給 collab 落盤）。
-    // #269 併線：與站內連結轉換的 stop 並行、共用同一份 2 s 寬限。
+    // The wait for the scan to stop is capped at 2 s so a stuck scan can't use up docker stop's grace period, which collab needs to flush to disk;
+    // it runs in parallel with the link-conversion stop and shares the same 2 s grace.
     expect(handler).toMatch(/Promise\.race\(\[Promise\.all\(\[collab\.versions\.stopScan\(\), app\.linkConversion\.stop\(\)\]\), stopGrace\(\)\]\)/);
   });
 
-  it("結構守衛：app.ts 的 onClose 等掃描停下也有 SCAN_STOP_GRACE_MS 上限（與 index.ts 的關機上限共用）", () => {
-    // 守的是原始碼字面（行為面要造一個卡住的掃描並量 close 時間，成本不值得；同上方 index.ts 的 race 守衛）。剔掉註解行：只看程式碼。
+  it("structure guard: the app.ts onClose wait for the scan to stop is also capped by SCAN_STOP_GRACE_MS (shared with the index.ts shutdown cap)", () => {
+    // Checks source literals only (building a stuck scan and timing close isn't worth the cost); same as the index.ts race test above.
+    // Comment lines are stripped so only code is checked.
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/app.ts"), "utf8").replace(/^\s*\/\/.*$/gm, "");
     expect(src).toMatch(/await Promise\.race\(\[versions\.stopScan\(\), new Promise<void>\(resolve => setTimeout\(resolve, SCAN_STOP_GRACE_MS\)\.unref\(\)\)\]\);/);
   });

@@ -206,17 +206,17 @@ const mdq = (n: number) => Array.from({ length: n }, (_, k) => `> q${k}\n>`).joi
  * require a ratio < 24 (linear is about 8-16, quadratic about 64) rather than absolute milliseconds (`expectLinear`); a full run under 250 ms passes outright, and there is also an absolute cap (`maxMs`, 30 s by default in perf-helpers.ts).
  */
 const SLOW: Array<[string, (n: number) => string, number, "ok" | "nested_paragraph"]> = [
-  ["引言 2 000 段（Markdown）", n => mdq(n), 2000, "ok"],
-  ["<h2> 底下 2 000 段", n => "<h2>" + ps(n, "h") + "</h2>", 2000, "ok"],
-  ["<details><summary> 底下 2 000 段", n => "<details><summary>" + ps(n, "s") + "</summary>\n\nchild\n\n</details>", 2000, "ok"],
-  ["全文某處出現字串 data-content-type", n => "This note talks about data-content-type attributes.\n\n" + mdq(n), 2000, "ok"],
-  ["外層包 <pre>", n => "<pre><blockquote>" + ps(n) + "</blockquote></pre>", 2000, "ok"],
-  ["外層包 <pre><code>", n => "<pre><code><blockquote>" + ps(n) + "</blockquote></code></pre>", 2000, "ok"],
-  ["不在 details 裡的 <summary>", n => "<summary><blockquote>" + ps(n) + "</blockquote></summary>", 2000, "ok"],
-  ["引言裡帶 data-content-type 的子元素", n => '<blockquote><p><span data-content-type="zzz">y</span></p>' + ps(n) + "</blockquote>", 2000, "ok"],
-  ["頂層 <p> 經 <button> 巢 1 000 段", n => "<p>a<button>" + ps(n) + "</button></p>", 1000, "nested_paragraph"],
-  ["頂層 <p> 經 <math><mtext> 巢 1 000 段", n => "<p>a<math><mtext>" + ps(n) + "</mtext></math></p>", 1000, "nested_paragraph"],
-  ["引言裡 <p> 經 <button> 巢 2 000 段", n => "<blockquote><p>a<button>" + ps(n) + "</button></p><p>z</p></blockquote>", 2000, "nested_paragraph"],
+  ["2 000 blockquote paragraphs (Markdown)", n => mdq(n), 2000, "ok"],
+  ["2 000 paragraphs under <h2>", n => "<h2>" + ps(n, "h") + "</h2>", 2000, "ok"],
+  ["2 000 paragraphs under <details><summary>", n => "<details><summary>" + ps(n, "s") + "</summary>\n\nchild\n\n</details>", 2000, "ok"],
+  ["the string data-content-type appears somewhere in the text", n => "This note talks about data-content-type attributes.\n\n" + mdq(n), 2000, "ok"],
+  ["wrapped in <pre>", n => "<pre><blockquote>" + ps(n) + "</blockquote></pre>", 2000, "ok"],
+  ["wrapped in <pre><code>", n => "<pre><code><blockquote>" + ps(n) + "</blockquote></code></pre>", 2000, "ok"],
+  ["<summary> outside details", n => "<summary><blockquote>" + ps(n) + "</blockquote></summary>", 2000, "ok"],
+  ["blockquote with a child element carrying data-content-type", n => '<blockquote><p><span data-content-type="zzz">y</span></p>' + ps(n) + "</blockquote>", 2000, "ok"],
+  ["1 000 paragraphs nested via <button> in a top-level <p>", n => "<p>a<button>" + ps(n) + "</button></p>", 1000, "nested_paragraph"],
+  ["1 000 paragraphs nested via <math><mtext> in a top-level <p>", n => "<p>a<math><mtext>" + ps(n) + "</mtext></math></p>", 1000, "nested_paragraph"],
+  ["2 000 paragraphs nested via <button> in a <p> inside a blockquote", n => "<blockquote><p>a<button>" + ps(n) + "</button></p><p>z</p></blockquote>", 2000, "nested_paragraph"],
 ];
 describe("timing: shapes that were quadratic and took over 20 seconds before the fix are linear after it", () => {
   for (const [name, mdOf, size, want] of SLOW) {

@@ -1,14 +1,5 @@
-// scripts/changelog-section.test.mjs
-//
-// changelog-section.mjs 的常駐測試（node:test，餵手造 CHANGELOG 字串，不讀真檔）。
-// 跑法：`pnpm test:scripts`（= `node --test scripts/*.test.mjs`）。
-//
-// 覆蓋範圍：
-//   - 抽出指定版本段落（不含 `## [x.y.z]` 標題行本身）
-//   - 段落止於下一個版本標題
-//   - 段落止於「非版本」的 `## ` 檔尾章節（真的踩過：CHANGELOG 檔尾有 `## Documentation`）
-//   - 版本不存在一律 throw（fail-closed：不讓 CI 發出 notes 空白的 release）
-//   - `[Unreleased]` 不會被當成某個版本的內容誤抓
+// Fail-closed on a missing or empty version so CI never publishes a release with blank notes.
+// The trailing `## Documentation` section is a real case: it must not be read as part of a version.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -43,13 +34,13 @@ const CHANGELOG = [
   '',
 ].join('\n');
 
-test('extractChangelogSection: 抽出指定版本內容，不含標題行', () => {
+test('extractChangelogSection: extracts the requested version without its heading line', () => {
   const section = extractChangelogSection(CHANGELOG, '0.1.0');
 
   assert.equal(section, ['### Added', '- 新東西 A。', '', '### Security', '- 安全性修補 A。'].join('\n'));
 });
 
-test('extractChangelogSection: 段落止於下一個版本標題', () => {
+test('extractChangelogSection: stops at the next version heading', () => {
   const section = extractChangelogSection(CHANGELOG, '0.2.0');
 
   assert.equal(section, ['### Added', '- 新東西 B。'].join('\n'));
@@ -57,24 +48,24 @@ test('extractChangelogSection: 段落止於下一個版本標題', () => {
   assert.ok(!section.includes('新東西 A'));
 });
 
-test('extractChangelogSection: 段落止於非版本的 `## ` 檔尾章節', () => {
+test('extractChangelogSection: stops at a trailing non-version `## ` section', () => {
   const section = extractChangelogSection(CHANGELOG, '0.1.0');
 
   assert.ok(!section.includes('Documentation'));
   assert.ok(!section.includes('檔尾章節'));
 });
 
-test('extractChangelogSection: 版本不存在時 throw（訊息帶版本號）', () => {
+test('extractChangelogSection: throws for a missing version, with the version in the message', () => {
   assert.throws(() => extractChangelogSection(CHANGELOG, '9.9.9'), /9\.9\.9/);
 });
 
-test('extractChangelogSection: 不把 [Unreleased] 內容算進任何版本', () => {
+test('extractChangelogSection: does not attribute [Unreleased] content to any version', () => {
   const section = extractChangelogSection(CHANGELOG, '0.2.0');
 
   assert.ok(!section.includes('尚未發版'));
 });
 
-test('extractChangelogSection: 版本存在但內容為空時也 throw', () => {
+test('extractChangelogSection: throws when the version exists but its body is empty', () => {
   const emptySection = ['# Changelog', '', '## [0.3.0] - 2026-10-01', '', '## [0.2.0] - 2026-09-01', '', '- x。', ''].join('\n');
 
   assert.throws(() => extractChangelogSection(emptySection, '0.3.0'), /0\.3\.0/);

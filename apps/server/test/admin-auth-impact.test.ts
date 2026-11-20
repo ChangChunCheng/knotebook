@@ -68,8 +68,8 @@ describe("GET /api/admin/auth/providers/:id/impact (#187; 'no password' = no pas
   });
 
   it.each([
-    ["尾斜線形", "https://gitlab.example/"],
-    ["大寫 host 形", "https://GitLab.Example"],
+    ["trailing slash form", "https://gitlab.example/"],
+    ["uppercase host form", "https://GitLab.Example"],
   ])("%s: no match while resolved_issuer is NULL (issuerResolved=false, 0 users); matches after the connection test writes it", async (_name, typed) => {
     const idp = createFakeIdp("https://gitlab.example");
     const built = await adminApp({ oidcRegistry: createOidcRuntimeRegistry({ fetch: idp.fetch }) });

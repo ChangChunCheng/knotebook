@@ -102,7 +102,7 @@ describe("collab awareness (#293)", () => {
     await waitFor("owner 重新認證並同步", 5_000, () => s.ownerClient.provider.isAuthenticated && s.ownerClient.provider.synced);
     const t0 = Date.now();
     await waitFor("owner 重連後看到 viewer", 5_000, s.ownerSeesViewer);
-    console.log("[CA4] observer reconnect, viewer back after ms", Date.now() - t0);
+    console.log("observer reconnect, viewer back after ms", Date.now() - t0);
   });
 
   it("control: without clearing remote old meta -> still doesn't see those who were present 2 s after reconnect", async () => {

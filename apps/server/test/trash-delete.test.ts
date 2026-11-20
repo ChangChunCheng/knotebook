@@ -258,17 +258,17 @@ const editNote = (app: FastifyInstance, token: string, noteId: string) =>
   mcpPost(app, rpc("tools/call", { name: "edit_note", arguments: { note_id: noteId, op: "append", markdown: "MCP 寫的" } }), { token });
 
 const GONE_ROWS: Array<[string, (s: GoneScene) => Promise<void>]> = [
-  ["POST …/edits", async s => {
+  ["POST .../edits", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/edits`, s.owner.id, { op: "append", markdown: "more" });
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);
   }],
-  ["POST …/edits/:editId/revert", async s => {
+  ["POST .../edits/:editId/revert", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/edits/${s.editId}/revert`, s.owner.id);
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);
   }],
-  ["POST …/versions/:seq/apply", async s => {
+  ["POST .../versions/:seq/apply", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/versions/${s.seq}/apply`, s.owner.id, { versionId: s.versionId, discardUnsaved: true });
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);

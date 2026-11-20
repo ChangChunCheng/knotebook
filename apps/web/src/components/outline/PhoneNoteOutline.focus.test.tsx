@@ -56,7 +56,7 @@ const dialog = () => screen.queryByRole("dialog", { name: "Heading outline" });
 const pressEscape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
 describe("PhoneNoteOutline: focus around the bubble and the sheet", () => {
-  it("keyboard: focus the bubble, open, wait past the countdown, close → focus is back on the bubble", () => {
+  it("keyboard: focus the bubble, open, wait past the countdown, close -> focus is back on the bubble", () => {
     render(<Host scroller={scroller} />);
     scroll();
     const chip = bubble()!;
@@ -77,7 +77,7 @@ describe("PhoneNoteOutline: focus around the bubble and the sheet", () => {
     expect(bubble()).toBe(chip);
   });
 
-  it("touch: tap the bubble (it never takes focus), open, close → focus is not put on the bubble, which then counts down", () => {
+  it("touch: tap the bubble (it never takes focus), open, close -> focus is not put on the bubble, which then counts down", () => {
     render(<Host scroller={scroller} />);
     scroll();
     const chip = bubble()!;

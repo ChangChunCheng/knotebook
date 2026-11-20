@@ -67,7 +67,7 @@ describe("parseMarkdownForNote pre-check (27k paragraphs)", () => {
     const { r, calls, ms } = await parseCounting(md);
     expect(r).toEqual({ error: "too_many_blocks" });
     expect(calls).toBe(0);
-    console.log(`[B1] ${Math.round(ms)} ms`);
+    console.log(`[27k plain] ${Math.round(ms)} ms`);
   }, 60_000);
 
   it("plain markdown shorter than the second-layer threshold (MAX_BLOCKS + 1 single-letter paragraphs, about 6 KB) -> stopped by the first layer, no full parse (the second layer ignores files this short)", async () => {
@@ -83,7 +83,7 @@ describe("parseMarkdownForNote pre-check (27k paragraphs)", () => {
     const { r, calls, ms } = await parseCounting(md);
     expect(r).toEqual({ error: "too_many_blocks" });
     expect(calls).toBe(0);
-    console.log(`[B2] ${Math.round(ms)} ms`);
+    console.log(`[27k html-first] ${Math.round(ms)} ms`);
   }, 60_000);
 
   it("the lower bound has no false positives: exactly MAX_BLOCKS paragraphs (plain markdown and with HTML) parse successfully into exactly MAX_BLOCKS blocks; one more -> too_many_blocks", async () => {
@@ -98,12 +98,12 @@ describe("parseMarkdownForNote pre-check (27k paragraphs)", () => {
 
   // Six shapes: counting fences the CommonMark way would misjudge each of these (BlockNote parses them into 1-3 blocks) as too_many_blocks.
   const FENCE_HEADS: Array<[string, string]> = [
-    ["info string 含 backtick（BlockNote 照開 fence）", "``` a`b\n\n"],
-    ["收尾 fence 後帶 NBSP", "```\ncode\n```\u00a0\n\nZed\n\n```\n\n"],
-    ["表格列開頭的 ```", "a | b\n--|--\n```|x\n```\n\n"],
-    ["段落續行裡縮排的 fence", "Lead\n  ```\n```\n\n"],
-    ["引言 lazy 續行裡縮排的 fence", "> q\n  ```\n```\n\n"],
-    ["清單項裡的 fence 接第 0 欄收尾", "- item\n  ```\n  code\n```\n\n"],
+    ["info string containing a backtick (BlockNote still opens the fence)", "``` a`b\n\n"],
+    ["NBSP after the closing fence", "```\ncode\n```\u00a0\n\nZed\n\n```\n\n"],
+    ["``` at the start of a table row", "a | b\n--|--\n```|x\n```\n\n"],
+    ["indented fence in a paragraph continuation line", "Lead\n  ```\n```\n\n"],
+    ["indented fence in a blockquote lazy continuation line", "> q\n  ```\n```\n\n"],
+    ["fence in a list item closed at column 0", "- item\n  ```\n  code\n```\n\n"],
   ];
   for (const [name, head] of FENCE_HEADS) {
     it(`${name} + ${MAX_BLOCKS + 10} paragraphs -> parses normally (not misjudged by the first layer)`, async () => {

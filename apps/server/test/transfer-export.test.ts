@@ -661,6 +661,6 @@ describe("log does not leak content", () => {
     expect(Object.keys(first).sort()).toEqual(["bytes", "hostname", "level", "ms", "msg", "notMergeable", "notes", "outcome", "pid", "range", "reqId", "skipped", "time", "tokenId", "userId"]);
     expect(first).toMatchObject({ notMergeable: 1, skipped: 1, notes: 2, outcome: "done", userId: u.id });
     expect(infos[1]).toMatchObject({ outcome: "aborted" });
-    console.log("[E21 info line] " + JSON.stringify(first));
+    console.log("[info line] " + JSON.stringify(first));
   }, 120_000);
 });

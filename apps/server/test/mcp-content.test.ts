@@ -642,7 +642,7 @@ describe("#240 uppercase note_id (MCP read)", () => {
     // Ordered first: with the lowercasing removed the outline would read from note_states, which doesn't have Head yet.
     expect(outline.sections.map(e => e.heading)).toContain("Head");
     expect(await stateHas(s.ctx, s.noteId, "Head")).toBe(false); // the read happens inside the debounce window; if this turns true the test loses its discriminating power
-    console.log(`[L1a] seed→斷言 ${Date.now() - s.seededAt} ms（store debounce 2000 ms）`);
+    console.log(`[outline] seed→斷言 ${Date.now() - s.seededAt} ms（store debounce 2000 ms）`);
     expect(outline.note.id).toBe(s.noteId);
     s.client.disconnect();
   });
@@ -653,7 +653,7 @@ describe("#240 uppercase note_id (MCP read)", () => {
     const section = await sectionOf(s.ctx.app, s.token, s.noteId.toUpperCase(), "_top");
     expect(section.section.markdown).toContain(MARK);
     expect(await stateHas(s.ctx, s.noteId, MARK)).toBe(false);
-    console.log(`[L1b] seed→斷言 ${Date.now() - s.seededAt} ms（store debounce 2000 ms）`);
+    console.log(`[section] seed→斷言 ${Date.now() - s.seededAt} ms（store debounce 2000 ms）`);
     s.client.disconnect();
   });
 

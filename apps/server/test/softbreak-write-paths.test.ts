@@ -7,10 +7,10 @@ import { seedNote, seedUser } from "./group-helpers.js";
 import { bulkPut, callTool, downloadNote, editBody, issueBulkDirect, liveMarkdown, seedBlocks } from "./bulk-transfer-helpers.js";
 
 const FORMS = [
-  ["軟換行", "行一ABC\n行二DEF"],
-  ["\\ 換行", "行一ABC\\\n行二DEF"],
-  ["行尾兩空白", "行一ABC  \n行二DEF"],
-  ["CRLF 軟換行", "行一ABC\r\n行二DEF"],
+  ["soft line break", "行一ABC\n行二DEF"],
+  ["backslash line break", "行一ABC\\\n行二DEF"],
+  ["two trailing spaces", "行一ABC  \n行二DEF"],
+  ["CRLF soft line break", "行一ABC\r\n行二DEF"],
 ] as const;
 const READ = "行一ABC\\\n行二DEF";
 
