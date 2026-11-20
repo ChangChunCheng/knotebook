@@ -168,7 +168,7 @@ describe("#398 parsing in the worker: batch write-back (PUT /api/transfer/notes)
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, () => SLOW + "\n" + paras.join("\n") + "\n"));
     const ms = performance.now() - t;
     const s1 = pool.stats();
-    console.log(`[#398] C2 20 段 ${Math.round(ms)} ms；逾時 ${s1.timedOut - s0.timedOut} 次`);
+    console.log(`[#398] 20 段 ${Math.round(ms)} ms；逾時 ${s1.timedOut - s0.timedOut} 次`);
     expect(r.statusCode).toBe(400);
     expect(r.json().error.code).toBe("unsupported_block");
     expect(r.json().error.message).toBe(transferParseMessage("unsupported_block", "too_complex"));
@@ -188,7 +188,7 @@ describe("#398 parsing in the worker: batch write-back (PUT /api/transfer/notes)
       const meter = loopStall();
       const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, () => body));
       const stall = meter.stop();
-      console.log(`[#398] I1 ${name} → ${r.statusCode}；主執行緒最大停頓 ${stall} ms`);
+      console.log(`[#398] ${name} → ${r.statusCode}；主執行緒最大停頓 ${stall} ms`);
       expect(stall, name).toBeLessThan(stallLimit(baseline, 200));
     }
     await s.ctx.destroy();
@@ -227,7 +227,7 @@ describe("heavy accepted content: main-thread stall when written", () => {
     const meter = loopStall();
     const res = await ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: bearer(token), payload: { op: "replace_all", markdown: DENSEST_BIG, if_match: before.fingerprint } });
     const stall = meter.stop();
-    console.log(`[#398] C1 /edits x<br>×24500 → ${res.statusCode}；主執行緒最大停頓 ${stall} ms`);
+    console.log(`[#398] /edits x<br>×24500 → ${res.statusCode}；主執行緒最大停頓 ${stall} ms`);
     expect(res.statusCode).toBe(201);
     expect((rt.parser as ParsePool).stats().docJobs - jobs0, "轉換送進了 worker").toBeGreaterThan(0);
     expect(stall).toBeLessThan(stallLimit(baseline, HEAVY_STALL_CEILING_MS));
@@ -243,7 +243,7 @@ describe("heavy accepted content: main-thread stall when written", () => {
     const meter = loopStall();
     const r = await callTool(ctx.app, token, "edit_note", { note_id: note.id, op: "replace_all", markdown: BOLD_ITALIC_SMALL, if_match: before.fingerprint });
     const stall = meter.stop();
-    console.log(`[#398] C1 edit_note 粗斜體×4000 → ${r.isError ? "error" : "ok"}；主執行緒最大停頓 ${stall} ms`);
+    console.log(`[#398] edit_note 粗斜體×4000 → ${r.isError ? "error" : "ok"}；主執行緒最大停頓 ${stall} ms`);
     expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
     expect((rt.parser as ParsePool).stats().docJobs - jobs0, "轉換送進了 worker").toBeGreaterThan(0);
     expect(stall).toBeLessThan(stallLimit(baseline, HEAVY_STALL_CEILING_MS));
@@ -259,7 +259,7 @@ describe("heavy accepted content: main-thread stall when written", () => {
     const meter = loopStall();
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, () => DENSEST_SMALL));
     const stall = meter.stop();
-    console.log(`[#398] C1 寫回 x<br>×8000 → ${r.statusCode}；主執行緒最大停頓 ${stall} ms`);
+    console.log(`[#398] 寫回 x<br>×8000 → ${r.statusCode}；主執行緒最大停頓 ${stall} ms`);
     expect(r.statusCode, r.body.slice(0, 200)).toBe(200);
     expect((rt.parser as ParsePool).stats().docJobs - jobs0, "寫回的轉換送進了 worker").toBeGreaterThan(0);
     expect(stall).toBeLessThan(stallLimit(baseline, HEAVY_STALL_CEILING_MS));
@@ -267,7 +267,7 @@ describe("heavy accepted content: main-thread stall when written", () => {
     const meterNew = loopStall();
     const c = await bulkPut(s.ctx.app, s.bulk.token, `---\nknotebook: 1\ntitle: "densest"\n---\n${DENSEST_SMALL}\n`);
     const stallNew = meterNew.stop();
-    console.log(`[#398] C1 新增檔 x<br>×8000 → ${c.statusCode}；主執行緒最大停頓 ${stallNew} ms`);
+    console.log(`[#398] 新增檔 x<br>×8000 → ${c.statusCode}；主執行緒最大停頓 ${stallNew} ms`);
     expect(c.statusCode, c.body.slice(0, 200)).toBe(201);
     expect((rt.parser as ParsePool).stats().docJobs - jobsNew0, "新增檔的轉換送進了 worker").toBeGreaterThan(0);
     expect(stallNew).toBeLessThan(stallLimit(baseline, HEAVY_STALL_CEILING_MS));

@@ -134,11 +134,11 @@ describe("POST /api/admin/invites", () => {
     ["8", { expiresInDays: 8 }],
     ["1.5", { expiresInDays: 1.5 }],
     ['"3"', { expiresInDays: "3" }],
-    ["缺 expiresInDays", {}],
-    ["多餘鍵", { expiresInDays: 3, extra: 1 }],
-    ["label 101 字", { expiresInDays: 3, label: "字".repeat(101) }],
-    ["label 含 NUL", { expiresInDays: 3, label: "a\u0000b" }],
-    ["label 非字串", { expiresInDays: 3, label: 5 }],
+    ["missing expiresInDays", {}],
+    ["extra key", { expiresInDays: 3, extra: 1 }],
+    ["label of 101 characters", { expiresInDays: 3, label: "字".repeat(101) }],
+    ["label contains NUL", { expiresInDays: 3, label: "a\u0000b" }],
+    ["label is not a string", { expiresInDays: 3, label: 5 }],
   ])("body invalid (%s) -> 400 invalid_body, no row inserted", async (_name, payload) => {
     const ctx = await setup();
     const res = await issue(ctx, payload);

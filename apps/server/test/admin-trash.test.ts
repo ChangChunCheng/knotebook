@@ -36,8 +36,8 @@ describe("permissions and input validation", () => {
     ["3651", { retentionDays: 3651 }],
     ["1.5", { retentionDays: 1.5 }],
     ['"7"', { retentionDays: "7" }],
-    ["缺鍵", {}],
-    ["多餘鍵", { retentionDays: 7, x: 1 }],
+    ["missing key", {}],
+    ["extra key", { retentionDays: 7, x: 1 }],
   ])("%s -> 400 invalid_body, DB unchanged", async (_n, body) => {
     const b = await adminApp();
     await patch(b, { retentionDays: 9 });

@@ -767,14 +767,14 @@ describe("POST /api/ai - #263 Instruct field matrix (400 before streaming, ahead
   // Deliberately a note the user has no permission on: if the 400 came after resolveRole these cases would become 404.
   const NO_ACCESS_NOTE = "11111111-2222-4333-8444-555555555555";
   const cases: Array<[string, Record<string, unknown>]> = [
-    ["Instruct 缺 instruction", { action_id: INSTRUCT_ACTION_ID }],
-    ["Instruct instruction 為空字串", { action_id: INSTRUCT_ACTION_ID, instruction: "" }],
-    ["Instruct instruction 只有空白（含全形空白）", { action_id: INSTRUCT_ACTION_ID, instruction: " 　\t" }],
-    ["Instruct instruction trim 後 501 code point", { action_id: INSTRUCT_ACTION_ID, instruction: `  ${"字".repeat(501)}  ` }],
+    ["Instruct missing instruction", { action_id: INSTRUCT_ACTION_ID }],
+    ["Instruct with empty instruction", { action_id: INSTRUCT_ACTION_ID, instruction: "" }],
+    ["Instruct with whitespace-only instruction (including full-width space)", { action_id: INSTRUCT_ACTION_ID, instruction: " 　\t" }],
+    ["Instruct instruction of 501 code points after trim", { action_id: INSTRUCT_ACTION_ID, instruction: `  ${"字".repeat(501)}  ` }],
     ["Instruct focus 2001 code point", { action_id: INSTRUCT_ACTION_ID, instruction: "改短", focus: "😀".repeat(2001) }],
-    ["非 Instruct 帶 instruction（空字串也算帶）", { action_id: REWRITE_ACTION_ID, instruction: "" }],
-    ["非 Instruct 只帶 focus（空字串也算帶）", { action_id: REWRITE_ACTION_ID, focus: "" }],
-    ["大寫的 Instruct id 缺 instruction（小寫化後同樣走 Instruct 規則）", { action_id: INSTRUCT_ACTION_ID.toUpperCase() }],
+    ["non-Instruct with instruction (an empty string counts as present)", { action_id: REWRITE_ACTION_ID, instruction: "" }],
+    ["non-Instruct with only focus (an empty string counts as present)", { action_id: REWRITE_ACTION_ID, focus: "" }],
+    ["uppercase Instruct id missing instruction (lowercased, it follows the Instruct rules too)", { action_id: INSTRUCT_ACTION_ID.toUpperCase() }],
   ];
   for (const [name, extra] of cases) {
     it(`${name} -> 400 invalid_body (400 comes first even when the note is not permitted)`, async () => {

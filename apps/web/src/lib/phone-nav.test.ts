@@ -13,13 +13,13 @@ afterEach(() => {
 
 describe("backTarget", () => {
   it.each([
-    ["清單序號不存在 → 換掉目前這格", { listIdx: null, currentIdx: 5 }, { kind: "replace" }],
-    ["目前序號不存在 → 換掉", { listIdx: 2, currentIdx: null }, { kind: "replace" }],
-    ["清單序號等於目前 → 換掉（同一格不能退）", { listIdx: 5, currentIdx: 5 }, { kind: "replace" }],
-    ["清單序號大於目前 → 換掉（記錄過期）", { listIdx: 7, currentIdx: 5 }, { kind: "replace" }],
-    ["清單序號小於目前 → 退 delta 格", { listIdx: 2, currentIdx: 5 }, { kind: "go", delta: -3 }],
-    ["差一格 → 退一格", { listIdx: 4, currentIdx: 5 }, { kind: "go", delta: -1 }],
-    ["清單在第 0 格 → 退到底", { listIdx: 0, currentIdx: 1 }, { kind: "go", delta: -1 }],
+    ["list index missing -> replace the current entry", { listIdx: null, currentIdx: 5 }, { kind: "replace" }],
+    ["current index missing -> replace", { listIdx: 2, currentIdx: null }, { kind: "replace" }],
+    ["list index equals current -> replace (the same entry cannot be gone back to)", { listIdx: 5, currentIdx: 5 }, { kind: "replace" }],
+    ["list index above current -> replace (stale record)", { listIdx: 7, currentIdx: 5 }, { kind: "replace" }],
+    ["list index below current -> go back by delta", { listIdx: 2, currentIdx: 5 }, { kind: "go", delta: -3 }],
+    ["one entry apart -> go back one", { listIdx: 4, currentIdx: 5 }, { kind: "go", delta: -1 }],
+    ["list at entry 0 -> go back to the start", { listIdx: 0, currentIdx: 1 }, { kind: "go", delta: -1 }],
   ])("%s", (_name, input, expected) => {
     expect(backTarget(input)).toEqual(expected);
   });

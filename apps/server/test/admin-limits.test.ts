@@ -65,13 +65,13 @@ describe("out of range", () => {
 
 describe("shape", () => {
   it.each([
-    ["未知 key", { set: { bogusKey: 1 } }],
+    ["unknown key", { set: { bogusKey: 1 } }],
     ["1.5", { set: { rateEdit: 1.5 } }],
     ['"3"', { set: { rateEdit: "3" } }],
     ["{ set: {} }", { set: {} }],
-    ["外層多一個鍵", { set: { rateEdit: 10 }, extra: 1 }],
-    ["set 不是物件", { set: 5 }],
-    ["缺 set", {}],
+    ["extra outer key", { set: { rateEdit: 10 }, extra: 1 }],
+    ["set is not an object", { set: 5 }],
+    ["missing set", {}],
   ])("%s -> 400 invalid_body, fixed message", async (_n, body) => {
     const b = await adminApp();
     const res = await patch(b, body);

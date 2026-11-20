@@ -109,7 +109,7 @@ describe("list_folders across the three spaces", () => {
 });
 
 describe("list_folders group_id", () => {
-  it("lists only that group; non-member, noRead group and random uuid -> identical field by field (group_not_found + FM2); uppercase group_id behaves like lowercase", async () => {
+  it("lists only that group; non-member, noRead group and random uuid -> identical field by field (group_not_found + the group-not-found message); uppercase group_id behaves like lowercase", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -340,7 +340,7 @@ describe("folder in read_note_outline", () => {
 
 describe("folderReply re-read finds nothing", () => {
   // The millisecond window where the folder is deleted after a create/rename/move succeeds and before the re-read can't be built over HTTP; calling the exported folderReply directly with a real db and a random uuid reaches the miss branch.
-  it("real db + random uuid -> not_found + FM1 (no half-formed folder returned)", async () => {
+  it("real db + random uuid -> not_found + the not-found message (no half-formed folder returned)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const r = (await folderReply({ db: ctx.db, userId: me.id } as unknown as McpToolCtx, randomUUID())) as ToolCallResult;
@@ -426,7 +426,7 @@ describe("four placements of create_folder", () => {
     expect([g3.space.kind, g3.parentId]).toEqual(["group", null]);
   });
 
-  it("two or more placement params -> invalid_body + FM20, invalid name -> FM6; no new DB row; tokenWrite is charged (scope comes before both) while the folder limiter isn't", async () => {
+  it("two or more placement params -> invalid_body + the multiple-placements message, invalid name -> the name-length message; no new DB row; tokenWrite is charged (scope comes before both) while the folder limiter isn't", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 50, windowMs: 600_000 });
     const folder = new FixedWindowLimiter({ limit: 50, windowMs: 600_000 });
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite, folder } });
@@ -449,7 +449,7 @@ describe("four placements of create_folder", () => {
 });
 
 describe("names", () => {
-  it("NUL, lone surrogate -> FM4; newline inside -> FM5; 81 characters, whitespace only -> FM6; succeeds after a trailing newline is trimmed; NFC-equivalent and case-different same names -> FM7; the response name is NFC", async () => {
+  it("NUL, lone surrogate -> the unstorable-character message; newline inside -> the control-character message; 81 characters, whitespace only -> the name-length message; succeeds after a trailing newline is trimmed; NFC-equivalent and case-different same names -> the duplicate-name message; the response name is NFC", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx.db, me.id, RW);
@@ -471,7 +471,7 @@ describe("names", () => {
 });
 
 describe("group root not visible", () => {
-  it("non-member, noRead, random uuid, group deleted before the transaction -> identical field by field (group_not_found + FM2); readOnly -> forbidden + FM3", async () => {
+  it("non-member, noRead, random uuid, group deleted before the transaction -> identical field by field (group_not_found + the group-not-found message); readOnly -> forbidden + the cannot-change-folders message", async () => {
     let doomed: string | null = null;
     const ctx = await buildCollabTestApp({
       groupTestHook: async (point, hctx) => {
@@ -499,7 +499,7 @@ describe("group root not visible", () => {
 });
 
 describe("limits", () => {
-  it("6th level -> conflict + FM8; space already has 1000 -> conflict + FM10", async () => {
+  it("6th level -> conflict + the depth-limit message; space already has 1000 -> conflict + the folder-count-limit message", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx.db, me.id, RW);
@@ -514,7 +514,7 @@ describe("limits", () => {
 });
 
 describe("rename_folder", () => {
-  it("rename succeeds, the path's last segment is the new name, the note's updated_at/slug unchanged; invisible and random uuid identical field by field (FM1); readOnly -> FM3; name collision -> FM7", async () => {
+  it("rename succeeds, the path's last segment is the new name, the note's updated_at/slug unchanged; invisible and random uuid identical field by field (the not-found message); readOnly -> the cannot-change-folders message; name collision -> the duplicate-name message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -542,7 +542,7 @@ describe("rename_folder", () => {
 });
 
 describe("move_folder", () => {
-  it("move within a space, parent_id null returns to root, moving to the original parent succeeds with DB unchanged; invisible (including cross-space) and random uuid identical field by field; visible but cross-space -> FM17; into a descendant -> FM9; too deep -> FM8", async () => {
+  it("move within a space, parent_id null returns to root, moving to the original parent succeeds with DB unchanged; invisible (including cross-space) and random uuid identical field by field; visible but cross-space -> the cross-space-move message; into a descendant -> the move-into-itself message; too deep -> the depth-limit message", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -571,7 +571,7 @@ describe("move_folder", () => {
 });
 
 describe("folder tools: re-judgement inside the transaction", () => {
-  it("after taking the structure lock, removing can_edit from editOnly -> all three tools forbidden + FM3, DB unchanged", async () => {
+  it("after taking the structure lock, removing can_edit from editOnly -> all three tools forbidden + the cannot-change-folders message, DB unchanged", async () => {
     let roleToStrip: string | null = null;
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
@@ -602,7 +602,7 @@ describe("folder tools: re-judgement inside the transaction", () => {
 });
 
 describe("retryable errors", () => {
-  it("40001 thrown after the structure lock -> all three server_busy + FM11, DB unchanged", async () => {
+  it("40001 thrown after the structure lock -> all three server_busy + the server-busy message, DB unchanged", async () => {
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
         if (point === "folder-structure-locked") throw busyErr();
@@ -824,7 +824,7 @@ describe("placement doesn't change visibility or other fields", () => {
 });
 
 describe("error order of move_note_to_folder", () => {
-  it("invisible note -> the note sentence; invisible folder and random uuid identical field by field (FM1); visible but cross-space -> FM16; readOnly group note -> FM12; invisible note + invisible folder -> the note sentence", async () => {
+  it("invisible note -> the note sentence; invisible folder and random uuid identical field by field (the not-found message); visible but cross-space -> the wrong-space message; readOnly group note -> the cannot-file-note message; invisible note + invisible folder -> the note sentence", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -913,7 +913,7 @@ describe("describe strings of move_note_to_folder", () => {
 });
 
 describe("folder_id of create_note", () => {
-  it("personal folder, group folder + the right group_id (including uppercase) succeed (with and without content); four mismatches -> FM14; another group's folder -> FM1 and identical field by field to a random uuid; editDelete -> the existing sentence; create + read without edit -> FM13", async () => {
+  it("personal folder, group folder + the right group_id (including uppercase) succeed (with and without content); four mismatches -> the folder-cannot-hold-note message; another group's folder -> the not-found message and identical field by field to a random uuid; editDelete -> the existing sentence; create + read without edit -> the create-but-not-edit message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -968,7 +968,7 @@ describe("folder_id of create_note", () => {
 });
 
 describe("folder_id of copy_note", () => {
-  it("RW: invisible group folder + group_id -> FM1 (not insufficient_scope); visible + the right group_id -> insufficient_scope; no group_id -> FM14; personal folder succeeds and the response folder is right", async () => {
+  it("RW: invisible group folder + group_id -> the not-found message (not insufficient_scope); visible + the right group_id -> insufficient_scope; no group_id -> the folder-cannot-hold-note message; personal folder succeeds and the response folder is right", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -993,7 +993,7 @@ describe("folder_id of copy_note", () => {
     expect(await folderIdOf(ctx.db, copy.id)).toBe(PF);
   });
 
-  it("RWM: group folder + the right group_id succeeds; source in a folder copied into the same folder succeeds; create + read without edit -> FM13", async () => {
+  it("RWM: group folder + the right group_id succeeds; source in a folder copied into the same folder succeeds; create + read without edit -> the create-but-not-edit message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -1032,7 +1032,7 @@ describe("folder_id of copy_note", () => {
 });
 
 describe("folder_id of move_note_to_group", () => {
-  it("with a group folder succeeds (response folder); another group's folder -> FM15; invisible folder and random uuid identical field by field; create + read without edit -> FM13; a recipient's earlier placement disappears with the share row", async () => {
+  it("with a group folder succeeds (response folder); another group's folder -> the other-group-folder message; invisible folder and random uuid identical field by field; create + read without edit -> the create-but-not-edit message; a recipient's earlier placement disappears with the share row", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -1069,7 +1069,7 @@ describe("folder_id of move_note_to_group", () => {
 });
 
 describe("disappearance race at every entry point", () => {
-  it("create_note: after membership-checked the group is transferred or the target folder is deleted (FK) -> not_found + FM1, not internal/group_not_found; no row created", async () => {
+  it("create_note: after membership-checked the group is transferred or the target folder is deleted (FK) -> not_found + the not-found message, not internal/group_not_found; no row created", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1088,7 +1088,7 @@ describe("disappearance race at every entry point", () => {
     expect(await countTitled(ctx.db, "kf c1")).toBe(0);
   });
 
-  it("copy_note (note-copy-authorized), move_note_to_group (note-move-authorized): transferring the target group inside the seam -> not_found + FM1, not internal", async () => {
+  it("copy_note (note-copy-authorized), move_note_to_group (note-move-authorized): transferring the target group inside the seam -> not_found + the not-found message, not internal", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1108,7 +1108,7 @@ describe("disappearance race at every entry point", () => {
     expect(await noteState(ctx.db.$client, n.id)).toMatchObject({ owner_id: s2.member.id, group_id: null });
   });
 
-  it("move_note_to_folder (note-folder-authorized): transferring the group -> not_found + the note sentence (the note is judged first); deleting the target folder -> not_found + FM1", async () => {
+  it("move_note_to_folder (note-folder-authorized): transferring the group -> not_found + the note sentence (the note is judged first); deleting the target folder -> not_found + the not-found message", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1349,7 +1349,7 @@ describe("delete then restore (the restore sentence end to end over MCP)", () =>
 });
 
 describe("group (all or nothing)", () => {
-  it("editOnly / member: with live notes -> forbidden + FM18 and everything stays; empty folders and folders with only trashed notes -> succeed; editDelete / admin succeed; readOnly / deleteOnly -> FM3; outsider, noRead, random uuid identical field by field (FM1)", async () => {
+  it("editOnly / member: with live notes -> forbidden + the notes-cannot-be-trashed message and everything stays; empty folders and folders with only trashed notes -> succeed; editDelete / admin succeed; readOnly / deleteOnly -> the cannot-change-folders message; outsider, noRead, random uuid identical field by field (the not-found message)", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const s = await sixRoleScene(ctx.db);
@@ -1403,7 +1403,7 @@ describe("group (all or nothing)", () => {
 });
 
 describe("delete_folder: re-judgement inside the transaction", () => {
-  it("folder-delete-notes-locked removes can_delete from editDelete -> forbidden + FM18; a note added to the subtree after folder-delete-gated (no gate opened) -> conflict + FM19; both leave nothing deleted", async () => {
+  it("folder-delete-notes-locked removes can_delete from editDelete -> forbidden + the notes-cannot-be-trashed message; a note added to the subtree after folder-delete-gated (no gate opened) -> conflict + the contents-changed message; both leave nothing deleted", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const pool = ctx.db.$client;
@@ -1532,7 +1532,7 @@ describe("limiters and settings", () => {
 });
 
 describe("REST and MCP over the same fixture (delete folder)", () => {
-  it("sixRoleScene + noRead x {delete empty folder, delete folder with notes}: the result mapping tables of REST (cookie) and MCP (RWD) are identical cell by cell (folder_delete_blocked <-> forbidden + FM18)", async () => {
+  it("sixRoleScene + noRead x {delete empty folder, delete folder with notes}: the result mapping tables of REST (cookie) and MCP (RWD) are identical cell by cell (folder_delete_blocked <-> forbidden + the notes-cannot-be-trashed message)", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const noRead = await seedUser(ctx.db);

@@ -316,7 +316,7 @@ describe("two clients: other side types during a drag-drop (B mounted with full 
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }, a, "y1", "AAA");
     expectSameAndClean(a, b);
-    console.log("CO6 middle", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("new row, not last block", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
   // Recorded: A's text isn't in y; it appears in the empty paragraph added after the row (merged `ROW[y|x]  paragraph:AAA`).
@@ -325,7 +325,7 @@ describe("two clients: other side types during a drag-drop (B mounted with full 
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }, a, "y1", "AAA");
     expectSameAndClean(a, b);
-    console.log("CO6 last", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("new row, last block", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
   it("safe: top-level [y, m, x], B drags x onto y's right edge creating a row, A types in m -> m keeps A's text", async () => {
@@ -378,7 +378,7 @@ describe("two clients: other side types during a drag-drop (B mounted with full 
     await pair.sync();
     expectSameAndClean(a, b);
     const count = (a.document.find((block) => block.id === "r") as { children: unknown[] }).children.length;
-    console.log("CO10", JSON.stringify({ shape: shape(a), columns: count, widths: widthsOf(a, "r") }));
+    console.log("two columns added at once", JSON.stringify({ shape: shape(a), columns: count, widths: widthsOf(a, "r") }));
   });
 
   // Recorded: A's text typed in the empty paragraph E appears inside the z that replaces it. Whether it comes before or after z depends on the two Y.Docs' clientID order (`AAAz` or `zAAA`) and may differ every run, so it's only recorded, order isn't asserted.
@@ -387,7 +387,7 @@ describe("two clients: other side types during a drag-drop (B mounted with full 
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "z1", target: "e1", at: [456, 200], boxes: rowBoxes("r", 2) }, a, "e1", "AAA", "emptyColumnDrop");
     expectSameAndClean(a, b);
-    console.log("CO11 empty", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("drop into empty column", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
   // Recorded: A's text isn't in the moved X; it appears in the empty paragraph left in the source column (merged original row `[a|AAA]`, the new row's X has no A text).
@@ -397,7 +397,7 @@ describe("two clients: other side types during a drag-drop (B mounted with full 
     await dropWhileTyping(pair, b, { drag: "X1", target: "w1", at: [590, 15], boxes: topBox("w1", 0) }, a, "X1", "AAA");
     expectSameAndClean(a, b);
     const sourceColumnText = rowBlock(a, "r").children[1]!.children.map((block) => (block.content ?? []).map((c) => c.text).join("")).join("|");
-    console.log("CO11 source", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA"), sourceColumnText }));
+    console.log("source column drag-out", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA"), sourceColumnText }));
   });
 });
 
@@ -456,7 +456,7 @@ describe("two clients: other side edits while a divider is released", () => {
       expect(w).toBeLessThanOrEqual(10);
     }
     const sum = Math.round(merged.reduce((s, w) => s + w, 0) * 100) / 100;
-    console.log("CO9", JSON.stringify({ fromA, fromB, merged, sum }));
+    console.log("divider pairs adjusted at once", JSON.stringify({ fromA, fromB, merged, sum }));
   });
 
   it("safe: B presses divider 2, A adjusts divider 1 and syncs over; B releases -> column 1 keeps A's value, only columns 2 and 3 follow B's write", async () => {

@@ -278,7 +278,7 @@ describe("GET /api/notes/:id/content", () => {
     expect(res.json().markdown).toContain(MARK);
     const stateHasMark = async () => { const d = await loadDoc(ctx.db, note.id); return d !== null && xmlOf(d).includes(MARK); };
     expect(await stateHasMark()).toBe(false); // the read happens inside the debounce window; if this turns true the case loses its discriminating power
-    console.log(`[R1] seed→斷言 ${Date.now() - seededAt} ms（store debounce 2000 ms）`);
+    console.log(`[content] seed→斷言 ${Date.now() - seededAt} ms（store debounce 2000 ms）`);
     expect(res.statusCode).toBe(200);
     client.disconnect();
   });

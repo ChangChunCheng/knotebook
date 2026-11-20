@@ -692,7 +692,7 @@ describe("NoteMenu - version history", () => {
     expect(triggerRef.current).toBe(screen.getByRole("button", { name: "More" }));
   });
 
-  it.each([["disabled（viewer）"], ["none（側欄每列 ⋮，provider 之外）"]] as const)("%s -> not rendered at narrow width either", async (label) => {
+  it.each([["disabled (viewer)"], ["none (sidebar row menus, outside the provider)"]] as const)("%s -> not rendered at narrow width either", async (label) => {
     installMatchMedia(true);
     renderVersionsMenu(label.startsWith("disabled") ? "disabled" : "none");
     const menu = await openVersionsMenu();

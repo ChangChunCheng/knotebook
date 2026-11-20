@@ -2,20 +2,10 @@ import { test, expect, type BrowserContext, type Locator, type Page } from "@pla
 import { ADMIN, createNote, createUserViaInvite, loginAs, noteIdFromUrl, openSiteAdmin, randomEmail, showSidebarTab, solidPng } from "./helpers.js";
 
 /**
- * 個人頭貼（設定頁 → 側欄 → 同篇筆記的在線頭像 → 刪除）與上傳大小上限：
- * 1. alice 在 /settings/account 上傳 600×400 的 PNG → 裁切框裡拖曳一次、改一次縮放 → Save（真瀏覽器的 canvas 編碼）→
- *    框關、候選格多一格且被選用；伺服器回的顯示圖是 256×256。
- * 2. 側欄帳號按鈕內有載入完成的 <img>。
- * 3. bob（檢視者）與 alice 開同一篇筆記，bob 頁首的在線頭像列裡 alice 那顆有 <img>。
- * 4. alice 刪掉目前這張 → 帳號按鈕內沒有 <img>、顯示首字。
- * 5. 站台把上傳大小上限調到 1 MiB → 選 1.5 MiB 的圖 → 區塊內出現超過上限的訊息、不開裁切框；測完調回預設。
+ * 53-1 covers the whole upload UI; 53-2 and 53-3 set avatars through the API and check other people's avatars in lists.
  *
- * 站台限制是整座疊共用的設定，所以還原寫在 finally，而且前後都用 API 做，不靠畫面。
- *
- * 53-2／53-3：列表上別人的頭貼（頭貼本身用 API 上傳，上傳畫面由 53-1 負責）。
- * 53-2：bob 看 alice——群組成員表、版本歷史的編輯者頭貼群有 alice 的 <img>；沒有頭貼的 bob 那列沒有；
- *       同一個人跨兩個畫面只向伺服器要一次圖；筆記頁首的「最後編輯」落款沒有 <img>。
- * 53-3：alice 看 bob——建議清單、分享名單（新增後與重新開啟）、站台管理的使用者表都有 bob 的 <img>。
+ * The site upload limit is shared by the whole stack, so it is restored in a finally block, and both the change and the restore go
+ * through the API rather than the UI.
  */
 
 const RUN = Date.now();
@@ -29,7 +19,7 @@ async function setUploadMaxBytes(page: Page, value: number | null): Promise<void
   expect(res.status(), `PATCH /api/admin/limits → HTTP ${res.status()} ${await res.text()}`).toBe(200);
 }
 
-test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁首看得到 → 刪除退回首字 → 超過上限被擋", async ({ browser }) => {
+test("53-1 avatar: upload and crop (256x256 display image) -> sidebar -> others see it in the header -> delete falls back to the initial -> over-limit upload is rejected", async ({ browser }) => {
   test.setTimeout(180_000);
 
   const contexts: BrowserContext[] = [];
@@ -50,7 +40,6 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await createUserViaInvite(adminPage, alice);
     await createUserViaInvite(adminPage, bob);
 
-    // alice 建一篇筆記並分享給 bob（檢視者）。
     const alicePage = await open();
     await loginAs(alicePage, alice.email, alice.password);
     const title = `E2E avatar ${RUN}`;
@@ -60,7 +49,6 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     const shared = await alicePage.request.put(`/api/notes/${noteId}/shares`, { data: { email: bob.email, role: "viewer" } });
     expect(shared.status(), await shared.text()).toBe(200);
 
-    // ── 1. 上傳、裁切、儲存 ───────────────────────────────────────
     await alicePage.goto("/settings/account");
     const group = alicePage.getByRole("radiogroup", { name: "Picture options" });
     await expect(group.getByRole("radio", { name: "No picture", exact: true })).toHaveAttribute("aria-checked", "true");
@@ -89,7 +77,7 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await expect(group.getByRole("radio").nth(1)).toHaveAttribute("aria-checked", "true");
     await expect(group.getByRole("radio", { name: "No picture", exact: true })).toHaveAttribute("aria-checked", "false");
 
-    // 顯示圖是瀏覽器編碼的結果（只有 e2e 看得到這條路徑）：伺服器回來的圖解碼後是 256×256。
+    // The display image is the browser's canvas encoding (only e2e exercises that path): the served image decodes to 256x256.
     const me = (await (await alicePage.request.get("/api/auth/me")).json()) as { avatar: { id: string; v: number; pending: boolean } | null };
     expect(me.avatar, "選用後 /me 應帶 avatar").not.toBeNull();
     const shown = await alicePage.evaluate(async ({ id, v }) => {
@@ -102,7 +90,7 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     expect(shown.type).toMatch(/^image\/(webp|jpeg|png)$/);
     expect([shown.width, shown.height]).toEqual([256, 256]);
 
-    // 重新裁切走另一條請求（PUT）：⋮ → Adjust crop → 拖一下 → Save，顯示圖版本號要加一。
+    // Re-cropping goes through a different request (PUT); the display version must increase.
     await group.getByRole("radio").nth(1).hover();
     await alicePage.getByRole("button", { name: /^More actions for / }).click();
     await alicePage.getByRole("menuitem", { name: "Adjust crop", exact: true }).click();
@@ -119,7 +107,8 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
       .poll(async () => ((await (await alicePage.request.get("/api/auth/me")).json()) as { avatar: { v: number } | null }).avatar?.v)
       .toBeGreaterThan(me.avatar!.v);
 
-    // ── 2. 側欄帳號按鈕內有圖（設定頁沒有側欄，回筆記頁看；先等標題框，lazy 頁的殼換完才碰側欄）────
+    // The settings page has no sidebar, so go back to the note page; wait for the title box first, because the lazy page's
+    // shell swap must finish before the sidebar is touched.
     await alicePage.goto(noteUrl);
     await waitForNoteTitle(alicePage);
     const accountButton = alicePage.getByRole("button", { name: aliceName, exact: true });
@@ -127,7 +116,6 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await expect(accountImg).toHaveCount(1);
     await expect.poll(() => accountImg.evaluate((el: HTMLImageElement) => el.naturalWidth), { timeout: 15_000 }).toBeGreaterThan(0);
 
-    // ── 3. bob 在同一篇筆記的頁首看到 alice 的頭貼 ───────────────────────
     const bobPage = await open();
     await loginAs(bobPage, bob.email, bob.password);
     await bobPage.goto(noteUrl);
@@ -138,7 +126,6 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await expect(aliceInRow).toBeVisible({ timeout: 35_000 });
     await expect(aliceInRow.locator("img")).toHaveCount(1, { timeout: 35_000 });
 
-    // ── 4. 刪掉目前這張 → 退回首字 ───────────────────────────────────
     await alicePage.goto("/settings/account");
     await expect(group.getByRole("radio")).toHaveCount(2);
     await group.getByRole("radio").nth(1).hover();
@@ -146,7 +133,7 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await alicePage.getByRole("menuitem", { name: "Delete", exact: true }).click();
     const confirm = alicePage.getByRole("dialog", { name: "Delete this picture?", exact: true });
     await confirm.getByRole("button", { name: "Delete", exact: true }).click();
-    // 設定是 modal，外面的 toast 區在無障礙樹裡被隱藏，所以用文字找，不用 role。
+    // Settings is a modal, so the toast region outside it is hidden from the accessibility tree: find by text, not role.
     await expect(alicePage.getByText("Deleted. Your initial is shown instead.", { exact: true })).toBeVisible();
     await expect(group.getByRole("radio")).toHaveCount(1);
     await alicePage.goto(noteUrl);
@@ -155,10 +142,9 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
     await expect(accountButton.locator("img")).toHaveCount(0);
     await expect(accountButton.locator("span").first()).toHaveText("A");
 
-    // ── 5. 超過站台上傳上限 ───────────────────────────────────────
     try {
       await setUploadMaxBytes(adminPage, 1_048_576);
-      // 站台設定沒回來之前選檔，瀏覽器端的大小前驗會被跳過；先等設定回應再選。
+      // Picking a file before the site settings arrive skips the browser-side size pre-check, so wait for that response first.
       const authConfig = alicePage.waitForResponse(r => r.url().endsWith("/api/auth/config") && r.ok());
       await alicePage.goto("/settings/account");
       await authConfig;
@@ -178,7 +164,6 @@ test("53-1 頭貼：上傳裁切（256×256 顯示圖）→ 側欄 → 別人頁
   }
 });
 
-/** 用 API 幫目前登入的人設一張頭貼（原圖與顯示圖都是純色 PNG）；回傳 `/api/auth/me` 的 avatar 參照。 */
 async function setAvatarViaApi(page: Page): Promise<{ id: string; v: number }> {
   const res = await page.request.post("/api/auth/avatars", {
     multipart: {
@@ -194,7 +179,7 @@ async function setAvatarViaApi(page: Page): Promise<{ id: string; v: number }> {
   return { id: me.avatar!.id, v: me.avatar!.v };
 }
 
-/** 範圍內恰有一顆 <img> 且已載入（有圖才算數，不只是節點存在）。 */
+/** Waits for naturalWidth > 0: an <img> node alone doesn't prove the picture loaded. */
 async function expectLoadedImg(scope: Locator): Promise<Locator> {
   const img = scope.locator("img");
   await expect(img).toHaveCount(1, { timeout: 15_000 });
@@ -202,7 +187,7 @@ async function expectLoadedImg(scope: Locator): Promise<Locator> {
   return img;
 }
 
-test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷史有圖；沒頭貼的沒有；同一人跨畫面只要一次圖；最後編輯落款沒有圖", async ({ browser }) => {
+test("53-2 avatars on lists (bob views alice): group member table and version history show images; users without one show none; the server serves each person's image once across screens; the last-edit byline has no image", async ({ browser }) => {
   test.setTimeout(180_000);
   const contexts: BrowserContext[] = [];
   const open = async (): Promise<Page> => {
@@ -221,7 +206,6 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
     await createUserViaInvite(adminPage, alice);
     await createUserViaInvite(adminPage, bob);
 
-    // alice：設頭貼 → 建群組、加 bob → 在群組裡建一篇筆記、寫一次內容、存一個版本。
     const alicePage = await open();
     await loginAs(alicePage, alice.email, alice.password);
     const aliceAvatar = await setAvatarViaApi(alicePage);
@@ -241,10 +225,9 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
     expect(saved.status(), await saved.text()).toBe(201);
     const aliceSrc = `/api/avatars/${aliceAvatar.id}?v=${aliceAvatar.v}`;
 
-    // bob：記下 alice 的圖被要了幾次，從群組成員表走到版本歷史。
     const bobPage = await open();
     await loginAs(bobPage, bob.email, bob.password);
-    // Playwright 的 request 事件連記憶體快取命中都會報，所以用 CDP 區分：真的到伺服器的才算。
+    // Playwright's request event also fires for memory-cache hits, so use CDP and count only requests that reached the server.
     const cdp = await bobPage.context().newCDPSession(bobPage);
     await cdp.send("Network.enable");
     const avatarIds = new Map<string, string>();
@@ -257,7 +240,7 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
       if (e.response.fromDiskCache || e.response.fromPrefetchCache) servedFromCache.add(e.requestId);
     });
     await bobPage.goto("/");
-    // bob 是一般成員，群組選單的項目叫「View members」（有管理成員權限的才叫「Members & settings」）。
+    // bob is a regular member, so the group menu item is "View members" (it is "Members & settings" with the manage-members permission).
     await showSidebarTab(bobPage, "Groups");
     await bobPage.getByRole("complementary").getByRole("button", { name: `Group actions for ${groupName}` }).click();
     await bobPage.getByRole("menuitem", { name: "View members" }).click();
@@ -270,7 +253,7 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
     await expect(await expectLoadedImg(aliceRow)).toHaveAttribute("src", aliceSrc);
     await expect(bobRow.locator("img")).toHaveCount(0);
 
-    // 關掉群組視窗，從側欄開那篇筆記（單頁應用內換頁，同一份文件裡同網址的圖不會再向伺服器要）。
+    // Navigating inside the SPA: within one document an image with the same URL is not requested from the server again.
     await bobPage.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     const sidebar = bobPage.getByRole("complementary");
@@ -280,7 +263,6 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
     await noteRow.click();
     await waitForNoteTitle(bobPage);
 
-    // 筆記頁首「最後編輯」落款：只有字，沒有圖。
     const lastEdited = bobPage.getByTestId("last-edited");
     await expect(lastEdited).toBeVisible({ timeout: 15_000 });
     await expect(lastEdited.locator("img")).toHaveCount(0);
@@ -305,7 +287,7 @@ test("53-2 列表上的頭貼（bob 看 alice）：群組成員表、版本歷�
   }
 });
 
-test("53-3 列表上的頭貼（alice 看 bob）：建議清單、分享名單（新增後與重新開啟）、站台管理使用者表", async ({ browser }) => {
+test("53-3 avatars on lists (alice views bob): suggestion list, share list (after adding and after reopening), site admin users table", async ({ browser }) => {
   test.setTimeout(180_000);
   const contexts: BrowserContext[] = [];
   const open = async (): Promise<Page> => {
@@ -324,7 +306,7 @@ test("53-3 列表上的頭貼（alice 看 bob）：建議清單、分享名單�
     await createUserViaInvite(adminPage, alice);
     await createUserViaInvite(adminPage, bob);
 
-    // bob 設頭貼；alice 與 bob 同在一個群組（建議清單只找「已經認識的人」）。
+    // alice must share a group with bob: the suggestion list only looks among people already known.
     const bobPage = await open();
     await loginAs(bobPage, bob.email, bob.password);
     const bobAvatar = await setAvatarViaApi(bobPage);
@@ -342,21 +324,20 @@ test("53-3 列表上的頭貼（alice 看 bob）：建議清單、分享名單�
     const shareDialog = alicePage.getByRole("dialog", { name: "Share note" });
     await shareDialog.getByRole("radio", { name: /Members only/ }).click();
 
-    // 建議清單：打 bob 的 email 前幾字，那一項有他的圖。
     const emailBox = shareDialog.getByLabel("Email address");
     await emailBox.fill(bob.email.slice(0, 10));
     const option = alicePage.getByRole("listbox").getByRole("option").filter({ hasText: bobName });
     await expect(option).toHaveCount(1, { timeout: 15_000 });
     await expect(await expectLoadedImg(option)).toHaveAttribute("src", bobSrc);
 
-    // 加進分享名單：新增後那一列有圖（PUT 的回應）。
+    // The row right after adding is rendered from the PUT response.
     await emailBox.fill(bob.email);
     await shareDialog.getByRole("button", { name: "Add", exact: true }).click();
     const shareRow = shareDialog.getByRole("listitem").filter({ hasText: bob.email });
     await expect(shareRow).toHaveCount(1, { timeout: 15_000 });
     await expect(await expectLoadedImg(shareRow)).toHaveAttribute("src", bobSrc);
 
-    // 重新載入、再開分享框：名單從伺服器重抓（GET），那一列仍有圖。
+    // After reload the list is refetched (GET).
     await alicePage.reload();
     await waitForNoteTitle(alicePage);
     await alicePage.getByRole("button", { name: "Share", exact: true }).click();
@@ -365,12 +346,11 @@ test("53-3 列表上的頭貼（alice 看 bob）：建議清單、分享名單�
     await expect(reopenedRow).toHaveCount(1, { timeout: 15_000 });
     await expect(await expectLoadedImg(reopenedRow)).toHaveAttribute("src", bobSrc);
 
-    // 站台管理的使用者表：bob 那列有圖，沒頭貼的 alice 那列沒有。
     const admin = await openSiteAdmin(adminPage);
     const table = admin.getByRole("table", { name: "Users", exact: true });
     const bobUserRow = table.getByRole("row").filter({ hasText: bob.email });
     await expect(bobUserRow).toHaveCount(1, { timeout: 15_000 });
-    // 圖是 loading="lazy"：疊裡累積很多使用者時，這一列可能在捲動區之外，要捲進來才會載。
+    // The image is loading="lazy": with many users in the stack this row may be outside the scroll area and only loads once scrolled into view.
     await bobUserRow.scrollIntoViewIfNeeded();
     await expect(await expectLoadedImg(bobUserRow)).toHaveAttribute("src", bobSrc);
     const aliceUserRow = table.getByRole("row").filter({ hasText: alice.email });

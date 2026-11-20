@@ -116,9 +116,9 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     ["0", { expiresInHours: 0 }],
     ["25", { expiresInHours: 25 }],
     ["1.5", { expiresInHours: 1.5 }],
-    ["字串 \"1\"", { expiresInHours: "1" }],
-    ["空物件", {}],
-    ["多欄", { expiresInHours: 1, extra: 1 }],
+    ["string \"1\"", { expiresInHours: "1" }],
+    ["empty object", {}],
+    ["extra field", { expiresInHours: 1, extra: 1 }],
   ])("body %s -> 400 invalid_body, no row inserted", async (_name, payload) => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
