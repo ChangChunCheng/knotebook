@@ -1,8 +1,4 @@
-/**
- * #93：全文索引測試用的 Y.Doc 建構器（純 Yjs、不碰 DB——unit 與整合測試共用）。
- * 形狀＝BlockNote 的結構：fragment > blockGroup > blockContainer(id) > <type …> > 內容。
- * `id` 是 unknown：敵意案要塞數字或空字串；省略＝不設 id 屬性。
- */
+// `id` is unknown on purpose: hostile cases pass a number or an empty string; omitting it sets no id attribute.
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 

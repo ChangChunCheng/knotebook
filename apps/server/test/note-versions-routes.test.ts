@@ -1,4 +1,3 @@
-// 版本歷史 REST（REST 矩陣、手動儲存、PATCH／DELETE）。
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -25,7 +24,7 @@ async function restSetup(over: Parameters<typeof buildTestApp>[0] = {}) {
   const owner = await seedUser(db);
   const note = await seedNote(db, { ownerId: owner.id });
   await seedDoc(db, note.id, paraDoc(["版本一的內容"]));
-  /** 換掉 note_states（模擬「文件沒載入時內容變了」），回新內容的版本指紋。 */
+  /** Replaces note_states to simulate content changing while the document isn't loaded; returns the new version fingerprint. */
   const setContent = async (text: string) => {
     const d = paraDoc([text]);
     await db.update(noteStates).set({ ydoc: Buffer.from(Y.encodeStateAsUpdate(d)) }).where(eq(noteStates.noteId, note.id));
@@ -35,10 +34,10 @@ async function restSetup(over: Parameters<typeof buildTestApp>[0] = {}) {
   return { app, db, owner, note, setContent, base };
 }
 
-describe("權限矩陣（開頭）", () => {
-  it("owner／editor／群組 editor 可讀可寫；viewer 403；看不到 404；未登入 401；PAT 401", async () => {
+describe("permission matrix", () => {
+  it("owner/editor/group editor can read and write; viewer 403; invisible 404; logged out 401; PAT 401", async () => {
     const s = await restSetup();
-    expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201); // 先有 v1
+    expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201); // make v1 first
     const editor = await seedUser(s.db);
     const viewer = await seedUser(s.db);
     const stranger = await seedUser(s.db);
@@ -65,17 +64,17 @@ describe("權限矩陣（開頭）", () => {
     expect((await call(s.app, "POST", `/api/notes/${gnote.id}/versions`, editor.id, {})).statusCode).toBe(201);
   });
 
-  it("沒有 collab 的部署：apply 路由不註冊（404），其餘五支照常", async () => {
+  it("deployment without collab: the apply route isn't registered (404), the other five work as usual", async () => {
     const s = await restSetup();
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201);
     const v1 = (await versionsOf(s.db, s.note.id))[0]!;
     expect((await call(s.app, "POST", `${s.base}/1/apply`, s.owner.id, { versionId: v1.id, discardUnsaved: false })).statusCode).toBe(404);
   });
 
-  it("角色檢查排在扣桶之前——viewer 對每支寫入連打 3 次（桶上限 2）每次都是 403 不是 429，且不耗 owner 的桶", async () => {
+  it("role check runs before the limiter is charged: a viewer hitting each write 3 times (limit 2) always gets 403, never 429, and the owner's limiter isn't consumed", async () => {
     const s = await restSetup({ limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }) });
     for (const [method, url, body] of [["POST", s.base, {}], ["PATCH", `${s.base}/1`, { name: "x" }], ["DELETE", `${s.base}/1`, undefined]] as const) {
-      const viewer = await seedUser(s.db); // 桶以 userId 為鍵：每支各用一個 viewer，單支路由的對調也抓得到
+      const viewer = await seedUser(s.db); // limiter keyed by userId: one viewer per route, so swapping a single route is caught too
       await seedShare(s.db, s.note.id, viewer.id, "viewer");
       for (let i = 0; i < 3; i += 1) {
         const r = await call(s.app, method, url, viewer.id, body);
@@ -87,8 +86,8 @@ describe("權限矩陣（開頭）", () => {
   });
 });
 
-describe("參數驗證（不變量 S）", () => {
-  it(":id 非 uuid → 404；:seq 非法 → 404（不是 500）；before／limit 非法 → 400", async () => {
+describe("parameter validation: malformed or out-of-range params get 404/400, never 500", () => {
+  it(":id not a uuid -> 404; invalid :seq -> 404 (not 500); invalid before/limit -> 400", async () => {
     const s = await restSetup();
     expect((await call(s.app, "GET", "/api/notes/not-a-uuid/versions", s.owner.id)).json().error.code).toBe("not_found");
     for (const seq of ["0", "01", "-1", "1.5", "1e3", "2147483648", "abc", "%00", "１"]) {
@@ -106,8 +105,8 @@ describe("參數驗證（不變量 S）", () => {
   });
 });
 
-describe("GET 清單與快照", () => {
-  it("新到舊、游標分頁、nextBefore 恰好在最後一頁為 null；editors 帶 handle（刪除的使用者為空字串）；current", async () => {
+describe("GET list and snapshot", () => {
+  it("newest first, cursor paging, nextBefore exactly null on the last page; editors carry handle (deleted users give an empty string); current", async () => {
     const s = await restSetup();
     const fp = versionFingerprint(paraDoc(["版本一的內容"]).getXmlFragment(YDOC_FRAGMENT));
     const ghost = "00000000-0000-4000-8000-0000000000ff";
@@ -134,14 +133,14 @@ describe("GET 清單與快照", () => {
     expect(p3.versions.map((v: { seq: number }) => v.seq)).toEqual([1]);
     expect(p3.nextBefore).toBeNull();
     const exact = (await call(s.app, "GET", `${s.base}?limit=5`, s.owner.id)).json();
-    expect(exact.nextBefore).toBeNull(); // 剛好整頁不多給空頁游標
+    expect(exact.nextBefore).toBeNull(); // exactly a full page: no empty-page cursor
     await s.setContent("內容變了");
     expect((await call(s.app, "GET", s.base, s.owner.id)).json().current.dirty).toBe(true);
   });
 
-  it("kind 篩選（#258）：manual／auto／省略；與 before、limit、nextBefore 並用；current 不受篩選影響", async () => {
+  it("kind filter (#258): manual/auto/omitted; combined with before, limit, nextBefore; current is unaffected by the filter", async () => {
     const s = await restSetup();
-    // seq 1..9：manual＝2、5、6、9；其餘 auto。
+    // seq 1..9: manual = 2, 5, 6, 9; the rest are auto.
     const manual = new Set([2, 5, 6, 9]);
     for (let seq = 1; seq <= 9; seq += 1) {
       await s.db.insert(noteVersions).values({
@@ -161,31 +160,29 @@ describe("GET 清單與快照", () => {
     const onlyAuto = await get("?kind=auto");
     expect(seqs(onlyAuto)).toEqual([8, 7, 4, 3, 1]);
     expect(onlyAuto.versions.every((v: { kind: string }) => v.kind === "auto")).toBe(true);
-    // current 與篩選無關。
     expect(onlyManual.current).toEqual(all.current);
     expect(onlyAuto.current).toEqual(all.current);
 
-    // 與 limit／before 並用：nextBefore 是「篩選後該頁最後一筆」的 seq，接著帶 before 取下一頁不漏不重。
+    // Combined with limit/before: nextBefore is the seq of the last entry of the filtered page; passing it as before gets the next page with no gaps or repeats.
     const m1 = await get("?kind=manual&limit=2");
     expect(seqs(m1)).toEqual([9, 6]);
     expect(m1.nextBefore).toBe(6);
     const m2 = await get(`?kind=manual&limit=2&before=${m1.nextBefore}`);
     expect(seqs(m2)).toEqual([5, 2]);
-    expect(m2.nextBefore).toBeNull(); // 剛好整頁、後面沒有符合的
+    expect(m2.nextBefore).toBeNull(); // exactly a full page, nothing matching after
     const a1 = await get("?kind=auto&limit=3");
     expect(seqs(a1)).toEqual([8, 7, 4]);
     expect(a1.nextBefore).toBe(4);
     const a2 = await get(`?kind=auto&limit=3&before=${a1.nextBefore}`);
     expect(seqs(a2)).toEqual([3, 1]);
     expect(a2.nextBefore).toBeNull();
-    // before 之後沒有符合的 → 空清單、current 照給。
     const none = await get("?kind=manual&before=2");
     expect(none.versions).toEqual([]);
     expect(none.nextBefore).toBeNull();
     expect(none.current).toEqual(all.current);
   });
 
-  it("kind 篩選：自動版本改名轉手動後，立刻出現在 kind=manual、從 kind=auto 消失", async () => {
+  it("kind filter: after an auto version is renamed to manual it shows up in kind=manual at once and disappears from kind=auto", async () => {
     const s = await restSetup();
     await s.db.insert(noteVersions).values({ noteId: s.note.id, seq: 1, ydoc: Buffer.from([0]), kind: "auto", name: null, editors: [], baseSeq: null });
     await s.db.update(notes).set({ versionCounter: 1 }).where(eq(notes.id, s.note.id));
@@ -195,22 +192,22 @@ describe("GET 清單與快照", () => {
     expect((await call(s.app, "GET", `${s.base}?kind=auto`, s.owner.id)).json().versions).toEqual([]);
   });
 
-  it("#272 案 24：base——基底不在本頁或被 kind 篩掉仍帶名稱；基底列刪除後 { id, name: null, deleted: true }；升級前就已刪的舊資料 { id: null, deleted: true }；current.base；POST／PATCH 回應帶 base", async () => {
+  it("#272: base: a base outside this page or filtered out by kind still carries its name; after the base row is deleted { id, name: null, deleted: true }; legacy data deleted before the upgrade { id: null, deleted: true }; current.base; POST/PATCH responses carry base", async () => {
     const s = await restSetup();
     const ins = async (seq: number, kind: "auto" | "manual", name: string | null, baseSeq: number | null, baseVersionId: string | null) =>
       (await s.db.insert(noteVersions).values({ noteId: s.note.id, seq, ydoc: Buffer.from([0]), kind, name, editors: [], baseSeq, baseVersionId }).returning())[0]!;
     const v1 = await ins(1, "manual", "起點", null, null);
-    await ins(2, "auto", null, 9, null); // 舊資料：沿自 9，沒有基底 uuid
+    await ins(2, "auto", null, 9, null); // legacy data: derived from 9, no base uuid
     const v3 = await ins(3, "manual", "第三", 1, v1.id);
     const v4 = await ins(4, "auto", null, 3, v3.id);
     const fp = versionFingerprint(paraDoc(["版本一的內容"]).getXmlFragment(YDOC_FRAGMENT));
     await s.db.update(notes).set({ versionCounter: 4, versionBaseSeq: 4, versionBaseFingerprint: fp, versionBaseVersionId: v4.id }).where(eq(notes.id, s.note.id));
     const get = async (q: string) => (await call(s.app, "GET", `${s.base}${q}`, s.owner.id)).json();
-    expect((await get("?limit=1&before=4")).versions[0]).toMatchObject({ seq: 3, baseSeq: 1, base: { id: v1.id, name: "起點", deleted: false } }); // 基底不在本頁
+    expect((await get("?limit=1&before=4")).versions[0]).toMatchObject({ seq: 3, baseSeq: 1, base: { id: v1.id, name: "起點", deleted: false } }); // base not on this page
     const autos = await get("?kind=auto");
     expect(autos.versions.map((v: VersionDto) => [v.seq, v.base])).toEqual([
-      [4, { id: v3.id, name: "第三", deleted: false }], // 基底被 kind=auto 篩掉
-      [2, { id: null, name: null, deleted: true }], // 舊資料
+      [4, { id: v3.id, name: "第三", deleted: false }], // base filtered out by kind=auto
+      [2, { id: null, name: null, deleted: true }], // legacy data
     ]);
     expect(autos.current.base).toEqual({ id: v4.id, name: null, deleted: false });
     await s.db.delete(noteVersions).where(eq(noteVersions.id, v1.id));
@@ -223,7 +220,7 @@ describe("GET 清單與快照", () => {
     expect(renamed.json()).toMatchObject({ seq: 3, base: { id: v1.id, name: null, deleted: true } });
   });
 
-  it("快照：{ id, seq, ydoc(base64) }、Cache-Control private, no-store；不存在 → 404", async () => {
+  it("snapshot: { id, seq, ydoc (base64) }, Cache-Control private, no-store; nonexistent -> 404", async () => {
     const s = await restSetup();
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201);
     const [v1] = await versionsOf(s.db, s.note.id);
@@ -236,8 +233,8 @@ describe("GET 清單與快照", () => {
   });
 });
 
-describe("POST 手動儲存", () => {
-  it("沒有基底且乾淨 → 201 新版；乾淨且有基底 → 201 upgraded（總數不變）；dirty → 新版", async () => {
+describe("POST manual save", () => {
+  it("no base and clean -> 201 new version; clean with a base -> 201 upgraded (count unchanged); dirty -> new version", async () => {
     const s = await restSetup();
     const a = await call(s.app, "POST", s.base, s.owner.id, { name: "首版" });
     expect(a.statusCode).toBe(201);
@@ -249,7 +246,7 @@ describe("POST 手動儲存", () => {
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).json()).toMatchObject({ seq: 2, upgraded: false, name: null });
   });
 
-  it("沒有基底且真空的空筆記 → 建一版（作者補）", async () => {
+  it("no base and truly empty note -> creates a version (author filled in)", async () => {
     const s = await restSetup();
     const empty = await seedNote(s.db, { ownerId: s.owner.id });
     const r = await call(s.app, "POST", `/api/notes/${empty.id}/versions`, s.owner.id, {});
@@ -257,7 +254,7 @@ describe("POST 手動儲存", () => {
     expect(r.json()).toMatchObject({ seq: 1, upgraded: false });
   });
 
-  it("名稱規則——只有空白 → null；120 code point 收、121 拒；NUL／落單代理 400（不是 500）；body 形狀錯 400", async () => {
+  it("name rules: whitespace only -> null; 120 code points accepted, 121 rejected; NUL/lone surrogate 400 (not 500); wrong body shape 400", async () => {
     const s = await restSetup();
     const smile = String.fromCodePoint(0x1f600);
     expect((await call(s.app, "POST", s.base, s.owner.id, { name: " 　 " })).json().name).toBeNull();
@@ -274,13 +271,13 @@ describe("POST 手動儲存", () => {
     expect((await call(s.app, "PATCH", `${s.base}/1`, s.owner.id, {})).statusCode).toBe(400);
   });
 
-  it("筆記已刪 → 404（走 canEdit 的 none 分支，沒進 saveVersion）", async () => {
+  it("deleted note -> 404 (canEdit's none branch, never reaches saveVersion)", async () => {
     const s = await restSetup();
     await s.db.delete(notes).where(eq(notes.id, s.note.id));
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(404);
   });
 
-  it("寫入端點吃 edit 桶（GET 不吃）：上限 2 → 第三次寫入 429", async () => {
+  it("write endpoints consume the edit limiter (GET doesn't): limit 2 -> third write 429", async () => {
     const s = await restSetup({ limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }) });
     for (let i = 0; i < 5; i += 1) expect((await call(s.app, "GET", s.base, s.owner.id)).statusCode).toBe(200);
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201);
@@ -291,8 +288,8 @@ describe("POST 手動儲存", () => {
   });
 });
 
-describe("PATCH／DELETE", () => {
-  it("PATCH 自動版本 → 轉手動；{name:null} 清名稱仍是手動；不存在 → 404", async () => {
+describe("PATCH/DELETE", () => {
+  it("PATCH on an auto version -> becomes manual; {name:null} clears the name and stays manual; nonexistent -> 404", async () => {
     const s = await restSetup();
     await s.db.insert(noteVersions).values({ noteId: s.note.id, seq: 1, ydoc: Buffer.from([0]), kind: "auto" });
     const r = await call(s.app, "PATCH", `${s.base}/1`, s.owner.id, { name: "命名" });
@@ -301,7 +298,7 @@ describe("PATCH／DELETE", () => {
     expect((await call(s.app, "PATCH", `${s.base}/7`, s.owner.id, { name: "x" })).statusCode).toBe(404);
   });
 
-  it("DELETE：基底 → 409 version_is_base（英文訊息）；不存在 → 404；非基底 → 204", async () => {
+  it("DELETE: base -> 409 version_is_base (English message); nonexistent -> 404; non-base -> 204", async () => {
     const s = await restSetup();
     expect((await call(s.app, "POST", s.base, s.owner.id, {})).statusCode).toBe(201);
     await s.setContent("第二版");
@@ -315,7 +312,7 @@ describe("PATCH／DELETE", () => {
   });
 });
 
-describe("POST apply × 真 collab", () => {
+describe("POST apply with real collab", () => {
   async function collabSetup(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
     const ctx = await buildCollabTestApp(opts);
     const u = await ctx.createUser({ email: "a@example.com", password: "correct-horse-battery" });
@@ -333,7 +330,7 @@ describe("POST apply × 真 collab", () => {
     return { ctx, u, note, session, base, unloaded, setContent, post, v1: v1!, v2: v2! };
   }
 
-  it("200 { current }；大寫 versionId 視同同一版；versionId 對不上 409；seq 不存在 404；body 錯 400", async () => {
+  it("200 { current }; uppercase versionId counts as the same version; mismatched versionId 409; nonexistent seq 404; bad body 400", async () => {
     const s = await collabSetup();
     const ok = await s.post(`${s.base}/1/apply`, { versionId: s.v1.id.toUpperCase(), discardUnsaved: false });
     expect(ok.status).toBe(200);
@@ -347,7 +344,7 @@ describe("POST apply × 真 collab", () => {
     }
   });
 
-  it("dirty 且 discardUnsaved=false → 409 version_unsaved_changes（英文訊息）；true → 200", async () => {
+  it("dirty with discardUnsaved=false -> 409 version_unsaved_changes (English message); true -> 200", async () => {
     const s = await collabSetup();
     await s.setContent("沒存的第三版");
     const r = await s.post(`${s.base}/1/apply`, { versionId: s.v1.id, discardUnsaved: false });
@@ -356,13 +353,13 @@ describe("POST apply × 真 collab", () => {
     expect((await s.post(`${s.base}/1/apply`, { versionId: s.v1.id, discardUnsaved: true })).status).toBe(200);
   });
 
-  it("排隊期間被刪的版本、有 WS 連線（文件不卸載）→ 回應 baseSeq null、dirty true；之後全部離開 → 不切（#272）、baseSeq null、nextSeq 3", async () => {
+  it("version deleted while queued, with a WS connection (document not unloaded) -> response baseSeq null, dirty true; after everyone leaves -> no cut (#272), baseSeq null, nextSeq 3", async () => {
     let deleteV1: (() => Promise<void>) | null = null;
     const s = await collabSetup({ editingTestHooks: { beforeMerge: async () => { if (deleteV1) await deleteV1(); } } });
     const client = await s.session.connect(s.note.id);
     deleteV1 = async () => { await s.ctx.db.delete(noteVersions).where(sql`note_versions.note_id = ${s.note.id} and note_versions.seq = 1`); };
     const r = await s.post(`${s.base}/1/apply`, { versionId: s.v1.id, discardUnsaved: false });
-    expect((await r.json()).current).toMatchObject({ baseSeq: null, dirty: true }); // 套用完成後的實際 current
+    expect((await r.json()).current).toMatchObject({ baseSeq: null, dirty: true }); // actual current after the apply completes
     deleteV1 = null;
     client.disconnect();
     await s.unloaded();
@@ -371,7 +368,7 @@ describe("POST apply × 真 collab", () => {
     expect((await (await s.session.fetch(s.base)).json()).current).toMatchObject({ baseSeq: null, nextSeq: 3 });
   });
 
-  it("排隊期間被刪的版本、沒有 WS 連線 → 卸載不再切版（#272），回應 baseSeq null、dirty false、nextSeq 3；之後手動儲存 → 201 新版 v3、總數 2、GET dirty=false、基底 3", async () => {
+  it("version deleted while queued, no WS connection -> unloading no longer cuts a version (#272), response baseSeq null, dirty false, nextSeq 3; a manual save afterwards -> 201 new v3, total 2, GET dirty=false, base 3", async () => {
     let deleteV1: (() => Promise<void>) | null = null;
     const s = await collabSetup({ editingTestHooks: { beforeMerge: async () => { if (deleteV1) await deleteV1(); } } });
     deleteV1 = async () => { await s.ctx.db.delete(noteVersions).where(sql`note_versions.note_id = ${s.note.id} and note_versions.seq = 1`); };
@@ -388,7 +385,7 @@ describe("POST apply × 真 collab", () => {
     expect((await noteBase(s.ctx.db, s.note.id)).baseSeq).toBe(3);
   });
 
-  it("I1：viewer apply → 403 且內容與 version_base_seq 不變；stranger → 404", async () => {
+  it("viewer apply -> 403 and content and version_base_seq unchanged; stranger -> 404", async () => {
     const s = await collabSetup();
     const viewer = await s.ctx.createUser({ email: "v@example.com", password: "correct-horse-battery" });
     await s.ctx.createUser({ email: "x@example.com", password: "correct-horse-battery" });
@@ -407,7 +404,7 @@ describe("POST apply × 真 collab", () => {
     expect(Buffer.from(stateAfter).equals(Buffer.from(stateBefore))).toBe(true);
   });
 
-  it("I1：viewer 連打 apply 3 次（桶上限 2）→ 每次 403，不是 429", async () => {
+  it("viewer applying 3 times (limit 2) -> 403 every time, not 429", async () => {
     const s = await collabSetup({ limiters: { edit: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) } });
     const viewer = await s.ctx.createUser({ email: "v@example.com", password: "correct-horse-battery" });
     await s.ctx.share(s.note.id, viewer.id, "viewer");
@@ -418,7 +415,7 @@ describe("POST apply × 真 collab", () => {
     }
   });
 
-  it("m1：佇列被套用佔住、等待逾時 → 手動儲存 503 server_busy（英文訊息）；放行後套用 200", async () => {
+  it("queue held by an apply and wait times out -> manual save 503 server_busy (English message); apply 200 after release", async () => {
     let entered: (() => void) | null = null;
     let release: (() => void) | null = null;
     const gate = new Promise<void>(r => { release = r; });
@@ -438,7 +435,7 @@ describe("POST apply × 真 collab", () => {
     expect((await applying).status).toBe(200);
   });
 
-  it("手動儲存與套用併發 → 經同一顆佇列序列化，兩支都成功", async () => {
+  it("manual save and apply concurrently are serialized through the same queue: both succeed", async () => {
     const s = await collabSetup();
     const [a, b] = await Promise.all([
       s.post(`${s.base}/1/apply`, { versionId: s.v1.id, discardUnsaved: true }),

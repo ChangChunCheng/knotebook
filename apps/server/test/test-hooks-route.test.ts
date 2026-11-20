@@ -1,5 +1,4 @@
-// #272（案 27）：e2e 測試縫 PUT /api/admin/test/version-auto-wait——只在 config.testHooks 時註冊（KNOTEBOOK_E2E_TEST_HOOKS=1 且
-// PUBLIC_URL 是 loopback）；requireAdmin；strict { seconds: 1–3600 的整數 | null }；204；覆寫掃描器的等待 X（null＝回站台設定）。
+// Test hook route: registered only when config.testHooks is set (KNOTEBOOK_E2E_TEST_HOOKS=1 and PUBLIC_URL is loopback).
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { markPending } from "../src/collab/versions.js";
@@ -15,14 +14,14 @@ async function put(app: FastifyInstance, who: string, payload: unknown) {
   return app.inject({ method: "PUT", url: ROUTE, cookies: await cookieOf(who), payload: payload as object });
 }
 
-describe("e2e 測試縫路由（案 27）", () => {
-  it("沒設環境變數 → 路由不存在（404）", async () => {
+describe("e2e test hook route", () => {
+  it("env var not set -> the route does not exist (404)", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     expect((await put(app, admin.id, { seconds: 2 })).statusCode).toBe(404);
   });
 
-  it("設了但 PUBLIC_URL 不是 loopback → 忽略：路由不存在（404）", async () => {
+  it("set but PUBLIC_URL is not loopback -> ignored: the route does not exist (404)", async () => {
     const config = loadConfig({ ...ENV, PUBLIC_URL: "https://notes.example.com", KNOTEBOOK_E2E_TEST_HOOKS: "1" });
     expect(config.testHooksIgnored).toBe(true);
     const { app, db } = await buildTestApp({ config });
@@ -30,7 +29,7 @@ describe("e2e 測試縫路由（案 27）", () => {
     expect((await put(app, admin.id, { seconds: 2 })).statusCode).toBe(404);
   });
 
-  it("開著：只有站台管理員；strict { seconds: 1–3600 整數 | null }；204 後覆寫掃描器的 X，null 回站台設定", async () => {
+  it("enabled: site admin only; strict { seconds: integer 1-3600 | null }; after 204 the scanner's X is overridden, null returns to the site setting", async () => {
     const config = loadConfig({ ...ENV, PUBLIC_URL: "http://localhost:3000", KNOTEBOOK_E2E_TEST_HOOKS: "1" });
     expect(config.testHooks).toBe(true);
     const ctx = await buildCollabTestApp({ config });
@@ -50,7 +49,7 @@ describe("e2e 測試縫路由（案 27）", () => {
       return n.id;
     };
     const a = await seedPending("測試縫");
-    expect(await ctx.collab.versions.scanDue()).toBe(0); // 站台設定 5 分鐘：3 秒前的變動還沒到期
+    expect(await ctx.collab.versions.scanDue()).toBe(0); // site setting is 5 minutes: a change from 3 s ago is not due yet
     expect((await put(ctx.app, admin.id, { seconds: 2 })).statusCode).toBe(204);
     expect(await ctx.collab.versions.scanDue()).toBe(1);
     expect(await versionsOf(ctx.db, a)).toHaveLength(1);

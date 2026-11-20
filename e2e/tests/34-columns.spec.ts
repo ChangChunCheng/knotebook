@@ -3,16 +3,15 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, randomEmail, ratioQuantPx, reEscape, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 並排排版（側邊把手）：
- * C1 `/grid`、C2 欄首／欄尾鍵＋撤銷、C3 取消並排、C4 堆疊、C5 寬表格、C6 欄內圖片把手、C7 側邊把手、C8 拖出唯一 block、
- * C9 公開頁／簡報／版本、C10 外部 HTML 不成列。
- *
- * - 內容一律貼正規形的 markdown（純文字剪貼簿 → `collab/paste.ts` 接手 → `pasteMarkdown`；同 22-presentation）。
- * - 文件形狀讀主編輯器的 ProseMirror 文件（`docShape`，格式同 web 的 `test/columns-fixtures.ts` 的 `shape`）：
- *   `paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z`（`paragraph` 無文字＝空段落）。
- * - e2e 不能 import web：堆疊門檻自算（`collab/columns/layout.ts` 的 COLUMN_MIN_TEXT_PX／COLUMN_GAP_PX，兩邊要一起改）。
- * - 每案收 `pageerror`，案尾斷言沒有（`ResizeObserver loop` 是瀏覽器已知的良性訊息，排除）。
- * - 量測結果寫進 `test.info().annotations`（grid-menu-space、side-menu-alignment），C4 的 768 寬、C5 的捲動量、C10 剪貼簿讀回的 HTML 也記（stack-768、stacked-rows、external-html）。
+ * - Content is always pasted as canonical markdown (plain-text clipboard -> `collab/paste.ts` takes over -> `pasteMarkdown`;
+ *   same as 22-presentation).
+ * - The document shape is read from the main editor's ProseMirror document (`docShape`, same format as `shape` in web's
+ *   `test/columns-fixtures.ts`): `paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z` (`paragraph` with no text
+ *   = an empty paragraph).
+ * - e2e cannot import web: the stacking threshold is computed here (COLUMN_MIN_TEXT_PX / COLUMN_GAP_PX in
+ *   `collab/columns/layout.ts`; change both together).
+ * - Every case collects `pageerror` and asserts there is none at the end (`ResizeObserver loop` is a known benign browser
+ *   message, excluded).
  */
 
 const RUN = Date.now();
@@ -20,7 +19,7 @@ const ROW = '[data-node-type="columnList"]';
 const COL = '[data-node-type="column"]';
 const COLUMN_MIN_TEXT_PX = 200;
 const COLUMN_GAP_PX = 24;
-/** 兩欄文字列：列寬 < 424 才堆疊（`shouldStack`：各欄最小寬度總和＋溝寬 > 可用寬）。 */
+/** Two-column text row: stacks only when the row is narrower than 424 (`shouldStack`: sum of the columns' minimum widths + gap > available width). */
 const TWO_TEXT_NEEDED = 2 * COLUMN_MIN_TEXT_PX + COLUMN_GAP_PX;
 
 function collectPageErrors(page: Page): string[] {
@@ -40,7 +39,6 @@ async function startNote(page: Page, label: string, creds: { email: string; pass
   return errors;
 }
 
-/** 正規形的一列（各欄 `flex:1`）。 */
 function columnsMarkdown(cols: string[]): string {
   return [
     '<div data-kb-columns style="display:flex;gap:16px">',
@@ -49,12 +47,10 @@ function columnsMarkdown(cols: string[]): string {
   ].join("\n");
 }
 
-/** 列前後各一段（`x`／`z`），同 web 單元測試的 fixture。 */
 function rowDoc(cols: string[]): string {
   return ["x", "", columnsMarkdown(cols), "", "z", ""].join("\n");
 }
 
-/** 疊的 origin 取目前頁面（呼叫時已登入、導覽過），不另寫一份網址常數。 */
 function originOf(page: Page): string {
   return new URL(page.url()).origin;
 }
@@ -63,7 +59,6 @@ async function grantClipboard(page: Page): Promise<void> {
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: originOf(page) });
 }
 
-/** 在筆記最後貼上 markdown（22-presentation 的 pasteMarkdown；Ctrl+End 後等 ProseMirror 跟上再貼）。 */
 async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await grantClipboard(page);
   await editorLocator(page).click();
@@ -73,7 +68,6 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
   await page.keyboard.press("ControlOrMeta+v");
 }
 
-/** 主編輯器 ProseMirror 文件的頂層形狀（見檔頭）。 */
 async function docShape(page: Page): Promise<string> {
   return editorLocator(page).evaluate((el) => {
     type PmNode = { type: { name: string }; childCount: number; child(i: number): PmNode; firstChild: PmNode | null; textContent: string };
@@ -92,7 +86,6 @@ async function docShape(page: Page): Promise<string> {
   });
 }
 
-/** 文字恰為 `text` 的區塊外層（27-site-links 同名 helper；巢狀時取最內層）。 */
 function blockOuter(page: Page, text: string): Locator {
   const root = editorLocator(page);
   return root
@@ -105,7 +98,6 @@ function inlineOf(page: Page, text: string): Locator {
   return blockOuter(page, text).locator(".bn-inline-content").first();
 }
 
-/** 點進某段文字、把游標放到開頭（Home）或結尾（End），等 ProseMirror 的 selection 跟上。 */
 async function caretIn(page: Page, text: string, where: "Home" | "End"): Promise<void> {
   await inlineOf(page, text).click();
   await page.keyboard.press(where);
@@ -131,7 +123,6 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 灰色 RGB PNG（22-presentation 的 tallPng 同法）。 */
 function grayPng(width: number, height: number): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
@@ -143,7 +134,6 @@ function grayPng(width: number, height: number): Buffer {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
 }
 
-/** 走 API 真上傳一張 PNG 到目前這篇（同 22-presentation），回傳 `/api/uploads/…` 網址。 */
 async function uploadPng(page: Page, width: number, height: number): Promise<string> {
   const noteId = await noteIdFromUrl(page);
   const res = await page.request.post(`/api/notes/${noteId}/uploads`, {
@@ -159,7 +149,7 @@ async function waitImageLoaded(img: Locator): Promise<void> {
   await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 }).toBeGreaterThan(0);
 }
 
-/** slash 選單開著（浮層關閉淡出時包裝層 inline `opacity:0`、DOM 還在——全域 playwright-e2e-gotchas）。 */
+/** Whether the slash menu is open (when the popover closes it fades out: the wrapper gets inline `opacity:0` while the DOM stays). */
 async function slashMenuOpen(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const menu = document.querySelector(".bn-suggestion-menu");
@@ -169,7 +159,6 @@ async function slashMenuOpen(page: Page): Promise<boolean> {
   });
 }
 
-/** 游標前剛打的 `typed` 逐字 Backspace 刪掉，等文件裡不再有 `/`。 */
 async function clearTyped(page: Page, typed: string): Promise<void> {
   for (let i = 0; i < typed.length; i++) await page.keyboard.press("Backspace");
   await expect.poll(() => docShape(page)).not.toContain("/");
@@ -182,8 +171,10 @@ async function slashTitles(page: Page): Promise<string[]> {
 type Rect = { x: number; y: number; width: number; height: number };
 
 /**
- * hover `text` 那一塊，等側邊選單移到它旁邊才回傳兩者的框：垂直範圍重疊，且選單中心在該塊左緣往左 100px 內
- * （同一列的另一欄 y 相同，只看垂直分不出是哪一欄的選單）。貼上時的點擊會讓選單先停在別塊，不等就會量／拖到錯的那塊。
+ * Hovers the block with `text` and returns the two boxes once the side menu has moved next to it: vertical ranges overlap, and
+ * the menu's centre is within 100px to the left of the block's left edge (the other column of the same row has the same y, so
+ * vertical alone cannot tell whose menu it is). After a paste the click leaves the menu on another block first, and without
+ * this wait the measurement / drag would hit the wrong block.
  */
 async function hoverForSideMenu(page: Page, text: string): Promise<{ menu: Rect; block: Rect }> {
   const block = blockOuter(page, text);
@@ -203,7 +194,6 @@ async function hoverForSideMenu(page: Page, text: string): Promise<{ menu: Rect;
   return got!;
 }
 
-/** 把 `sourceText` 那個 block 的 ⋮⋮ 拖到 `targetText` 那段的下半部放開（core 預設拖放）。 */
 async function dragBlockBelow(page: Page, sourceText: string, targetText: string): Promise<void> {
   await hoverForSideMenu(page, sourceText);
   const handle = page.getByRole("button", { name: "Open block menu" });
@@ -226,7 +216,7 @@ async function saveVersion(page: Page, name: string): Promise<void> {
   await expect(dialog).not.toBeVisible();
 }
 
-test("C1 /grid：/grid 列出 2／3／4 欄；/grid 3 只剩 3 欄（空白關選單則改 /grid3）；Enter 建 3 欄、游標在第 1 欄", async ({ page }) => {
+test("C1 /grid: /grid lists 2 / 3 / 4 columns; /grid 3 leaves only 3 columns (closing the menu with a space turns it into /grid3); Enter creates 3 columns with the caret in column 1", async ({ page }) => {
   test.setTimeout(90_000);
   const errors = await startNote(page, "grid");
   const editor = editorLocator(page);
@@ -239,7 +229,7 @@ test("C1 /grid：/grid 列出 2／3／4 欄；/grid 3 只剩 3 欄（空白關�
   await expect.poll(() => slashTitles(page)).toEqual(expect.arrayContaining(["2 columns", "3 columns", "4 columns"]));
   await page.keyboard.press("Escape");
   await expect.poll(() => slashMenuOpen(page)).toBe(false);
-  // Esc 留下「/grid」字樣：逐字 Backspace 清掉（不用 Shift+Home：原生選取要等 selectionchange，Backspace 可能只刪一字）
+  // Esc leaves the "/grid" text: clear it with one Backspace per character (not Shift+Home: a native selection waits for selectionchange, and Backspace might delete only one character)
   await clearTyped(page, "/grid");
 
   await page.keyboard.type("/grid 3");
@@ -267,7 +257,7 @@ test("C1 /grid：/grid 列出 2／3／4 欄；/grid 3 只剩 3 欄（空白關�
   expectNoPageErrors(errors);
 });
 
-test("C2 與撤銷：[a｜b] 在 b 開頭 Backspace → 攤平成 a b、中間沒有空段落；Ctrl+Z 一次 → 列回來", async ({ page }) => {
+test("C2 and undo: Backspace at the start of b in [a|b] flattens to a b with no empty paragraph in between; one Ctrl+Z brings the row back", async ({ page }) => {
   test.setTimeout(90_000);
   const errors = await startNote(page, "d24");
   const editor = editorLocator(page);
@@ -285,7 +275,7 @@ test("C2 與撤銷：[a｜b] 在 b 開頭 Backspace → 攤平成 a b、中間�
   expectNoPageErrors(errors);
 });
 
-test("C3：工具列刪掉欄內的圖 → 列不變、左欄留一個空段落；⋮⋮「Ungroup columns」→ 列攤平、r 還在", async ({ page }) => {
+test("C3: removing the image inside a column from the toolbar leaves the row and an empty paragraph in the left column; the drag handle's \"Ungroup columns\" flattens the row and r stays", async ({ page }) => {
   test.setTimeout(90_000);
   const errors = await startNote(page, "d25");
   const editor = editorLocator(page);
@@ -310,7 +300,7 @@ test("C3：工具列刪掉欄內的圖 → 列不變、左欄留一個空段落�
   expectNoPageErrors(errors);
 });
 
-test("C4 堆疊：1440／1024 並排、390 堆疊、768 依實際；每個寬度整頁沒有水平捲動", async ({ page }) => {
+test("C4 stacking: side by side at 1440 / 1024, stacked at 390, 768 depends on the actual width; no horizontal page scroll at every width", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "stack");
   await pasteMarkdown(page, rowDoc(["left text", "right text"]));
@@ -333,7 +323,7 @@ test("C4 堆疊：1440／1024 並排、390 堆疊、768 依實際；每個寬度
   for (const width of [1440, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     let m: Layout | undefined;
-    // 堆疊由 ResizeObserver 非同步重算：等 data-stacked 與當下列寬的規則一致
+    // Stacking is recomputed asynchronously by ResizeObserver: wait until data-stacked agrees with the rule for the current row width
     await expect(async () => {
       m = await measure();
       expect(m.rowWidth).toBeGreaterThan(0);
@@ -356,7 +346,7 @@ test("C4 堆疊：1440／1024 並排、390 堆疊、768 依實際；每個寬度
   expectNoPageErrors(errors);
 });
 
-test("C5 寬表格：左欄 6 欄長字串表格、390 寬 → 整頁不出水平捲動、表格在欄內捲動", async ({ page }) => {
+test("C5 wide table: a 6-column long-string table in the left column at width 390 -> no horizontal page scroll, the table scrolls inside the column", async ({ page }) => {
   test.setTimeout(90_000);
   const errors = await startNote(page, "wide-table");
   const cells = (r: string) => `| ${Array.from({ length: 6 }, (_, i) => `${r}LongCellContent${i + 1}WithoutAnyBreaks`).join(" | ")} |`;
@@ -367,8 +357,6 @@ test("C5 寬表格：左欄 6 欄長字串表格、390 寬 → 整頁不出水�
   const leftCol = editorLocator(page).locator(`${ROW} ${COL}`).first();
   await expect(leftCol.locator("table")).toBeVisible();
 
-  // 量到的值（含表格包裝層 .tableWrapper 自己的捲動量）記進 annotation，紅的時候看得出是誰在捲
-  // 量到的值（欄與 .tableWrapper 兩層、溢出的是哪一層、它的 overflowX、捲動後的 scrollLeft）記進 annotation，紅的時候也有
   const record: Record<string, unknown> = {};
   try {
     let layer = null as "wrapper" | "column" | null;
@@ -377,7 +365,6 @@ test("C5 寬表格：左欄 6 欄長字串表格、390 寬 → 整頁不出水�
         const wrapper = col.querySelector<HTMLElement>(".tableWrapper");
         const table = col.querySelector("table")!;
         const overflows = (el: HTMLElement | null) => !!el && el.scrollWidth > el.clientWidth;
-        // 溢出的那一層：先看欄內的 .tableWrapper（core 讓它自成捲動容器），再看欄本身
         const layer: "wrapper" | "column" | null = overflows(wrapper) ? "wrapper" : overflows(col as HTMLElement) ? "column" : null;
         const target = layer === "wrapper" ? wrapper : layer === "column" ? (col as HTMLElement) : null;
         return {
@@ -395,11 +382,10 @@ test("C5 寬表格：左欄 6 欄長字串表格、390 寬 → 整頁不出水�
       expect(m.col.right, "左欄右緣不出視窗").toBeLessThanOrEqual(390);
       expect(m.tableWidth, "前提：表格比欄寬").toBeGreaterThan(m.col.clientWidth);
       expect(m.layer, "欄或欄內 .tableWrapper 有橫向溢出").not.toBeNull();
-      // scrollWidth 不受 overflow 值影響（hidden／clip 也一樣），所以另斷溢出的那層真的是捲動容器
+      // scrollWidth is unaffected by the overflow value (hidden / clip give the same), so separately assert that the overflowing layer really is a scroll container
       expect(["auto", "scroll"], `溢出那層（${m.layer}）的 overflowX`).toContain(m.overflowX);
     }).toPass({ timeout: 10_000 });
 
-    // 使用者可觀察的行為：滑鼠在那一層上橫向滾輪 → 它真的捲動（overflow:hidden 時 scrollLeft 不會動）
     const target = layer === "wrapper" ? leftCol.locator(".tableWrapper").first() : leftCol;
     await target.scrollIntoViewIfNeeded();
     const box = (await target.boundingBox())!;
@@ -415,7 +401,7 @@ test("C5 寬表格：左欄 6 欄長字串表格、390 寬 → 整頁不出水�
   expectNoPageErrors(errors);
 });
 
-test("C6 欄內圖片：圖寬不超過欄；右把手往右拖 400px → 圖片欄變寬、文字欄讓出寬度但不小於 200px、寫入的 data-preview-width＝圖片顯示寬；往左拖 50px 圖片變小、欄寬不縮回", async ({ page }) => {
+test("C6 image in a column: image width does not exceed the column; dragging the right handle right by 400px widens the image column, the text column yields width but not below 200px, and the written data-preview-width = the displayed image width; dragging left by 50px shrinks the image and the column does not shrink back", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   const errors = await startNote(page, "image");
@@ -436,7 +422,7 @@ test("C6 欄內圖片：圖寬不超過欄；右把手往右拖 400px → 圖片
 
   const dragRightHandle = async (dx: number) => {
     await img.hover();
-    const handle = imageBlock.locator(".bn-resize-handle").nth(1); // 第二個是 right:4px 那顆
+    const handle = imageBlock.locator(".bn-resize-handle").nth(1); // the second handle is the right-hand one (right:4px)
     await expect(handle).toBeVisible();
     const h = (await handle.boundingBox())!;
     const x = h.x + h.width / 2;
@@ -455,31 +441,30 @@ test("C6 欄內圖片：圖寬不超過欄；右把手往右拖 400px → 圖片
   const leftWidened = await colWidth();
   const rightWidened = await rightWidth();
   test.info().annotations.push({ type: "image-expands-column", description: JSON.stringify({ leftBefore, rightBefore, widened, imgWidened, leftWidened, rightWidened }) });
-  // 圖片超過原欄寬時圖片欄跟著變寬、文字欄讓出寬度，但不小於文字欄最小寬度。
+  // When the image exceeds the original column width the image column widens and the text column yields width, but stays at or above the text column's minimum width.
   expect(leftWidened, "圖片欄變寬").toBeGreaterThan(leftBefore + 50);
   expect(rightWidened, "文字欄讓出寬度").toBeLessThan(rightBefore - 50);
-  // 欄比例寫進文件時捨入到兩位小數，換回像素會有誤差（容許值見 helpers 的 `ratioQuantPx`）。
+  // The column ratio is rounded to two decimals when written to the document, so converting back to pixels has an error (tolerance: `ratioQuantPx` in helpers).
   const quantPx = Math.max(1, ratioQuantPx([{ width: leftWidened }, { width: rightWidened }]));
   expect(rightWidened, "文字欄不小於 200px").toBeGreaterThanOrEqual(COLUMN_MIN_TEXT_PX - quantPx);
-  // 寫入的 previewWidth 來自捨入前的比例，圖片實際顯示寬則由捨入後的欄寬夾住。
+  // The written previewWidth comes from the ratio before rounding, while the displayed image width is clamped by the rounded column width.
   expect(Math.abs(widened - imgWidened), "data-preview-width＝圖片顯示寬").toBeLessThanOrEqual(quantPx);
   expect(imgWidened).toBeLessThanOrEqual(leftWidened + 0.5);
 
-  // 縮小圖片只改圖、不把欄縮回去。
   await dragRightHandle(-50);
   await expect.poll(previewWidth).toBeLessThan(widened);
   expect(Math.abs((await colWidth()) - leftWidened), "欄寬不縮回").toBeLessThanOrEqual(1);
   expectNoPageErrors(errors);
 });
 
-test("C7 側邊把手：第 2 欄的 ⋮⋮ 落在溝裡、不蓋進第 1 欄", async ({ page }) => {
+test("C7 side handle: the drag handle of column 2 sits in the gap and does not overlap column 1", async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   const errors = await startNote(page, "side-menu");
   await pasteMarkdown(page, rowDoc(["first column", "second column"]));
   await expect.poll(() => docShape(page), { timeout: 15_000 }).toContain("ROW[COL(paragraph:first column) | COL(paragraph:second column)]");
   const row = editorLocator(page).locator(ROW).first();
-  // 前提（硬）：列已排版、並排——列寬夠兩欄、沒有 data-stacked、兩欄 y 相同（RO 還沒跑時 data-stacked 本來就不存在，只斷它會空真）
+  // Hard precondition: the row is laid out and side by side - row wide enough for two columns, no data-stacked, both columns at the same y (before the ResizeObserver runs data-stacked does not exist anyway, so asserting only that would pass vacuously)
   await expect(async () => {
     const m = await row.evaluate((el) => ({
       rowWidth: (el as HTMLElement).clientWidth,
@@ -492,7 +477,7 @@ test("C7 側邊把手：第 2 欄的 ⋮⋮ 落在溝裡、不蓋進第 1 欄", 
     expect(Math.abs(m.ys[0]! - m.ys[1]!)).toBeLessThanOrEqual(0.5);
   }).toPass({ timeout: 10_000 });
 
-  // 正向對照：欄外的 block 有 "Add block"，下面斷「不可見」才不會因找不到元素而空真
+  // Positive control: a block outside the columns has "Add block", so asserting "not visible" below cannot pass vacuously because the element is missing
   await blockOuter(page, "x").hover();
   const addBlock = page.getByRole("button", { name: "Add block" });
   await expect(addBlock).toBeVisible();
@@ -504,7 +489,7 @@ test("C7 側邊把手：第 2 欄的 ⋮⋮ 落在溝裡、不蓋進第 1 欄", 
     if (!aligned) test.info().annotations.push({ type: "side-menu-alignment", description: "side menu never aligned with the hovered block (see failure message)" });
   }
   const { menu, block } = aligned!;
-  // 欄內只留 ⋮⋮：兩顆鈕共 48px，比 24px 的溝寬。
+  // Inside a column only the drag handle remains: the two buttons are 48px together, wider than the 24px gap.
   await expect(addBlock).toBeHidden();
   const col1 = (await row.locator(COL).nth(0).boundingBox())!;
   const col2 = (await row.locator(COL).nth(1).boundingBox())!;
@@ -523,7 +508,7 @@ test("C7 側邊把手：第 2 欄的 ⋮⋮ 落在溝裡、不蓋進第 1 欄", 
   expectNoPageErrors(errors);
 });
 
-test("C8 拖出唯一 block：[a｜b] 拖 b 到 z 下方 → 仍兩欄、第 2 欄空段落；[a｜b｜c] 同動作 → 剩 a、c 兩欄", async ({ page }) => {
+test("C8 dragging out the only block: dragging b of [a|b] below z -> still two columns with an empty paragraph in column 2; the same move on [a|b|c] -> two columns a and c remain", async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await startNote(page, "drag-two");
   await pasteMarkdown(page, rowDoc(["a", "b"]));
@@ -541,7 +526,7 @@ test("C8 拖出唯一 block：[a｜b] 拖 b 到 z 下方 → 仍兩欄、第 2 �
   expectNoPageErrors(errors);
 });
 
-/** C9 三案共用：登入、建筆記、貼兩欄（沒有任何標題：整篇含列都在封面），等列出現。回 pageerror 收集與兩欄文字。 */
+/** Shared by the C9 cases: logs in, creates a note and pastes two columns. The note has no heading, so the whole note including the row is on the cover slide. Returns the pageerror collector and the two columns' text. */
 async function startSurfacesNote(
   page: Page,
   label: string,
@@ -555,12 +540,11 @@ async function startSurfacesNote(
   return { errors, left, right };
 }
 
-test("C9a 公開頁：匿名開公開連結 → 有一列兩欄、兩欄文字都在", async ({ page, browser, request }) => {
-  // 用新註冊的帳號：public-link 的 PUT 每人 10 次/10 分鐘，整套序跑到這裡 admin 已被用滿 → 429（同 31-note-width）。
+test("C9a public page: anonymous opens the public link -> one row with two columns, both columns' text present", async ({ page, browser, request }) => {
+  // Use a newly registered account: the public-link PUT allows 10 per user per 10 minutes, and in a serial run admin has used it up by now -> 429 (same as 31-note-width).
   const creds = { email: randomEmail(), password: "e2e-columns-pw" };
   expect((await request.post("/api/auth/register", { data: creds })).status()).toBe(201);
   const { errors, left, right } = await startSurfacesNote(page, "public", creds);
-  // 同 11-public-share／22-presentation 的 ShareDialog 操作
   await page.getByRole("button", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share note" });
   const publicRadio = dialog.getByRole("radio", { name: /^Public link/ });
@@ -596,13 +580,13 @@ test("C9a 公開頁：匿名開公開連結 → 有一列兩欄、兩欄文字�
   expectNoPageErrors(errors);
 });
 
-test("C9b 簡報：封面的列保留正規 style；390 寬開 → data-stacked，1440 寬重新進入 → 沒有", async ({ page }) => {
+test("C9b presentation: the cover's row keeps its canonical style; opened at width 390 -> data-stacked, re-entered at 1440 -> none", async ({ page }) => {
   const { errors, left, right } = await startSurfacesNote(page, "present");
   const noteUrl = page.url();
   const slideRow = page.locator("section.present [data-kb-columns]");
 
-  // 落盤屏障（同 01-bootstrap 的 toPass(reload…)）：goto 會掐掉本頁唯一的共編連線、重載時內容由 server 讀回，
-  // server 落盤有 debounce——重整到讀回的文件裡有這一列才往下走。
+  // Persistence barrier (as the toPass(reload...) in 01-bootstrap): goto cuts the note's only collab connection and the content is
+  // read back from the server on reload; the server persists with a debounce, so reload until the read-back document has this row before continuing.
   await expect(async () => {
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible();
@@ -626,8 +610,8 @@ test("C9b 簡報：封面的列保留正規 style；390 寬開 → data-stacked�
   expectNoPageErrors(errors);
 });
 
-test("C9c 版本：手動存版 → 改右欄 → split view 兩側列 y 差 ≤ 1px；單欄＋只看變更不出錯", async ({ page }) => {
-  await page.setViewportSize({ width: 1500, height: 900 }); // 1500 開面板：預覽區夠寬，自動 split（同 22-versions）
+test("C9c versions: manual save -> edit the right column -> in split view the two sides' rows differ in y by <= 1px; single column + changes only does not error", async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 900 }); // 1500 with the panel open: the preview area is wide enough to split automatically (as in 22-versions)
   const { errors, left, right } = await startSurfacesNote(page, "versions");
   await caretIn(page, left, "End");
   await saveVersion(page, "cols-base");
@@ -661,7 +645,7 @@ test("C9c 版本：手動存版 → 改右欄 → split view 兩側列 y 差 ≤
   const single = page.getByTestId("diff-single");
   await expect(single).toBeVisible();
   await expect(single.locator(ROW)).toHaveCount(1);
-  // data-diff 直接寫在 PM 管的欄 DOM 上，真瀏覽器裡不得被重繪掉（欄本身 context、欄內改過的段落 changed）。
+  // data-diff is written directly on the column DOM managed by PM and must not be redrawn away in a real browser (the column itself is context, a paragraph edited inside a column is changed).
   await expect(single.locator(`${ROW} > ${COL}`)).toHaveCount(2);
   await expect(single.locator(`${ROW} > ${COL}[data-diff="context"]`)).toHaveCount(2);
   await expect(single.locator(`${COL}[data-diff="context"] .bn-block-outer[data-diff="changed"]`, { hasText: right })).toHaveCount(1);
@@ -669,12 +653,12 @@ test("C9c 版本：手動存版 → 改右欄 → split view 兩側列 y 差 ≤
   expectNoPageErrors(errors);
 });
 
-test("C10 外部 HTML 不成列：剪貼簿 text/html 是沒有 data-kb-* 的並列 div（帶 display:flex 與不帶各一次）→ 貼上後都沒有 columnList", async ({ page }) => {
+test("C10 external HTML does not become a row: clipboard text/html is side-by-side divs without data-kb-* (once with display:flex and once without) -> neither yields a columnList after pasting", async ({ page }) => {
   test.setTimeout(90_000);
   const errors = await startNote(page, "external-html");
   const editor = editorLocator(page);
   await grantClipboard(page);
-  // 帶 style 那份：Chromium 寫入 async clipboard 時會消毒 HTML，讀回記下 display:flex 是否還在（被剝的話，不帶 style 那份仍守住結構）
+  // The copy with style: Chromium sanitizes HTML when writing the async clipboard, so read back and record whether display:flex survived (if it is stripped, the copy without style still guards the structure)
   const cases = [
     { label: "styled", html: '<div style="display:flex"><div><p>A</p></div><div><p>B</p></div></div>', texts: ["A", "B"] },
     { label: "plain", html: "<div><div><p>C</p></div><div><p>D</p></div></div>", texts: ["C", "D"] },

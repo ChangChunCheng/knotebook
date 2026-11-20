@@ -1,14 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// `lib/tour-bridge.ts` 在首包（AppShell、NoteEditor 都 import 它）。從它出發、沿著執行期的 import 走下去，
-// 不得碰到編輯器的套件：tiptap、ProseMirror 一進來，首包就多出整條編輯器鏈（`scripts/check-bundle-size.mjs` 的 entry 上限擋的是結果，
-// 這裡擋的是原因，而且不必 build）。`import type` 編譯後消失，不算。
+// `lib/tour-bridge.ts` is in the first bundle (AppShell and NoteEditor both import it). Following its runtime imports must not reach
+// the editor packages: once tiptap or ProseMirror come in, the first bundle gains the whole editor chain. The entry limit in
+// `scripts/check-bundle-size.mjs` catches the result; this catches the cause, and needs no build. `import type` disappears at compile time and does not count.
 
 const SRC = `${process.cwd().replace(/\\/g, "/")}/src`;
 const EDITOR_PACKAGES = /^(@tiptap\/|prosemirror-|y-prosemirror|@blocknote\/)/;
 
-/** 執行期的 import／re-export 來源（不含 `import type`、`export type`）。 */
 function runtimeSpecifiers(code: string): string[] {
   const out: string[] = [];
   const re = /^\s*(import|export)\s+(?!type\s)(?:[^"';]*?\sfrom\s+)?["']([^"']+)["']/gm;
@@ -45,20 +44,20 @@ function closure(entry: string): { files: string[]; packages: string[] } {
   return { files: files.map((f) => f.slice(SRC.length + 1)), packages: [...packages] };
 }
 
-describe("tour-bridge 留在首包時不拉進編輯器套件", () => {
+describe("tour-bridge stays in the first bundle without pulling in editor packages", () => {
   const { files, packages } = closure(`${SRC}/lib/tour-bridge.ts`);
 
-  it("走得到開關模組（防正則或路徑壞掉而靜默全過）", () => {
+  it("reaches the switch module (guards against a broken regex or path silently passing)", () => {
     expect(files).toContain("lib/tour-bridge.ts");
     expect(files).toContain("collab/tour-filter-flag.ts");
   });
 
-  it("執行期 import 的套件裡沒有 tiptap、ProseMirror、y-prosemirror、BlockNote；也沒走到過濾外掛本體", () => {
+  it("packages imported at runtime contain no tiptap, ProseMirror, y-prosemirror or BlockNote, and the walk does not reach the filter plugin itself", () => {
     expect(packages.filter((p) => EDITOR_PACKAGES.test(p))).toEqual([]);
     expect(files).not.toContain("collab/tour-transaction-filter.ts");
   });
 
-  it("對照：同一套走法從過濾外掛本體出發，會看到 tiptap（證明偵測有效）", () => {
+  it("contrast: the same walk starting from the filter plugin itself sees tiptap (proves the detection works)", () => {
     expect(closure(`${SRC}/collab/tour-transaction-filter.ts`).packages).toContain("@tiptap/core");
   });
 });

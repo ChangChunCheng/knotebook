@@ -8,9 +8,9 @@ import { registerEditor, setTourTransactionFilter } from "@/lib/tour-bridge";
 import { createTourTransactionFilterExtension } from "./tour-transaction-filter";
 import { isTourTransactionFilterOn, setEditorTransactionFilterFlag, TOUR_TRANSACTION_META } from "./tour-filter-flag";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror 節點型別在 apps/web 值層級拿不到
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ProseMirror node type isn't available at value level in apps/web
 type Any = any;
 
 const cleanups: Array<() => void> = [];
@@ -21,7 +21,6 @@ afterEach(() => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-/** 共編編輯器（自己一份 Y.Doc），掛上過濾 extension 並 mount：未 mount 的編輯器沒有 PM 外掛。 */
 function mountEditor(doc: Y.Doc, extensions = [createTourTransactionFilterExtension()]): AnyEditor {
   const editor = BlockNoteEditor.create(
     withCollaboration({
@@ -32,9 +31,9 @@ function mountEditor(doc: Y.Doc, extensions = [createTourTransactionFilterExtens
         user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
       },
       _tiptapOptions: { extensions },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
     } as any),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   ) as any as AnyEditor;
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -61,7 +60,6 @@ function texts(editor: AnyEditor): string[] {
   );
 }
 
-/** 第一個 textblock 結尾的位置。 */
 function endOfFirstText(editor: AnyEditor): number {
   let end = -1;
   editor._tiptapEditor.state.doc.descendants((node: Any, pos: number) => {
@@ -75,7 +73,6 @@ function endOfFirstText(editor: AnyEditor): number {
   return end;
 }
 
-/** 文件裡每個 blockContainer 的 id 屬性（沒有 id 時是 null）。 */
 function blockIds(editor: AnyEditor): unknown[] {
   const ids: unknown[] = [];
   editor._tiptapEditor.state.doc.descendants((node: Any) => {
@@ -85,7 +82,7 @@ function blockIds(editor: AnyEditor): unknown[] {
   return ids;
 }
 
-/** 在最外層 blockGroup 尾端插入第一個 block 的複本，但 id 是 null：BlockNote 的 UniqueID 會用附加交易補上。 */
+/** Inserts a copy of the first block at the end of the outermost blockGroup with id null: BlockNote's UniqueID fills it in with an appended transaction. */
 function appendBlockWithoutId(state: Any): Any {
   const group = state.doc.firstChild;
   const first = group.firstChild;
@@ -93,7 +90,6 @@ function appendBlockWithoutId(state: Any): Any {
   return state.tr.insert(1 + group.content.size, copy);
 }
 
-/** 一般打字的形：一筆 insertText 交易。 */
 function typeAtEnd(editor: AnyEditor, text: string, meta?: [string, unknown]): void {
   const view = editor._tiptapEditor.view;
   const tr = view.state.tr.insertText(text, endOfFirstText(editor));
@@ -101,8 +97,8 @@ function typeAtEnd(editor: AnyEditor, text: string, meta?: [string, unknown]): v
   view.dispatch(tr);
 }
 
-describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
-  it("開關關著：一般 insertText 照常寫入，也寫進 Y.Doc", async () => {
+describe("tour transaction filter (real editor with Y.Doc collab)", () => {
+  it("switch off: ordinary insertText is written as usual, into the Y.Doc too", async () => {
     const { doc, editor } = await setup();
     expect(isTourTransactionFilterOn(editor._tiptapEditor)).toBe(false);
     const before = Y.encodeStateVector(doc);
@@ -111,7 +107,7 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(Y.encodeStateVector(doc)).not.toEqual(before);
   });
 
-  it("開關記在編輯器實例上：另一個編輯器開著，這一個照常寫入", async () => {
+  it("the switch is kept per editor instance: with another editor's on, this one still writes as usual", async () => {
     const { editor: a } = await setup();
     const { editor: b } = await setup();
     setEditorTransactionFilterFlag(b._tiptapEditor, true);
@@ -121,7 +117,7 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(texts(b)).toEqual(["hello"]);
   });
 
-  it("開著：一般 insertText、帶 composition meta 的交易都被擋，文件與 Y.Doc 不變", async () => {
+  it("on: ordinary insertText and transactions with the composition meta are blocked, document and Y.Doc unchanged", async () => {
     const { doc, editor } = await setup();
     setEditorTransactionFilterFlag(editor._tiptapEditor, true);
     const before = Y.encodeStateVector(doc);
@@ -131,7 +127,7 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(Y.encodeStateVector(doc)).toEqual(before);
   });
 
-  it("開著：只改選取的交易放行", async () => {
+  it("on: selection-only transactions pass", async () => {
     const { editor } = await setup();
     const end = endOfFirstText(editor);
     editor._tiptapEditor.commands.setTextSelection(end);
@@ -141,14 +137,14 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(texts(editor)).toEqual(["hello"]);
   });
 
-  it("開著：帶導覽 meta 的改文件交易放行", async () => {
+  it("on: document-changing transactions with the tour meta pass", async () => {
     const { editor } = await setup();
     setEditorTransactionFilterFlag(editor._tiptapEditor, true);
     typeAtEnd(editor, "!", [TOUR_TRANSACTION_META, true]);
     expect(texts(editor)).toEqual(["hello!"]);
   });
 
-  it("開著：另一個 Y.Doc 的 update 套進來（y-sync$）→ 內容照常出現", async () => {
+  it("on: an update from another Y.Doc applied (y-sync$) -> the content appears as usual", async () => {
     const { doc: d1, editor: a } = await setup();
     const d2 = new Y.Doc();
     cleanups.push(() => d2.destroy());
@@ -163,12 +159,12 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     Y.applyUpdate(d1, Y.encodeStateAsUpdate(d2, Y.encodeStateVector(d1)));
     await tick();
     expect(texts(a)).toEqual(["hello from B"]);
-    // 對照：同一個編輯器自己打的字仍被擋，證明上面那筆是靠 y-sync$ 放行的。
+    // Control: typing in this same editor is still blocked, so the update above passed because of y-sync$.
     typeAtEnd(a, "x");
     expect(texts(a)).toEqual(["hello from B"]);
   });
 
-  it("開著：帶導覽 meta 插入沒有 id 的 block → 補 id 的附加交易照樣放行；不帶 meta 的插入仍被擋", async () => {
+  it("on: inserting a block without an id with the tour meta -> the appended transaction that fills in the id passes too; an insert without the meta is still blocked", async () => {
     const { editor } = await setup();
     const tiptap = editor._tiptapEditor;
     setEditorTransactionFilterFlag(tiptap, true);
@@ -180,14 +176,13 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
   });
 
-  it("開著：遠端套進一個沒有 id 的 block → 本機補上 id（附加交易跟著遠端同步放行）", async () => {
+  it("on: a remote block without an id applied -> the local side fills in the id (the appended transaction passes along with the remote sync)", async () => {
     const { doc: d1, editor: a } = await setup();
     const d2 = new Y.Doc();
     cleanups.push(() => d2.destroy());
     Y.applyUpdate(d2, Y.encodeStateAsUpdate(d1));
     setEditorTransactionFilterFlag(a._tiptapEditor, true);
 
-    // 不經編輯器的寫入者：直接在 Y 裡加一個沒有 id 屬性的 block。
     const group = d2.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement;
     const block = new Y.XmlElement("blockContainer");
     const paragraph = new Y.XmlElement("paragraph");
@@ -203,7 +198,7 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
   });
 
-  it("開關切換多次：state.plugins 數量與身分不變，不呼叫 registerPlugin／unregisterPlugin", async () => {
+  it("toggled several times: the number and identity of state.plugins are unchanged and registerPlugin/unregisterPlugin aren't called", async () => {
     const { editor } = await setup();
     const tiptap = editor._tiptapEditor;
     const register = vi.spyOn(tiptap, "registerPlugin");
@@ -219,13 +214,13 @@ describe("導覽交易過濾（帶 Y.Doc 共編的真編輯器）", () => {
     after.forEach((plugin: unknown, i: number) => expect(plugin).toBe(before[i]));
     expect(register).not.toHaveBeenCalled();
     expect(unregister).not.toHaveBeenCalled();
-    // 開、關、開、關、開各打一次：只有兩次關著時打的字進文件，開關切換多次後仍然有效。
+    // On, off, on, off, on with one typing each: only the two typed while off land, so the switch still works after several toggles.
     expect(texts(editor)).toEqual(["helloxx"]);
   });
 });
 
-describe("導覽交易過濾：經登記處開關", () => {
-  it("setTourTransactionFilter 的 id 與登記的不同 → 不生效；相同 → 生效", async () => {
+describe("tour transaction filter: switch via the registry", () => {
+  it("setTourTransactionFilter with an id different from the registered one -> no effect; the same id -> takes effect", async () => {
     const { editor } = await setup();
     const unregister = registerEditor("note-1", editor);
     cleanups.push(unregister);
@@ -241,7 +236,7 @@ describe("導覽交易過濾：經登記處開關", () => {
     expect(texts(editor)).toEqual(["helloac"]);
   });
 
-  it("撤登記後開關關掉，打字照常寫入", async () => {
+  it("after unregistering the switch is off and typing is written as usual", async () => {
     const { editor } = await setup();
     const unregister = registerEditor("note-1", editor);
     setTourTransactionFilter("note-1", true);
@@ -253,7 +248,7 @@ describe("導覽交易過濾：經登記處開關", () => {
     expect(texts(editor)).toEqual(["hellob"]);
   });
 
-  it("編輯器已卸載後才撤登記：不拋錯、開關關掉", async () => {
+  it("unregistering after the editor has unmounted: no throw, the switch is off", async () => {
     const { editor } = await setup();
     const unregister = registerEditor("note-1", editor);
     setTourTransactionFilter("note-1", true);

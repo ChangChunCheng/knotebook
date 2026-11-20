@@ -16,12 +16,12 @@ import { KnotebookSideMenu, NotePathContext, SIDE_MENU_FLOATING_OPTIONS } from "
 import { DRAG_ACTIVE_CLASS, useDragActiveClass } from "./use-drag-active-class";
 
 /**
- * 拖放進行中，⋮⋮ 與它外面的幾層都要不吃指標（drop 才落得到底下的編輯器）。jsdom 不載 `index.css`：把 `.kb-dragging` 那條規則
- * 原樣抽出來注入 `<style>`。
+ * During a drag-and-drop, the handle and the layers outside it must not take the pointer (so the drop can reach the editor underneath). jsdom does not load `index.css`:
+ * the `.kb-dragging` rule is extracted verbatim and injected as `<style>`.
  *
- * jsdom 的 `getComputedStyle` 會做 `pointer-events` 的繼承：只關外層，裡面的元素量起來也是 none。所以先注入一張「每一層都明寫
- * auto」的底稿（特異度低於拖放規則）：每一層都得靠拖放規則直接選中才量得到 none，不能靠從外層繼承。這樣之後若有樣式在任何一層
- * 明寫 `auto`，規則也不會因為只關了外層而失效。
+ * jsdom's `getComputedStyle` inherits `pointer-events`: closing only the outer layer would make the inner elements also measure as none. So a baseline where every
+ * layer explicitly sets auto (lower specificity than the drag rule) is injected first: each layer must be selected by the drag rule directly to measure none, not by
+ * inheritance. That way, if some style later sets an explicit `auto` on any layer, the rule will not appear to work just because the outer layer was closed.
  */
 const EXPLICIT_AUTO =
   "[data-kb-side-menu-popover], [data-kb-column-side-menu], .bn-side-menu, .bn-side-menu *, [data-floating-ui-portal] * { pointer-events: auto; }";
@@ -54,7 +54,7 @@ const fire = (type: string, init: { relatedTarget?: EventTarget | null } = {}) =
   act(() => void document.dispatchEvent(event));
 };
 
-/** 欄（`columnEl`）掛 `useDragActiveClass`，裡面是真的 `SideMenuController`＋`KnotebookSideMenu`（帶 popover 標記），同筆記頁。 */
+/** The column (`columnEl`) mounts `useDragActiveClass`, inside it the real `SideMenuController` + `KnotebookSideMenu` (with the popover marker), same as on the note page. */
 function mount(content: PartialBlockLike[]): { editor: AnyEditor; column: () => HTMLElement; unmount(): void } {
   const editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: content as never }) as AnyEditor;
   function Column() {
@@ -80,7 +80,7 @@ function mount(content: PartialBlockLike[]): { editor: AnyEditor; column: () => 
   return { editor, column: () => screen.getByTestId("column"), unmount };
 }
 
-/** 讓 SideMenuView 指向第 2 欄的 b，回傳欄內 ⋮⋮ 的四層命中元素。 */
+/** Points SideMenuView at b in the 2nd column; returns the four hit-test layers of the handle in the column. */
 async function hoverColumnBlock(editor: AnyEditor): Promise<Record<"button" | "sideMenu" | "wrapper" | "popover", HTMLElement>> {
   const el = screen.getByText("b");
   Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [el] });
@@ -105,31 +105,31 @@ const pointerEventsOf = (layers: Record<string, HTMLElement>) =>
 const CONTENT = () => [P("x", "x1"), row([[P("a", "a1")], [P("b", "b1")]], "r")];
 const ALL_NONE = { button: "none", sideMenu: "none", wrapper: "none", popover: "none" };
 
-describe("U1 拖放進行中，欄內 ⋮⋮ 的每一層都不吃指標", () => {
-  it("U1 前提：⋮⋮ 的 popover 在欄（columnEl）之內，祖先選擇器成立", async () => {
+describe("during a drag-and-drop every layer of the handle inside a column ignores the pointer", () => {
+  it("precondition: the handle's popover is inside the column (columnEl), so the ancestor selector holds", async () => {
     const { editor, column } = mount(CONTENT());
     const { popover } = await hoverColumnBlock(editor);
     expect(column().contains(popover)).toBe(true);
   });
 
-  it("U1 document 收到 dragenter（沒有先 dragstart：從作業系統或別的視窗拖進來）→ 欄有 class，四層 computed pointer-events 都是 none", async () => {
+  it("document receives dragenter (without a dragstart first: dragged in from the OS or another window): the column gets the class and all four layers compute pointer-events none", async () => {
     const { editor, column } = mount(CONTENT());
     const layers = await hoverColumnBlock(editor);
-    for (const value of Object.values(pointerEventsOf(layers))) expect(value).not.toBe("none"); // 對照：沒拖放時照常吃指標
+    for (const value of Object.values(pointerEventsOf(layers))) expect(value).not.toBe("none"); // contrast: without a drag the pointer is taken as usual
     fire("dragenter");
     expect(column().classList.contains(DRAG_ACTIVE_CLASS)).toBe(true);
     expect(pointerEventsOf(layers)).toEqual(ALL_NONE);
   });
 
-  it("U1 只有 dragover（dragenter 漏掉）也加 class", async () => {
+  it("dragover alone (dragenter missed) also adds the class", async () => {
     const { column } = mount(CONTENT());
     fire("dragover");
     expect(column().classList.contains(DRAG_ACTIVE_CLASS)).toBe(true);
   });
 });
 
-describe("U1b 監聽在 capture 階段", () => {
-  it.each(["dragenter", "dragover"])("U1b 落點元素的 %s handler 呼叫 stopPropagation → 仍然加上 class", (type) => {
+describe("listeners are in the capture phase", () => {
+  it.each(["dragenter", "dragover"])("a %s handler on the drop-target element calling stopPropagation still adds the class", (type) => {
     const el = document.createElement("div");
     document.body.appendChild(el);
     el.addEventListener(type, (e) => e.stopPropagation());
@@ -144,7 +144,7 @@ describe("U1b 監聽在 capture 階段", () => {
     }
   });
 
-  it("U1b 落點元素的 drop handler 呼叫 stopPropagation → 仍然清掉 class", () => {
+  it("a drop handler on the drop-target element calling stopPropagation still clears the class", () => {
     const el = document.createElement("div");
     document.body.appendChild(el);
     el.addEventListener("drop", (e) => e.stopPropagation());
@@ -161,8 +161,8 @@ describe("U1b 監聽在 capture 階段", () => {
   });
 });
 
-describe("U2 拖放結束時清掉", () => {
-  it.each(["drop", "dragend", "pointermove"])("U2 dragenter 之後 %s → class 不在、四層都照常吃指標", async (end) => {
+describe("cleared when the drag ends", () => {
+  it.each(["drop", "dragend", "pointermove"])("after dragenter, %s: the class is gone and all four layers take the pointer as usual", async (end) => {
     const { editor, column } = mount(CONTENT());
     const layers = await hoverColumnBlock(editor);
     fire("dragenter");
@@ -173,9 +173,9 @@ describe("U2 拖放結束時清掉", () => {
   });
 
   it.each([
-    ["relatedTarget 是 null", null],
-    ["relatedTarget 是元素", "element"],
-  ] as const)("U2 拖放中途的 dragleave（%s）不清", (_label, related) => {
+    ["relatedTarget is null", null],
+    ["relatedTarget is an element", "element"],
+  ] as const)("a dragleave mid-drag (%s) does not clear", (_label, related) => {
     const { column } = mount(CONTENT());
     fire("dragenter");
     fire("dragleave", { relatedTarget: related === null ? null : document.body });
@@ -183,8 +183,8 @@ describe("U2 拖放結束時清掉", () => {
   });
 });
 
-describe("U3 中途誤清會自己補回", () => {
-  it("U3 dragenter → pointermove（誤清）→ dragover → class 回來", () => {
+describe("an erroneous clear restores itself", () => {
+  it("dragenter -> pointermove (erroneous clear) -> dragover -> the class is back", () => {
     const { column } = mount(CONTENT());
     fire("dragenter");
     fire("pointermove");
@@ -194,8 +194,8 @@ describe("U3 中途誤清會自己補回", () => {
   });
 });
 
-describe("U4 卸載與換掉 columnEl", () => {
-  it("U4 拖放中卸載 → class 拿掉；之後的 dragenter 不再加", () => {
+describe("unmount and replacing columnEl", () => {
+  it("unmount during a drag removes the class; a later dragenter no longer adds it", () => {
     const el = document.createElement("div");
     const { unmount } = renderHook(() => useDragActiveClass(el));
     fire("dragenter");
@@ -206,7 +206,7 @@ describe("U4 卸載與換掉 columnEl", () => {
     expect(el.classList.contains(DRAG_ACTIVE_CLASS)).toBe(false);
   });
 
-  it("U4 columnEl 換成另一個元素 → 舊的清掉、不再加；新的接手", () => {
+  it("columnEl replaced by another element: the old one is cleared and no longer gets it; the new one takes over", () => {
     const first = document.createElement("div");
     const second = document.createElement("div");
     const { rerender, unmount } = renderHook(({ el }) => useDragActiveClass(el), { initialProps: { el: first as HTMLElement | null } });
@@ -222,9 +222,9 @@ describe("U4 卸載與換掉 columnEl", () => {
   });
 });
 
-describe("U5 拖放進行中，格式工具列的浮層每一層都不吃指標；同一個 portal 裡的輸入框照常吃指標", () => {
-  // 結構照瀏覽器裡量到的：floating-ui portal（0×0）＞ floating-ui 的包裝 div（掛著工具列的標記）＞ `.bn-formatting-toolbar` ＞ 按鈕。
-  // ⋮⋮ 拖曳開始時 core 選取被拖的 block，工具列出現在它正上方；包裝 div 本身也會接走 drop，所以每一層都要量到 none。
+describe("during a drag-and-drop every layer of the formatting toolbar overlay ignores the pointer; inputs in the same portal still take the pointer", () => {
+  // Structure as measured in a browser: floating-ui portal (0x0) > floating-ui wrapper div (carrying the toolbar marker) > `.bn-formatting-toolbar` > buttons.
+  // When the handle drag starts core selects the dragged block and the toolbar appears right above it; the wrapper div itself also receives the drop, so every layer must measure none.
   function portalIn(column: HTMLElement): HTMLElement {
     const portal = document.createElement("div");
     portal.setAttribute("data-floating-ui-portal", "");
@@ -248,17 +248,17 @@ describe("U5 拖放進行中，格式工具列的浮層每一層都不吃指標�
     return { wrapper, toolbar, button };
   }
 
-  it("U5 dragenter → 欄有 class，工具列的包裝層、工具列、按鈕 computed pointer-events 都是 none；drop 之後恢復", () => {
+  it("dragenter: the column gets the class, and the toolbar's wrapper layer, toolbar and buttons all compute pointer-events none; restored after drop", () => {
     const { column } = mount(CONTENT());
     const layers = toolbarIn(portalIn(column()));
-    for (const value of Object.values(pointerEventsOf(layers))) expect(value).not.toBe("none"); // 對照：沒拖放時照常吃指標
+    for (const value of Object.values(pointerEventsOf(layers))) expect(value).not.toBe("none"); // contrast: without a drag the pointer is taken as usual
     fire("dragenter");
     expect(pointerEventsOf(layers)).toEqual({ wrapper: "none", toolbar: "none", button: "none" });
     fire("drop");
     for (const value of Object.values(pointerEventsOf(layers))) expect(value).not.toBe("none");
   });
 
-  it("U5b 拖放中，同一個 portal 裡檔案面板的 input[type=file] 照常吃指標（它本身就是拖放的落點）", () => {
+  it("during a drag the file panel's input[type=file] in the same portal still takes the pointer (it is itself a drop target)", () => {
     const { column } = mount(CONTENT());
     const portal = portalIn(column());
     toolbarIn(portal);

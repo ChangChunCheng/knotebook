@@ -3,16 +3,16 @@ import { test, expect, type Page } from "@playwright/test";
 import { ADMIN, chooseSelectOption, adminNav, createNote, createUserViaInvite, editorLocator, loginAs, openSiteAdmin, randomEmail } from "./helpers.js";
 
 /**
- * 儲存配額 E1：管理員在 Site admin → Storage plans 建一個 1 MB 方案、在 Site admin → Users 指派給新建的
- * 測試使用者 → 該使用者在自己的筆記貼一張 > 1 MB 的圖 → toast「Storage is full」＋用量句（自己的個人空間看得到數字）。
- * `finally` 以 API 把使用者指回新使用者的預設方案（e2e 疊上就是 Basic）並刪掉 1 MB 方案。
+ * `finally` points the user back to the new-user default plan through the API (Basic on the e2e stack) and deletes the 1 MB plan.
  *
- * - 貼上走合成 `ClipboardEvent("paste")`＋真的 `DataTransfer`：toast 是 `createUploadFile`（貼上／拖放那條）的行為，
- *   FilePanel 的 Upload tab 走的是行內錯誤，不是本案要驗的出口。
- * - 檔案是 1,100,000 bytes 的「PNG」：只有 8 bytes PNG 簽名＋零填充——server 只看 magic bytes（`uploads/magic-bytes.ts`），
- *   瀏覽器端也不解碼；> 1 MiB（1,048,576）才放不下 1 MB 方案。
- * - 用量句的數字是端到端守衛：`NoteEditor` 的 late-bound translate 若丟掉插值參數，這裡會看到 `{{used}}`。
- * - 名稱與 email 隨機化：腳本失敗時不 down 疊，重跑會吃到髒資料。
+ * - The paste uses a synthetic `ClipboardEvent("paste")` with a real `DataTransfer`: the toast is the behaviour of
+ *   `createUploadFile` (the paste/drop path); the FilePanel Upload tab shows an inline error instead, which is not the exit
+ *   under test here.
+ * - The file is a 1,100,000-byte "PNG": just the 8-byte PNG signature plus zero padding - the server looks only at magic
+ *   bytes (`uploads/magic-bytes.ts`) and the browser does not decode it; it must be > 1 MiB (1,048,576) to not fit a 1 MB plan.
+ * - The numbers in the usage sentence are an end-to-end guard: if the late-bound translate in `NoteEditor` dropped the
+ *   interpolation parameters, `{{used}}` would show here.
+ * - Names and emails are randomised: a failed run leaves the stack up and a re-run would otherwise hit dirty data.
  */
 
 const PLAN_NAME = `E2E 1MB ${randomUUID().slice(0, 8)}`;
@@ -31,7 +31,7 @@ async function pasteFakePng(page: Page, size: number): Promise<void> {
   }, size);
 }
 
-test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → toast「Storage is full」＋用量", async ({ browser }) => {
+test("21 storage quota: 1 MB plan assigned to a user -> pasting an image > 1 MB -> \"Storage is full\" toast plus usage", async ({ browser }) => {
   test.setTimeout(120_000);
   const adminContext = await browser.newContext();
   const userContext = await browser.newContext();
@@ -39,13 +39,12 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
   const userEmail = randomEmail();
   const password = "e2e-quota-user-pw";
   try {
-    // ── admin：以邀請建使用者（先建、之後才開站台管理，使用者表第一次載入就有他）──────
+    // admin: create the user by invitation first, and only afterwards open site admin, so the users table has them on its first load
     await loginAs(adminPage, ADMIN.email, ADMIN.password);
     await expect(adminPage).toHaveURL(/\/$/);
     await createUserViaInvite(adminPage, { email: userEmail, password, displayName: "E2E Quota User" });
     await openSiteAdmin(adminPage);
 
-    // ── admin：建 1 MB 方案 ────────────────────────────────────────
     await adminNav(adminPage, "Storage plans");
     await adminPage.getByRole("button", { name: "New plan" }).click();
     const planDialog = adminPage.getByRole("dialog", { name: "New storage plan" });
@@ -56,7 +55,6 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
     await expect(planDialog).not.toBeVisible();
     await expect(adminPage.getByRole("row", { name: PLAN_NAME, exact: true })).toContainText("1 MB");
 
-    // ── admin：在使用者表指派 ──────────────────────────────────────
     await adminNav(adminPage, "Users");
     const planSelect = adminPage.getByLabel(`Storage plan for ${userEmail}`, { exact: true });
     const assigned = adminPage.waitForResponse((r) => r.url().endsWith("/storage-plan") && r.request().method() === "PATCH");
@@ -64,7 +62,6 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
     expect((await assigned).status()).toBe(200);
     await expect(planSelect.locator("[data-select-text]")).toHaveText(PLAN_NAME);
 
-    // ── 使用者：登入 → 自己的筆記 → 貼 > 1 MB 圖 ─────────────────
     const userPage = await userContext.newPage();
     await loginAs(userPage, userEmail, password);
     await expect(userPage).toHaveURL(/\/$/);
@@ -76,8 +73,9 @@ test("21 儲存配額 E1：1 MB 方案指派給使用者 → 貼 > 1 MB 圖 → 
     await expect(userPage.getByText("Storage is full", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(userPage.getByText("0 B of 1 MB used. Ask a site admin for more space.", { exact: true })).toBeVisible();
   } finally {
-    // 指回預設方案、刪掉 1 MB 方案（API；不經 UI，讓清理不受畫面狀態影響）。清理**絕不 throw**：
-    // 在 finally 裡 throw 會蓋掉主體的原始失敗，Playwright 只會回報清理的錯——每一步先看 res.ok()，失敗只 console.warn。
+    // Point the user back to the default plan and delete the 1 MB plan (API, not the UI, so cleanup does not depend on screen
+    // state). Cleanup **must never throw**: a throw in `finally` would replace the body's original failure and Playwright would
+    // report only the cleanup error; check res.ok() at every step and on failure only console.warn.
     try {
       const plansRes = await adminPage.request.get("/api/admin/storage-plans");
       const usersRes = await adminPage.request.get("/api/admin/users");

@@ -7,15 +7,15 @@ import { AppErrorBoundary } from "@/components/ErrorBoundary";
 import { adminRole, groupDto } from "@/test/fixtures";
 import { GroupMenu } from "./GroupMenu";
 
-// 改名／刪除群組對話框的 lazy chunk 載入失敗：只在原位顯示 inline 錯誤，⋮ 鈕與整個 app 不崩。
-// `vi.mock` 整檔生效，所以獨立成檔（照 NoteList.folder-lazy-error.test.tsx）。
+// The lazy chunk of the rename/delete group dialog fails to load: only an inline error is shown in place, and the kebab button and the whole app do not crash.
+// `vi.mock` applies to the whole file, so this is its own file (like NoteList.folder-lazy-error.test.tsx).
 const fail = (name: string) => Promise.reject(new TypeError(`Failed to fetch dynamically imported module: http://localhost/assets/${name}-abc.js`));
 vi.mock("./GroupNameDialog", () => fail("GroupNameDialog"));
 vi.mock("./DeleteGroupDialog", () => fail("DeleteGroupDialog"));
 
 const GROUP = groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Workshop A" }, adminRole());
 
-describe("GroupMenu — 改名／刪除對話框 chunk 載入失敗", () => {
+describe("GroupMenu - rename/delete dialog chunk load failure", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     sessionStorage.clear();
@@ -28,7 +28,7 @@ describe("GroupMenu — 改名／刪除對話框 chunk 載入失敗", () => {
     sessionStorage.clear();
   });
 
-  it.each(["Rename", "Delete group"])("⋮ → %s：出現 inline 錯誤，⋮ 鈕還在、app 沒崩", async (item) => {
+  it.each(["Rename", "Delete group"])("kebab -> %s: an inline error appears, the kebab button remains, the app does not crash", async (item) => {
     render(
       <AppErrorBoundary reload={vi.fn()}>
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

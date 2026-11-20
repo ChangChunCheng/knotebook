@@ -1,7 +1,4 @@
-/**
- * #103：`onGroupAccessChanged` 只重驗 (noteIds × userIds) 的交集連線；重驗結果由 `resolveRole` 決定。
- * 本檔直接呼叫 hook（路由的呼叫點由 spy 測試與端到端踢線測試驗）。
- */
+/** The hook is called directly (the routes' call sites are verified by the spy test and the end-to-end kick test). */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -27,7 +24,7 @@ async function waitFor(label: string, timeoutMs: number, check: () => boolean): 
 }
 
 describe("#103 CollabHooks.onGroupAccessChanged", () => {
-  it("只重驗 noteIds × userIds 的交集：筆記不對或人不對都不動；點名到的人才被重驗並關閉", async () => {
+  it("revalidates only the intersection of noteIds x userIds: wrong note or wrong person are untouched; only the named people are revalidated and closed", async () => {
     let hooks!: CollabHooks;
     const ctx = await buildCollabTestApp({ collabHooks: (server, log) => (hooks = createCollabHooks(server, log)) });
     const owner = await ctx.createUser({ email: "owner-gh1@example.com", password: PASSWORD });
@@ -40,10 +37,10 @@ describe("#103 CollabHooks.onGroupAccessChanged", () => {
     const aClient = await (await ctx.loginAs("a-gh1@example.com", PASSWORD)).connect(note.id);
     const bClient = await (await ctx.loginAs("b-gh1@example.com", PASSWORD)).connect(note.id);
 
-    // 直接刪 DB 列（不經路由、不觸發任何 hook）：兩人此刻都已沒有角色，只有被點名的人會被重驗。
+    // Delete DB rows directly (bypassing routes, triggering no hook): both people have no role now, only the named person gets revalidated.
     await ctx.db.delete(noteShares).where(eq(noteShares.noteId, note.id));
-    hooks.onGroupAccessChanged([other.id], [a.id]); // 筆記不對
-    hooks.onGroupAccessChanged([note.id], [owner.id]); // 人不對（owner 沒有連線）
+    hooks.onGroupAccessChanged([other.id], [a.id]); // wrong note
+    hooks.onGroupAccessChanged([note.id], [owner.id]); // wrong person (owner has no connection)
     await sleep(REVERIFY_DEADLINE_MS + 1_000);
     expect(aClient.closes).toEqual([]);
     expect(bClient.closes).toEqual([]);
@@ -54,7 +51,7 @@ describe("#103 CollabHooks.onGroupAccessChanged", () => {
     expect(bClient.closes).toEqual([]);
   });
 
-  it("空名單、不存在的 id 不 throw", async () => {
+  it("empty lists and nonexistent ids don't throw", async () => {
     let hooks!: CollabHooks;
     await buildCollabTestApp({ collabHooks: (server, log) => (hooks = createCollabHooks(server, log)) });
     expect(() => hooks.onGroupAccessChanged([], [])).not.toThrow();

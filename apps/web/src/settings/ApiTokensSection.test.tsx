@@ -1,9 +1,6 @@
 /**
- * #130：設定→帳號的「API token」段。
- *
- * 沿用 SettingsAccountSection.test.tsx 的 render helper 形：走真 AppRoutes、stub fetch、
- * retry: false、掛 Toaster。fetch 樁對未預期 URL 一律 throw——那是「元件多打了一發
- * 沒人知道的 API」的守衛，不要改成回 404。
+ * Same render-helper shape as SettingsAccountSection.test.tsx: real AppRoutes, stubbed fetch, retry: false, Toaster mounted.
+ * The fetch stub throws on any unexpected URL so a component calling an unknown API fails the test; don't change it to return 404.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -107,9 +104,9 @@ describe("ApiTokensSection", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("建立表單：點對話框外面不關閉、已填名稱仍在；Esc 仍可關（表單型守衛只擋點外面）", async () => {
+  it("create form: clicking outside the dialog doesn't close it and the typed name remains; Esc still closes (the form guard only blocks outside clicks)", async () => {
     renderSettings(PASSWORD_USER, []);
-    // 本檔第一次載入帳號區塊 lazy chunk
+    // First load of the account section lazy chunk in this file
     fireEvent.click(
       await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }),
     );
@@ -121,7 +118,7 @@ describe("ApiTokensSection", () => {
     await waitFor(() => expect(screen.queryByLabelText(nameLabel)).toBeNull());
   });
 
-  it("明文畫面：點對話框外面與 Esc 都不關閉（既有 issued 守衛與 dismissOnOutside 並存仍成立）", async () => {
+  it("plaintext screen: clicking outside the dialog and Esc both leave it open (the existing issued guard and dismissOnOutside still hold together)", async () => {
     const created = { ...PAT_ROW, id: "t-g", name: "G", token: "knb_" + "z".repeat(43) };
     renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -140,13 +137,13 @@ describe("ApiTokensSection", () => {
     expect(screen.getByLabelText(valueLabel)).toBeInTheDocument();
   });
 
-  it("空狀態", async () => {
+  it("empty state", async () => {
     renderSettings(PASSWORD_USER, []);
     expect(await screen.findByText(i18n.t("settings.account.apiTokensEmpty"))).toBeInTheDocument();
   });
 
-  it("載入中不顯示空狀態（空狀態只在確定拿到空清單後才出現）", async () => {
-    // 空狀態案的 findByText 在載入中就匹配得到——顯示條件寫反（data 未定義才顯示）照樣綠。
+  it("no empty state while loading (it appears only after an empty list is confirmed)", async () => {
+    // The empty-state case's findByText already matches while loading, so a reversed condition (show when data is undefined) would still pass.
     renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "GET"
         ? fakeResponse({ ok: true, status: 200, json: () => new Promise(() => {}) })
@@ -156,8 +153,8 @@ describe("ApiTokensSection", () => {
     expect(screen.queryByText(i18n.t("settings.account.apiTokensEmpty"))).not.toBeInTheDocument();
   });
 
-  it("只填名稱就送出 → scope 預設 read、expiresInDays 預設 null（PAT 預設不到期）", async () => {
-    // 這條規則在前端的唯一落點就是這兩個預設值；建立成功案把兩個 select 都顯式改掉，守不到。
+  it("submitting with only a name -> scope defaults to read, expiresInDays defaults to null (PATs don't expire by default)", async () => {
+    // The create-success case sets both selects explicitly, so it doesn't exercise these defaults.
     const created = { ...PAT_ROW, id: "t-d", name: "D", token: "knb_" + "y".repeat(43) };
     const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -165,7 +162,7 @@ describe("ApiTokensSection", () => {
         : null
     );
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
-    // #239'：兩個開關預設都關，且都在「Access」那一組裡（#247：建立對話框改用 toggle）。
+    // #239': both toggles default to off and both are in the "Access" group (#247: the create dialog uses toggles).
     const access = screen.getByRole("group", { name: i18n.t("settings.account.apiTokensScopeLabel") });
     expect(within(access).getByRole("switch",{ name: i18n.t("settings.account.apiTokensScopeEdit") })).not.toBeChecked();
     expect(within(access).getByRole("switch",{ name: i18n.t("settings.account.apiTokensScopeMove") })).not.toBeChecked();
@@ -177,40 +174,40 @@ describe("ApiTokensSection", () => {
     expect(post?.body).toEqual({ name: "D", scope: "notes:read", expiresInDays: null });
   });
 
-  it("SSO-only 帳號也看得到這一段（在 hasPassword 三元式之外）", async () => {
+  it("SSO-only accounts also see this section (it sits outside the hasPassword ternary)", async () => {
     renderSettings(SSO_ONLY_USER, []);
     expect(
       await screen.findByRole("heading", { name: i18n.t("settings.account.apiTokensTitle") })
     ).toBeInTheDocument();
   });
 
-  it("列表：oauth 列標示「未經驗證」且名稱容器有 dir=ltr，pat 列沒有旁註", async () => {
+  it("list: oauth rows are labelled unverified and the name container has dir=ltr; pat rows have no side note", async () => {
     renderSettings(PASSWORD_USER, [PAT_ROW, OAUTH_ROW]);
     expect(await screen.findByText("Claude Code")).toBeInTheDocument();
     const oauthName = screen.getByText("Claude Code");
     expect(oauthName).toHaveAttribute("dir", "ltr");
-    expect(oauthName).toHaveClass("[unicode-bidi:isolate]"); // dir 與 isolate 樣式都要
-    // pat 列的名稱同樣要 bidi 隔離——名稱是使用者輸入，不只 oauth 列是外部字串
+    expect(oauthName).toHaveClass("[unicode-bidi:isolate]"); // both dir and the isolate style are required
+    // The pat row's name also needs bidi isolation: names are user input, so oauth rows aren't the only ones holding external strings
     expect(screen.getByText("Script")).toHaveAttribute("dir", "ltr");
     expect(screen.getByText("Script")).toHaveClass("[unicode-bidi:isolate]");
     expect(screen.getAllByText(i18n.t("settings.account.apiTokensUnverifiedName"))).toHaveLength(1);
   });
 
-  it("列表：過期的列標示 Expired（danger 語氣，#9「保留過期紅色」），不到期的列標示 No expiry", async () => {
+  it("list: expired rows are labelled Expired (danger tone, #9 keeps the expired red), non-expiring rows are labelled No expiry", async () => {
     const expiredRow: ApiTokenDto = { ...PAT_ROW, id: "t-exp", name: "Old", expiresAt: "2020-01-01T00:00:00.000Z" };
     renderSettings(PASSWORD_USER, [PAT_ROW, expiredRow]);
     expect(await screen.findByText(i18n.t("settings.account.apiTokensExpired"))).toHaveClass("text-destructive");
     expect(screen.getByText(i18n.t("settings.account.apiTokensNoExpiry"))).not.toHaveClass("text-destructive");
   });
 
-  describe("到期欄（#298）", () => {
+  describe("expiry column (#298)", () => {
     const DAY = 86_400_000;
     const ago = (ms: number): string => new Date(Date.now() - ms).toISOString();
     const ahead = (ms: number): string => new Date(Date.now() + ms).toISOString();
     const idle = (iso: string): string => new Date(Date.parse(iso) + OAUTH_APP_IDLE_DAYS * DAY).toLocaleDateString("en");
     const oauth = (over: Partial<ApiTokenDto>): ApiTokenDto => ({ ...OAUTH_ROW, name: "App", ...over });
 
-    it("S1：oauth 列的 access token 已過期、但最後使用＋N 天未到 → 顯示日期，不標已過期、不是 danger", async () => {
+    it("oauth row's access token expired but last used + N days not reached -> shows the date, not marked expired, not danger", async () => {
       const lastUsedAt = ago(1 * DAY);
       renderSettings(PASSWORD_USER, [oauth({ createdAt: ago(10 * DAY), lastUsedAt, expiresAt: ago(12 * 3_600_000) })]);
       const row = within(await screen.findByRole("row", { name: "App" }));
@@ -219,7 +216,7 @@ describe("ApiTokensSection", () => {
       expect(row.queryByText(i18n.t("settings.account.apiTokensExpired"))).toBeNull();
     });
 
-    it("S2：oauth 列閒置超過 N 天 → 已過期（danger），即使 expiresAt 還沒到", async () => {
+    it("oauth row idle for more than N days -> expired (danger) even when expiresAt hasn't arrived", async () => {
       renderSettings(PASSWORD_USER, [
         oauth({ createdAt: ago((OAUTH_APP_IDLE_DAYS + 5) * DAY), lastUsedAt: ago((OAUTH_APP_IDLE_DAYS + 1) * DAY), expiresAt: ahead(12 * 3_600_000) }),
       ]);
@@ -227,7 +224,7 @@ describe("ApiTokensSection", () => {
       expect(row.getByText(i18n.t("settings.account.apiTokensExpired"))).toHaveClass("text-destructive");
     });
 
-    it("S3：oauth 列沒用過 → 從建立時起算 N 天", async () => {
+    it("oauth row never used -> counted N days from creation", async () => {
       const createdAt = ago(2 * DAY);
       renderSettings(PASSWORD_USER, [oauth({ createdAt, lastUsedAt: null, expiresAt: ahead(12 * 3_600_000) })]);
       const row = within(await screen.findByRole("row", { name: "App" }));
@@ -235,7 +232,7 @@ describe("ApiTokensSection", () => {
       expect(row.getByText(i18n.t("settings.account.apiTokensNeverUsed"))).toBeInTheDocument();
     });
 
-    it("S4：pat 列仍顯示自己的 expiresAt，不套閒置公式", async () => {
+    it("pat row still shows its own expiresAt, no idle formula", async () => {
       const expiresAt = ahead(10 * DAY);
       const lastUsedAt = ago(1 * DAY);
       renderSettings(PASSWORD_USER, [{ ...PAT_ROW, name: "Pat", createdAt: ago(3 * DAY), lastUsedAt, expiresAt }]);
@@ -244,7 +241,7 @@ describe("ApiTokensSection", () => {
       expect(row.queryByText(idle(lastUsedAt))).toBeNull();
     });
 
-    it("S5：表格後三行註腳依序為 footnote、oauthExpiryNote、cleanup hint", async () => {
+    it("the three footer notes below the table are, in order, footnote, oauthExpiryNote, cleanup hint", async () => {
       renderSettings(PASSWORD_USER, []);
       const foot = await screen.findByText(i18n.t("settings.authorization.tokens.footnote"));
       const note = foot.nextElementSibling;
@@ -253,7 +250,7 @@ describe("ApiTokensSection", () => {
     });
   });
 
-  it("表名 API tokens；欄名 Name／Label／Permissions／Last used／Expires／Actions；列名＝token 名", async () => {
+  it("table name API tokens; column names Name / Label / Permissions / Last used / Expires / Actions; row name = token name", async () => {
     renderSettings(PASSWORD_USER, [PAT_ROW, OAUTH_ROW]);
     const table = await screen.findByRole("table", { name: "API tokens" });
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
@@ -268,7 +265,7 @@ describe("ApiTokensSection", () => {
     expect(within(table).getByRole("row", { name: "Claude Code" })).toBeInTheDocument();
   });
 
-  it("建立成功 → 同位置一次性顯示明文，且列表 API 被重抓；送出的 body 形狀正確", async () => {
+  it("create success -> one-time plaintext shown in place and the list API is refetched; the submitted body has the right shape", async () => {
     const created = { ...PAT_ROW, id: "t-new", name: "New", token: "knb_" + "x".repeat(43) };
     const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -294,7 +291,7 @@ describe("ApiTokensSection", () => {
     });
   });
 
-  it("建立：勾選後關掉對話框再重開 → 兩框回到未勾（reset 一併重設，#239）", async () => {
+  it("create: tick, close the dialog and reopen -> both boxes back to unticked (reset covers them, #239)", async () => {
     renderSettings(PASSWORD_USER, []);
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
     fireEvent.click(screen.getByRole("switch",{ name: i18n.t("settings.account.apiTokensScopeEdit") }));
@@ -307,7 +304,7 @@ describe("ApiTokensSection", () => {
     expect(screen.getByRole("switch",{ name: i18n.t("settings.account.apiTokensScopeMove") })).not.toBeChecked();
   });
 
-  it("建立：勾編輯與搬移 → 送第三形（#239）", async () => {
+  it("create: tick edit and move -> sends the third shape (#239)", async () => {
     const created = { ...PAT_ROW, id: "t-m", name: "M", token: "knb_" + "m".repeat(43) };
     const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -324,7 +321,7 @@ describe("ApiTokensSection", () => {
     expect(post?.body).toEqual({ name: "M", scope: "notes:read notes:write notes:move", expiresInDays: null });
   });
 
-  it("建立：勾編輯→勾搬移→取消編輯 → 搬移 disabled 且清掉，送 notes:read（#239）", async () => {
+  it("create: tick edit -> tick move -> untick edit -> move is disabled and cleared, sends notes:read (#239)", async () => {
     const created = { ...PAT_ROW, id: "t-u", name: "U", token: "knb_" + "u".repeat(43) };
     const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -347,7 +344,7 @@ describe("ApiTokensSection", () => {
     expect(post?.body).toEqual({ name: "U", scope: "notes:read", expiresInDays: null });
   });
 
-  it("建立失敗（409 token_limit）→ 停留在表單並 toast 錯誤，不顯示明文欄", async () => {
+  it("create failure (409 token_limit) -> stays on the form and toasts the error, no plaintext field", async () => {
     renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
         ? fakeResponse({
@@ -360,26 +357,24 @@ describe("ApiTokensSection", () => {
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
     fireEvent.change(screen.getByLabelText(i18n.t("settings.account.apiTokensNameLabel")), { target: { value: "New" } });
     fireEvent.click(screen.getByRole("button", { name: i18n.t("settings.account.apiTokensSubmit") }));
-    // 錯誤 toast 用 errors.<code> 的文案（有專屬 key），不是 fallback
     await screen.findByText(i18n.t("errors.token_limit"));
     expect(screen.queryByLabelText(i18n.t("settings.account.apiTokensValueLabel"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(i18n.t("settings.account.apiTokensNameLabel"))).toBeInTheDocument();
   });
 
-  it("撤銷：確認後才送 DELETE", async () => {
+  it("revoke: DELETE is sent only after confirming", async () => {
     const { calls } = renderSettings(PASSWORD_USER, [PAT_ROW], (url, method) =>
       url === `/api/auth/tokens/${PAT_ROW.id}` && method === "DELETE" ? fakeResponse({ ok: true, status: 204 }) : null
     );
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensRevoke") }));
-    // 先等確認對話框真的出現，再斷言「還沒送 DELETE」——直接同步斷言是假守衛：
-    // 即使實作在點下 trigger 就送出，fetch 也要一個 microtask 才會進 calls。
+    // Wait for the confirm dialog to actually appear before asserting "DELETE not sent yet": a synchronous assertion proves nothing,
+    // since even if the implementation sent on trigger click, fetch needs one microtask to reach calls.
     const confirm = await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensRevokeConfirm") });
     expect(calls.some(c => c.method === "DELETE")).toBe(false);
     fireEvent.click(confirm);
     await waitFor(() =>
       expect(calls.some(c => c.method === "DELETE" && c.url === `/api/auth/tokens/${PAT_ROW.id}`)).toBe(true)
     );
-    // 成功後對話框要關、列表要重抓（建立路徑有守，撤銷路徑原本沒有）
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: i18n.t("settings.account.apiTokensRevokeConfirm") })).not.toBeInTheDocument()
     );
@@ -388,7 +383,7 @@ describe("ApiTokensSection", () => {
     });
   });
 
-  it("明文畫面按 Esc 不會關閉（誤觸會讓 token 報銷）；按 Done 關閉後重開是乾淨表單", async () => {
+  it("Esc on the plaintext screen doesn't close it (a stray key press would waste the token); after Done closes, reopening shows a clean form", async () => {
     const created = { ...PAT_ROW, id: "t-new", name: "New", token: "knb_" + "z".repeat(43) };
     renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -407,14 +402,13 @@ describe("ApiTokensSection", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText(i18n.t("settings.account.apiTokensValueLabel"))).not.toBeInTheDocument()
     );
-    // 重開：明文不殘留、name 清空（行為守衛）
     fireEvent.click(screen.getByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
     expect(screen.queryByLabelText(i18n.t("settings.account.apiTokensValueLabel"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(i18n.t("settings.account.apiTokensNameLabel"))).toHaveValue("");
   });
 });
 
-describe("ApiTokensSection 表格與行內編輯（#247）", () => {
+describe("ApiTokensSection table and inline edit (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -428,7 +422,6 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
   const WRITER: ApiTokenDto = { ...PAT_ROW, id: "t-w", name: "n8n bot", agentLabel: "n8n", scope: "notes:read notes:write" };
   const ROWS = [OVERRIDE, DERIVED, WRITER];
 
-  /** token 表的列名＝token 名。 */
   const rowOf = (name: string) => screen.getByRole("row", { name });
   const pills = (row: HTMLElement) => Array.from(row.querySelectorAll("[data-pill]")).map((p) => p.textContent);
 
@@ -448,7 +441,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
   const ok = (id: string, body: Record<string, unknown>) =>
     fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ ...ROWS.find((t) => t.id === id)!, ...body }) });
 
-  it("權限 pill 三種組合：讀取／讀取＋編輯／讀取＋編輯＋搬移（搬移是 destructive 淡底）", async () => {
+  it("permission pill, three combinations: read / read + edit / read + edit + move (move is a destructive light background)", async () => {
     withPatch(ok);
     await screen.findByText("Claude Desktop");
     expect(pills(rowOf("Claude Desktop"))).toEqual(["Read"]);
@@ -457,19 +450,19 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(rowOf("Claude Code laptop")).getByText("Move to groups")).toHaveClass("text-destructive");
   });
 
-  it("label 等於 deriveAgentLabel(name) 時灰字、不等時一般字", async () => {
+  it("label is gray text when it equals deriveAgentLabel(name), normal text otherwise", async () => {
     withPatch(ok);
     await screen.findByText("Claude Desktop");
     expect(within(rowOf("Claude Desktop")).getByText("claude")).toHaveClass("text-muted-foreground");
     expect(within(rowOf("Claude Code laptop")).getByText("claude-laptop")).not.toHaveClass("text-muted-foreground");
   });
 
-  it("鉛筆 → 編輯態：主欄保留、其餘欄合併成一格表單、只有 label 一個輸入框（名稱不可改）；存檔／取消是 icon 鈕（無可見文字）在表單最右；其他列鉛筆 softDisabled＋原因", async () => {
+  it("pencil -> edit state: primary column kept, remaining columns merged into one form cell, the label is the only input (name can't be changed); save / cancel are icon buttons (no visible text) at the form's far right; other rows' pencils are softDisabled with a reason", async () => {
     withPatch(ok);
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
-    // 編輯中的列仍以 token 名為列名：主欄就是 nameColumn，aria-labelledby 指向仍在的主欄名稱（主欄不是 nameColumn 時才會掉名）。
-    // 先以「含輸入框的那一列」取列再斷名稱，不靠列名取列（否則掉名時紅在取列，而不是這條斷言）。
+    // An editing row is still named by the token name: the primary column is nameColumn and aria-labelledby points at the primary column name that still exists (the name is lost only when the primary column isn't nameColumn).
+    // Find the row via the one containing the input, then assert the name; don't find the row by name (otherwise a lost name fails at row lookup instead of at this assertion).
     const editingRow = screen.getAllByRole("row").find((candidate) => within(candidate).queryByRole("textbox") !== null);
     expect(editingRow).toHaveAccessibleName("Claude Desktop");
     const row = rowOf("Claude Desktop");
@@ -477,7 +470,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(row).getAllByRole("textbox")).toHaveLength(1);
     const input = within(row).getByRole("textbox", { name: "Label" });
     expect(input).toHaveValue("claude");
-    expect(input).toHaveFocus(); // autoFocus 是 TokenEditForm 自己的（SettingsTable 不管焦點，保留現有鍵盤行為）
+    expect(input).toHaveFocus(); // autoFocus belongs to TokenEditForm itself (SettingsTable doesn't manage focus, keeping the existing keyboard behavior)
     expect(within(row).getByText("1–32 letters, digits, . _ or -. Leave empty to go back to “claude”, derived from the name.")).toBeInTheDocument();
     const save = within(row).getByRole("button", { name: "Save" });
     const cancel = within(row).getByRole("button", { name: "Cancel" });
@@ -491,7 +484,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(other).not.toHaveAttribute("tabindex");
   });
 
-  it("鎖定中的鉛筆：可聚焦；按下（鍵盤 Enter／Space 也是觸發 click）不進編輯、不搶走正在編的那一列", async () => {
+  it("locked pencil: focusable; pressing it (keyboard Enter / Space also trigger click) doesn't enter edit and doesn't steal the row being edited", async () => {
     withPatch(ok);
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
@@ -503,7 +496,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(rowOf("Claude Desktop")).getByRole("textbox", { name: "Label" })).toBeInTheDocument();
   });
 
-  it("取消不送請求、回顯示態", async () => {
+  it("cancel sends no request, returns to display state", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
@@ -513,18 +506,17 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(bodies).toHaveLength(0);
   });
 
-  it("只改 label → body 只有 agentLabel", async () => {
+  it("changing only the label -> body has only agentLabel", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
     fireEvent.change(within(rowOf("Claude Desktop")).getByRole("textbox", { name: "Label" }), { target: { value: "desk" } });
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(bodies).toEqual([{ id: "t-d", body: { agentLabel: "desk" } }]));
-    // 儲存成功 → 回顯示態
     await waitFor(() => expect(within(rowOf("Claude Desktop")).queryByRole("textbox")).toBeNull());
   });
 
-  it("正在編的那列在重抓後消失（別處撤銷）→ 不再卡住其他列的鉛筆", async () => {
+  it("the row being edited disappears after a refetch (revoked elsewhere) -> no longer blocks other rows' pencils", async () => {
     let rows: ApiTokenDto[] = ROWS;
     renderSettings(PASSWORD_USER, [], (url, method) => {
       if (url === "/api/auth/tokens" && method === "GET")
@@ -535,7 +527,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
     expect(within(rowOf("Claude Code laptop")).getByRole("button", { name: "Edit" })).toHaveAttribute("aria-disabled", "true");
-    // 撤銷另一列觸發重抓；重抓回來時正在編的 "Claude Desktop" 也已被別處撤銷。
+    // Revoking another row triggers a refetch; by the time it returns, the "Claude Desktop" row being edited has also been revoked elsewhere.
     rows = [OVERRIDE];
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Revoke" }));
     fireEvent.click(await screen.findByRole("button", { name: "Revoke token" }));
@@ -543,7 +535,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(rowOf("Claude Code laptop")).getByRole("button", { name: "Edit" })).not.toHaveAttribute("aria-disabled");
   });
 
-  it("只改權限 → body 只有 scope（scopeFromChecks 的落庫形）", async () => {
+  it("changing only permissions -> body has only scope (the stored form of scopeFromChecks)", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("Claude Desktop");
     fireEvent.click(within(rowOf("Claude Desktop")).getByRole("button", { name: "Edit" }));
@@ -552,7 +544,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await waitFor(() => expect(bodies).toEqual([{ id: "t-d", body: { scope: "notes:read notes:write" } }]));
   });
 
-  it("清空 label（原本是覆寫值）→ 送 agentLabel: null；Enter＝儲存", async () => {
+  it("clearing the label (it was an override) -> sends agentLabel: null; Enter = save", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("Claude Code laptop");
     fireEvent.click(within(rowOf("Claude Code laptop")).getByRole("button", { name: "Edit" }));
@@ -562,7 +554,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await waitFor(() => expect(bodies).toEqual([{ id: "t-o", body: { agentLabel: null } }]));
   });
 
-  it("存檔請求在飛時：輸入框與存檔／取消鈕都原生 disabled（暫時性不可用）；回應落地後回顯示態", async () => {
+  it("while the save request is in flight: input and save / cancel buttons are natively disabled (temporary unavailability); after the response it returns to display state", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -582,7 +574,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await waitFor(() => expect(within(rowOf("Claude Desktop")).queryByRole("textbox")).toBeNull());
   });
 
-  it("什麼都沒改按儲存 → 不送請求、回顯示態", async () => {
+  it("pressing save with nothing changed -> no request, back to display state", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -591,7 +583,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(bodies).toHaveLength(0);
   });
 
-  it("label 格式不合 → 列內紅字、不送請求", async () => {
+  it("invalid label format -> red text in the row, no request", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -601,7 +593,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(bodies).toHaveLength(0);
   });
 
-  it("關掉「編輯」→「搬移」disabled 且清為關；儲存送 notes:read", async () => {
+  it("turning off \"Edit\" -> \"Move\" is disabled and cleared to off; saving sends notes:read", async () => {
     const { bodies } = withPatch(ok);
     await screen.findByText("Claude Code laptop");
     fireEvent.click(within(rowOf("Claude Code laptop")).getByRole("button", { name: "Edit" }));
@@ -615,7 +607,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await waitFor(() => expect(bodies).toEqual([{ id: "t-o", body: { scope: "notes:read" } }]));
   });
 
-  it("行內編輯：「搬移」開時顯示搬移提示全文、關時不在", async () => {
+  it("inline edit: the full move hint shows while \"Move\" is on, absent when off", async () => {
     withPatch(ok);
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -625,7 +617,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(rowOf("n8n bot")).getByText(hint)).toBeInTheDocument();
   });
 
-  it("PATCH 失敗 → 留在編輯態、列內 alert", async () => {
+  it("PATCH failure -> stays in edit state, alert in the row", async () => {
     withPatch(() => fakeResponse({ ok: false, status: 400, json: () => Promise.resolve({ error: { code: "invalid_body", message: "x" } }) }));
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -635,7 +627,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(within(rowOf("n8n bot")).getByRole("textbox", { name: "Label" })).toBeInTheDocument();
   });
 
-  it("沒有 Esc 取消：label 輸入框按 Esc 會關掉整個設定面板（Radix 在 capture 階段吃 Escape）", async () => {
+  it("no Esc cancel: Esc in the label input closes the whole settings panel (Radix handles Escape in the capture phase)", async () => {
     withPatch(ok);
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -643,7 +635,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("撤銷是列尾的 Revoke 鈕，確認框照舊（外觀由 RowIconButton 自己的測試守）", async () => {
+  it("revoke is the Revoke button at the row's end, confirm dialog unchanged (appearance is covered by RowIconButton's own test)", async () => {
     withPatch(ok);
     await screen.findByText("n8n bot");
     const trash = within(rowOf("n8n bot")).getByRole("button", { name: "Revoke" });
@@ -652,7 +644,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(await screen.findByRole("dialog", { name: "Revoke this token?" })).toBeInTheDocument();
   });
 
-  it("建立對話框：兩個 toggle 預設皆關；「搬移」開時出現搬移提示全文、關時不在", async () => {
+  it("create dialog: both toggles default to off; the full move hint shows while \"Move\" is on, absent when off", async () => {
     withPatch(ok);
     fireEvent.click(await screen.findByRole("button", { name: "Create API token" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Create API token" }));
@@ -661,7 +653,6 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
     expect(edit).toHaveAttribute("aria-checked", "false");
     expect(move).toHaveAttribute("aria-checked", "false");
     const hint = i18n.t("settings.account.apiTokensScopeMoveHint");
-    // 兩個 toggle 各有一行不重複名稱的說明，一直在。
     expect(dialog.getByText(i18n.t("settings.account.apiTokensScopeMoveDesc"))).toBeInTheDocument();
     expect(dialog.getByText(i18n.t("settings.account.apiTokensScopeDeleteDesc"))).toBeInTheDocument();
     expect(dialog.queryByText(hint)).toBeNull();
@@ -673,8 +664,7 @@ describe("ApiTokensSection 表格與行內編輯（#247）", () => {
   });
 });
 
-// #181：第三個 toggle「刪除」（notes:delete）——建立、pill、行內編輯。
-describe("ApiTokensSection #181 刪除 toggle", () => {
+describe("ApiTokensSection #181 delete toggle", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -687,7 +677,6 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
   const RWMD = "notes:read notes:write notes:move notes:delete";
   const EDIT = "Create and edit notes";
   const DELETE = "Move to trash (can be restored)";
-  // 刪除 toggle 的說明＝S2＋「需同時勾選編輯」一句（比照搬移說明的結尾）。
   const DELETE_HINT_EN =
     "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
   const DELETE_HINT_ZH =
@@ -713,7 +702,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     return bodies;
   }
 
-  it("建立對話框：「刪除」預設關、編輯關時 disabled；開編輯＋刪除送出 scope RWD", async () => {
+  it("create dialog: \"Delete\" is off by default and disabled while edit is off; turning on edit + delete submits scope RWD", async () => {
     const created = { ...PAT_ROW, id: "t-n", name: "D", token: "knb_" + "d".repeat(43) };
     const { calls } = renderSettings(PASSWORD_USER, [], (url, method) =>
       url === "/api/auth/tokens" && method === "POST"
@@ -737,7 +726,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     expect(post?.body).toEqual({ name: "D", scope: RWD, expiresInDays: null });
   });
 
-  it("建立對話框：「刪除」開時出現說明並以 aria-describedby 帶上、關時不在", async () => {
+  it("create dialog: when \"Delete\" is on the description shows and is attached via aria-describedby, absent when off", async () => {
     renderSettings(PASSWORD_USER, []);
     fireEvent.click(await screen.findByRole("button", { name: "Create API token" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Create API token" }));
@@ -752,7 +741,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     expect(dialog.queryByText(hint)).toBeNull();
   });
 
-  it("建立對話框（zh-TW）：「刪除」開時的說明以「需同時勾選「建立與修改筆記」。」收尾，並是 switch 的可及描述", async () => {
+  it("create dialog (zh-TW): when \"Delete\" is on its description ends with the sentence requiring \"Create and edit notes\" to be ticked, and is the switch's accessible description", async () => {
     await i18n.changeLanguage("zh-TW");
     renderSettings(PASSWORD_USER, []);
     fireEvent.click(await screen.findByRole("button", { name: i18n.t("settings.account.apiTokensCreate") }));
@@ -764,7 +753,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     expect(del).toHaveAccessibleDescription(DELETE_HINT_ZH);
   });
 
-  it("pill：RWMD 依序 Read、Edit、Move to groups、Move to trash（Move to trash 是預設 tone）；RWD 沒有 Move to groups", async () => {
+  it("pill: RWMD reads Read, Edit, Move to groups, Move to trash in order (Move to trash has the default tone); RWD has no Move to groups", async () => {
     withPatch();
     await screen.findByText("All bot");
     expect(pills(rowOf("All bot"))).toEqual(["Read", "Edit", "Move to groups", "Move to trash"]);
@@ -773,7 +762,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     expect(within(rowOf("Trash bot")).getByText("Move to trash")).not.toHaveClass("text-destructive");
   });
 
-  it("行內編輯：打開「刪除」→ PATCH { scope: RWD }", async () => {
+  it("inline edit: turning on \"Delete\" -> PATCH { scope: RWD }", async () => {
     const bodies = withPatch();
     await screen.findByText("n8n bot");
     fireEvent.click(within(rowOf("n8n bot")).getByRole("button", { name: "Edit" }));
@@ -784,7 +773,7 @@ describe("ApiTokensSection #181 刪除 toggle", () => {
     await waitFor(() => expect(bodies).toEqual([{ id: "t-w", body: { scope: RWD } }]));
   });
 
-  it("行內編輯：關掉「編輯」→「刪除」disabled 且清為關；儲存送 notes:read", async () => {
+  it("inline edit: turning off \"Edit\" -> \"Delete\" is disabled and cleared to off; saving sends notes:read", async () => {
     const bodies = withPatch();
     await screen.findByText("Trash bot");
     fireEvent.click(within(rowOf("Trash bot")).getByRole("button", { name: "Edit" }));

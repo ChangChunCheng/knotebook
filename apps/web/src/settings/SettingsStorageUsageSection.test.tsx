@@ -41,7 +41,7 @@ function renderPage(usage: StorageUsageDto) {
 const row = (kind: string) => screen.getByTestId(`by-kind-${kind}`);
 const barWidth = (kind: string) => (screen.getByTestId(`by-kind-bar-${kind}`) as HTMLElement).style.width;
 
-describe("SettingsStorageUsageSection（#247）", () => {
+describe("SettingsStorageUsageSection (#247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -49,10 +49,10 @@ describe("SettingsStorageUsageSection（#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("「依類型」五列恆在、順序固定（含 0 的列）", async () => {
+  it("the five \"by type\" rows are always present in a fixed order (including rows with 0)", async () => {
     renderPage({ usedBytes: 3 * MiB, quotaBytes: null, planName: "Big", byKind: { image: 3 * MiB, audio: 0, video: 0, document: 0, other: 0 } });
     expect(await screen.findByRole("heading", { level: 2, name: "By type" })).toBeInTheDocument();
-    // 區塊標題在載入中就已渲染（列要等 /api/storage 回來）——先等列出現再數
+    // The section title renders while loading (the rows wait for /api/storage) - wait for the rows to appear before counting
     await screen.findByTestId("by-kind-image");
     const names = screen.getAllByTestId(/^by-kind-(image|audio|video|document|other)$/).map((el) => el.getAttribute("data-testid"));
     expect(names).toEqual(["by-kind-image", "by-kind-audio", "by-kind-video", "by-kind-document", "by-kind-other"]);
@@ -62,7 +62,7 @@ describe("SettingsStorageUsageSection（#247）", () => {
     expect(screen.queryByText("Profile pictures")).not.toBeInTheDocument();
   });
 
-  it("佔比分母取 byKind 之和，不取 usedBytes（兩者不等時）", async () => {
+  it("the percentage denominator is the sum of byKind, not usedBytes (when they differ)", async () => {
     renderPage({
       usedBytes: 99 * MiB, quotaBytes: 2048 * MiB, planName: "Basic",
       byKind: { image: 3 * MiB, audio: 0, video: 0, document: 1 * MiB, other: 0 },
@@ -73,13 +73,13 @@ describe("SettingsStorageUsageSection（#247）", () => {
     expect(barWidth("audio")).toBe("0%");
   });
 
-  it("各類之和為 0 → 五條都是 0%（不得 NaN）", async () => {
+  it("kinds sum to 0 -> all five are 0% (must not be NaN)", async () => {
     renderPage({ usedBytes: 0, quotaBytes: 2048 * MiB, planName: "Basic", byKind: { image: 0, audio: 0, video: 0, document: 0, other: 0 } });
     await screen.findByTestId("by-kind-image");
     for (const kind of ["image", "audio", "video", "document", "other"]) expect(barWidth(kind)).toBe("0%");
   });
 
-  it("頁首、用量區塊、版本歷史區塊（含「版本不佔額度」一句與自動儲存開關）", async () => {
+  it("header, usage section, version history section (including the \"versions don't count toward the quota\" sentence and the auto-save switch)", async () => {
     renderPage({ usedBytes: MiB, quotaBytes: 2048 * MiB, planName: "Basic", byKind: { image: MiB, audio: 0, video: 0, document: 0, other: 0 } });
     expect(screen.getByRole("heading", { level: 1, name: "Storage" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Usage" })).toBeInTheDocument();

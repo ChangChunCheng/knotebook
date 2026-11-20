@@ -10,8 +10,9 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { SearchResults } from "./SearchResults";
 
 /**
- * #93：內文區的 lazy chunk 什麼時候載入。lazy 是模組級單例、`vi.mock` 的 factory 只跑一次，
- * 所以本檔的案**有順序**：先驗「不載」的三種字，再驗「2 個字就先載 chunk、還沒發請求」，最後才驗會載的 `" ab "`。
+ * #93: when the lazy chunk of the body section loads. The lazy module is a module-level singleton and the `vi.mock` factory runs only once,
+ * so the cases in this file are **ordered**: first the three kinds of text that must not load, then "two characters load the chunk first, before any request is sent",
+ * and only last the `" ab "` that does load.
  */
 const flags = vi.hoisted(() => ({ bodySearchLoaded: false }));
 vi.mock("@/components/sidebar/BodySearchLazy", async (importOriginal) => {
@@ -64,10 +65,10 @@ function renderControlled(initial: string) {
   const r = render(tree(initial));
   return { ...r, setQuery: (q: string) => r.rerender(tree(q)) };
 }
-const settle = () => new Promise((r) => setTimeout(r, 400)); // 過了 300 ms 防抖
+const settle = () => new Promise((r) => setTimeout(r, 400)); // past the 300 ms debounce
 
-describe("S5／S9 內文區何時載入", () => {
-  it("S5 只打空白：不發 /api/search、不載 chunk；標題 0 → noMatch", async () => {
+describe("when the body section loads", () => {
+  it("only whitespace typed: no /api/search, no chunk load; title 0 gives noMatch", async () => {
     renderControlled("  ");
     expect(await screen.findByText("No notes match your search.")).toBeInTheDocument();
     await settle();
@@ -75,7 +76,7 @@ describe("S5／S9 內文區何時載入", () => {
     expect(flags.bodySearchLoaded).toBe(false);
   });
 
-  it("S5 一個字：提示句、不發、不載；標題 0 → noMatch", async () => {
+  it("one character: the hint sentence, no request, no load; title 0 gives noMatch", async () => {
     renderControlled("z");
     expect(await screen.findByText("Type one more character to search note text too.")).toBeInTheDocument();
     expect(screen.getByText("No notes match your search.")).toBeInTheDocument();
@@ -84,7 +85,7 @@ describe("S5／S9 內文區何時載入", () => {
     expect(flags.bodySearchLoaded).toBe(false);
   });
 
-  it("S5 201 字：提示句、不發、不載", async () => {
+  it("201 characters: the hint sentence, no request, no load", async () => {
     renderControlled("b".repeat(201));
     expect(await screen.findByText("Too long to search note text; matching titles only.")).toBeInTheDocument();
     await settle();
@@ -92,18 +93,18 @@ describe("S5／S9 內文區何時載入", () => {
     expect(flags.bodySearchLoaded).toBe(false);
   });
 
-  it("S9 一到 2 個字就先載 chunk，即使 300 ms 還沒過、還沒發請求", async () => {
+  it("the chunk loads as soon as there are 2 characters, even before 300 ms have passed and before any request is sent", async () => {
     const r = renderControlled("b");
-    await screen.findByRole("link", { name: /^Beta/ }); // 清單到了（SearchResults 過了提前 return）
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); // 防抖的 setTimeout 不會自己到期
+    await screen.findByRole("link", { name: /^Beta/ }); // the list has arrived (SearchResults is past its early return)
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); // the debounce's setTimeout never expires by itself
     act(() => r.setQuery("be"));
-    // 不用 waitFor：RTL 的 asyncWrapper 會 await 一個 setTimeout(0)，被 fake 掉就卡住。改以 setImmediate（沒被 fake）讓出。
+    // Not waitFor: RTL's asyncWrapper awaits a setTimeout(0), which hangs when faked. Yield through setImmediate (not faked) instead.
     for (let i = 0; i < 500 && !flags.bodySearchLoaded; i += 1) await new Promise((res) => setImmediate(res));
     expect(flags.bodySearchLoaded).toBe(true);
     expect(searchUrls).toEqual([]);
   });
 
-  it("S5 \" ab \" 發的是 q=ab", async () => {
+  it("\" ab \" sends q=ab", async () => {
     renderControlled(" ab ");
     await waitFor(() => expect(searchUrls.length).toBe(1));
     expect(new URL(searchUrls[0]!, "http://x").searchParams.get("q")).toBe("ab");

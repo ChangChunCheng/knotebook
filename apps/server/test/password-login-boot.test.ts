@@ -12,8 +12,8 @@ import { seedAuthProvider } from "./helpers/oidc-provider.js";
 
 const fakeLogger = () => ({ warn: vi.fn(), error: vi.fn() });
 
-describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => {
-  it("預設（DB 開、env 未設）→ 一行都不印", async () => {
+describe("warnPasswordLoginAtBoot (#187: logs only, never blocks boot)", () => {
+  it("prints nothing by default (DB on, env unset)", async () => {
     const { db } = await buildTestApp();
     const logger = fakeLogger();
     await warnPasswordLoginAtBoot(db, { passwordLoginForceEnable: false }, logger);
@@ -21,7 +21,7 @@ describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => 
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it("env 強制＋DB 關 → warn「regardless of the Site admin setting」；env 強制＋DB 開 → warn「has no effect」", async () => {
+  it("env force + DB off -> warns 'regardless of the Site admin setting'; env force + DB on -> warns 'has no effect'", async () => {
     const { db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: "https://idp.example" });
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -36,7 +36,7 @@ describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => 
     expect(on.warn.mock.calls).toEqual([[PASSWORD_LOGIN_FORCED_NOOP_LOG]]);
   });
 
-  it("有效值關＋零個啟用 provider（只可能是手改 DB）→ error 一行；有啟用 provider 時不印", async () => {
+  it("effective off with zero enabled providers (only possible by hand-editing the DB) -> one error line; none when a provider is enabled", async () => {
     const { db } = await buildTestApp();
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
     const none = fakeLogger();
@@ -50,7 +50,7 @@ describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => 
     expect(one.warn).not.toHaveBeenCalled();
   });
 
-  it("只有停用的 provider 不算（enabled 為假）→ 仍 error", async () => {
+  it("disabled providers do not count (enabled is false) -> still errors", async () => {
     const { db } = await buildTestApp();
     await seedAuthProvider(db, { issuerUrl: "https://other.example", enabled: false, clientSecret: null });
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -59,7 +59,7 @@ describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => 
     expect(logger.error.mock.calls).toEqual([[PASSWORD_LOGIN_LOCKOUT_LOG]]);
   });
 
-  it("site_settings 讀不到列 → error 印 SETTINGS_MISSING（帳密視同開啟，不再多印）", async () => {
+  it("unreadable site_settings row -> logs SETTINGS_MISSING error only (password login treated as on)", async () => {
     const { db } = await buildTestApp();
     await db.delete(siteSettings);
     const logger = fakeLogger();
@@ -68,7 +68,7 @@ describe("warnPasswordLoginAtBoot（#187：不擋啟動，只寫 log）", () => 
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("env 強制時即使 DB 關＋零 provider 也不印 error（有效值是開）", async () => {
+  it("env force prints no error even with DB off and zero providers (effective value is on)", async () => {
     const { db } = await buildTestApp();
     await db.update(siteSettings).set({ passwordLoginEnabled: false });
     const logger = fakeLogger();

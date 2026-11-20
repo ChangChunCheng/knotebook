@@ -5,8 +5,8 @@ import { extractLinkTargets, isBlankParseResult, rebindWikilinks, restoreMermaid
 
 const isInline = (type: string) => type === "paragraph" || type === "heading";
 
-describe("isBlankParseResult（apps/web/src/ai/apply.ts 原 isBlankParseResult 精確形）", () => {
-  it("零 block 或單一空 paragraph → 空；divider 不算空；有文字不算空", () => {
+describe("isBlankParseResult (the exact form of the original isBlankParseResult in apps/web/src/ai/apply.ts)", () => {
+  it("zero blocks or a single empty paragraph -> blank; a divider is not blank; text is not blank", () => {
     expect(isBlankParseResult([])).toBe(true);
     expect(isBlankParseResult([{ type: "paragraph", content: [], children: [] }])).toBe(true);
     expect(isBlankParseResult([{ type: "divider" }])).toBe(false);
@@ -15,7 +15,7 @@ describe("isBlankParseResult（apps/web/src/ai/apply.ts 原 isBlankParseResult �
 });
 
 describe("restoreMermaidBlocks", () => {
-  it("codeBlock(language=mermaid) → mermaid block，code 一字不差；其他 codeBlock 不動；遞迴 children", () => {
+  it("codeBlock(language=mermaid) -> mermaid block, code character for character; other codeBlocks untouched; recurses into children", () => {
     const out = restoreMermaidBlocks([
       { type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph TD\n  A-->B" }] },
       { type: "codeBlock", props: { language: "ts" }, content: [{ type: "text", text: "1" }] },
@@ -25,7 +25,7 @@ describe("restoreMermaidBlocks", () => {
     expect(out[1]!.type).toBe("codeBlock");
     expect((out[2] as { children: Array<{ type: string }> }).children[0]!.type).toBe("mermaid");
   });
-  it("NM-COL1：columnList → column → codeBlock(mermaid) 也還原成 mermaid", () => {
+  it("columnList -> column -> codeBlock(mermaid) is also restored to mermaid", () => {
     const out = restoreMermaidBlocks([
       { type: "columnList", children: [
         { type: "column", props: { width: 1 }, children: [{ type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph TD" }] }] },
@@ -35,7 +35,7 @@ describe("restoreMermaidBlocks", () => {
     const col0 = (out[0] as { children: Array<{ children: unknown[] }> }).children[0]!;
     expect(col0.children[0]).toEqual({ type: "mermaid", props: { code: "graph TD" } });
   });
-  it("NM-ID：輸入帶字串 id → 還原後保留同一個 id（預覽 diff 才配得到）；非字串 id 不帶", () => {
+  it("input with a string id -> the same id is kept after restoring (so the preview diff can match); a non-string id is not carried", () => {
     const out = restoreMermaidBlocks([
       { id: "m1", type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph TD" }] },
       { id: 7, type: "codeBlock", props: { language: "mermaid" }, content: [{ type: "text", text: "graph LR" }] },
@@ -45,8 +45,8 @@ describe("restoreMermaidBlocks", () => {
   });
 });
 
-describe("rebindWikilinks（唯一命中才綁）", () => {
-  it("#269：表格格子裡的 [[…]] 也綁（兩種 cell 形），未命中也計入 unbound", () => {
+describe("rebindWikilinks (bind only on a unique hit)", () => {
+  it("#269: [[...]] inside table cells is bound too (both cell shapes), a miss also counts in unbound", () => {
     const notes = [{ id: "n1", title: "A" }];
     const [out, unbound] = rebindWikilinks(
       [{ type: "table", content: { type: "tableContent", rows: [{ cells: [
@@ -62,7 +62,7 @@ describe("rebindWikilinks（唯一命中才綁）", () => {
     expect((cells[1] as { content: Array<{ text: string }> }).content[0]!.text).toBe("[[Nope]]");
   });
   const notes = [{ id: "11111111-1111-4111-8111-111111111111", title: "A" }, { id: "2", title: "Dup" }, { id: "3", title: "Dup" }];
-  it("唯一命中 → wikilink inline；重名／找不到 → 純文字且計數", () => {
+  it("a unique hit -> wikilink inline; duplicate name / not found -> plain text and counted", () => {
     const [blocks, unbound] = rebindWikilinks(
       [{ type: "paragraph", content: [{ type: "text", text: "see [[A]] and [[Dup]] and [[Nope]]", styles: {} }], children: [] }],
       notes,
@@ -73,12 +73,12 @@ describe("rebindWikilinks（唯一命中才綁）", () => {
     expect(content[1]!.props).toEqual({ targetNoteId: notes[0]!.id, snapshotTitle: "A" });
     expect(unbound).toBe(2);
   });
-  it("codeBlock（非 inline content）裡的 [[X]] 不重綁", () => {
+  it("[[X]] inside a codeBlock (non-inline content) is not rebound", () => {
     const [blocks, unbound] = rebindWikilinks([{ type: "codeBlock", content: [{ type: "text", text: "[[A]]" }] }], notes, isInline);
     expect((blocks[0] as { content: Array<{ type: string }> }).content[0]!.type).toBe("text");
     expect(unbound).toBe(0);
   });
-  it("NM-COL2：欄內段落的 [[A]] 也綁、unbound 0", () => {
+  it("[[A]] in a paragraph inside a column is bound too, unbound 0", () => {
     const [blocks, unbound] = rebindWikilinks(
       [{ type: "columnList", children: [
         { type: "column", props: { width: 1 }, children: [{ type: "paragraph", content: [{ type: "text", text: "[[A]]", styles: {} }], children: [] }] },
@@ -94,7 +94,7 @@ describe("rebindWikilinks（唯一命中才綁）", () => {
 });
 
 describe("extractLinkTargets", () => {
-  it("走訪 wikilink 元素、只收合法 uuid、去重排序", () => {
+  it("walks wikilink elements, accepts only valid uuids, dedupes and sorts", () => {
     const doc = new Y.Doc();
     const g = new Y.XmlElement("blockGroup"); const c = new Y.XmlElement("blockContainer"); c.setAttribute("id", "a");
     const p = new Y.XmlElement("paragraph");

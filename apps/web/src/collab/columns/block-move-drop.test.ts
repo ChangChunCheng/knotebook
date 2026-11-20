@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- 測試直接摸 PM 的 view／selection（型別在 apps/web 拿不到） */
+/* eslint-disable @typescript-eslint/no-explicit-any -- tests reach into PM's view/selection directly (types unavailable in apps/web) */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
@@ -9,8 +9,7 @@ import { collabUndoManager, keepCollabUndoAlive } from "@/collab/undo";
 import type { EditorRef } from "@/components/wikilink/menu";
 import { IMG, P, blockPos, cursorOf, integrity, pressKey, row, shape, startBlockDrag, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 
-// ⋮⋮ 拖放之後的撤銷與焦點（#428、#429、#430）。拖放的那顆編輯器（bob）以 `buildNoteEditorOptions` 的完整選項掛（`handleDrop` 串接、
-// 拖曳來源記錄器都在）；另一顆（alice）是一般的共編編輯器，用來看共享文件。兩顆各自一份 Y.Doc，經 `Y.applyUpdate` 互傳。
+// Undo and focus after a drag-drop of the drag handle (#428, #429, #430). The dragging editor (bob) is mounted with `buildNoteEditorOptions`'s full options (the `handleDrop` chain and the drag-source recorder are present); the other (alice) is an ordinary collab editor used to inspect the shared document. Each has its own Y.Doc, synced through `Y.applyUpdate`.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
@@ -29,8 +28,7 @@ type Box = readonly [left: number, top: number, right: number, bottom: number];
 const ORIGINAL_RECT = Element.prototype.getBoundingClientRect;
 
 /**
- * jsdom 的 rect 全是 0：落點那顆編輯器根層的 `.bn-block-group` 回包住所有測試座標的框（core SideMenu 以它找最近的編輯器），
- * 另一顆放到很遠；其餘元素照 `<data-node-type>:<data-id>` 查表。
+ * jsdom rects are all 0: the drop-target editor's root `.bn-block-group` returns a box enclosing all test coordinates (core SideMenu uses it to find the nearest editor), the other editor is placed far away; other elements are looked up by `<data-node-type>:<data-id>`.
  */
 function mockRects(target: AnyEditor, boxes: Record<string, Box> = {}): void {
   const dom = target.prosemirrorView!.dom;
@@ -75,7 +73,7 @@ function makeEditor(doc: Y.Doc, name: string, full: boolean): AnyEditor {
   const el = document.createElement("div");
   document.body.appendChild(el);
   editor.mount(el);
-  // 同 NoteEditor 的 `useCollabUndoLifeline`：掛載之後接上撤銷的生命線。
+  // Same as NoteEditor's `useCollabUndoLifeline`: attach the undo lifeline after mount.
   const disarm = full ? keepCollabUndoAlive(editor) : () => {};
   cleanups.push(() => {
     disarm();
@@ -86,7 +84,7 @@ function makeEditor(doc: Y.Doc, name: string, full: boolean): AnyEditor {
   return editor;
 }
 
-/** alice（一般共編）寫入初始內容、同步給 bob（完整選項）；初始內容不在 bob 的撤銷堆疊裡。 */
+/** alice (ordinary collab) writes the initial content and syncs it to bob (full options); the initial content isn't in bob's undo stack. */
 async function pair(initial: PartialBlockLike[]) {
   const d1 = new Y.Doc();
   const d2 = new Y.Doc();
@@ -104,20 +102,19 @@ async function pair(initial: PartialBlockLike[]) {
     Y.applyUpdate(d1, u2);
     await tick();
   };
-  /** 單向：只把 bob 的更新送給 alice（bob 這邊不跑任何 Y 交易）。 */
+  // One way: sends only bob's updates to alice (runs no Y transaction on bob's side).
   const bobToAlice = () => Y.applyUpdate(d1, Y.encodeStateAsUpdate(d2, Y.encodeStateVector(d1)));
-  /** 單向：只把 alice 的更新送給 bob。 */
+  // One way: sends only alice's updates to bob.
   const aliceToBob = () => Y.applyUpdate(d2, Y.encodeStateAsUpdate(d1, Y.encodeStateVector(d2)));
   return { alice, bob, sync, bobToAlice, aliceToBob };
 }
 
-/** `id` 那個 block 第一個 textblock 的文字結尾（落點在它的下半部：PM 的 `dropPoint` 插在這個 block 之後）。 */
+/** End of the text of `id`'s first textblock (the drop point is in its lower half: PM's `dropPoint` inserts after this block). */
 const textEnd = (editor: AnyEditor, id: string): number => {
   const pos = blockPos(editor, id);
   return pos + 2 + editor.prosemirrorView!.state.doc.nodeAt(pos)!.firstChild!.content.size;
 };
 
-/** 對 `view.dom` dispatch drop（`posAtCoords` 固定回 `pos`）。 */
 function dispatchDrop(editor: AnyEditor, dataTransfer: unknown, pos: number, at: readonly [number, number], extra: { ctrlKey?: boolean } = {}): DragEvent {
   const view = editor.prosemirrorView! as any;
   view.posAtCoords = () => ({ pos, inside: -1 });
@@ -132,8 +129,7 @@ function dispatchDrop(editor: AnyEditor, dataTransfer: unknown, pos: number, at:
 }
 
 /**
- * 瀏覽器在 ⋮⋮ 上送的 dragend：⋮⋮ 自己的 handler 呼叫 core `blockDragEnd`（它會讓編輯器失焦），之後冒泡到 document。
- * ⋮⋮ 替身掛在編輯器容器內（同 `startBlockDrag`）。
+ * A dragend the browser sends on the drag handle: the handle's own handler calls core `blockDragEnd` (which blurs the editor), then it bubbles to document. The handle stand-in is mounted inside the editor container (same as `startBlockDrag`).
  */
 function dragEndFromHandle(editor: AnyEditor): void {
   const handle = document.createElement("div");
@@ -143,7 +139,6 @@ function dragEndFromHandle(editor: AnyEditor): void {
   handle.remove();
 }
 
-/** ⋮⋮ 拖 `drag`（`range` 給多選）放到 `target` 的下半部；`beforeDrop` 在 dragstart 之後、drop 之前跑。 */
 async function blockDrop(
   editor: AnyEditor,
   g: { drag: string; range?: readonly [string, string]; target: string; at?: readonly [number, number]; boxes?: Record<string, Box>; ctrlKey?: boolean },
@@ -160,18 +155,18 @@ async function blockDrop(
 const ids = (editor: AnyEditor): string[] => editor.document.map((b) => b.id);
 const selectionType = (editor: AnyEditor): string => editor.prosemirrorView!.state.selection.toJSON().type;
 
-/** 頁面錯誤的替身：y-prosemirror 在 Y 觀察者裡丟的例外會從 `undo()` 冒出來。 */
+/** Page error stand-in: an exception thrown by y-prosemirror inside a Y observer surfaces from `undo()`. */
 function undoOnce(editor: AnyEditor): void {
   expect(pressKey(editor, "z", { ctrlKey: true }), "Ctrl+Z 有 handler 接手").toBe(true);
 }
 
 const XROWZ = () => [P("x", "x1"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z1")];
 
-describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
+describe("#428 Ctrl+Z right after dropping a horizontal-line drag into an existing column", () => {
   it.each([
-    ["z 放到 a 下方（進第 1 欄）", "a1", "paragraph:x  ROW[COL(paragraph:a,paragraph:z) | COL(paragraph:b)]"],
-    ["z 放到 b 下方（進第 2 欄）", "b1", "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b,paragraph:z)]"],
-  ] as const)("%s → 放下後不是 NodeSelection；一下 Ctrl+Z 就還原、不丟例外、本機與共享文件相同、id 不變", async (_label, target, moved) => {
+    ["z dropped below a (into column 1)", "a1", "paragraph:x  ROW[COL(paragraph:a,paragraph:z) | COL(paragraph:b)]"],
+    ["z dropped below b (into column 2)", "b1", "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b,paragraph:z)]"],
+  ] as const)("%s: after the drop the selection isn't a NodeSelection; one Ctrl+Z restores, no exception, local and shared documents equal, ids unchanged", async (_label, target, moved) => {
     const { alice, bob, sync } = await pair(XROWZ());
     const before = shape(bob);
     const beforeIds = ids(bob);
@@ -189,16 +184,15 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
     expect(shape(alice)).toBe(before);
     expect(integrity(bob)).toEqual(CLEAN);
 
-    // 重做：撤銷時 y-prosemirror 留著「放下之前」的選取，重做以它還原。
+    // Redo: when undoing, y-prosemirror keeps the selection from before the drop, and redo restores with it.
     expect(() => pressKey(bob, "z", { ctrlKey: true, shiftKey: true })).not.toThrow();
     expect(shape(bob)).toBe(moved);
     await sync();
     expect(shape(alice)).toBe(moved);
   });
 
-  it("z 放進第 1 欄 → Ctrl+Z 之後立刻 Ctrl+Shift+Z（中間沒有任何 Y 交易）→ 不丟例外、回到放下後、兩邊相同", async () => {
-    // 撤銷之後 y-prosemirror 留著這一步「放下之前」的選取，下一筆非本機編輯的 Y 交易（這裡是重做）以它還原；
-    // 中間若有任何 Y 交易（例如同步），它就被用掉了，所以這一案兩下之間不同步。
+  it("z into column 1 -> Ctrl+Z then immediately Ctrl+Shift+Z (no Y transaction in between) -> no exception, back to the post-drop state, both sides equal", async () => {
+    // After undo y-prosemirror keeps this step's "before the drop" selection, and the next non-local Y transaction (here, the redo) restores with it; any Y transaction in between (e.g. a sync) would consume it, so this case doesn't sync between the two presses.
     const { alice, bob, sync } = await pair(XROWZ());
     await blockDrop(bob, { drag: "z1", target: "a1", at: [150, 150], boxes: rowBoxes("r", 2) });
     const moved = shape(bob);
@@ -210,7 +204,7 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
     expect(shape(alice)).toBe(moved);
   });
 
-  it("頂層排序（x y z 拖 x 到 z 下方）→ 一下 Ctrl+Z 還原、id 不變、只多一步撤銷", async () => {
+  it("top-level reorder (x y z, drag x below z) -> one Ctrl+Z restores, ids unchanged, one undo step added", async () => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     const manager = collabUndoManager(bob)!;
     const stack = manager.undoStack.length;
@@ -224,7 +218,7 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
     expect(ids(bob)).toEqual(["x1", "y1", "z1"]);
   });
 
-  it("打完字馬上排序、排完馬上打字（都在 500ms 內）→ 排序自成一步：Ctrl+Z 依序撤掉後打的字、排序、先打的字", async () => {
+  it("typing right before a reorder and right after (both within 500 ms) -> the reorder is its own step: Ctrl+Z undoes the later typing, the reorder, then the earlier typing in turn", async () => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     const view = bob.prosemirrorView!;
     bob.setTextCursorPosition("y1", "end");
@@ -241,7 +235,7 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
     expect(shape(bob)).toBe("paragraph:x  paragraph:y  paragraph:z");
   });
 
-  it("多選拖曳（a b 拖到 c 下方）→ 放下後是跨兩段的文字選取（再拖一次仍是兩個 block）、一下 Ctrl+Z 還原", async () => {
+  it("multi-select drag (a b dragged below c) -> after the drop a text selection spanning two blocks (a second drag still moves two blocks), one Ctrl+Z restores", async () => {
     const { bob } = await pair([P("a", "a1"), P("b", "b1"), P("c", "c1"), P("d", "d1")]);
     await blockDrop(bob, { drag: "a1", range: ["a1", "b1"], target: "c1" });
     expect(shape(bob)).toBe("paragraph:c  paragraph:a  paragraph:b  paragraph:d");
@@ -255,9 +249,9 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
   });
 
   it.each([
-    ["橫線排序（x 拖到 z 下方）", { drag: "x1", target: "z1" }, "paragraph:y  paragraph:z  paragraph:x"],
-    ["直線建列（x 拖到 z 右緣）", { drag: "x1", target: "z1", at: [590, 165] as const, boxes: { "blockOuter:z1": [0, 150, 600, 180] as Box } }, "paragraph:y  ROW[COL(paragraph:z) | COL(paragraph:x)]  paragraph"],
-  ] as const)("%s → 撤銷再重做：重做之後是游標，不是整塊選取 x 原位的 y", async (_label, g, moved) => {
+    ["horizontal-line reorder (x dragged below z)", { drag: "x1", target: "z1" }, "paragraph:y  paragraph:z  paragraph:x"],
+    ["vertical-line column creation (x dragged to z's right edge)", { drag: "x1", target: "z1", at: [590, 165] as const, boxes: { "blockOuter:z1": [0, 150, 600, 180] as Box } }, "paragraph:y  ROW[COL(paragraph:z) | COL(paragraph:x)]  paragraph"],
+  ] as const)("%s: undo then redo - after redo the selection is a caret, not a whole-block selection of the y now in x's old place", async (_label, g, moved) => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     await blockDrop(bob, g);
     expect(shape(bob)).toBe(moved);
@@ -269,8 +263,8 @@ describe("#428 橫線放進既有欄之後立刻 Ctrl+Z", () => {
   });
 });
 
-describe("#429 多選拖曳途中有協作者打字", () => {
-  it("a b 拖到 c 下方，拖曳中 alice 在 d 打字（bob 的多選退化成文字選取）→ a b 整塊搬走、沒有空段落、兩邊相同", async () => {
+describe("#429 collaborator types during a multi-select drag", () => {
+  it("a b dragged below c, alice types in d during the drag (bob's multi-selection degrades to a text selection) -> a b moved as whole blocks, no empty paragraph, both sides equal", async () => {
     const { alice, bob, sync } = await pair([P("a", "a1"), P("b", "b1"), P("c", "c1"), P("d", "d1")]);
     await blockDrop(bob, { drag: "a1", range: ["a1", "b1"], target: "c1" }, async () => {
       expect(selectionType(bob), "前提：dragstart 後是多選").not.toBe("text");
@@ -295,7 +289,7 @@ describe("#429 多選拖曳途中有協作者打字", () => {
   });
 });
 
-/** 以 `fromJSON({ type: "node" })` 在 `pos` 建 NodeSelection（apps/web 拿不到 prosemirror-state 的值）。 */
+/** Builds a NodeSelection at `pos` via `fromJSON({ type: "node" })` (apps/web can't get prosemirror-state values). */
 function selectNode(editor: AnyEditor, pos: number): void {
   const view = editor.prosemirrorView! as any;
   let base = view.state.selection.constructor;
@@ -304,8 +298,8 @@ function selectNode(editor: AnyEditor, pos: number): void {
   expect(selectionType(editor), "前提：NodeSelection").toBe("node");
 }
 
-describe("#428 撤銷當下的選取是 NodeSelection", () => {
-  it("撤銷堆疊是空的：Ctrl+Z 不動選取，圖片仍是 NodeSelection", async () => {
+describe("#428 selection at undo time is a NodeSelection", () => {
+  it("undo stack empty: Ctrl+Z leaves the selection alone, the image stays a NodeSelection", async () => {
     const { bob } = await pair([P("x", "x1"), IMG("i1")]);
     expect(collabUndoManager(bob)!.undoStack.length, "前提：沒有東西可撤").toBe(0);
     selectNode(bob, blockPos(bob, "i1"));
@@ -315,9 +309,9 @@ describe("#428 撤銷當下的選取是 NodeSelection", () => {
   });
 
   it.each([
-    ["x 複製到 z 下方（文件結尾）", XROWZ, { drag: "x1", target: "z1" }, "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b)]  paragraph:z  paragraph:x"],
-    ["z 複製到 a 下方（第 1 欄結尾）", XROWZ, { drag: "z1", target: "a1", at: [150, 150] as const, boxes: rowBoxes("r", 2) }, "paragraph:x  ROW[COL(paragraph:a,paragraph:z) | COL(paragraph:b)]  paragraph:z"],
-  ] as const)("Ctrl 複製拖：%s → 焦點在編輯器，不點直接 Ctrl+Z → 一步、不丟例外、本機與共享文件相同", async (_label, content, g, copied) => {
+    ["x copied below z (document end)", XROWZ, { drag: "x1", target: "z1" }, "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b)]  paragraph:z  paragraph:x"],
+    ["z copied below a (end of column 1)", XROWZ, { drag: "z1", target: "a1", at: [150, 150] as const, boxes: rowBoxes("r", 2) }, "paragraph:x  ROW[COL(paragraph:a,paragraph:z) | COL(paragraph:b)]  paragraph:z"],
+  ] as const)("Ctrl copy-drag: %s -> focus in the editor, Ctrl+Z without clicking -> one step, no exception, local and shared documents equal", async (_label, content, g, copied) => {
     const { alice, bob, sync } = await pair(content());
     const before = shape(bob);
     const manager = collabUndoManager(bob)!;
@@ -334,9 +328,9 @@ describe("#428 撤銷當下的選取是 NodeSelection", () => {
   });
 
   it.each([
-    ["圖片的 block", 0],
-    ["圖片本身", 1],
-  ] as const)("選取%s（NodeSelection）、撤銷把剛插入的圖片移走 → 不丟例外、本機與共享文件相同", async (_label, offset) => {
+    ["the image's block", 0],
+    ["the image itself", 1],
+  ] as const)("select %s (NodeSelection), undo removes the just-inserted image -> no exception, local and shared documents equal", async (_label, offset) => {
     const { alice, bob, sync } = await pair([P("x", "x1"), P("y", "y1")]);
     const manager = collabUndoManager(bob)!;
     manager.stopCapturing();
@@ -354,7 +348,7 @@ describe("#428 撤銷當下的選取是 NodeSelection", () => {
   it.each([
     ["Ctrl+Shift+Z", { ctrlKey: true, shiftKey: true }, "z"],
     ["Ctrl+Y", { ctrlKey: true }, "y"],
-  ] as const)("重做（%s）時是 NodeSelection、重做把那個 block 移走 → 不丟例外", async (_label, mods, key) => {
+  ] as const)("when redo (%s) runs with a NodeSelection and removes that block -> no exception", async (_label, mods, key) => {
     const { alice, bob, sync } = await pair([P("x", "x1"), P("y", "y1")]);
     const manager = collabUndoManager(bob)!;
     manager.stopCapturing();
@@ -372,13 +366,12 @@ describe("#428 撤銷當下的選取是 NodeSelection", () => {
   });
 });
 
-describe("#428 撤銷步驟記下的「操作前選取」是 NodeSelection（撤銷之後的下一筆 Y 交易以它還原）", () => {
+describe("#428 the pre-operation selection recorded in an undo step is a NodeSelection (the next Y transaction after undo restores with it)", () => {
   const IMAGE_AT_END = () => [P("x", "x1"), IMG("i1")];
   const IMAGE_AT_COLUMN_END = () => [P("x", "x1"), row([[P("a", "a1"), IMG("i1")], [P("b", "b1")]], "r")];
   const without = (content: "end" | "column") =>
     content === "end" ? "paragraph:x" : "paragraph:x  ROW[COL(paragraph:a) | COL(paragraph:b)]";
 
-  /** 選取圖片（NodeSelection）→ Backspace 刪掉 → Ctrl+Z 還原。 */
   function deleteSelectedImageThenUndo(bob: AnyEditor, where: "end" | "column"): void {
     selectNode(bob, blockPos(bob, "i1"));
     expect(pressKey(bob, "Backspace"), "Backspace 有 handler 接手").toBe(true);
@@ -388,11 +381,11 @@ describe("#428 撤銷步驟記下的「操作前選取」是 NodeSelection（撤
   }
 
   it.each([
-    ["文件結尾", IMAGE_AT_END, "end"],
-    ["第 1 欄的最後一個 block", IMAGE_AT_COLUMN_END, "column"],
-  ] as const)("圖片在%s：選取 → Backspace → Ctrl+Z → 立刻 Ctrl+Shift+Z → 不丟例外、重做生效、本機與共享文件相同", async (_label, content, where) => {
+    ["document end", IMAGE_AT_END, "end"],
+    ["last block of column 1", IMAGE_AT_COLUMN_END, "column"],
+  ] as const)("image at %s: select -> Backspace -> Ctrl+Z -> immediately Ctrl+Shift+Z -> no exception, redo takes effect, local and shared documents equal", async (_label, content, where) => {
     const { alice, bob, sync } = await pair(content());
-    // alice 寫入內容之後選取停在最後插入的圖片上；這一案只看 bob 的撤銷，先把 alice 的游標放到文字裡。
+    // After alice writes the content her selection rests on the last inserted image; this case only looks at bob's undo, so put alice's caret in text first.
     alice.setTextCursorPosition("x1", "end");
     deleteSelectedImageThenUndo(bob, where);
     expect(() => pressKey(bob, "z", { ctrlKey: true, shiftKey: true })).not.toThrow();
@@ -403,9 +396,9 @@ describe("#428 撤銷步驟記下的「操作前選取」是 NodeSelection（撤
   });
 
   it.each([
-    ["文件結尾", IMAGE_AT_END, "end"],
-    ["第 1 欄的最後一個 block", IMAGE_AT_COLUMN_END, "column"],
-  ] as const)("圖片在%s：選取 → Backspace → Ctrl+Z，接著收到協作者刪掉那張圖的遠端更新（bob 這邊中間沒有別的 Y 交易）→ 不丟例外、兩邊相同；之後打字、撤銷照常", async (_label, content, where) => {
+    ["document end", IMAGE_AT_END, "end"],
+    ["last block of column 1", IMAGE_AT_COLUMN_END, "column"],
+  ] as const)("image at %s: select -> Backspace -> Ctrl+Z, then a remote update arrives in which a collaborator deleted that image (no other Y transaction on bob's side in between) -> no exception, both sides equal; typing and undo work as usual afterwards", async (_label, content, where) => {
     const { alice, bob, sync, bobToAlice, aliceToBob } = await pair(content());
     alice.setTextCursorPosition("x1", "end");
     deleteSelectedImageThenUndo(bob, where);
@@ -431,8 +424,7 @@ describe("#428 撤銷步驟記下的「操作前選取」是 NodeSelection（撤
   });
 });
 
-describe("拖曳途中協作者在被拖的 block 打字（docs/known-limitations.md）", () => {
-  /** bob 按住 z 的 ⋮⋮；alice 在 z 結尾打 Q、同步給 bob；bob 放下。 */
+describe("collaborator types in the dragged block mid-drag (docs/known-limitations.md)", () => {
   async function dragWhileAliceTypesInZ(content: PartialBlockLike[], g: Parameters<typeof blockDrop>[1]) {
     const p = await pair(content);
     await blockDrop(p.bob, g, async () => {
@@ -446,12 +438,12 @@ describe("拖曳途中協作者在被拖的 block 打字（docs/known-limitation
     return p;
   }
 
-  it("放到另一個 block 上方或下方（橫線）：落下的是拖曳開始時的內容，alice 打的字不見", async () => {
+  it("dropped above or below another block (horizontal line): the content from when the drag started lands, alice's typing is lost", async () => {
     const { bob } = await dragWhileAliceTypesInZ([P("x", "x1"), P("y", "y1"), P("z", "z1")], { drag: "z1", target: "x1" });
     expect(shape(bob)).toBe("paragraph:x  paragraph:z  paragraph:y");
   });
 
-  it("放到另一個 block 旁邊（直線建列）：落下的是放下當下的內容，alice 打的字留著", async () => {
+  it("dropped beside another block (vertical line creates a row): the content at drop time lands, alice's typing is kept", async () => {
     const { bob } = await dragWhileAliceTypesInZ([P("x", "x1"), P("y", "y1"), P("z", "z1")], {
       drag: "z1",
       target: "x1",
@@ -461,7 +453,7 @@ describe("拖曳途中協作者在被拖的 block 打字（docs/known-limitation
     expect(shape(bob)).toBe("ROW[COL(paragraph:x) | COL(paragraph:zQ)]  paragraph:y");
   });
 
-  it("放進空欄：落下的是放下當下的內容，alice 打的字留著", async () => {
+  it("dropped into an empty column: the content at drop time lands, alice's typing is kept", async () => {
     const { bob } = await dragWhileAliceTypesInZ([row([[P("a", "a1")], [{ id: "e1", type: "paragraph", content: [] } as PartialBlockLike]], "r"), P("z", "z1")], {
       drag: "z1",
       target: "e1",
@@ -472,11 +464,11 @@ describe("拖曳途中協作者在被拖的 block 打字（docs/known-limitation
   });
 });
 
-describe("#430 ⋮⋮ 放下之後焦點留在編輯器", () => {
+describe("#430 focus stays in the editor after a drag-handle drop", () => {
   it.each([
-    ["橫線排序", { drag: "x1", target: "z1" }, "paragraph:y  paragraph:z  paragraph:x"],
-    ["直線建列", { drag: "z1", target: "x1", at: [590, 115] as const, boxes: { "blockOuter:x1": [0, 100, 600, 130] as Box } }, "ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y"],
-  ] as const)("%s：⋮⋮ 的 dragend 讓編輯器失焦之後焦點拉回編輯器，游標在被拖 block 開頭；直接 Ctrl+Z 一下還原", async (_label, g, moved) => {
+    ["horizontal-line reorder", { drag: "x1", target: "z1" }, "paragraph:y  paragraph:z  paragraph:x"],
+    ["vertical-line column creation", { drag: "z1", target: "x1", at: [590, 115] as const, boxes: { "blockOuter:x1": [0, 100, 600, 130] as Box } }, "ROW[COL(paragraph:x) | COL(paragraph:z)]  paragraph:y"],
+  ] as const)("%s: after the drag handle's dragend blurs the editor, focus returns to the editor with the caret at the start of the dragged block; a plain Ctrl+Z restores", async (_label, g, moved) => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     await blockDrop(bob, g);
     expect(shape(bob)).toBe(moved);
@@ -487,7 +479,7 @@ describe("#430 ⋮⋮ 放下之後焦點留在編輯器", () => {
     expect(shape(bob)).toBe("paragraph:x  paragraph:y  paragraph:z");
   });
 
-  it("⋮⋮ 拖出去沒有放進編輯器 → dragend 之後不搶焦點", async () => {
+  it("drag handle dragged out without dropping into the editor -> dragend doesn't steal focus", async () => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     const input = document.createElement("input");
     document.body.appendChild(input);
@@ -500,7 +492,7 @@ describe("#430 ⋮⋮ 放下之後焦點留在編輯器", () => {
     expect(shape(bob)).toBe("paragraph:x  paragraph:y  paragraph:z");
   });
 
-  it("上一次 ⋮⋮ 放下之後，一次與 ⋮⋮ 無關的 dragend（例如側欄連結）不搶焦點", async () => {
+  it("after a previous drag-handle drop, a dragend unrelated to the handle (e.g. a sidebar link) doesn't steal focus", async () => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     await blockDrop(bob, { drag: "x1", target: "z1" });
     const input = document.createElement("input");
@@ -511,7 +503,7 @@ describe("#430 ⋮⋮ 放下之後焦點留在編輯器", () => {
     expect(document.activeElement).toBe(input);
   });
 
-  it("Ctrl 複製拖（PM 預設的放置）照舊：複製一份、原本的留著", async () => {
+  it("Ctrl copy-drag (PM's default drop) works as before: copies, the original stays", async () => {
     const { bob } = await pair([P("x", "x1"), P("y", "y1"), P("z", "z1")]);
     await blockDrop(bob, { drag: "x1", target: "z1", ctrlKey: true });
     expect(shape(bob)).toBe("paragraph:x  paragraph:y  paragraph:z  paragraph:x");

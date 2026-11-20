@@ -1,4 +1,4 @@
-/** #397：`http/limiters.ts`——桶合併與 9 顆可調桶讀 `siteLimits`。 */
+/** #397: `http/limiters.ts`: merging limiters, and the 9 tunable limiters read `siteLimits`. */
 import { describe, expect, it } from "vitest";
 import { SITE_LIMIT_KEYS, type SiteLimitKey } from "@knotebook/shared";
 import { FixedWindowLimiter } from "../../src/http/rate-limit.js";
@@ -19,44 +19,44 @@ const base = (): Limiters => {
 };
 
 describe("mergeLimiters", () => {
-  it("用覆寫的那顆", () => {
+  it("uses the overriding one", () => {
     const b = base();
     const mine = new FixedWindowLimiter({ limit: 3, windowMs: 60_000 });
     const merged = mergeLimiters(b, { edit: mine });
     expect(merged.edit).toBe(mine);
     expect(merged.search).toBe(b.search);
   });
-  it("{ edit: undefined } 仍是 base 那顆", () => {
+  it("`{ edit: undefined }` still gives the base one", () => {
     const b = base();
     const merged = mergeLimiters(b, { edit: undefined });
     expect(merged.edit).toBe(b.edit);
   });
-  it("沒給 overrides 回 base", () => {
+  it("no overrides returns base", () => {
     const b = base();
     expect(mergeLimiters(b)).toBe(b);
   });
-  it("31 個 key 齊全", () => {
+  it("all 31 keys are present", () => {
     expect(EXPECTED_KEYS).toHaveLength(31);
     expect(Object.keys(mergeLimiters(base(), {})).sort()).toEqual(EXPECTED_KEYS);
     expect(Object.keys(mergeLimiters(base(), { edit: undefined })).sort()).toEqual(EXPECTED_KEYS);
   });
 });
 
-describe("可調桶", () => {
-  it("可調桶讀傳入的 siteLimits（預設值）", () => {
+describe("tunable limiters", () => {
+  it("tunable limiters read the passed siteLimits (default values)", () => {
     const adj = buildAdjustableLimiters(SiteLimits.defaults({ machine: testConfig.machine }));
     expect(adj.edit.currentLimit()).toBe(30);
     expect(adj.upload.currentLimit()).toBe(120);
     expect(adj.tokenRead.currentLimit()).toBe(300);
   });
-  it("9 個 key 都對得上註冊表的 rate* 項", () => {
+  it("all 9 keys match the rate* entries of the registry", () => {
     expect(ADJUSTABLE_LIMITER_KEYS).toHaveLength(9);
     const adj = buildAdjustableLimiters(SiteLimits.defaults({ machine: testConfig.machine }));
     const rateKeys = SITE_LIMIT_KEYS.filter(k => k.startsWith("rate"));
     expect(rateKeys).toHaveLength(9);
     expect(Object.keys(adj).sort()).toEqual([...ADJUSTABLE_LIMITER_KEYS].sort());
   });
-  it("桶名 → 註冊表 key 的對應逐顆釘住（stub siteLimits 每個 key 回不同值）", () => {
+  it("the mapping from limiter name to registry key is pinned one by one (stub siteLimits returns a different value for each key)", () => {
     const stub = { get: (k: SiteLimitKey) => SITE_LIMIT_KEYS.indexOf(k) + 1000 } as unknown as SiteLimits;
     const adj = buildAdjustableLimiters(stub);
     const expected: Record<keyof typeof adj, SiteLimitKey> = {

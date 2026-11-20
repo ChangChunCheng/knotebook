@@ -1,4 +1,3 @@
-// 清除（DELETE 的並發保險、切版後清除、背景掃描 ≥ 250 篇）、病態文件（5000 層）、量測（只回報、不斷言上限）。
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -14,7 +13,7 @@ import { buildTestApp, testEditingRuntime } from "./helpers.js";
 import { deepDoc, paraDoc, versionsOf } from "./version-helpers.js";
 
 const NOW = new Date("2026-10-09T12:00:00Z");
-/** 在 note 上插 N 列自動版本：createdAt 依序是 days 陣列（距 NOW 的天數，可帶小數）。seq 1..N；基底指向最後一列。 */
+/** Inserts N automatic version rows on a note: createdAt follows the `days` array (days before NOW, may be fractional); seq 1..N; the base points at the last row. */
 async function seedAutos(db: Awaited<ReturnType<typeof buildTestApp>>["db"], noteId: string, days: number[]): Promise<void> {
   for (let i = 0; i < days.length; i += 1) {
     await db.insert(noteVersions).values({ noteId, seq: i + 1, ydoc: Buffer.from([0]), kind: "auto", createdAt: new Date(NOW.getTime() - days[i]! * 86_400_000) });
@@ -22,13 +21,12 @@ async function seedAutos(db: Awaited<ReturnType<typeof buildTestApp>>["db"], not
   await db.update(notes).set({ versionCounter: days.length, versionBaseSeq: days.length, versionBaseFingerprint: "fp" }).where(eq(notes.id, noteId));
 }
 
-describe("pruneNote 的並發保險（DELETE 當下重判）", () => {
-  it("讀完到刪之前：某一列被改名成手動、基底被套用換成某一列 → 兩列都留", async () => {
+describe("concurrency guard of pruneNote (re-judged at DELETE time)", () => {
+  it("between reading and deleting: one row renamed to manual and the base switched by an apply to some row -> both rows are kept", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
-    // 天數越小越新：seq 1 最舊（70.4 天前）、seq 4 最新（70.1 天前），四列同一 UTC 日（2026-07-31 週五）→ 同週，留 seq 4、刪 1–3。
-    // （原稿方向寫反，seq 1 反而最新、doomed 變成 [2,3,4]）
+    // Fewer days = newer: seq 1 is oldest (70.4 days ago), seq 4 newest (70.1 days ago), all four in the same UTC day (2026-07-31, Friday) -> the same week: keep seq 4, delete 1-3.
     await seedAutos(db, n.id, [70.4, 70.3, 70.2, 70.1, 0.5]);
     const svc = createVersionService({
       db, log: { warn: () => {} },
@@ -45,13 +43,13 @@ describe("pruneNote 的並發保險（DELETE 當下重判）", () => {
   });
 });
 
-describe("切版後清除", () => {
-  it("手動存一版之後，舊的自動版本依 policy 被清：結果＝policy 對同一組列的輸出", async () => {
+describe("prune after a cut", () => {
+  it("after a manual version, old automatic versions are pruned by policy: result = the policy's output for the same set of rows", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
     await seedDoc(db, n.id, paraDoc(["新內容"]));
-    // 以 DB 的現在為準造列（切版內呼叫 pruneNote 用的是真實時鐘）：遠離區間邊界 ±0.4 天以上。
+    // Build rows relative to the DB's now (pruneNote inside the cut uses the real clock): stay at least 0.4 days away from an interval boundary.
     for (const [i, d] of [10.5, 10.52, 70.1, 70.12, 3.5].entries()) {
       await db.execute(sql`insert into note_versions (note_id, seq, ydoc, kind, created_at) values (${n.id}, ${i + 1}, '\\x00'::bytea, 'auto', now() - make_interval(secs => ${d * 86400}))`);
     }
@@ -61,12 +59,12 @@ describe("切版後清除", () => {
     expect(r.statusCode).toBe(201);
     const expectDoomed = selectVersionsToDelete([...before, { seq: 6, kind: "manual", createdAt: new Date() }], { now: new Date(), keepAllDays: 7, dailyUntilDays: 30, baseSeq: 6 });
     expect((await versionsOf(db, n.id)).map(v => v.seq)).toEqual([1, 2, 3, 4, 5, 6].filter(s => !expectDoomed.includes(s)));
-    expect(expectDoomed.length).toBeGreaterThan(0); // 前提：這組資料真的有東西可刪
+    expect(expectDoomed.length).toBeGreaterThan(0); // precondition: this data really has something to delete
   });
 });
 
-describe("sweep 規模（連續三輪涵蓋 ≥ 250 篇中的每一篇）", () => {
-  it("250 篇各有一列該刪：三輪（100／100／50）後每篇都清乾淨；第四輪回 0", async () => {
+describe("sweep scale (three rounds in a row cover each of the >= 250 notes)", () => {
+  it("250 notes each with one row to delete: after three rounds (100/100/50) every note is clean; the fourth round returns 0", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     await db.execute(sql`insert into notes (owner_id, slug) select ${u.id}, 'sw-' || g from generate_series(1, 250) g`);
@@ -79,13 +77,13 @@ describe("sweep 規模（連續三輪涵蓋 ≥ 250 篇中的每一篇）", () =
     const svc = createVersionService({ db, log: { warn: () => {} } });
     expect([await svc.sweep(NOW), await svc.sweep(NOW), await svc.sweep(NOW)]).toEqual([100, 100, 50]);
     const left = await db.execute(sql`select count(*)::int as n from note_versions`);
-    expect(left.rows[0]).toEqual({ n: 500 }); // 每篇剩 2（同週較新的那列＋最新）
+    expect(left.rows[0]).toEqual({ n: 500 }); // 2 left per note (the newer row of the same week + the newest)
     expect(await svc.sweep(NOW)).toBe(0);
   });
 });
 
-describe("病態文件（深巢狀：5000 層巢狀不讓版本路由與搬移回 500）", () => {
-  it("5000 層：GET /versions 不 500、手動存 201、GET 快照 200、搬到群組成功", async () => {
+describe("pathological documents (deep nesting: 5000 levels must not make the version routes and move return 500)", () => {
+  it("5000 levels: GET /versions is not 500, manual save 201, GET snapshot 200, move to a group succeeds", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -99,8 +97,8 @@ describe("病態文件（深巢狀：5000 層巢狀不讓版本路由與搬移�
   });
 });
 
-describe("量測（只回報；數字抄進回報與 PR body）", () => {
-  it("刪群組・轉移 50 篇（每篇 3 版）耗時", async () => {
+describe("measurements (reported only, no limit asserted)", () => {
+  it("deleting a group with transfer, 50 notes (3 versions each): elapsed time", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -114,7 +112,7 @@ describe("量測（只回報；數字抄進回報與 PR body）", () => {
     expect(r.statusCode).toBe(204);
   });
 
-  it("server 代理：缺 isToggleable 的舊 heading 被 mount 後會不會回寫屬性、版本指紋變不變", async () => {
+  it("server proxy: after an old heading missing isToggleable is mounted, are attributes written back and does the version fingerprint change", async () => {
     const doc = new Y.Doc();
     const g = new Y.XmlElement("blockGroup");
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [g]);
@@ -135,10 +133,10 @@ describe("量測（只回報；數字抄進回報與 PR body）", () => {
     const fpChanged = versionFingerprint(doc.getXmlFragment(YDOC_FRAGMENT)) !== fpBefore;
     console.log(`MEASURE mount writeback: wrote=${wrote} fpChanged=${fpChanged} attrs=${JSON.stringify(h.getAttributes())}`);
     expect(fpBefore).toMatch(/^[0-9a-f]{16}$/);
-    expect(wrote || !fpChanged).toBe(true); // 沒寫回就不該指紋變（指紋只看 Yjs 結構）
+    expect(wrote || !fpChanged).toBe(true); // if nothing was written back the fingerprint must not change (the fingerprint reads only the Yjs structure)
   });
 
-  it("server 側：2000 區塊筆記的手動存與 GET 快照耗時", async () => {
+  it("server side: elapsed time of a manual save and a GET snapshot for a 2000-block note", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });

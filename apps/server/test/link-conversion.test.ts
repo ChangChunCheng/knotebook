@@ -39,7 +39,7 @@ function linkHrefs(doc: Y.Doc): string[] {
   }
   return out;
 }
-/** 頂層 block 的 Yjs item id（client:clock）——同一個 id ＝ 沒被重寫。 */
+/** Same Yjs item id (client:clock) means the block wasn't rewritten. */
 function itemIdOf(doc: Y.Doc, index: number): string {
   const c = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[index] as unknown as { _item: { id: { client: number; clock: number } } };
   return `${c._item.id.client}:${c._item.id.clock}`;
@@ -47,20 +47,18 @@ function itemIdOf(doc: Y.Doc, index: number): string {
 async function linksOf(ctx: Ctx, noteId: string): Promise<string[]> {
   return (await ctx.db.select({ t: noteLinks.targetNoteId }).from(noteLinks).where(eq(noteLinks.sourceNoteId, noteId))).map(r => r.t).sort();
 }
-/** 版本列的快照（note_versions.ydoc）解回 Y.Doc。 */
 function versionDoc(row: { ydoc: Uint8Array }): Y.Doc {
   const d = new Y.Doc();
   Y.applyUpdate(d, new Uint8Array(row.ydoc));
   return d;
 }
-/** 收 warn 的 log（非例外的 retry 也要有一行 warn）。 */
 function spyLog(): { log: LinkConversionDeps["log"]; warns: Array<Record<string, unknown>> } {
   const warns: Array<Record<string, unknown>> = [];
   return { warns, log: { info: () => {}, warn: (o: object) => void warns.push(o as Record<string, unknown>), error: () => {} } };
 }
 
-describe("#269 一次性站內連結轉換", () => {
-  it("個人筆記：owner 看得到的轉、看不到的留、表格轉、樣式丟；先存「連結轉換前」；note_links 只增；不落款、不寫 AI 紀錄；未動的 block 不重寫；標 done", async () => {
+describe("#269 one-time internal link conversion", () => {
+  it("personal note: links the owner can see are converted, invisible ones stay, tables are converted, styles dropped; the pre-conversion version is saved first; note_links only grows; no attribution, no AI record; untouched blocks aren't rewritten; marked done", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-a@example.com", password: PASSWORD });
     const bob = await ctx.createUser({ email: "lc-b@example.com", password: PASSWORD });
@@ -95,10 +93,10 @@ describe("#269 一次性站內連結轉換", () => {
     ]);
     expect(linkHrefs(doc)).toEqual([`/notes/${secret.id}`]);
     expect(itemIdOf(doc, 0)).toBe(untouchedBefore);
-    // 只斷言 manual 列（不斷言轉換後的切版時機——#272 前離線即切 auto、#272 後交給掃描器）。
+    // Only manual rows are asserted, not when the post-conversion auto version is cut (before #272 it is cut right when offline, after #272 it is left to the scanner).
     const manual = (await versionsOf(ctx.db, host.id)).filter(v => v.kind === "manual");
     expect(manual.map(v => v.name)).toEqual([LINK_CONVERSION_VERSION_NAME]);
-    // 那一版是轉換「前」切的：快照裡沒有 wikilink、仍是原本的一般連結。
+    // That version was cut before the conversion: its snapshot has no wikilink and still has the original ordinary link.
     const snap = versionDoc(manual[0]!);
     expect(wikilinks(snap)).toEqual([]);
     expect(new Set(linkHrefs(snap))).toEqual(new Set([`/n/${handle}/a`, `${ORIGIN}/notes/${a.id}#b-h1`, `/notes/${shared.id}`, `/notes/${secret.id}`, `/notes/${a.id}`]));
@@ -110,7 +108,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(summary).toMatchObject({ scanned: 1, notesConverted: 1, linksConverted: 4, unresolved: 1, retry: 0, failed: 0 });
   });
 
-  it("群組筆記：只轉目標在同一群組的連結；他群組與 /n/ 個人筆記留", async () => {
+  it("group note: only links whose target is in the same group are converted; other groups and /n/ personal notes stay", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-g@example.com", password: PASSWORD });
     const g = await seedGroup(ctx.db, "G", [{ userId: alice.id, role: "admin" }]);
@@ -130,7 +128,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect([otherGroup.id, personal.id].every(id => !wikilinks(doc).some(w => w.targetNoteId === id))).toBe(true);
   });
 
-  it("「連結轉換前」：基底同內容且使用者已命名 → 名字不變、不多一列；基底沒名字 → 換成「連結轉換前」", async () => {
+  it("pre-conversion version: base has the same content and the user already named it -> name unchanged, no extra row; base has no name -> renamed to the pre-conversion name", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-v@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -143,12 +141,12 @@ describe("#269 一次性站內連結轉換", () => {
     const versions = depsOf(ctx).versions;
     for (const [n, name] of [[named, "My name"], [unnamed, null]] as const) {
       const { doc, transient } = await versions.docFor(n.id);
-      // 兩篇都用 manual（unnamed 帶 name: null）——未載入筆記的無基底 auto 一律判 clean 回 null，前置會失敗。
+      // Both notes use manual (the unnamed one passes name: null): an auto version without a base for a note that isn't loaded is always judged clean and returns null, so the precondition would fail.
       const r = await versions.cutIfDirty(n.id, doc, { kind: "manual", name, transient });
       expect(r && "row" in r).toBe(true);
     }
     await run(ctx);
-    // 只看 manual 列（轉換後的 auto 切版時機不斷言）；manual 那一列的快照仍是一般連結。
+    // Only manual rows are looked at (when the post-conversion auto version is cut isn't asserted); the manual row's snapshot is still the ordinary link.
     const manualOf = async (id: string) => (await versionsOf(ctx.db, id)).filter(v => v.kind === "manual");
     const namedManual = await manualOf(named.id);
     expect(namedManual.map(v => v.name)).toEqual(["My name"]);
@@ -158,7 +156,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(wikilinks(versionDoc(unnamedManual[0]!))).toEqual([]);
   });
 
-  it("重跑：已 done 的不再處理；把列改回 pending 後重跑——內容零寫入、note_links 只補缺；合併已落盤但 note_links 沒寫的篇（預掃為 0）補上連結列", async () => {
+  it("rerun: done rows aren't processed again; after setting a row back to pending and rerunning - zero content writes, note_links only fills gaps; a note whose merge was persisted but whose note_links weren't written (pre-scan 0) gets its link rows", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-r@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -166,17 +164,17 @@ describe("#269 一次性站內連結轉換", () => {
     await seedOldNote(ctx.db, host.id, `[x](/notes/${a.id})`);
     await pending(ctx, host.id);
     await run(ctx);
-    // 已 done 的列不再是候選——同樣狀態再跑一輪，一篇都不碰。
     expect((await run(ctx)).scanned).toBe(0);
     const versionsAfterFirst = await versionsOf(ctx.db, host.id);
     const bytes1 = Buffer.from(Y.encodeStateAsUpdate((await loadDoc(ctx.db, host.id))!)).toString("base64");
     await ctx.db.delete(noteLinks).where(eq(noteLinks.sourceNoteId, host.id));
     await ctx.db.update(noteLinkConversion).set({ status: "pending" }).where(eq(noteLinkConversion.noteId, host.id));
+    // The second round has no ordinary internal links left, so no new version is saved.
     const second = await run(ctx);
     expect(Buffer.from(Y.encodeStateAsUpdate((await loadDoc(ctx.db, host.id))!)).toString("base64")).toBe(bytes1);
     expect(await linksOf(ctx, host.id)).toEqual([a.id]);
     expect(second).toMatchObject({ scanned: 1, notesConverted: 0, linksConverted: 0 });
-    // 第二輪沒有站內一般連結 ⇒ 不再存版本——比前後，不斷言總數（第一輪之後的 auto 切版依 #272 是否已 merge 而不同）。
+    // Compare before and after rather than asserting a total (the auto version cut after the first round depends on #272).
     const versionsAfterSecond = await versionsOf(ctx.db, host.id);
     expect(versionsAfterSecond.map(v => v.id)).toEqual(versionsAfterFirst.map(v => v.id));
     expect(versionsAfterSecond.filter(v => v.name === LINK_CONVERSION_VERSION_NAME)).toHaveLength(1);
@@ -189,7 +187,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(await statusOf(ctx, already.id)).toMatchObject({ status: "done" });
   });
 
-  it("FingerprintMismatch 兩次 → retry（attempts 1）、內容不變", async () => {
+  it("FingerprintMismatch twice -> retry (attempts 1), content unchanged", async () => {
     let target = "";
     let aliceId = "";
     let ctxRef: Ctx | null = null;
@@ -198,7 +196,7 @@ describe("#269 一次性站內連結轉換", () => {
       editingTestHooks: {
         beforeMerge: async () => {
           mergeAttempts += 1;
-          // 合併前在活文件插一段：整篇指紋必不符（apply-version 的實測結論）。
+          // Insert a paragraph into the live doc before merging: the whole-note fingerprint must then mismatch.
           const direct = await ctxRef!.collab.hocuspocus.openDirectConnection(target, { userId: aliceId });
           await direct.transact(doc => {
             const g = doc.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement;
@@ -221,15 +219,15 @@ describe("#269 一次性站內連結轉換", () => {
     await pending(ctx, host.id);
     const spy = spyLog();
     await run(ctx, { ...depsOf(ctx), log: spy.log });
-    // 指紋不符「從步 1 重來一次」——恰好合併兩次（不重來、或重來兩次以上都紅）。
+    // A fingerprint mismatch restarts from the beginning - exactly two merges (no restart, or two or more restarts, both go red).
     expect(mergeAttempts).toBe(2);
     expect(await statusOf(ctx, host.id)).toMatchObject({ status: "retry", attempts: 1 });
     expect(wikilinks((await loadDoc(ctx.db, host.id))!)).toEqual([]);
-    // 非例外的 retry 也有一行 warn，形狀只有 { noteId, stage, err }（不含 href／標題／文字）。
+    // A non-exception retry also logs one warn, shaped only { noteId, stage, err } (no href/title/text).
     expect(spy.warns).toEqual([{ noteId: host.id, stage: "merge", err: "fingerprint-mismatch" }]);
   });
 
-  it("uninitialized → retry；非預期例外 → retry，第 3 次 → failed，之後不再處理", async () => {
+  it("uninitialized -> retry; unexpected exception -> retry, 3rd -> failed, never processed again", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-u@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -251,7 +249,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(fourth.scanned).toBe(0);
   });
 
-  it("attempts 已達 3 的 retry 列（手寫）不是候選——不處理、狀態不變、內容不變", async () => {
+  it("a hand-written retry row with attempts already at 3 isn't a candidate: not processed, state and content unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-m@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -265,7 +263,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(await versionsOf(ctx.db, host.id)).toEqual([]);
   });
 
-  it("abort 中途：在途那篇不留標記（維持 pending）、內容不變", async () => {
+  it("abort midway: the in-flight note keeps no marker (stays pending), content unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-x@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -289,7 +287,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(wikilinks((await loadDoc(ctx.db, host.id))!)).toEqual([]);
   });
 
-  it("migration 之後才建立的筆記（沒有列）永遠不被處理、不切「連結轉換前」", async () => {
+  it("a note created after the migration (no row) is never processed and never gets the pre-conversion version", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-n@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -301,7 +299,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(await versionsOf(ctx.db, late.id)).toEqual([]);
   });
 
-  it("指向自己的站內一般連結 → 轉成自連結 wikilink；note_links 不寫自己；標 done", async () => {
+  it("internal ordinary link to itself -> converted to a self-link wikilink; note_links doesn't write itself; marked done", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-s@example.com", password: PASSWORD });
     const self = await seedNote(ctx.db, { ownerId: alice.id }, { title: "Self", slug: "self" });
@@ -314,7 +312,7 @@ describe("#269 一次性站內連結轉換", () => {
     expect(await statusOf(ctx, self.id)).toMatchObject({ status: "done", converted: 2 });
   });
 
-  it("切版階段 DB 出錯——真 pino 輸出的「單篇失敗」只有 noteId／stage／錯誤類別與 SQLSTATE，不含筆記文字與查詢參數", async () => {
+  it("DB error in the version-cutting stage: the real pino output of a single-note failure only has noteId/stage/error class and SQLSTATE, no note text or query params", async () => {
     const ctx = await buildCollabTestApp();
     const alice = await ctx.createUser({ email: "lc-l@example.com", password: PASSWORD });
     const a = await seedNote(ctx.db, { ownerId: alice.id }, { title: "A" });
@@ -322,10 +320,10 @@ describe("#269 一次性站內連結轉換", () => {
     const MARK = "ZQXLEAKMARK7731";
     await seedOldNote(ctx.db, host.id, `${MARK} [x](/notes/${a.id})`);
     await pending(ctx, host.id);
-    // 真 pino（預設 err serializer 會把 message／params 等可列舉欄位全寫出去）：量的是自架者 log 裡實際會出現的字。
+    // Real pino (its default err serializer writes out every enumerable field such as message/params): measures what actually appears in a self-hoster's log.
     const lines: string[] = [];
     const log = pino({ level: "info" }, { write: (s: string) => void lines.push(s) });
-    // 讓「連結轉換前」的 note_versions INSERT 炸：drizzle 把它包成 DrizzleQueryError，params 含整份 ydoc（MARK 是明文）。
+    // Make the `note_versions` INSERT for the pre-conversion version blow up: drizzle wraps it in DrizzleQueryError whose params contain the whole ydoc (MARK is plain text).
     await ctx.db.execute(sql`create or replace function knb_lc_boom() returns trigger as $$ begin raise exception 'boom'; end $$ language plpgsql`);
     await ctx.db.execute(sql`create trigger knb_lc_boom_trg before insert on note_versions for each row execute function knb_lc_boom()`);
     try {

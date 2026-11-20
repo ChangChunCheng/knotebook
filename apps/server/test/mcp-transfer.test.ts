@@ -1,8 +1,3 @@
-/**
- * #200（確定性並發與 log 不含明文在 `mcp-transfer-flow.test.ts`）。
- * harness：`buildTestApp`（無 collab）——`create_transfer_token` 在部署形態閘門外，無 collab 的 app 也有它。
- * PUBLIC_URL 刻意設成與 inject 的 Host（`localhost:80`）不同的 https origin，證明 `url`／`curl` 取自 PUBLIC_URL。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -31,6 +26,8 @@ import { PNG_BYTES, expireToken, fileBody, issueDirect, ownerWithPat, upload } f
 import { giveUserQuota, seedAttachment } from "./storage-helpers.js";
 import { SESSION_COOKIE } from "@knotebook/shared";
 
+// Uses buildTestApp without collab because create_transfer_token sits outside the deployment-shape gate; deterministic concurrency and no-plaintext-in-log tests are in mcp-transfer-flow.test.ts.
+// PUBLIC_URL is deliberately a different https origin than inject's Host (`localhost:80`), proving `url`/`curl` come from PUBLIC_URL.
 const ORIGIN = "https://kb.example.test:8443";
 const config = loadConfig({ DATABASE_URL: "postgres://u:p@localhost:5432/test", APP_SECRET: "a".repeat(64), PUBLIC_URL: `${ORIGIN}/` });
 
@@ -47,8 +44,8 @@ async function toolsOf(app: Parameters<typeof mcpPost>[0], opts: { token?: strin
   return res.json().result.tools as Array<{ name: string; description: string; inputSchema: { properties: Record<string, { enum?: string[]; description?: string }> } }>;
 }
 
-describe("M1：tools/list", () => {
-  it("讀寫憑證：有 create_transfer_token、purpose enum 兩值、讀寫版描述", async () => {
+describe("tools/list", () => {
+  it("read-write credential: has create_transfer_token, a two-value purpose enum, and the read-write description", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const tool = (await toolsOf(app, { token: o.pat })).find(t => t.name === "create_transfer_token");
@@ -56,25 +53,25 @@ describe("M1：tools/list", () => {
     expect(tool!.description).toBe(CREATE_TRANSFER_TOKEN_DESCRIPTION_RW);
     expect(tool!.inputSchema.properties.purpose!.enum).toEqual(["upload", "download"]);
     expect(Object.keys(tool!.inputSchema.properties).sort()).toEqual(["note_id", "purpose"]);
-    // 上傳只存一張圖、要 edit_note 引用才進筆記（#200）——連舊的過度宣稱一起釘，加回去會紅。
+    // Upload only stores an image, which enters the note only via edit_note (#200); also pins the older overclaiming wording so re-adding it fails.
     expect(tool!.inputSchema.properties.purpose!.description).toBe(
       "`upload` stores one image for the note (then reference it with edit_note); `download` fetches its images."
     );
     expect(tool!.inputSchema.properties.purpose!.description).not.toContain("adds one image to the note");
   });
 
-  it("唯讀憑證：有、enum 只有 download、唯讀版描述（不描述 upload 這個 purpose）", async () => {
+  it("read-only credential: tool present, enum is only download, read-only description (does not describe the upload purpose)", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db, "notes:read");
     const tool = (await toolsOf(app, { token: o.pat })).find(t => t.name === "create_transfer_token");
     expect(tool!.description).toBe(CREATE_TRANSFER_TOKEN_DESCRIPTION_RO);
-    // 唯讀版描述本來就含 "uploaded"（"any image uploaded to that note"）——要擋的是「描述 upload 這個 purpose」：
+    // The read-only description already contains "uploaded" ("any image uploaded to that note"); what must be excluded is describing the `upload` purpose:
     expect(tool!.description).not.toContain("`upload`");
     expect(tool!.description).not.toContain("upload an image");
     expect(tool!.inputSchema.properties.purpose!.enum).toEqual(["download"]);
   });
 
-  it("session（cookie）打 /api/mcp：沒有 create_transfer_token", async () => {
+  it("session (cookie) on /api/mcp: no create_transfer_token", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const cookie = (await cookieOf(o.userId))[SESSION_COOKIE]!;
@@ -82,7 +79,7 @@ describe("M1：tools/list", () => {
     expect(names).not.toContain("create_transfer_token");
   });
 
-  it("唯讀憑證送 purpose:upload → SDK 輸入驗證錯誤（無 code），且 tokenWrite 未被扣", async () => {
+  it("read-only credential with purpose:upload -> SDK input validation error (no code), and tokenWrite is not charged", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ config, limiters: freshLimiters({ tokenWrite }) });
     const o = await ownerWithPat(db, "notes:read");
@@ -90,15 +87,15 @@ describe("M1：tools/list", () => {
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toBeUndefined();
     expect(await db.select().from(transferTokens)).toHaveLength(0);
-    // 同一使用者的讀寫憑證：tokenWrite（key token:<userId>）還有那 1 發
+    // Same user's read-write credential: tokenWrite (key token:<userId>) still has its 1 remaining slot
     const { token: rw } = await seedTokenForUser(db, o.userId, "notes:read notes:write");
     const write = await mcpPost(app, rpc("tools/call", { name: "create_note", arguments: {} }), { token: rw });
     expect(write.json().result.isError).toBeUndefined();
   });
 });
 
-describe("M2：create_transfer_token 的流程", () => {
-  it("upload 正路：url／curl／next 逐字；noteId 小寫（輸入大寫）；expiresAt ≈ now＋10 分；method POST", async () => {
+describe("create_transfer_token flow", () => {
+  it("upload happy path: url/curl/next verbatim; noteId lowercased (uppercase input); expiresAt about now + 10 min; method POST", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const before = Date.now();
@@ -113,10 +110,10 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(p.url).toBe(`${ORIGIN}/api/notes/${o.noteId}/uploads`);
     expect(p.curl).toBe(`curl -sS -X POST -H "Authorization: Bearer ${p.token}" -F "file=@<path-to-image>" "${ORIGIN}/api/notes/${o.noteId}/uploads"`);
     expect(p.next).toBe(UPLOAD_NEXT);
-    // bearerMiss 的 429 取代的是 401，token 可能早已用過——只能說「這次被拒不會用掉它」。
+    // The bearerMiss 429 replaces a 401, so the token may already be used: only "this rejection doesn't use it up" can be claimed.
     expect(UPLOAD_NEXT).toContain("A 403 or 429 doesn't use the token up");
     expect(UPLOAD_NEXT).not.toContain("leaves the token unused");
-    // 全文逐字＝#200 定稿（含儲存配額加入的兩句 409，位置在 404 那句之後、413／415 那句之前）。
+    // Verbatim text, including the two 409 sentences added with the storage quota (after the 404 sentence, before the 413/415 one).
     expect(UPLOAD_NEXT).toBe(
       "The reply is JSON `{id, url}`. Put the image in the note with edit_note using markdown `![description](url)`, with " +
         "`url` exactly as returned (`/api/uploads/<id>`, relative). The token is good for one upload until `expiresAt`. A 401 " +
@@ -132,7 +129,7 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(exp).toBeLessThanOrEqual(Date.now() + 10 * 60_000 + 5_000);
   });
 
-  it("download 正路：url 帶 <upload_id> 佔位、curl 逐字、method GET、next 逐字", async () => {
+  it("download happy path: url has an <upload_id> placeholder, curl verbatim, method GET, next verbatim", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const p = (await call(app, o.pat, { note_id: o.noteId, purpose: "download" })).structuredContent as Payload;
@@ -140,11 +137,11 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(p.url).toBe(`${ORIGIN}/api/uploads/<upload_id>`);
     expect(p.curl).toBe(`curl -sS -H "Authorization: Bearer ${p.token}" -o <output-file> "${ORIGIN}/api/uploads/<upload_id>"`);
     expect(p.next).toBe(DOWNLOAD_NEXT);
-    // describe 承諾「what its status codes mean」：GET 答得出的 401／403／404／429 都要講到。
+    // The description promises "what its status codes mean": every code GET can answer (401/403/404/429) must be mentioned.
     for (const code of ["401", "403", "404", "429"]) expect(DOWNLOAD_NEXT).toContain(`A ${code} `);
   });
 
-  it("看不到的筆記與不存在的筆記 → 同一個 not_found（逐位元組）", async () => {
+  it("note the caller cannot see and a nonexistent note give the same not_found (byte-identical)", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const stranger = await ownerWithPat(db);
@@ -154,7 +151,7 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(hidden.content[0]!.text).toBe(missing.content[0]!.text);
   });
 
-  it("viewer：upload → forbidden（逐字訊息）；download 照簽", async () => {
+  it("viewer: upload -> forbidden (verbatim message); download is issued", async () => {
     const { app, db } = await buildTestApp({ config });
     const owner = await ownerWithPat(db);
     const viewer = await seedUser(db);
@@ -167,7 +164,7 @@ describe("M2：create_transfer_token 的流程", () => {
     expect((await call(app, token, { note_id: owner.noteId, purpose: "download" })).isError).toBeUndefined();
   });
 
-  it("upload 扣 tokenWrite（limit:1 → 第二發 too_many_requests）、不扣 contentRead；download 扣 contentRead、不扣 tokenWrite", async () => {
+  it("upload charges tokenWrite (limit:1 -> second issuance too_many_requests) and not contentRead; download charges contentRead and not tokenWrite", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const contentRead = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ config, limiters: freshLimiters({ tokenWrite, contentRead }) });
@@ -178,9 +175,9 @@ describe("M2：create_transfer_token 的流程", () => {
     expect((await call(app, o.pat, { note_id: o.noteId, purpose: "download" })).structuredContent!.code).toBe("too_many_requests");
   });
 
-  // 守檔頭「流程順序是契約」的 ①→②：upload 先扣 tokenWrite、再查筆記權限——所以對看不到的筆記簽 upload 也會扣。
-  // `requireWriteScope` 挪到 `resolveNoteAccess` 之後，none 就在扣之前 return，下面第二發會成功（突變實測見 #200 回報）。
-  it("upload 對看不到的筆記：not_found，但 tokenWrite 已扣（limit:1 → 接著對自己的筆記 upload 被 too_many_requests）", async () => {
+  // upload charges tokenWrite before checking note access, so issuing for an invisible note still charges. If requireWriteScope
+  // moved after resolveNoteAccess, none would return before the charge and the second issuance below would succeed.
+  it("upload for an invisible note: not_found, but tokenWrite is charged (limit:1 -> a following upload for the caller's own note gets too_many_requests)", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ config, limiters: freshLimiters({ tokenWrite }) });
     const o = await ownerWithPat(db);
@@ -189,8 +186,8 @@ describe("M2：create_transfer_token 的流程", () => {
       code: "not_found",
       message: NOTE_NOT_FOUND_MESSAGE,
     });
-    // 連訊息一起釘：`too_many_requests` 也是未消費上限的碼（TOO_MANY_PENDING_MESSAGE），只看 code 分不出是被速率桶擋的。
-    // 字面值抄自 `mcp/write-scope.ts` 的 RATE_LIMITED_MESSAGE（未 export）。
+    // Pin the message too: too_many_requests is also the pending-limit code (TOO_MANY_PENDING_MESSAGE), so the code alone can't
+    // tell a limiter rejection. Literal copied from RATE_LIMITED_MESSAGE in `mcp/write-scope.ts` (not exported).
     expect((await call(app, o.pat, { note_id: o.noteId, purpose: "upload" })).structuredContent).toEqual({
       code: "too_many_requests",
       message: "Too many writes with this credential right now. Wait a few minutes before writing again.",
@@ -198,7 +195,7 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(await db.select().from(transferTokens)).toHaveLength(0);
   });
 
-  it("母憑證只剩 60 秒 → expiresAt 截在它；next 與描述沒有 10 分以外的時間承諾", async () => {
+  it("parent credential with 60 s left: expiresAt is capped to it; next and the description make no time promise other than 10 min", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const parentExp = new Date(Date.now() + 60_000);
@@ -210,7 +207,7 @@ describe("M2：create_transfer_token 的流程", () => {
     }
   });
 
-  it("母憑證在簽發途中被刪（beforeLock 縫）→ unauthorized、零列", async () => {
+  it("parent credential deleted mid-issuance (beforeLock hook): unauthorized, zero rows", async () => {
     const seam: IssueTransferTokenSeam = {};
     const { app, db } = await buildTestApp({ config, mcpTestHooks: { issueTransferToken: seam } });
     const o = await ownerWithPat(db);
@@ -224,7 +221,7 @@ describe("M2：create_transfer_token 的流程", () => {
     expect(await db.select().from(transferTokens)).toHaveLength(0);
   });
 
-  it("母憑證在簽發途中到期（beforeLock 縫把 access_expires_at 改成過去）→ expiry_chk → unauthorized", async () => {
+  it("parent credential expires mid-issuance (beforeLock hook sets access_expires_at to the past): expiry_chk -> unauthorized", async () => {
     const seam: IssueTransferTokenSeam = {};
     const { app, db } = await buildTestApp({ config, mcpTestHooks: { issueTransferToken: seam } });
     const o = await ownerWithPat(db);
@@ -238,7 +235,7 @@ describe("M2：create_transfer_token 的流程", () => {
   });
 
   for (const purpose of ["upload", "download"] as const) {
-    it(`筆記在 resolveNoteAccess 之後被刪（afterCount 縫，${purpose}）→ not_found＋NOTE_NOT_FOUND_MESSAGE`, async () => {
+    it(`note deleted after resolveNoteAccess (afterCount hook, ${purpose}): not_found with NOTE_NOT_FOUND_MESSAGE`, async () => {
       const seam: IssueTransferTokenSeam = {};
       const { app, db } = await buildTestApp({ config, mcpTestHooks: { issueTransferToken: seam } });
       const o = await ownerWithPat(db);
@@ -249,7 +246,7 @@ describe("M2：create_transfer_token 的流程", () => {
     });
   }
 
-  it("M2a（基本形）：連簽 5 支 upload → 第 6 支 too_many_requests（逐字）；用掉一支（POST 201）後可簽；過期一支後可簽；download 不受限", async () => {
+  it("basic pending limit: 5 upload tokens in a row, 6th gets too_many_requests (verbatim); usable again after one is used (POST 201) or one expires; download is unlimited", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     expect(TOO_MANY_PENDING_MESSAGE).toContain(` ${MAX_PENDING_UPLOAD_TOKENS} unused upload tokens`);
@@ -272,15 +269,15 @@ describe("M2：create_transfer_token 的流程", () => {
   });
 });
 
-describe("③a 儲存配額「已滿」預檢（#200）", () => {
+describe("storage quota \"already full\" precheck (#200)", () => {
   const GIB2 = 2 ** 31;
   const rowCount = async (db: Awaited<ReturnType<typeof buildTestApp>>["db"]) => (await db.select({ id: transferTokens.id }).from(transferTokens)).length;
 
-  it("可見形（筆記擁有者）：storage_quota_exceeded＋訊息逐字（formatBytes 印的兩數）＋extra 兩個原始數字；不簽 token（列數不變）", async () => {
+  it("visible form (note owner): storage_quota_exceeded, verbatim message (two numbers via formatBytes), extra has both raw numbers; no token issued (row count unchanged)", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     await giveUserQuota(db, o.userId, GIB2);
-    // `uploads.size` 是 int4：兩列各 1 GiB 湊成 2 GiB。
+    // `uploads.size` is int4: two 1 GiB rows make 2 GiB.
     for (let i = 0; i < 2; i++) await seedAttachment(db, uploadsDir, o.noteId, o.userId, GIB2 / 2, { noFile: true });
     const before = await rowCount(db);
     const r = await call(app, o.pat, { note_id: o.noteId, purpose: "upload" });
@@ -297,7 +294,7 @@ describe("③a 儲存配額「已滿」預檢（#200）", () => {
     expect(await rowCount(db)).toBe(before);
   });
 
-  it("不可見形（被分享的編輯者）：訊息逐字、沒有 extra；不簽 token", async () => {
+  it("hidden form (shared editor): verbatim message, no extra; no token issued", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ config });
     const owner = await ownerWithPat(db);
     const editor = await seedUser(db);
@@ -315,7 +312,7 @@ describe("③a 儲存配額「已滿」預檢（#200）", () => {
     expect(await rowCount(db)).toBe(before);
   });
 
-  it("被分享的編輯者是站台 admin → 可見形（isAdmin 由交易外那一句讀出）", async () => {
+  it("shared editor who is a site admin gets the visible form (isAdmin is read by a statement outside the transaction)", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ config });
     const owner = await ownerWithPat(db);
     const admin = await seedUser(db);
@@ -334,7 +331,7 @@ describe("③a 儲存配額「已滿」預檢（#200）", () => {
     expect(storageFullVisibleMessage(2048, 1536)).toContain("(2 KB of 1.5 KB used)");
   });
 
-  it("download 不預檢：空間已滿時 download 照常簽（多一列）", async () => {
+  it("download has no precheck: still issued when storage is full (one more row)", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     await giveUserQuota(db, o.userId, 1000);
@@ -346,7 +343,7 @@ describe("③a 儲存配額「已滿」預檢（#200）", () => {
     expect(await rowCount(db)).toBe(before + 1);
   });
 
-  it("未滿（差 1 byte）→ upload 照常簽：預檢只擋 used ≥ quota", async () => {
+  it("under quota (1 byte short): upload is issued; the precheck only blocks used >= quota", async () => {
     const { app, db, uploadsDir } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     await giveUserQuota(db, o.userId, 1000);
@@ -355,8 +352,8 @@ describe("③a 儲存配額「已滿」預檢（#200）", () => {
   });
 });
 
-describe("M3：清理", () => {
-  it("一列已過期 → 下一次成功簽發後消失（fire-and-forget，等它）；未過期的留著", async () => {
+describe("cleanup", () => {
+  it("an expired row is gone after the next successful issuance (fire-and-forget, awaited); an unexpired one stays", async () => {
     const { app, db } = await buildTestApp({ config });
     const o = await ownerWithPat(db);
     const dead = await issueDirect(db, o.patId, o.noteId, "download");

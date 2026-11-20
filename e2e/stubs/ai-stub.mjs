@@ -1,11 +1,10 @@
 // e2e/stubs/ai-stub.mjs
 //
-// 零依賴（僅 node: 內建模組）vLLM-相容 chat completions stub，跑在 compose 的獨立容器
-// （見 ../../docker-compose.e2e.yml 的 ai-stub 服務，只給 app 容器內網打，不發布 host port）。
-// SSE 形狀對齊 apps/server/test/unit/__fixtures__/vllm-sse.txt，但每個 delta 同時帶
-// `reasoning_content` 欄——E2E 層順帶驗「thinking 內容不會洩漏到使用者看得到的輸出」。
-// `/fast`、`/slow` 不看請求內容、一律回 FINAL_CONTENT；`/echo` 回最後一則 user 訊息、第一個 `Original` 換成
-// `Rewritten`（並排 e2e 37：驗「AI 改一個字、寬度與並排標記原樣保留」）。
+// Zero-dependency vLLM-compatible chat completions stub in its own compose container (not published to the host).
+// The SSE shape follows apps/server/test/unit/__fixtures__/vllm-sse.txt, but every delta also carries
+// `reasoning_content`, so e2e checks that thinking text does not reach the visible output.
+// `/fast` and `/slow` ignore the request and return FINAL_CONTENT; `/echo` returns the last user message with the first
+// `Original` replaced by `Rewritten` (used by 37-columns-rw).
 
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -17,7 +16,6 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** 把字串依 code point 切成 n 個連續、非空（除非字串本身太短）片段，串接後等於原字串；不會切開 surrogate pair。 */
 function splitIntoChunks(text, n) {
   const chars = Array.from(text);
   const chunks = [];
@@ -59,7 +57,6 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** `/echo` 的回覆：最後一則 `role === "user"` 的字串 content，第一個 `Original` 換成 `Rewritten`；body 不合預期回 null。 */
 function echoContent(raw) {
   let body;
   try {
@@ -80,8 +77,7 @@ const server = createServer(async (req, res) => {
       return await streamCompletions(res, { content: FINAL_CONTENT, chunkCount: 8, intervalMs: 0 });
     }
     if (req.method === "POST" && req.url === "/slow/chat/completions") {
-      // 守門流程用：間隔 1 秒、共 12 個 delta——總時長 ~11s，遠低於 server
-      // IDLE_TIMEOUT_MS=60s，用來驗證「有活動就不會被判 idle」。
+      // 1s interval x 12 deltas (~11s) stays well under the server's IDLE_TIMEOUT_MS (60s): activity must not count as idle.
       return await streamCompletions(res, { content: FINAL_CONTENT, chunkCount: 12, intervalMs: 1000 });
     }
     if (req.method === "POST" && req.url === "/echo/chat/completions") {
@@ -104,8 +100,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// 必須綁 0.0.0.0（同款理由見 fake-idp.mjs）：只有 compose 網路內的 app 容器會打這支，
-// 但同一顆 Dockerfile.stub 兩個服務共用，行為一致比較不容易漏改。
+// Must bind 0.0.0.0 (same reason as fake-idp.mjs). Only the app container calls this, but both stubs share one Dockerfile.stub,
+// so identical behaviour is less likely to drift.
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[ai-stub] listening on 0.0.0.0:${PORT}`);
 });

@@ -1,39 +1,46 @@
 /**
- * #181 垃圾桶結構守衛。逐行掃 `src/` 下所有 `.ts`（不含測試），`trim()` 後以 `//`、`*`、`/*` 開頭的
- * 註解行跳過，每行以 `matchAll` 計數。
+ * Scans every non-test `.ts` under `src/` line by line; lines whose trimmed text starts with `//`, `*` or `/*` are skipped, and
+ * each remaining line is counted with `matchAll`.
  *
- * 守衛一：直接查 `notes` 表的位置（不分大小寫：`.from(notes)`、`(inner|left|right|full)?join(notes`、`.update(notes)`、
- * `.delete(notes)`、SQL 字面 `from notes`／`join notes`／`update notes`、`${notes}`），以「檔案 → 各處置的處數」登記，
- * 逐檔命中數與表上總和不同就紅；新檔沒登記、登記了但沒命中也紅。
- * 守衛二：寫 `deleted_at` 的字面（`deletedAt:`、`deletedBy:`、`deleted_at\s*=`、`set deleted_at`）只准出現在
- * schema、`trashNotesInTx`／`restoreNotesInTx` 所在檔、垃圾桶清單查詢（含 DTO 映射）、MCP `list_trash`（outputSchema 與 DTO 映射）
- * 四檔，各登記處數。
- * 守衛二 b：`trashFolderPath:`／`trash_folder_path` 字面只准 schema、`notes/tx/trash.ts`、
- * `folders/tx/delete-folder.ts`、`groups/tx/delete-group.ts`、垃圾桶清單查詢五檔，各登記處數（與守衛二分開兩張表）。
- * 守衛三：寫 `folders` 表（`.update|insert|delete(folders)`、SQL 字面 `update folders`／`delete from folders`／
- * `insert into folders`，表名也收引號識別字 `"folders"` 與 `sql` 樣板 `${folders}`）的檔只准在 `folders/tx/*.ts`、`groups/tx/delete-group.ts` 之內（原列 `notes/tx/trash.ts`，
- * 實作經 `folders/tx/ensure-path.ts`，故不列；日後 trash.ts 真要直接寫再加回）。
- * 守衛三 b：寫 `note_placements` 表（同形，含 `"note_placements"`、`${notePlacements}`）的檔只准在 `folders/tx/*.ts` 之內。三與三 b 只比檔集合、不記處數。
+ * notes guard: places that query the `notes` table directly (case-insensitive: `.from(notes)`, `(inner|left|right|full)?join(notes`,
+ * `.update(notes)`, `.delete(notes)`, SQL literals `from notes` / `join notes` / `update notes`, `${notes}`) are registered as
+ * file -> count per disposition. A per-file hit count that differs from the table's sum fails, and so does a new file that isn't
+ * registered or a registered file with no hits.
+ * deleted_at guard: the literals that write `deleted_at` (`deletedAt:`, `deletedBy:`, `deleted_at\s*=`, `set deleted_at`) may appear only
+ * in the schema, the file holding `trashNotesInTx` / `restoreNotesInTx`, the trash list query (including DTO mapping) and MCP
+ * `list_trash` (outputSchema and DTO mapping), with registered counts.
+ * trash_folder_path guard: the `trashFolderPath:` / `trash_folder_path` literals may appear only in the schema, `notes/tx/trash.ts`,
+ * `folders/tx/delete-folder.ts`, `groups/tx/delete-group.ts` and the trash list query, with registered counts (a separate table from the
+ * deleted_at guard).
+ * folders guard: files that write the `folders` table (`.update|insert|delete(folders)`, SQL literals `update folders` / `delete from
+ * folders` / `insert into folders`, also the quoted identifier `"folders"` and the `sql` template `${folders}`) may only be inside
+ * `folders/tx/*.ts` and `groups/tx/delete-group.ts`. `notes/tx/trash.ts` is not listed because restore goes through
+ * `folders/tx/ensure-path.ts`; add it back if trash.ts ever writes directly.
+ * note_placements guard: same form for the `note_placements` table (including `"note_placements"` and `${notePlacements}`); files may
+ * only be inside `folders/tx/*.ts`. This and the folders guard compare file sets only and record no counts.
  *
- * 選處數不選行內標記：行內標記要訂「命中前後幾行內要有標記」的視窗規則，查詢跨行、標記被格式化工具移位都會誤判；
- * 處數表是純計數，沒有視窗、沒有放置規則，任何處數變動都會讓這張表出現在 diff 裡，code review 一定看得到。
- * 代價：表只記處數，不記哪一處屬於哪一類。
+ * Counts instead of inline markers: a marker needs a "marker within N lines of the hit" window rule, and queries span lines and formatters
+ * move markers, so it misjudges; a count table has no window or placement rule, and any count change shows up in the diff where code
+ * review sees it. Cost: the table records counts, not which hit belongs to which class.
  *
- * ⚠ 不宣稱（誠實）：
- *   - 同一檔裡「刪一處、加一處」處數不變時抓不到。
- *   - 逐處分類是否正確——靠人工審視與各路由的行為測試，不靠守衛。
- *   - 以 note id 直接查子表、不碰 `notes` 的讀取（`uploads`、`note_states`、`note_versions`、`note_links`、`note_shares`、
- *     `note_search_*` 等）——由對應的測試負責。
- *   - 守衛一的 SQL 引號識別字 `"notes"` 與 import 別名（`import { notes as n }`）不在比對式內（目前零命中）。
- *   - 逐行比對：關鍵字與表名分在兩行的 SQL（`update⏎ folders`）抓不到（守衛一的字面 `from⏎ notes` 同此盲點；`${notes}` 不受影響）；
- *     drizzle 呼叫參數拆行（`.update(⏎ folders⏎ )`）也抓不到。
- *   - 守衛二／二 b 抓不到物件簡寫 `.set({ deletedAt })`、`.set({ trashFolderPath })`（沒有冒號）；各條守衛都不做括號解析。
- *   - FK 動作（`ON DELETE CASCADE`／`SET NULL`）造成的寫入不在比對式內：刪資料夾 SET NULL `notes.folder_id`、CASCADE 子資料夾
- *     與放置，刪筆記／撤分享 CASCADE 放置，刪群組 CASCADE 群組資料夾。
- *   - `sql.raw` 拼表名、表物件存進區域變數再寫（`const t = folders; tx.update(t)`）、別名 import、schema 限定的表名
- *     （`${schema.folders}`、`public.folders`）都抓不到（目前零命中）。
- *   - 守衛三／三 b 不記處數：允許檔裡多寫幾處、守衛二 b 同檔刪一處加一處，處數表都不變。
- *   - 寫 `notes.folder_id` 不歸守衛三管（那是 `notes` 的寫入，由守衛一的 `write`／`trashOnly` 登記）。
+ * Not caught:
+ *   - Deleting one hit and adding another in the same file leaves the count unchanged.
+ *   - Whether each hit is classified correctly: that depends on review and each route's behaviour tests, not on this guard.
+ *   - Reads of child tables by note id that never touch `notes` (`uploads`, `note_states`, `note_versions`, `note_links`, `note_shares`,
+ *     `note_search_*` and so on): those are the job of the corresponding tests.
+ *   - The notes guard's quoted SQL identifier `"notes"` and import aliases (`import { notes as n }`) are outside the pattern (no hits today).
+ *   - Line-by-line matching misses SQL whose keyword and table name sit on different lines (`update⏎ folders`; the notes literal
+ *     `from⏎ notes` has the same blind spot, `${notes}` does not) and drizzle calls whose argument is split across lines (`.update(⏎ folders⏎ )`).
+ *   - The deleted_at and trash_folder_path guards miss the object shorthand `.set({ deletedAt })` / `.set({ trashFolderPath })` (no colon);
+ *     none of the guards parse parentheses.
+ *   - Writes caused by FK actions (`ON DELETE CASCADE` / `SET NULL`) are outside the patterns: deleting a folder sets `notes.folder_id` NULL
+ *     and cascades to child folders and placements, deleting or unsharing a note cascades to placements, deleting a group cascades to its folders.
+ *   - Table names built with `sql.raw`, a table object stored in a local variable and written later (`const t = folders; tx.update(t)`),
+ *     aliased imports and schema-qualified names (`${schema.folders}`, `public.folders`) are missed (no hits today).
+ *   - The folders and note_placements guards record no counts: extra writes inside an allowed file leave their results unchanged, and
+ *     deleting one hit and adding another in the same file leaves the trash_folder_path count table unchanged.
+ *   - Writes to `notes.folder_id` are not the folders guard's concern (they are writes to `notes`, registered by the notes guard's
+ *     `write` / `trashOnly` entries).
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -50,7 +57,6 @@ function walk(dir: string): string[] {
 }
 const rel = (p: string) => path.relative(SRC, p).split(path.sep).join("/");
 
-/** 逐檔命中數（只列 > 0 的檔）。 */
 function hits(re: RegExp): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of walk(SRC)) {
@@ -82,131 +88,130 @@ const DELETED_AT_WRITE = /deletedAt:|deletedBy:|deleted_at\s*=|set\s+deleted_at/
 
 type Disposition = { excludes?: number; trashOnly?: number; includes?: number; write?: number; why?: string };
 
-// `excludes`＝帶 `deleted_at IS NULL`，或結果必經「在垃圾桶的筆記不可見」的閘口；`trashOnly`＝只看垃圾桶；`includes`＝刻意不分狀態（附理由）；`write`＝`UPDATE`／`DELETE`／寫入用 CTE，本句帶 `deleted_at IS NULL` 或受同交易先前帶條件的 `FOR UPDATE` 保護。
+// `excludes`: carries `deleted_at IS NULL`, or its result always passes the gate that hides trashed notes; `trashOnly`: looks only at the trash; `includes`: deliberately ignores state (with a reason); `write`: `UPDATE` / `DELETE` / write CTE whose statement carries `deleted_at IS NULL` or is protected by an earlier conditioned `FOR UPDATE` in the same transaction.
 const REGISTRY: Record<string, Disposition> = {
-  "collab/server.ts": { includes: 1, why: "落款寫進垃圾桶筆記" },
-  "collab/store.ts": { includes: 1, why: "載入時 links_clock 鉗制，與存活無關" },
-  // excludes：scanRound（scanDue）。
-  "collab/versions.ts": { excludes: 1, includes: 7, why: "版本狀態隨落盤與套用版本後的基底寫回寫入；readVersionMeta 不改（M-G）；sweep 照常" },
-  // 刪資料夾預讀子樹活筆記（刪資料夾）。
+  "collab/server.ts": { includes: 1, why: "last-edited stamp is written even for a trashed note" },
+  "collab/store.ts": { includes: 1, why: "links_clock clamp on load, unrelated to whether the note is live" },
+  // excludes: scanRound (scanDue).
+  "collab/versions.ts": { excludes: 1, includes: 7, why: "version state is written on persist and when the base is written back after applying a version; readVersionMeta is left unchanged; sweep runs as usual" },
+  // Folder delete pre-reads the live notes of the subtree.
   "folders/service.ts": { excludes: 1 },
-  // includes：子樹筆記鎖讀；trashOnly：刷新子樹垃圾桶筆記的路徑快照（刪資料夾）。
-  "folders/tx/delete-folder.ts": { includes: 1, trashOnly: 1, why: "一段式依 id 鎖子樹全部筆記（不分狀態，spec m5）" },
-  // excludes：放置的筆記鎖讀（個人／群組 FOR UPDATE、共享 FOR KEY SHARE 同一句，帶 deleted_at IS NULL）；write：UPDATE folder_id（受前一句的 FU 保護）（放置）。
+  // includes: lock-read of the subtree's notes; trashOnly: refreshes the path snapshot of the subtree's trashed notes (folder delete).
+  "folders/tx/delete-folder.ts": { includes: 1, trashOnly: 1, why: "locks all of the subtree's notes by id in one statement, regardless of state" },
+  // excludes: lock-read of the note being placed (personal/group FOR UPDATE and shared FOR KEY SHARE in one statement, with deleted_at IS NULL); write: UPDATE folder_id (protected by the preceding FOR UPDATE).
   "folders/tx/place-note.ts": { excludes: 1, write: 1 },
-  "groups/queries.ts": { includes: 1, why: "群組全部筆記（踢線、刪群組 P0）" },
-  // 轉移的鎖、配額 innerJoin、轉移 UPDATE、全刪的鎖。
-  "groups/tx/delete-group.ts": { includes: 4, why: "轉移／全刪含垃圾桶" },
+  "groups/queries.ts": { includes: 1, why: "all of the group's notes (disconnecting members, deleting the group)" },
+  // Transfer lock, quota innerJoin, transfer UPDATE, delete-all lock.
+  "groups/tx/delete-group.ts": { includes: 4, why: "transfer and delete-all include trashed notes" },
   "mcp/tools/read-note-outline.ts": { excludes: 1 },
   "notes/editing/candidates.ts": { excludes: 3 },
   "notes/editing/read.ts": { excludes: 1 },
-  // excludes：檔案寫回讀現行標題（判 note_changed，帶 deleted_at IS NULL）。
-  "notes/editing/write-service.ts": { excludes: 1, includes: 1, why: "帶 content 建立失敗清掉剛建的列" },
-  // excludes：存活 meta；includes：backfill 群組分支。
-  "notes/link-conversion.ts": { excludes: 1, includes: 1, why: "目標在垃圾桶照記" },
+  // excludes: file write-back reads the current title (to decide note_changed), with deleted_at IS NULL.
+  "notes/editing/write-service.ts": { excludes: 1, includes: 1, why: "a failed create-with-content deletes the row it just created" },
+  // excludes: live meta; includes: backfill group branch.
+  "notes/link-conversion.ts": { excludes: 1, includes: 1, why: "links are recorded even when the target is trashed" },
   "notes/links.ts": { excludes: 3 },
   "notes/list-query.ts": { excludes: 3 },
-  // GET :ref／by-path 重讀／搬移後／還原後都在閘口後；routes/notes.ts POST 帶 content 的建立後重讀不經閘口，
-  // 讀的是本請求剛建的列，無洩漏。
+  // GET :ref, the by-path re-read, and the reads after move and restore all sit behind the gate; the re-read after POST with content in routes/notes.ts doesn't pass the gate,
+  // but it reads the row this request just created, so nothing leaks.
   "notes/note-dto.ts": { excludes: 1 },
   "notes/public-links.ts": { excludes: 1 },
-  // excludes：pre-read、0 列後的存在＋標題查詢（#381 起 expectTitle／expectTitleFingerprint 共用這一句；兩句都帶 deleted_at IS NULL）；write：UPDATE。
+  // excludes: pre-read, and the existence + title lookup after 0 rows (expectTitle and expectTitleFingerprint share this statement; both statements carry deleted_at IS NULL); write: UPDATE.
   "notes/rename-note.ts": { excludes: 2, write: 1 },
-  // excludes：accessQuery、noteIsLive；trashOnly：trashedAccessQuery；includes：loadNoteAudience。
-  "notes/service.ts": { excludes: 2, trashOnly: 1, includes: 1, why: "移入前抓名單" },
+  // excludes: accessQuery, noteIsLive; trashOnly: trashedAccessQuery; includes: loadNoteAudience.
+  "notes/service.ts": { excludes: 2, trashOnly: 1, includes: 1, why: "loads the audience before moving to trash" },
   "notes/site-link-resolver.ts": { excludes: 2 },
-  // excludes：legacy ref（之後接授權）；includes：slug 探測。
-  "notes/slug.ts": { excludes: 1, includes: 1, why: "slug 仍佔用" },
+  // excludes: legacy ref (authorization follows); includes: slug probe.
+  "notes/slug.ts": { excludes: 1, includes: 1, why: "a trashed note still holds its slug" },
   "notes/tx/copy.ts": { excludes: 1 },
-  "notes/tx/delete-notes.ts": { includes: 2, why: "集合由呼叫端決定（永久刪除只傳垃圾桶 id、全刪傳全部）" },
+  "notes/tx/delete-notes.ts": { includes: 2, why: "the caller decides the set (permanent delete passes only trashed ids, delete-all passes all)" },
   "notes/tx/move.ts": { excludes: 1, write: 1 },
   "notes/tx/patch-slug.ts": { write: 2 },
-  "notes/tx/search-index.ts": { includes: 1, why: "索引照寫" },
+  "notes/tx/search-index.ts": { includes: 1, why: "the index is written regardless" },
   "notes/tx/shares.ts": { excludes: 1 },
-  // trashOnly：照路徑重建寫 folder_id（還原）、還原 UPDATE、到期查詢；includes：lockNotes；write：移入 UPDATE。
-  "notes/tx/trash.ts": { trashOnly: 3, includes: 1, write: 1, why: "先鎖再判（狀態在鎖後逐篇判）" },
-  // excludes：切版鎖讀；includes：notBaseVersionSql、reset 兩句；write：cutVersionInTx 內三句 UPDATE。
-  "notes/tx/versions.ts": { excludes: 1, includes: 3, write: 3, why: "版本清除照常、轉移 reset 不分狀態" },
-  "notes/tx/write-links.ts": { includes: 4, why: "目標在垃圾桶照記、CAS 不加條件" },
-  "routes/admin-storage.ts": { includes: 2, why: "容量照算" },
-  // excludes：GET public-link；write：公開連結五支（token PUT/DELETE、width PUT、別名 PUT/DELETE）。
-  // GET public-link 與 routes/notes.ts 的格 4 pre-read 同是「授權後、本句不帶條件」：前者是純讀，TOCTOU 下等同「先讀後移入」，歸 excludes；
-  // 後者登記為 includes。
+  // trashOnly: rebuild-by-path write of folder_id (restore), restore UPDATE, expiry query; includes: lockNotes; write: move-to-trash UPDATE.
+  "notes/tx/trash.ts": { trashOnly: 3, includes: 1, write: 1, why: "lock first, then decide (state is checked per note after locking)" },
+  // excludes: version-cut lock-read; includes: notBaseVersionSql, the two reset statements; write: the three UPDATEs inside cutVersionInTx.
+  "notes/tx/versions.ts": { excludes: 1, includes: 3, write: 3, why: "version pruning runs as usual; the transfer reset ignores state" },
+  "notes/tx/write-links.ts": { includes: 4, why: "links are recorded even when the target is trashed; the CAS adds no condition" },
+  "routes/admin-storage.ts": { includes: 2, why: "storage usage still counts trashed notes" },
+  // excludes: GET public-link; write: the five public-link routes (token PUT/DELETE, width PUT, alias PUT/DELETE).
+  // GET public-link and the pre-read in routes/notes.ts are both "after authorization, statement carries no condition": the former is a pure read, equivalent to "read, then move to trash" under TOCTOU, so it counts as excludes;
+  // the latter is registered as includes.
   "routes/note-sharing.ts": { excludes: 1, write: 5 },
-  // excludes：withCurrentBase（授權後讀）；includes：DELETE 版本的基底子查詢。
-  "routes/note-versions.ts": { excludes: 1, includes: 1, why: "刪版本：授權後子表單句寫入不加條件" },
-  // excludes：ownershipChanged、selectNotesWhere；includes：格 4 pre-read（授權後、本句不帶條件；與 routes/note-sharing.ts 的 GET public-link 對照）。
-  "routes/notes.ts": { excludes: 2, includes: 1, why: "格 4 pre-read 不加條件，後面的 CTE 會擋" },
+  // excludes: withCurrentBase (read after authorization); includes: the base subquery in the version DELETE route.
+  "routes/note-versions.ts": { excludes: 1, includes: 1, why: "version delete: single-statement child-table write after authorization, no condition" },
+  // excludes: ownershipChanged, selectNotesWhere; includes: the pre-read (after authorization, statement carries no condition; compare GET public-link in routes/note-sharing.ts).
+  "routes/notes.ts": { excludes: 2, includes: 1, why: "the pre-read carries no condition; the CTE that follows blocks trashed notes" },
   "routes/public.ts": { excludes: 2 },
-  // 「認識的人」建議：我擁有的活筆記的分享對象（帶 deleted_at IS NULL）。
+  // "People you know" suggestions: share targets of my live notes (with deleted_at IS NULL).
   "routes/users.ts": { excludes: 1 },
-  "storage/tx/quota.ts": { includes: 1, why: "容量照算" },
-  "storage/usage.ts": { includes: 4, why: "容量照算" },
-  // trashOnly：清單兩支、loadTrashedMeta（delete_note 移入後的重讀）、loadTrashedPurgeAt（delete_folder 移入後的重讀）。
+  "storage/tx/quota.ts": { includes: 1, why: "storage usage still counts trashed notes" },
+  "storage/usage.ts": { includes: 4, why: "storage usage still counts trashed notes" },
+  // trashOnly: the two list queries, loadTrashedMeta (re-read after delete_note moves to trash), loadTrashedPurgeAt (re-read after delete_folder moves to trash).
   "trash/list.ts": { trashOnly: 4 },
-  // 還原的預讀空間（還原）。
+  // Pre-read of the space for restore.
   "trash/service.ts": { trashOnly: 1 },
   "uploads/tx/insert-upload.ts": { excludes: 1 },
 };
 
-/** 守衛二：只准這四檔，值＝處數。 */
+/** deleted_at guard: only these four files; value = count. */
 const DELETED_AT_WRITERS: Record<string, number> = {
-  "db/schema.ts": 2, // 欄位定義 deleted_at、deleted_by
-  "mcp/tools/list-trash.ts": 4, // outputSchema 兩鍵、DTO 映射一鍵、型別註記 `let deletedBy:` 一處（都是讀取，非寫入）
-  "notes/tx/trash.ts": 5, // 鎖讀選欄、移入 set 兩欄、還原 set 兩欄
-  "trash/list.ts": 3, // 清單選欄、DTO 映射兩欄
+  "db/schema.ts": 2, // column definitions deleted_at, deleted_by
+  "mcp/tools/list-trash.ts": 4, // two outputSchema keys, one DTO-mapping key, one type annotation `let deletedBy:` (all reads, not writes)
+  "notes/tx/trash.ts": 5, // lock-read column selection, two columns set on move-to-trash, two set on restore
+  "trash/list.ts": 3, // list column selection, two DTO-mapping columns
 };
 
-/** 守衛二 b：`trash_folder_path` 字面，只准這五檔，值＝處數（字面比對，讀寫不分：清單讀快照、鎖讀選欄也算）。 */
+/** Values are hit counts. */
 const TRASH_FOLDER_PATH_WRITE = /trashFolderPath:|trash_folder_path/gi;
 const TRASH_FOLDER_PATH_WRITERS: Record<string, number> = {
-  "db/schema.ts": 3, // 欄位定義（鍵、欄名）、CHECK 名 notes_trash_folder_path_chk
-  "folders/tx/delete-folder.ts": 1, // 刪資料夾刷新子樹垃圾桶筆記的快照
-  "groups/tx/delete-group.ts": 1, // 轉移：快照前接新頂層名
-  "notes/tx/trash.ts": 3, // lockNotes 選欄、移入 set、還原清掉
-  "trash/list.ts": 1, // 清單 folderPath 讀快照
+  "db/schema.ts": 3, // column definition (key, column name), CHECK name notes_trash_folder_path_chk
+  "folders/tx/delete-folder.ts": 1, // folder delete refreshes the snapshot of the subtree's trashed notes
+  "groups/tx/delete-group.ts": 1, // transfer: prepends the new top-level name to the snapshot
+  "notes/tx/trash.ts": 3, // lockNotes column selection, set on move-to-trash, cleared on restore
+  "trash/list.ts": 1, // list folderPath reads the snapshot
 };
 
-/** 守衛三／三 b：寫 `folders`／`note_placements` 的檔集合。 */
 const FOLDERS_WRITE = /\.(?:update|insert|delete)\(folders\)|\b(?:update|delete\s+from|insert\s+into)\s+(?:"?folders"?(?!\w)|\$\{folders\})/gi;
 const PLACEMENTS_WRITE =
   /\.(?:update|insert|delete)\(notePlacements\)|\b(?:update|delete\s+from|insert\s+into)\s+(?:"?note_placements"?(?!\w)|\$\{notePlacements\})/gi;
 const inFoldersTx = (f: string) => /^folders\/tx\/[^/]+\.ts$/.test(f);
-// groups/tx/delete-group.ts：轉移改整棵。還原照路徑重建經 folders/tx/ensure-path.ts，notes/tx/trash.ts 不列。
+// groups/tx/delete-group.ts: transfer rewrites the whole tree. Restore rebuilds by path through folders/tx/ensure-path.ts, so notes/tx/trash.ts isn't listed.
 const FOLDERS_WRITE_OTHERS = new Set(["groups/tx/delete-group.ts"]);
 
 const total = (d: Disposition) => (d.excludes ?? 0) + (d.trashOnly ?? 0) + (d.includes ?? 0) + (d.write ?? 0);
 
-describe("垃圾桶結構守衛（#181）", () => {
+describe("trash structure guard (#181)", () => {
   const actual = hits(NOTES_QUERY);
 
-  it("守衛一 ① 直查 notes 的檔集合＝登記表的鍵", () => {
+  it("notes queries: the file set equals the registry keys", () => {
     expect(Object.keys(actual).sort()).toEqual(Object.keys(REGISTRY).sort());
   });
 
-  it("守衛一 ② 每檔處數＝登記表四項總和", () => {
+  it("notes queries: each file's count equals the sum of its four registry fields", () => {
     for (const [f, d] of Object.entries(REGISTRY)) expect.soft(actual[f] ?? 0, f).toBe(total(d));
   });
 
-  it("守衛一 ③ 有 includes 的條目一定附理由", () => {
+  it("notes queries: every entry with includes carries a reason", () => {
     const missing = Object.entries(REGISTRY).filter(([, d]) => (d.includes ?? 0) > 0 && !d.why?.trim()).map(([f]) => f);
     expect(missing).toEqual([]);
   });
 
-  it("守衛二寫 deleted_at 的字面只在四檔、處數凍結", () => {
+  it("deleted_at write literals appear only in four files, counts frozen", () => {
     expect(hits(DELETED_AT_WRITE)).toEqual(DELETED_AT_WRITERS);
   });
 
-  it("守衛二 b trash_folder_path 字面只在五檔、處數凍結", () => {
+  it("trash_folder_path literals appear only in five files, counts frozen", () => {
     expect(hits(TRASH_FOLDER_PATH_WRITE)).toEqual(TRASH_FOLDER_PATH_WRITERS);
   });
 
-  it("守衛三 寫 folders 只在 folders/tx/*、groups/tx/delete-group.ts", () => {
+  it("folders writes appear only in folders/tx/* and groups/tx/delete-group.ts", () => {
     const outside = Object.keys(hits(FOLDERS_WRITE)).filter(f => !inFoldersTx(f) && !FOLDERS_WRITE_OTHERS.has(f));
     expect(outside).toEqual([]);
   });
 
-  it("守衛三 b 寫 note_placements 只在 folders/tx/*", () => {
+  it("note_placements writes appear only in folders/tx/*", () => {
     expect(Object.keys(hits(PLACEMENTS_WRITE)).filter(f => !inFoldersTx(f))).toEqual([]);
   });
 });

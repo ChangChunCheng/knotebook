@@ -8,21 +8,21 @@ const LIST: SiteLinkCandidate[] = [{ id: "11111111-1111-4111-8111-111111111111",
 const parsed = (href: string) => parseSiteNoteHref(href, ORIGIN)!;
 
 describe("#269 resolveFromCache", () => {
-  it("快取未載入 → unknown；命中 → hit；載入了沒有 → miss", () => {
+  it("cache not loaded -> unknown; hit -> hit; loaded but absent -> miss", () => {
     expect(resolveFromCache(undefined, parsed("/n/alice/a"))).toEqual({ kind: "unknown" });
     expect(resolveFromCache(LIST, parsed("/n/alice/a"))).toEqual({ kind: "hit", target: { id: LIST[0]!.id, title: "A" } });
     expect(resolveFromCache(LIST, parsed("/n/alice/b"))).toEqual({ kind: "miss" });
   });
 });
 
-describe("#269 resolveViaServer（三支端點、寫入者權限、非 200 一律 null）", () => {
+describe("#269 resolveViaServer (three endpoints, writer permission, any non-200 gives null)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
   const ok = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as Response);
 
-  it("n／g／ref 各打對的端點；200 → { id, title }", async () => {
+  it("n / g / ref each hit the right endpoint; 200 -> { id, title }", async () => {
     const fetchMock = vi.fn<(url: string) => Promise<Response>>(() => ok({ id: "x1", title: "T", extra: 1 }));
     vi.stubGlobal("fetch", fetchMock);
     expect(await resolveViaServer(parsed("/n/Alice/My%20Note"))).toEqual({ id: "x1", title: "T" });
@@ -35,14 +35,14 @@ describe("#269 resolveViaServer（三支端點、寫入者權限、非 200 一�
     ]);
   });
 
-  it("404／網路錯誤 → null", async () => {
+  it("404 / network error -> null", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({ error: { code: "not_found", message: "x" } }) } as Response)));
     expect(await resolveViaServer(parsed("/n/alice/a"))).toBeNull();
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("down"))));
     expect(await resolveViaServer(parsed("/n/alice/a"))).toBeNull();
   });
 
-  it("逾時（5 s）→ abort、null", async () => {
+  it("timeout (5 s) -> abort, null", async () => {
     vi.useFakeTimers();
     let signal: AbortSignal | undefined;
     vi.stubGlobal("fetch", vi.fn((_u: string, init?: RequestInit) => {

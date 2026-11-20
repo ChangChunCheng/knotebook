@@ -1,17 +1,16 @@
-// #379：筆記裡打的字面 HTML（`<b>`、`<script>`…）走「讀出 → 改 → 送回站內 AI 套用」要原樣回來。
-// 讀出端的 `<` 跳脫由 shared 負責，解析端靠 BlockNote parser 的 `\<` patch；這裡兩頭都釘住。
+// #379: literal HTML typed in a note (`<b>`, `<script>`...) must come back verbatim through read -> edit -> send back to in-site AI apply. The `<` escaping on the read side is done by shared; the parse side relies on the BlockNote parser's `\<` patch; both ends are pinned here.
 import { describe, expect, it } from "vitest";
 import { BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { noteSchema } from "@/collab/schema";
 import { aiMarkdownOf } from "./note-markdown";
 import { prepareAiResult } from "./apply";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyPartial = PartialBlock<any, any, any>;
 
 const documentOf = (blocks: AnyPartial[]) => BlockNoteEditor.create({ schema: noteSchema, initialContent: blocks }).document;
 
-// [使用者打的字 L, 讀出的 markdown E]；E 的反斜線要原樣保留，所以用 String.raw。
+// [text L the user typed, markdown E as read out]; E's backslashes must be kept verbatim, hence String.raw.
 const CASES: [string, string][] = [
   ["<b>bold</b>", String.raw`\<b>bold\</b>`],
   ["a <b> c", String.raw`a \<b> c`],
@@ -24,8 +23,8 @@ const CASES: [string, string][] = [
   ['<div data-kb-columns style="display:flex;gap:16px">', String.raw`\<div data-kb-columns style="display:flex;gap:16px">`],
 ];
 
-describe("#379 站內 AI：字面 HTML 讀出、改字、套用", () => {
-  it.each(CASES)("%s 讀成 markdown 後改一個字，套用回來仍是同一段字面文字", (L, E) => {
+describe("#379 in-site AI: literal HTML read out, edited, applied", () => {
+  it.each(CASES)("%s read as markdown, edit one word, applying restores the same literal text", (L, E) => {
     const md = aiMarkdownOf(documentOf([{ type: "paragraph", content: `${L} EDITME` }]), () => undefined);
     expect(md).toBe(`${E} EDITME\n`);
 
@@ -37,8 +36,8 @@ describe("#379 站內 AI：字面 HTML 讀出、改字、套用", () => {
     expect(prepared.blocks[0]!.content).toEqual([{ type: "text", text: `${L} EDITED`, styles: {} }]);
   });
 
-  // 網頁貼上 markdown 與站內 AI 用同一個 parser：確認 web 這邊真的吃到 patch（`\<` 是字面 `<`）。
-  it("parser：`\\<b>x\\</b>` 解成一個段落、文字 <b>x</b>", () => {
+  // Web paste-markdown and in-site AI share one parser: confirms web really gets the patch (`\<` is a literal `<`).
+  it("parser: `\\<b>x\\</b>` parses to one paragraph with text <b>x</b>", () => {
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     const blocks = editor.tryParseMarkdownToBlocks(String.raw`\<b>x\</b>`);
     expect(blocks).toHaveLength(1);

@@ -3,12 +3,12 @@ import { MAX_UPLOAD_BYTES } from "./index.js";
 import { SITE_LIMIT_KEYS, SITE_LIMITS, siteLimitDef, siteLimitStep, type SiteLimitDef } from "./site-limits.js";
 
 describe("site limits registry", () => {
-  it("17 項、順序與 SITE_LIMIT_KEYS 相同", () => {
+  it("17 entries, in the same order as SITE_LIMIT_KEYS", () => {
     expect(SITE_LIMIT_KEYS).toEqual(Object.keys(SITE_LIMITS));
     expect(SITE_LIMIT_KEYS).toHaveLength(17);
   });
 
-  it("每項 default 在範圍內且對齊刻度", () => {
+  it("every default is within range and aligned to the step", () => {
     for (const key of SITE_LIMIT_KEYS) {
       const d = siteLimitDef(key);
       if (d.default === "auto") continue;
@@ -18,7 +18,7 @@ describe("site limits registry", () => {
     }
   });
 
-  it("min/max 對齊刻度、0 ≤ min ≤ max ≤ 2^31−1", () => {
+  it("min/max are aligned to the step, 0 <= min <= max <= 2^31-1", () => {
     for (const key of SITE_LIMIT_KEYS) {
       const d = siteLimitDef(key);
       const step = siteLimitStep(key);
@@ -30,7 +30,7 @@ describe("site limits registry", () => {
     }
   });
 
-  it("有 env 的恰好 5 項", () => {
+  it("exactly 5 have an env", () => {
     expect(SITE_LIMIT_KEYS.filter((k) => siteLimitDef(k).env)).toEqual([
       "noteMaxBytes",
       "parseWorkers",
@@ -48,7 +48,7 @@ describe("site limits registry", () => {
     expect(siteLimitStep("rateEdit")).toBe(1);
   });
 
-  it("只有 rate* 有 windowMs", () => {
+  it("only rate* has windowMs", () => {
     for (const key of SITE_LIMIT_KEYS) {
       const w = siteLimitDef(key).windowMs;
       if (key.startsWith("rate")) expect(w, key).toBeGreaterThan(0);
@@ -56,7 +56,7 @@ describe("site limits registry", () => {
     }
   });
 
-  it("每一項的預設與範圍逐字釘住", () => {
+  it("each entry's default and range are pinned verbatim", () => {
     const expected: Record<string, SiteLimitDef> = {
     uploadMaxBytes: { type: "int", unit: "bytes", default: 10_485_760, min: 1_048_576, max: 10_485_760, category: "uploadsNotes", input: { unit: "mib", step: 1 } },
     noteMaxBytes: { type: "int", unit: "bytes", default: 5_242_880, min: 1_048_576, max: 5_242_880, env: "NOTE_MAX_BYTES", category: "uploadsNotes", input: { unit: "mib", step: 1 } },
@@ -79,7 +79,7 @@ describe("site limits registry", () => {
     expect(SITE_LIMITS).toEqual(expected);
   });
 
-  it("siteLimitStep 遇到不在允許表的單位配對就丟錯", () => {
+  it("siteLimitStep throws for a unit pairing not in the allow table", () => {
     const real = SITE_LIMITS.rateEdit;
     const mutable = SITE_LIMITS as unknown as Record<string, { input: { unit: string; step: number } }>;
     const saved = mutable.rateEdit!.input;
@@ -92,7 +92,7 @@ describe("site limits registry", () => {
     expect(real.input.unit).toBe("count");
   });
 
-  it("MAX_UPLOAD_BYTES 等於註冊表預設", () => {
+  it("MAX_UPLOAD_BYTES equals the registry default", () => {
     expect(MAX_UPLOAD_BYTES).toBe(10_485_760);
     expect(MAX_UPLOAD_BYTES).toBe(SITE_LIMITS.uploadMaxBytes.default);
   });

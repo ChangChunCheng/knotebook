@@ -13,13 +13,13 @@ import { ThemeProvider } from "@/theme";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * #263 AI 框測試的共用 Host：照 `NoteEditor.tsx` 的真實掛載鏈——
- * `AiSessionProvider`（:450）包 `NoteEditorView`（:476），AI 元件是 `<BlockNoteView>` 的 children（:561-585），`editor.portalElement`
- * 由 BlockNoteView 掛上。外層 `MemoryRouter`＋`QueryClientProvider`：wikilink inline 用到 `useNavigate`／`useNotes`；`ThemeProvider`：預覽的 `DiffEditor` 用到 `useTheme`。
- * 不是 `NoteEditor` 本體——`NoteEditor` 自己 `useCreateBlockNote` 建 editor，測試拿不到實例去設選取。
+ * Shared Host for the AI box tests: follows the real mount chain in `NoteEditor.tsx` -
+ * `AiSessionProvider` wraps `NoteEditorView`, the AI components are children of `<BlockNoteView>`, and `editor.portalElement`
+ * is attached by BlockNoteView. Outer `MemoryRouter` + `QueryClientProvider`: the wikilink inline uses `useNavigate` / `useNotes`; `ThemeProvider`: the preview's `DiffEditor` uses `useTheme`.
+ * It isn't `NoteEditor` itself - `NoteEditor` builds its editor with `useCreateBlockNote`, so tests can't get the instance to set a selection.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 編輯器泛型三元組，走 repo 慣例用 any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; any per repo convention
 export type AnyEditor = BlockNoteEditor<any, any, any>;
 
 export function createTestEditor(initialContent: unknown[]): AnyEditor {
@@ -34,7 +34,6 @@ export interface AiRequestBody {
   focus?: string;
 }
 
-/** 一次 `POST /api/ai` 的把手：測試可在任意時間點推 delta、收尾或丟錯。 */
 export interface AiCall {
   body: AiRequestBody;
   signal: AbortSignal;
@@ -47,7 +46,6 @@ function jsonResponse(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body), body: null } as unknown as Response;
 }
 
-/** 假 fetch：`GET /api/ai/actions`、`GET /api/notes` 回固定值；`POST /api/ai` 開一條等測試推事件的串流。 */
 export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[] }): { calls: AiCall[] } {
   const calls: AiCall[] = [];
   const encoder = new TextEncoder();
@@ -93,7 +91,6 @@ export interface AiHostProps {
   noteId?: string;
   editable?: boolean;
   onAutoClose?: () => void;
-  /** 筆記大小上限的前端檢查（`AiSessionProvider` 的 `sizeGuard`）。 */
   sizeGuard?: (incomingBytes: number) => boolean;
   children?: ReactNode;
 }
@@ -129,7 +126,6 @@ export function renderAiHost(props: AiHostProps) {
   return { ...result, queryClient, rerenderHost: (overrides: Partial<AiHostProps>) => result.rerender(tree({ ...props, ...overrides })) };
 }
 
-/** 區塊內文的起點（`blockContainer` 的 posBefore＋2）。 */
 export function contentStart(editor: AnyEditor, blockId: string): number {
   const info = getNodeById(blockId, editor.prosemirrorState.doc);
   if (!info) throw new Error(`找不到區塊 ${blockId}`);

@@ -34,7 +34,7 @@ function spyCollabHooks(): CollabHooks {
 }
 
 describe("GET /api/notes/:id/shares", () => {
-  it("owner → 200，形狀正確", async () => {
+  it("owner -> 200, correct shape", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-gs1@example.com" });
     const viewer = await insertUser(db, { email: "viewer-gs1@example.com", displayName: "Viewer One" });
@@ -50,7 +50,7 @@ describe("GET /api/notes/:id/shares", () => {
     expect(body).toEqual([{ userId: viewer.id, email: "viewer-gs1@example.com", displayName: "Viewer One", role: "viewer", avatar: null }]);
   });
 
-  it("非 owner 但可讀（editor）→ 403", async () => {
+  it("non-owner but readable (editor) -> 403", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-gs2@example.com" });
     const editor = await insertUser(db, { email: "editor-gs2@example.com" });
@@ -66,7 +66,7 @@ describe("GET /api/notes/:id/shares", () => {
     expect(res.json()).toMatchObject({ error: { code: "forbidden" } });
   });
 
-  it("不可讀（陌生人）→ 404", async () => {
+  it("not readable (stranger) -> 404", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-gs3@example.com" });
     const stranger = await insertUser(db, { email: "stranger-gs3@example.com" });
@@ -81,7 +81,7 @@ describe("GET /api/notes/:id/shares", () => {
     expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("不存在的 note → 404", async () => {
+  it("nonexistent note -> 404", async () => {
     const { app, db } = await buildTestApp();
     const user = await insertUser(db);
     const cookie = await cookieFor(user.id);
@@ -93,7 +93,7 @@ describe("GET /api/notes/:id/shares", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("未登入 → 401", async () => {
+  it("unauthenticated -> 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const ownerCookie = await cookieFor(owner.id);
@@ -106,7 +106,7 @@ describe("GET /api/notes/:id/shares", () => {
 });
 
 describe("PUT /api/notes/:id/shares", () => {
-  it("owner 分享 viewer → 200；對方 GET :id 200 role=viewer；GET 清單看得到（role 正確）；onShareChanged 被呼叫", async () => {
+  it("owner shares as viewer -> 200; the sharee's GET :id is 200 with role=viewer; appears in the GET list (correct role); onShareChanged called", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const owner = await insertUser(db, { email: "owner-ps1@example.com" });
@@ -139,7 +139,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(list[0]).toMatchObject({ id: note.id, role: "viewer" });
   });
 
-  it("upsert 改 role viewer→editor → 200；對方 PATCH title 變可行；onShareChanged 被呼叫", async () => {
+  it("upsert changes role viewer -> editor -> 200; the sharee's PATCH title now works; onShareChanged called", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const owner = await insertUser(db, { email: "owner-ps2@example.com" });
@@ -151,7 +151,7 @@ describe("PUT /api/notes/:id/shares", () => {
     const note = createRes.json();
     await db.insert(noteShares).values({ noteId: note.id, userId: target.id, role: "viewer" });
 
-    // upsert 前先確認 viewer 還不能 PATCH（403）
+    // Before the upsert, confirm the viewer still cannot PATCH (403).
     const beforeRes = await app.inject({
       method: "PATCH",
       url: `/api/notes/${note.id}`,
@@ -184,7 +184,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(afterRes.statusCode).toBe(200);
   });
 
-  it("非 owner（editor）管理 shares → 403；onShareChanged 未被呼叫（hook 只在成功路徑觸發）", async () => {
+  it("non-owner (editor) managing shares -> 403; onShareChanged not called (the hook fires only on the success path)", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const owner = await insertUser(db, { email: "owner-ps3@example.com" });
@@ -207,7 +207,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(collabHooks.onShareChanged).not.toHaveBeenCalled();
   });
 
-  it("role: 'owner' → 400 invalid_body（分享角色只能是 viewer/editor，不可透過此端點授予 owner）", async () => {
+  it("role: 'owner' -> 400 invalid_body (a share role can only be viewer/editor; owner cannot be granted through this endpoint)", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ps7@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -228,7 +228,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(rows).toHaveLength(0);
   });
 
-  it("陌生人 → 404", async () => {
+  it("stranger -> 404", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ps4@example.com" });
     const stranger = await insertUser(db, { email: "stranger-ps4@example.com" });
@@ -247,7 +247,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("分享給自己 → 400 cannot_share_with_self", async () => {
+  it("sharing with yourself -> 400 cannot_share_with_self", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ps5@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -265,7 +265,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(res.json()).toMatchObject({ error: { code: "cannot_share_with_self" } });
   });
 
-  it("Mixed-Case email 分享 → 命中（讀取端 lower() 對稱比對）", async () => {
+  it("mixed-case email share -> matches (the read side compares with lower() symmetrically)", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ps8@example.com" });
     const target = await insertUser(db, { email: "target-ps8@example.com", displayName: "Target Eight" });
@@ -284,7 +284,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(putRes.json()).toEqual({ userId: target.id, email: "target-ps8@example.com", displayName: "Target Eight", role: "viewer", avatar: null });
   });
 
-  it("不存在 email → 404 user_not_found", async () => {
+  it("nonexistent email -> 404 user_not_found", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ps6@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -302,7 +302,7 @@ describe("PUT /api/notes/:id/shares", () => {
     expect(res.json()).toMatchObject({ error: { code: "user_not_found", message: "No user with that email." } });
   });
 
-  it("未登入 → 401", async () => {
+  it("unauthenticated -> 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const ownerCookie = await cookieFor(owner.id);
@@ -315,7 +315,7 @@ describe("PUT /api/notes/:id/shares", () => {
 });
 
 describe("DELETE /api/notes/:id/shares/:userId", () => {
-  it("owner 撤銷 → 204；對方 GET :id 404；onShareChanged 被呼叫且參數正確", async () => {
+  it("owner revokes -> 204; the sharee's GET :id is 404; onShareChanged called with the right arguments", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const owner = await insertUser(db, { email: "owner-ds1@example.com" });
@@ -346,7 +346,7 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
     expect(afterRes.statusCode).toBe(404);
   });
 
-  it("非 owner（editor）→ 403", async () => {
+  it("non-owner (editor) -> 403", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ds2@example.com" });
     const editor = await insertUser(db, { email: "editor-ds2@example.com" });
@@ -367,7 +367,7 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("陌生人 → 404", async () => {
+  it("stranger -> 404", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ds3@example.com" });
     const stranger = await insertUser(db, { email: "stranger-ds3@example.com" });
@@ -387,7 +387,7 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("分享列不存在 → 404 share_not_found；onShareChanged 未被呼叫（hook 只在成功路徑觸發）", async () => {
+  it("share row does not exist -> 404 share_not_found; onShareChanged not called (the hook fires only on the success path)", async () => {
     const collabHooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks });
     const owner = await insertUser(db, { email: "owner-ds4@example.com" });
@@ -407,7 +407,7 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
     expect(collabHooks.onShareChanged).not.toHaveBeenCalled();
   });
 
-  it(":userId 非 UUID → 404", async () => {
+  it(":userId not a UUID -> 404", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-ds5@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -423,7 +423,7 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("未登入 → 401", async () => {
+  it("unauthenticated -> 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db);
     const target = await insertUser(db);
@@ -436,8 +436,8 @@ describe("DELETE /api/notes/:id/shares/:userId", () => {
   });
 });
 
-describe("GET /api/notes 清單去重（防禦縱深）", () => {
-  it("owner 自我分享列（繞過 API 手動 insert）不造成清單重複，role 仍為 'owner'", async () => {
+describe("GET /api/notes list de-duplication (defence in depth)", () => {
+  it("an owner's self-share row (inserted by hand, bypassing the API) does not duplicate the list entry; role stays 'owner'", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-dedupe@example.com" });
     const ownerCookie = await cookieFor(owner.id);
@@ -445,8 +445,8 @@ describe("GET /api/notes 清單去重（防禦縱深）", () => {
     const createRes = await app.inject({ method: "POST", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie }, payload: {} });
     const note = createRes.json();
 
-    // 繞過 API（PUT /shares 會擋 cannot_share_with_self）直接插入 owner 對自己 note 的
-    // note_shares 列，模擬資料異常／未來程式錯誤造成的自我分享列。
+    // Bypass the API (PUT /shares rejects cannot_share_with_self) and insert a note_shares row of the owner on their own note,
+    // simulating a data anomaly or a future bug producing self-share rows.
     await db.insert(noteShares).values({ noteId: note.id, userId: owner.id, role: "editor" });
 
     const res = await app.inject({ method: "GET", url: "/api/notes", cookies: { [SESSION_COOKIE]: ownerCookie } });

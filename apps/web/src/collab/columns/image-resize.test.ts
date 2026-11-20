@@ -3,9 +3,9 @@ import { collabUndoManager } from "@/collab/undo";
 import { IMG, P, mountEditor, row, shape, withChildren, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { expandColumnPixels, ratiosFromPixels } from "./widths";
 
-// 欄內圖片把手：拉到不超過圖片可用寬只改圖；超過時擠壓其他欄（依各欄超出最小寬度的餘裕比例扣），放開時圖寬與欄寬一起寫、一步還原。
+// Column image handles: dragging within the image's usable width changes only the image; beyond it squeezes other columns (deducted in proportion to each column's headroom above its minimum width); on release image width and column widths are written together, one undo step.
 
-/** 原生把手按下時往 wrapper 塞的那個全幅 capture 元素（core `createResizableFileBlockWrapper` 的 eventCaptureElement）。 */
+/** The full-size capture element the native handle inserts into the wrapper on press (core `createResizableFileBlockWrapper`'s eventCaptureElement). */
 const CAPTURE = ":scope > div[style*='position: absolute']";
 
 let cleanups: Array<() => void> = [];
@@ -23,11 +23,11 @@ function mount(content: PartialBlockLike[], collab = false) {
 }
 
 /**
- * jsdom 沒有版面，量值依身分回：
- * - `ck`：block id → 該 block 內容框（`.bn-block-content`）的 `clientWidth`，即圖片可用寬；
- * - `columns`：欄 id → 欄的像素寬（`getBoundingClientRect().width`）與 `clientWidth`；
- * - `rows`：列 id → 列的 `clientWidth`（堆疊時的上限）。
- * 欄的 width 一寫進文件 PM 就換一個新的欄元素，所以 mock 掛在 prototype、依 `data-id` 查表；查不到的元素回原實作。
+ * jsdom has no layout, so measurements are returned by identity:
+ * - `ck`: block id -> `clientWidth` of that block's content box (`.bn-block-content`), i.e. the image's usable width;
+ * - `columns`: column id -> the column's pixel width (`getBoundingClientRect().width`) and `clientWidth`;
+ * - `rows`: row id -> the row's `clientWidth` (the cap when stacked).
+ * Once a column's width is written to the document PM replaces the column element, so the mock is attached to the prototype and looks up by `data-id`; elements not found fall through to the original implementation.
  */
 interface Geometry {
   ck?: Record<string, number>;
@@ -53,8 +53,7 @@ function mockGeometry({ ck = {}, columns = {}, rows = {} }: Geometry) {
 }
 
 /**
- * `id` 那張圖的 wrapper／左右把手。預設量值：圖片可用寬 200、顯示寬 200（previewWidth 300 被 max-width 擠成可用寬）、
- * 兩欄各 200px（文字欄已在最小寬度）。
+ * The wrapper and left/right handles of image `id`. Default measurements: image usable width 200, display width 200 (previewWidth 300 squeezed to the usable width by max-width), two columns of 200px each (the text columns are already at minimum width).
  */
 function imageParts(container: HTMLElement, id: string, displayed = 200, geometry: Geometry = {}) {
   mockGeometry({ ck: { [id]: 200 }, columns: { rc0: 200, rc1: 200 }, ...geometry });
@@ -66,22 +65,19 @@ function imageParts(container: HTMLElement, id: string, displayed = 200, geometr
 }
 
 const down = (el: Element, clientX: number) => el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX }));
-// mousemove 直接發在 window（冒泡經過 document 會叫醒 core SideMenu 的 mousemove，它要 jsdom 沒有的 elementsFromPoint）；
-// mouseup 照真實發在元素上冒泡到 window（原生的 window mouseup handler 會拿 target 做 `wrapper.contains`）。
+// mousemove is dispatched on window directly (bubbling through document would wake core SideMenu's mousemove, which needs elementsFromPoint that jsdom lacks); mouseup is dispatched on the element and bubbles to window like the real thing (the native window mouseup handler uses target for `wrapper.contains`).
 const move = (clientX: number) => window.dispatchEvent(new MouseEvent("mousemove", { clientX }));
 const up = (clientX: number) => document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX }));
 const previewWidth = (editor: AnyEditor, id: string) => (editor.getBlock(id)!.props as { previewWidth?: number }).previewWidth;
 const widths = (editor: AnyEditor, rowId = "r") =>
   (editor.getBlock(rowId) as unknown as { children: { props: { width: number } }[] }).children.map((c) => c.props.width);
 const previewTables = () => document.head.querySelectorAll("style[data-kb-col-preview]");
-/** 預覽表裡某欄的 flex-grow；沒有預覽表或沒寫到這欄 → null。 */
 const previewGrow = (columnId: string) => {
   const text = previewTables()[0]?.textContent ?? "";
   const m = new RegExp(`\\[data-id="${columnId}"\\] \\{ flex-grow: ([0-9.]+) !important; \\}`).exec(text);
   return m ? Number(m[1]) : null;
 };
 
-/** 數編輯器的 Y.Doc 收到幾次 update。 */
 function countUpdates(editor: AnyEditor) {
   const spy = vi.fn();
   collabUndoManager(editor)!.doc.on("update", spy);
@@ -98,12 +94,12 @@ const inColumn = (alignment?: string, columnWidths?: number[]) => [
   P("z", "z9"),
 ];
 
-describe("欄內圖片把手", () => {
-  it("IR1 右把手：攔下原生（沒有 capture 元素、取消瀏覽器預設）；+100 超過可用寬 200 → 文字欄讓出 100px；放開 → previewWidth 300、文字欄比例變小；放開後的移動不再改寬、不再寫入", () => {
+describe("column image handles", () => {
+  it("right handle: intercepts the native one (no capture element, browser default cancelled); +100 beyond the usable width 200 -> text columns give up 100px; on release previewWidth 300 and the text column ratio shrinks; moves after release no longer change width or write", () => {
     const { editor, container } = mount(inColumn(undefined, [1, 2]));
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: { rc0: 200, rc1: 400 } });
     const before = wrapper.querySelectorAll(CAPTURE).length;
-    expect(down(right, 500)).toBe(false); // dispatchEvent 在被 preventDefault 時回 false
+    expect(down(right, 500)).toBe(false); // dispatchEvent returns false when preventDefault'ed
     expect(wrapper.querySelectorAll(CAPTURE).length).toBe(before);
     move(600);
     expect(wrapper.style.width).toBe("300px");
@@ -121,7 +117,7 @@ describe("欄內圖片把手", () => {
     expect(previewWidth(editor, "i1")).toBe(300);
   });
 
-  it("IR6 一次調寬自成一個撤銷步（共編）：先打字不 stopCapturing 再拉圖，undo 一次只還原寬度、字還在", () => {
+  it("one resize is its own undo step (collab): typing without stopCapturing then dragging the image, one undo restores only the width, the text stays", () => {
     const { editor, container } = mount(inColumn(), true);
     const manager = collabUndoManager(editor)!;
     expect(manager).toBeDefined();
@@ -138,7 +134,7 @@ describe("欄內圖片把手", () => {
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(image) | COL(paragraph:bQ)]  paragraph:z");
   });
 
-  it("IR2 右把手往左拖 −50 → 寬度跟著縮、放開 → previewWidth 取整數（顯示寬 200.6 → 150.6px → 151）", () => {
+  it("right handle dragged left by 50 -> width shrinks, on release previewWidth is an integer (display width 200.6 -> 150.6px -> 151)", () => {
     const { editor, container } = mount(inColumn());
     const { wrapper, right } = imageParts(container, "i1", 200.6);
     down(right, 500);
@@ -148,7 +144,7 @@ describe("欄內圖片把手", () => {
     expect(previewWidth(editor, "i1")).toBe(151);
   });
 
-  it("IR2d 下限同原生 64px（往左拖 −1000）", () => {
+  it("lower bound same as native 64px (dragging left by 1000)", () => {
     const { editor, container } = mount(inColumn());
     const { wrapper, right } = imageParts(container, "i1");
     down(right, 1500);
@@ -158,7 +154,7 @@ describe("欄內圖片把手", () => {
     expect(previewWidth(editor, "i1")).toBe(64);
   });
 
-  it("IR2b 左把手往右拖 +50 → 150px（左側位移反向）", () => {
+  it("left handle dragged right by 50 -> 150px (left-side displacement reversed)", () => {
     const { editor, container } = mount(inColumn());
     const { wrapper, left } = imageParts(container, "i1");
     down(left, 100);
@@ -168,7 +164,7 @@ describe("欄內圖片把手", () => {
     expect(previewWidth(editor, "i1")).toBe(150);
   });
 
-  it("IR2c 置中的圖：位移乘 2（右把手 −30 → 140px）", () => {
+  it("centered image: displacement doubled (right handle -30 -> 140px)", () => {
     const { editor, container } = mount(inColumn("center"));
     const { wrapper, right } = imageParts(container, "i1");
     down(right, 500);
@@ -178,7 +174,7 @@ describe("欄內圖片把手", () => {
     expect(previewWidth(editor, "i1")).toBe(140);
   });
 
-  it("IR3 只按一下（無位移）→ 不寫入、沒有新交易", () => {
+  it("a click without displacement -> no write, no new transaction", () => {
     const { editor, container } = mount(inColumn());
     const { wrapper, right } = imageParts(container, "i1");
     const onChange = vi.fn();
@@ -192,7 +188,7 @@ describe("欄內圖片把手", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("IR4 頂層（非欄內）的圖：不攔，原生照舊塞 capture 元素", () => {
+  it("top-level (not in a column) image: not intercepted, native still inserts the capture element", () => {
     const { container } = mount([P("x", "x0"), IMG("i0", 300), P("z", "z9")]);
     const { wrapper, right } = imageParts(container, "i0");
     const before = wrapper.querySelectorAll(CAPTURE).length;
@@ -201,7 +197,7 @@ describe("欄內圖片把手", () => {
     up(500);
   });
 
-  it("IR5 唯讀（isEditable=false）：欄內把手不攔", () => {
+  it("read-only (isEditable=false): column handle doesn't intercept", () => {
     const { editor, container } = mount(inColumn());
     editor.isEditable = false;
     const { wrapper, right } = imageParts(container, "i1");
@@ -212,7 +208,7 @@ describe("欄內圖片把手", () => {
   });
 });
 
-/** `[圖｜文字｜文字]`，各欄像素 200／400／300 與文件比例一致；兩個文字欄的餘裕 200 與 100。 */
+/** [image|text|text] at 200/400/300 px, matching the document ratios; the text columns have headroom 200 and 100. */
 const threeColumns = () => [
   P("x", "x0"),
   row([[IMG("i1", 300)], [P("b", "b1")], [P("c", "c1")]], "r", [0.67, 1.33, 1]),
@@ -220,8 +216,8 @@ const threeColumns = () => [
 ];
 const THREE_PX = { rc0: 200, rc1: 400, rc2: 300 };
 
-describe("欄內圖片擴欄", () => {
-  it("E2 超過可用寬：其他欄依餘裕比例讓出，放開時 previewWidth＝round(W)、欄寬同一筆 Y update，undo 一次兩者都還原", () => {
+describe("column image column expansion", () => {
+  it("beyond the usable width: other columns give up space in proportion to headroom; on release previewWidth = round(W) and column widths are one Y update, one undo restores both", () => {
     const { editor, container } = mount(threeColumns(), true);
     const manager = collabUndoManager(editor)!;
     const { wrapper, right } = imageParts(container, "i1", 200.4, { columns: THREE_PX });
@@ -231,7 +227,7 @@ describe("欄內圖片擴欄", () => {
     expect(wrapper.style.width).toBe("350.4px");
     const expected = expandColumnPixels([200, 400, 300], [96, 200, 200], 0, 150.4);
     expect(expected.granted).toBe(150.4);
-    // 兩個文字欄依餘裕 200：100 扣。
+    // The two text columns give way 2:1, in proportion to their headroom.
     expect(400 - expected.px[1]!).toBeCloseTo(2 * (300 - expected.px[2]!), 9);
     const next = ratiosFromPixels(expected.px);
     expect(next).toEqual([1.17, 1, 0.83]);
@@ -247,7 +243,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([0.67, 1.33, 1]);
   });
 
-  it("E2b 拉大後拉回可用寬以內：預覽表拿掉，放開只寫 previewWidth、欄寬不變", () => {
+  it("pulled larger then back within the usable width: the preview table is removed, release writes only previewWidth, column widths unchanged", () => {
     const { editor, container } = mount(threeColumns());
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: THREE_PX });
     down(right, 500);
@@ -261,7 +257,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([0.67, 1.33, 1]);
   });
 
-  it("E2c 只超過 1px：算出的欄比例捨入後與文件現值相同，放開仍寫 previewWidth、欄寬不變", () => {
+  it("exceeds by only 1px: computed column ratios equal the document's current values after rounding, release still writes previewWidth, column widths unchanged", () => {
     const { editor, container } = mount(threeColumns());
     const { right } = imageParts(container, "i1", 200, { columns: THREE_PX });
     down(right, 500);
@@ -272,7 +268,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([0.67, 1.33, 1]);
   });
 
-  it("E3c 另一欄也是圖片欄：讓到圖片欄的最小寬度 96 為止（讓出 104px）", () => {
+  it("another column is also an image column: yields down to the image column's minimum width 96 (gives up 104px)", () => {
     const { editor, container } = mount([P("x", "x0"), row([[IMG("i1", 300)], [IMG("i3", 300)]], "r", [1, 1]), P("z", "z9")]);
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: { rc0: 200, rc1: 200 } });
     down(right, 500);
@@ -283,7 +279,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual(ratiosFromPixels([304, 96]));
   });
 
-  it("E3 其他欄都在最小寬度：寬度停在可用寬、欄不變、沒有預覽表", () => {
+  it("all other columns at minimum width: width stops at the usable width, columns unchanged, no preview table", () => {
     const { editor, container } = mount(inColumn());
     const { wrapper, right } = imageParts(container, "i1");
     down(right, 500);
@@ -295,7 +291,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([1, 1]);
   });
 
-  it("E3b 上限 4000：可用寬 3000＋文字欄餘裕 1800 足以撐到 4800，仍停在 4000、文字欄只讓 1000px", () => {
+  it("cap 4000: usable width 3000 + text column headroom 1800 could reach 4800, still stops at 4000, text columns give up only 1000px", () => {
     const { editor, container } = mount(inColumn(undefined, [1.2, 0.8]));
     const { wrapper, right } = imageParts(container, "i1", 3000, { ck: { i1: 3000 }, columns: { rc0: 3000, rc1: 2000 } });
     down(right, 500);
@@ -307,7 +303,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([1.6, 0.4]);
   });
 
-  it("E4 縮小從不改欄（文字欄有餘裕也一樣）", () => {
+  it("shrinking never changes columns (even when a text column has headroom)", () => {
     const { editor, container } = mount(inColumn(undefined, [1, 2]));
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: { rc0: 200, rc1: 400 } });
     down(right, 500);
@@ -319,7 +315,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([1, 2]);
   });
 
-  it("E4b 堆疊的列：上限是列寬、不動欄", () => {
+  it("stacked row: the cap is the row width, columns untouched", () => {
     const { editor, container } = mount(inColumn(undefined, [1, 2]));
     container.querySelector('[data-node-type="columnList"]')!.setAttribute("data-stacked", "");
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: { rc0: 200, rc1: 400 }, rows: { r: 300 } });
@@ -332,7 +328,7 @@ describe("欄內圖片擴欄", () => {
     expect(widths(editor)).toEqual([1, 2]);
   });
 
-  it("E5 縮排子 block 裡的圖：可用寬取該 block 的內容框（比欄窄 40px），超過它就開始擴欄", () => {
+  it("image inside an indented child block: usable width is that block's content box (40px narrower than the column), exceeding it starts expanding columns", () => {
     const content = [P("x", "x0"), row([[withChildren(P("t", "t1"), [IMG("i2", 300)])], [P("b", "b1")]], "r", [1, 2]), P("z", "z9")];
     const { editor, container } = mount(content);
     const { wrapper, right } = imageParts(container, "i2", 150, { ck: { i2: 160 }, columns: { rc0: 200, rc1: 400 } });
@@ -346,8 +342,8 @@ describe("欄內圖片擴欄", () => {
   });
 });
 
-describe("欄內圖片拖曳的取消與放開", () => {
-  it("E6 拖曳中按 Esc：不寫、預覽表拿掉、圖寬回到按下前；之後的移動與放開不再有作用", () => {
+describe("column image drag cancel and release", () => {
+  it("Esc during drag: nothing written, preview table removed, image width back to before the press; later moves and release have no effect", () => {
     const { editor, container } = mount(threeColumns());
     const { wrapper, right } = imageParts(container, "i1", 200, { columns: THREE_PX });
     const styleBefore = wrapper.style.width;
@@ -368,7 +364,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     expect(widths(editor)).toEqual([0.67, 1.33, 1]);
   });
 
-  it("E7 拖曳中列的欄 id 序列變了（另一端刪了一欄）：取消、不寫", () => {
+  it("the column id sequence of the row changes mid-drag (the other end deleted a column): cancelled, nothing written", () => {
     const { editor, container } = mount(threeColumns());
     const { right } = imageParts(container, "i1", 200, { columns: THREE_PX });
     down(right, 500);
@@ -382,7 +378,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     expect(previewWidth(editor, "i1")).toBe(300);
   });
 
-  it("E7b 拖曳中圖片被刪（列沒變）：取消，放開不丟例外、不寫", () => {
+  it("image deleted mid-drag (row unchanged): cancelled, release throws nothing, nothing written", () => {
     const content = [P("x", "x0"), row([[withChildren(P("t", "t1"), [IMG("i2", 300)])], [P("b", "b1")]], "r", [1, 2]), P("z", "z9")];
     const { editor, container } = mount(content);
     const { right } = imageParts(container, "i2", 150, { ck: { i2: 160 }, columns: { rc0: 200, rc1: 400 } });
@@ -392,7 +388,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     editor.removeBlocks(["i2"]);
     expect(previewTables().length).toBe(0);
     const before = JSON.stringify(editor.document);
-    // 事件 listener 丟的例外不會從 dispatchEvent 傳出來，jsdom 改在 window 上發 error 事件。
+    // An exception thrown by an event listener doesn't propagate out of dispatchEvent; jsdom fires an error event on window instead.
     const errors: unknown[] = [];
     const onError = (e: ErrorEvent) => {
       errors.push(e.error);
@@ -406,7 +402,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     expect(widths(editor)).toEqual([1, 2]);
   });
 
-  it("E8 拖曳中編輯器卸載：預覽表拿掉、之後的放開不寫", () => {
+  it("editor unmounts mid-drag: preview table removed, later release writes nothing", () => {
     const mounted = mountEditor(threeColumns());
     const { right } = imageParts(mounted.container, "i1", 200, { columns: THREE_PX });
     const write = vi.spyOn(mounted.editor, "updateBlock");
@@ -419,7 +415,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("E9 拖曳中變成唯讀：放開不寫、預覽表拿掉", () => {
+  it("becomes read-only mid-drag: release writes nothing, preview table removed", () => {
     const { editor, container } = mount(threeColumns());
     const { right } = imageParts(container, "i1", 200, { columns: THREE_PX });
     down(right, 500);
@@ -431,7 +427,7 @@ describe("欄內圖片拖曳的取消與放開", () => {
     expect(widths(editor)).toEqual([0.67, 1.33, 1]);
   });
 
-  it("E10 放開那一筆的位置也算：沒有 mousemove、直接在 −50 處放開 → previewWidth 150", () => {
+  it("the position of the release event counts too: with no mousemove, releasing directly at -50 -> previewWidth 150", () => {
     const { editor, container } = mount(inColumn());
     const { right } = imageParts(container, "i1");
     down(right, 500);

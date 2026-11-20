@@ -1,18 +1,12 @@
 /**
- * `/` 選單「連結」項的插入對話框（issue #99）。
- *
- * 主要行為（送出/取消/驗證/a11y）用**未掛進 DOM**的真 `BlockNoteEditor`
- * （`BlockNoteEditor.create({ schema: noteSchema })`，同 `markdown-link.test.ts` 的
- * 既有慣例）——網址驗證共用 `resolveTrailingMarkdownLink`，那支要吃真的
- * `tryParseMarkdownToBlocks`，假 editor 只會測到我們自己的 mock 行為。這批測試裡
- * `open` 恆為 `true`（`onOpenChange` 只是 spy，不接回 state），Dialog 不會真的
- * unmount，`editor.focus()`（掛在 `onCloseAutoFocus`）不會被呼叫，不必 stub 它。
- *
- * 焦點回歸另開一個 describe，**掛真 DOM**
- * （`editor.mount(container)`，同 `NoteEditorView.test.tsx` 的 `mountedEditor()`
- * 既有慣例）＋一個持有 `open` state 的 controlled wrapper，讓 Dialog 真的會
- * unmount——只斷言 spy 被呼叫過**不是結果**，這裡改斷言 `document.activeElement`
- * 真的落在編輯器的 `.ProseMirror` 節點上。
+ * Insert dialog for the `/` menu "Link" item (issue #99).
+ * The main behaviours (submit/cancel/validation/a11y) use a real `BlockNoteEditor` that is not mounted into the DOM (`BlockNoteEditor.create({ schema: noteSchema })`, as in `markdown-link.test.ts`):
+ * URL validation shares `resolveTrailingMarkdownLink`, which needs the real `tryParseMarkdownToBlocks`, and a fake editor would only test our own mock.
+ * In this group `open` is always `true` (`onOpenChange` is a spy, not wired back to state), so the Dialog never unmounts and
+ * `editor.focus()` (hooked on `onCloseAutoFocus`) is never called, so it needs no stub.
+ * Focus return is a separate describe that mounts into the real DOM (`editor.mount(container)`, as `mountedEditor()` in `NoteEditorView.test.tsx`)
+ * with a controlled wrapper holding the `open` state, so the Dialog really unmounts: a spy having been called is not the outcome,
+ * so it asserts that `document.activeElement` really lands on the editor's `.ProseMirror` node.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
@@ -24,12 +18,12 @@ import { clickOutside } from "@/test/outside-click";
 import { noteSchema } from "@/collab/schema";
 import { LinkDialog } from "./LinkDialog";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; any by repo convention
 let editor: BlockNoteEditor<any, any, any>;
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor = BlockNoteEditor.create({ schema: noteSchema }) as BlockNoteEditor<any, any, any>;
 });
 
@@ -48,7 +42,7 @@ function renderDialog(props: {
 }
 
 describe("LinkDialog", () => {
-  it("點對話框外面不關閉、已填內容仍在（表單型守衛；Esc 仍可關由 ui/dialog.test 守）", async () => {
+  it("clicking outside the dialog doesn't close it and filled content stays (form-style guard; Esc still closing is covered by ui/dialog.test)", async () => {
     const onOpenChange = vi.fn();
     renderDialog({ open: true, onOpenChange, onSubmit: vi.fn() });
     fireEvent.change(screen.getByLabelText(i18n.t("note.link.textLabel")), { target: { value: "keep" } });
@@ -57,7 +51,7 @@ describe("LinkDialog", () => {
     expect(screen.getByLabelText(i18n.t("note.link.textLabel"))).toHaveValue("keep");
   });
 
-  it("填文字＋合法網址 → onSubmit 收到 { text, href }", () => {
+  it("text + valid URL -> onSubmit receives { text, href }", () => {
     const onSubmit = vi.fn();
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit });
 
@@ -68,7 +62,7 @@ describe("LinkDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith({ text: "我的連結", href: "https://example.com" });
   });
 
-  it("網址不合法（javascript: scheme）→ 不呼叫 onSubmit，畫面出現 invalidUrl 錯誤", () => {
+  it("invalid URL (javascript: scheme) -> onSubmit not called, invalidUrl error shown", () => {
     const onSubmit = vi.fn();
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit });
 
@@ -79,14 +73,13 @@ describe("LinkDialog", () => {
     expect(screen.getByText(i18n.t("note.link.invalidUrl"))).toBeInTheDocument();
   });
 
-  it("網址欄前段被尾端比對吃掉（藏著 ) [y](真正網址 這種形狀）→ 不呼叫 onSubmit，顯示 invalidUrl", () => {
+  it("URL field whose front part is eaten by the trailing match (a shape like `) [y](actual URL`) -> onSubmit not called, shows invalidUrl", () => {
     const onSubmit = vi.fn();
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit });
 
-    // `resolveTrailingMarkdownLink` 只認尾端：組出的 textBefore 是
-    // `[x](https://x.com) [y](https://evil.com)`，尾端仍能剖出一個合法連結
-    // （href 是 evil.com），但那不是使用者以為自己填的整段網址——必須擋下來，
-    // 不能靜默插出 evil.com。
+    // `resolveTrailingMarkdownLink` only recognises the tail: the assembled textBefore is `[x](https://x.com) [y](https://evil.com)`,
+    // whose tail still parses as a valid link (href is evil.com), but that isn't the whole URL the user thinks they entered,
+    // so it must be blocked rather than silently inserting evil.com.
     fireEvent.change(screen.getByLabelText(i18n.t("note.link.urlLabel")), {
       target: { value: "https://x.com) [y](https://evil.com" },
     });
@@ -96,7 +89,7 @@ describe("LinkDialog", () => {
     expect(screen.getByText(i18n.t("note.link.invalidUrl"))).toBeInTheDocument();
   });
 
-  it("initialText／initialUrl 預填兩欄；沒傳就是空的", () => {
+  it("initialText/initialUrl prefill both fields; empty when not passed", () => {
     const view = renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit: vi.fn(), initialText: "picked", initialUrl: "https://example.com" });
     expect(screen.getByLabelText(i18n.t("note.link.textLabel"))).toHaveValue("picked");
     expect(screen.getByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("https://example.com");
@@ -106,7 +99,7 @@ describe("LinkDialog", () => {
     expect(screen.getByLabelText(i18n.t("note.link.urlLabel"))).toHaveValue("");
   });
 
-  it("取消 → 不呼叫 onSubmit", () => {
+  it("cancel -> onSubmit not called", () => {
     const onSubmit = vi.fn();
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit });
 
@@ -116,7 +109,7 @@ describe("LinkDialog", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("顯示文字留空＋合法網址 → onSubmit 收到 text === href（fallback）", () => {
+  it("blank display text + valid URL -> onSubmit receives text === href (fallback)", () => {
     const onSubmit = vi.fn();
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit });
 
@@ -126,14 +119,14 @@ describe("LinkDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith({ text: "https://example.com", href: "https://example.com" });
   });
 
-  it("無障礙：兩欄各有 <label for> 綁定、錯誤訊息用 aria-describedby 綁到網址欄", () => {
+  it("a11y: each field has a bound <label for>, the error message is bound to the URL field via aria-describedby", () => {
     renderDialog({ open: true, onOpenChange: vi.fn(), onSubmit: vi.fn() });
 
     const textInput = screen.getByLabelText(i18n.t("note.link.textLabel"));
     const urlInput = screen.getByLabelText(i18n.t("note.link.urlLabel"));
     expect(textInput.tagName).toBe("INPUT");
     expect(urlInput.tagName).toBe("INPUT");
-    // useId 生成的 id 不寫死，但兩欄各自的 id 仍要彼此不同——否則 <label for> 會撞名。
+    // useId ids aren't hard-coded, but the two fields' ids must still differ, otherwise <label for> collides.
     expect(textInput.id).not.toBe(urlInput.id);
 
     fireEvent.change(urlInput, { target: { value: "javascript:alert(1)" } });
@@ -145,12 +138,10 @@ describe("LinkDialog", () => {
 });
 
 /**
- * 焦點回歸：舊版本只斷言 `editor.focus` 這個 spy 被呼叫
- * 一次，沒斷言真的有沒有生效——實測（掛真編輯器＋真元件、不 stub `.focus`）三條關閉
- * 路徑全部失敗（`document.activeElement` 停在 `<body>`）。改成 `onCloseAutoFocus`
- * 之後這裡直接量真實結果，不再信任 spy。
+ * Focus return: asserting only that the `editor.focus` spy was called doesn't show it took effect (with the real editor and component,
+ * without stubbing `.focus`, `document.activeElement` can stay on `<body>`), so this measures the real result.
  */
-describe("LinkDialog — 焦點回歸（真編輯器，掛進 DOM）", () => {
+describe("LinkDialog - focus return (real editor, mounted in the DOM)", () => {
   let container: HTMLElement;
 
   beforeEach(() => {
@@ -164,8 +155,8 @@ describe("LinkDialog — 焦點回歸（真編輯器，掛進 DOM）", () => {
     container.remove();
   });
 
-  /** `Dialog` 是 controlled component——要讓它真的 unmount（觸發 `onCloseAutoFocus`），
-   * 測試這一層要自己接住 `onOpenChange` 更新 state，不能像上面那組一樣傳固定 `open`。 */
+  /** `Dialog` is a controlled component: to make it really unmount (triggering `onCloseAutoFocus`), this level has to catch `onOpenChange`
+   * and update state, instead of passing a fixed `open` like the group above. */
   function ControlledLinkDialog({ onSubmit }: { onSubmit: (v: { text: string; href: string }) => void }) {
     const [open, setOpen] = useState(true);
     return <LinkDialog editor={editor} open={open} onOpenChange={setOpen} onSubmit={onSubmit} />;
@@ -179,12 +170,12 @@ describe("LinkDialog — 焦點回歸（真編輯器，掛進 DOM）", () => {
     );
   }
 
-  /** 焦點是否落在編輯器的 ProseMirror 根節點——不是「onOpenChange/focus 被呼叫過」。 */
+  /** Whether focus is on the editor's ProseMirror root, not whether onOpenChange/focus was called. */
   function editorIsFocused(): boolean {
     return document.activeElement?.classList.contains("ProseMirror") === true;
   }
 
-  it("送出成功後：焦點回到編輯器", async () => {
+  it("after a successful submit: focus returns to the editor", async () => {
     renderControlled(vi.fn());
     fireEvent.change(screen.getByLabelText(i18n.t("note.link.urlLabel")), { target: { value: "https://example.com" } });
     fireEvent.click(screen.getByRole("button", { name: i18n.t("note.link.insert") }));
@@ -192,14 +183,14 @@ describe("LinkDialog — 焦點回歸（真編輯器，掛進 DOM）", () => {
     await waitFor(() => expect(editorIsFocused()).toBe(true));
   });
 
-  it("取消後：焦點回到編輯器（只測送出那條接不住這個）", async () => {
+  it("after cancel: focus returns to the editor", async () => {
     renderControlled(vi.fn());
     fireEvent.click(screen.getByRole("button", { name: i18n.t("home.cancel") }));
 
     await waitFor(() => expect(editorIsFocused()).toBe(true));
   });
 
-  it("按 Esc 關閉後：焦點回到編輯器（不是只有送出/取消鈕兩條路徑）", async () => {
+  it("after closing with Esc: focus returns to the editor", async () => {
     renderControlled(vi.fn());
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 

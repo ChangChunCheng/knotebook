@@ -17,7 +17,6 @@ import type { ReactNode } from "react";
 import { AppShell } from "./AppShell";
 import { BackToListButton } from "./BackToListButton";
 
-// 手機的「回清單」：清單那一格的 history 序號、退回或換掉、進筆記的轉場、回清單後的焦點落點。
 
 const NOTE_PATH = "/n/tester/alpha-note";
 
@@ -100,7 +99,7 @@ function Probe() {
   );
 }
 
-/** 與 `App.tsx` 的 `AppRoutes` 同形：真實 location／navigationType 放 `RealLocationContext`，內層 `<Routes location>` 讓子樹的 `useNavigationType()` 恆為 POP。 */
+/** Same shape as `AppRoutes` in `App.tsx`: the real location/navigationType live in `RealLocationContext`; the inner `<Routes location>` makes the subtree's `useNavigationType()` always POP. */
 function RealRouterBridge({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigationType = useNavigationType();
@@ -148,7 +147,7 @@ function aside(container: HTMLElement): HTMLElement {
 
 async function openNoteFromRow(container: HTMLElement): Promise<HTMLElement> {
   const row = await within(aside(container)).findByRole("link", { name: /Alpha Note/ });
-  // 真瀏覽器在導覽時已先把 history 序號加一。
+  // A real browser has already bumped the history index by navigation time.
   if (historyIdx !== null) historyIdx += 1;
   fireEvent.click(row);
   return row;
@@ -172,8 +171,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AppShell — 手機回清單", () => {
-  it("清單可見時記下這一格的 history 序號；筆記路由不記", async () => {
+describe("AppShell - phone back to list", () => {
+  it("records this entry's history index while the list is visible; note routes don't", async () => {
     historyIdx = 2;
     const { unmount } = renderAt("/");
     await screen.findByRole("tablist");
@@ -185,14 +184,14 @@ describe("AppShell — 手機回清單", () => {
     expect(sessionStorage.getItem("nav.listIdx")).toBeNull();
   });
 
-  it("寬度不是手機時不記序號", async () => {
+  it("no index recorded when the width is not phone", async () => {
     historyIdx = 2;
     renderAt("/", "overlay");
     await screen.findByTestId("location");
     expect(sessionStorage.getItem("nav.listIdx")).toBeNull();
   });
 
-  it("清單那格在較前面：「‹」退回去（POP），不新增 history", async () => {
+  it("list entry is earlier: the back button steps back (POP) without adding history", async () => {
     historyIdx = 2;
     const { container } = renderAt("/");
     await openNoteFromRow(container);
@@ -203,7 +202,7 @@ describe("AppShell — 手機回清單", () => {
     expect(screen.getByTestId("type")).toHaveTextContent("POP");
   });
 
-  it("沒有清單序號（直接開筆記）：「‹」把這一格換成清單（REPLACE），不是 push", () => {
+  it("no list index (note opened directly): the back button replaces this entry with the list (REPLACE), not a push", () => {
     historyIdx = 0;
     renderAt(NOTE_PATH);
     fireEvent.click(screen.getByRole("button", { name: "Back to notes" }));
@@ -211,14 +210,14 @@ describe("AppShell — 手機回清單", () => {
     expect(screen.getByTestId("type")).toHaveTextContent("REPLACE");
   });
 
-  it("過期的清單序號（目前這格不在它之後）在非清單畫面被清掉", () => {
+  it("a stale list index (current entry is not after it) is cleared on a non-list screen", () => {
     sessionStorage.setItem("nav.listIdx", "5");
     historyIdx = 0;
     renderAt(NOTE_PATH);
     expect(sessionStorage.getItem("nav.listIdx")).toBeNull();
   });
 
-  it("連點「‹」：第一下生效前第二下不再多退一格", () => {
+  it("double-tapping the back button: the second tap doesn't step back again before the first takes effect", () => {
     stubLayoutTier("phone");
     sessionStorage.setItem("nav.listIdx", "1");
     historyIdx = 2;
@@ -250,7 +249,7 @@ describe("AppShell — 手機回清單", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
 
-  it("清單序號不小於目前序號（記錄過期）：換掉而不是退", () => {
+  it("list index not smaller than the current index (stale record): replace instead of stepping back", () => {
     sessionStorage.setItem("nav.listIdx", "5");
     historyIdx = 5;
     renderAt(NOTE_PATH);
@@ -259,21 +258,21 @@ describe("AppShell — 手機回清單", () => {
   });
 });
 
-describe("AppShell — 進筆記的轉場", () => {
+describe("AppShell - transition into a note", () => {
   const ENTER = "kb-phone-enter";
 
-  it("手機：從清單 PUSH 進筆記 → 內容區加一次轉場 class", async () => {
+  it("phone: PUSH from the list into a note -> content area gets the transition class once", async () => {
     const { container } = renderAt("/");
     await openNoteFromRow(container);
     expect(container.querySelector("main")).toHaveClass(ENTER);
   });
 
-  it("深連結直接開筆記 → 不加", () => {
+  it("deep link opening a note -> no transition class", () => {
     const { container } = renderAt(NOTE_PATH);
     expect(container.querySelector("main")).not.toHaveClass(ENTER);
   });
 
-  it("POP（回清單再下一頁回筆記）→ 不加", async () => {
+  it("POP (back to list, then forward to the note) -> no transition class", async () => {
     historyIdx = 1;
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
@@ -291,7 +290,7 @@ describe("AppShell — 進筆記的轉場", () => {
     expect(container.querySelector("main")).not.toHaveClass(ENTER);
   });
 
-  it("正式的路由形（真實 navigationType 在 RealLocationContext、子樹的 useNavigationType 恆為 POP）：PUSH 加、POP 不加", async () => {
+  it("production routing shape (real navigationType in RealLocationContext, subtree's useNavigationType always POP): PUSH adds the class, POP doesn't", async () => {
     historyIdx = 1;
     const { container } = renderAt("/", "phone", true);
     await screen.findByRole("tablist");
@@ -307,7 +306,7 @@ describe("AppShell — 進筆記的轉場", () => {
     expect(container.querySelector("main")).not.toHaveClass(ENTER);
   });
 
-  it("筆記 → 另一篇筆記的 PUSH 不播轉場", async () => {
+  it("PUSH from one note to another plays no transition", async () => {
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
     fireEvent.click(screen.getByRole("button", { name: "go-note" }));
@@ -317,14 +316,14 @@ describe("AppShell — 進筆記的轉場", () => {
     expect(container.querySelector("main")).not.toHaveClass(ENTER);
   });
 
-  it("非手機寬度：PUSH 進筆記也不加", async () => {
+  it("non-phone width: PUSH into a note doesn't add it either", async () => {
     const { container } = renderAt("/", "overlay");
     await screen.findByTestId("location");
     fireEvent.click(screen.getByRole("button", { name: "go-note" }));
     expect(container.querySelector("main")).not.toHaveClass(ENTER);
   });
 
-  it("index.css：轉場 class 存在，且 prefers-reduced-motion 區塊把它關掉", async () => {
+  it("index.css: the transition class exists and the prefers-reduced-motion block turns it off", async () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(css).toContain(`.${ENTER}`);
@@ -335,8 +334,8 @@ describe("AppShell — 進筆記的轉場", () => {
   });
 });
 
-describe("AppShell — 回清單後的焦點", () => {
-  it("點清單列進筆記、按「‹」回來：焦點回到那一列", async () => {
+describe("AppShell - focus after returning to the list", () => {
+  it("opening a note from a list row, then pressing the back button: focus returns to that row", async () => {
     historyIdx = 1;
     const { container } = renderAt("/");
     const row = await openNoteFromRow(container);
@@ -347,7 +346,7 @@ describe("AppShell — 回清單後的焦點", () => {
     expect(document.activeElement).toBe(row);
   });
 
-  it("不是從列進筆記（找不到列）：焦點落在 tabpanel", async () => {
+  it("note not opened from a row (row not found): focus lands on the tabpanel", async () => {
     historyIdx = 1;
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
@@ -358,7 +357,7 @@ describe("AppShell — 回清單後的焦點", () => {
     expect(document.activeElement).toBe(within(aside(container)).getByRole("tabpanel"));
   });
 
-  it("手機段內清單仍在、只是跨 640 的寬度變化：不搶焦點", async () => {
+  it("list still present within the phone tier, only the width changes across 640: focus isn't stolen", async () => {
     const tier = stubLayoutTier("overlay");
     const { container } = renderAt("/", "overlay");
     await screen.findByTestId("location");
@@ -368,7 +367,7 @@ describe("AppShell — 回清單後的焦點", () => {
     expect(aside(container).contains(document.activeElement)).toBe(false);
   });
 
-  it("非手機寬度：筆記 → 清單不搶焦點", async () => {
+  it("non-phone width: note -> list doesn't steal focus", async () => {
     const { container } = renderAt(NOTE_PATH, "overlay");
     fireEvent.click(screen.getByRole("button", { name: "go-home" }));
     await act(async () => {});
@@ -376,7 +375,7 @@ describe("AppShell — 回清單後的焦點", () => {
     expect(aside(container).contains(document.activeElement)).toBe(false);
   });
 
-  it("有對話框開著時回清單不搶焦點", async () => {
+  it("returning to the list with a dialog open doesn't steal focus", async () => {
     historyIdx = 1;
     const { container } = renderAt("/");
     await openNoteFromRow(container);
@@ -390,7 +389,7 @@ describe("AppShell — 回清單後的焦點", () => {
     dialog.remove();
   });
 
-  it("首次載入清單不搶焦點", async () => {
+  it("first load of the list doesn't steal focus", async () => {
     const { container } = renderAt("/");
     await screen.findByRole("tablist");
     await act(async () => {});

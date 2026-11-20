@@ -1,4 +1,3 @@
-/** #200：OAuth 授權流程的測試 helper——原本是 test/oauth-token.test.ts:18-91 的檔內私有 helper（`NUL` 常數除外，留在原檔），#200 抽到這裡，兩檔共用。 */
 import { createHash, randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -13,11 +12,8 @@ export function pkce(): { verifier: string; challenge: string } {
 }
 
 /**
- * 對既有 client 走一輪 authorize → decision allow，回 code 與 verifier。
- *
- * `scope` 是 authorize 請求的 scope，`grant` 是 decision body 的 scope（同意頁的勾選結果），兩者不得混用。
- * 預設送五形中最寬的（#181 起是格的頂端），由 server 的 narrowerScope（交集）夾回 pending——等價於 #239 前的行為；
- * 要窄授予的案顯式傳 `grant`。
+ * `scope` is the authorize request's scope and `grant` is the decision body's scope (the consent page's checkboxes); don't mix them. Defaults to the widest of the five shapes
+ * (the top of the grid since #181), which the server's narrowerScope (intersection) clamps down to pending - equivalent to the behaviour before #239; narrow-grant tests pass `grant` explicitly.
  */
 export async function authorizeAndConsent(
   app: FastifyInstance,
@@ -51,7 +47,6 @@ export async function authorizeAndConsent(
   return { code, verifier };
 }
 
-/** DCR → authorize → decision allow，回換發 code 所需的一切。 */
 export async function obtainCode(
   app: FastifyInstance,
   cookie: string,

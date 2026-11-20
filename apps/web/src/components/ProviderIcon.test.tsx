@@ -8,7 +8,7 @@ const URL_V1 = "/api/auth/providers/11111111-1111-4111-8111-111111111111/icon?v=
 const URL_V2 = "/api/auth/providers/11111111-1111-4111-8111-111111111111/icon?v=2";
 
 describe("ProviderIcon", () => {
-  it("builtin 三名各渲染對應 SVG：data-provider-icon、aria-hidden、focusable=false、16px、沒有任何文字內容", () => {
+  it("three builtin names each render their SVG: data-provider-icon, aria-hidden, focusable=false, 16px, no text content", () => {
     for (const name of ["gitlab", "google", "generic"] as const) {
       const { container, unmount } = render(<ProviderIcon icon={{ type: "builtin", name }} />);
       const svg = container.querySelector("svg");
@@ -22,7 +22,7 @@ describe("ProviderIcon", () => {
     }
   });
 
-  it("三個內建圖示是不同的圖形；GitLab 三色全在、Google 漸層官方色在、通用圖示用 currentColor", () => {
+  it("the three builtin icons are different shapes; GitLab has all three colors, Google has the official gradient colors, the generic icon uses currentColor", () => {
     const html = (name: "gitlab" | "google" | "generic") => render(<ProviderIcon icon={{ type: "builtin", name }} />).container.innerHTML;
     const [gitlab, google, generic] = [html("gitlab"), html("google"), html("generic")];
     expect(new Set([gitlab, google, generic]).size).toBe(3);
@@ -32,7 +32,7 @@ describe("ProviderIcon", () => {
     expect(generic).not.toMatch(/fill="#/);
   });
 
-  it("Google 圖示沒有按鈕外框／底板（官方包的方框與 #747775 外框線已刪）", () => {
+  it("Google icon has no button frame or backplate (the official package's square and the #747775 outline are removed)", () => {
     const { container } = render(<ProviderIcon icon={{ type: "builtin", name: "google" }} />);
     expect(container.querySelector("rect")).toBeNull();
     expect(container.innerHTML).not.toContain("#747775");
@@ -40,7 +40,7 @@ describe("ProviderIcon", () => {
     expect(container.querySelector("svg")).toHaveAttribute("viewBox", "10 10 20 20");
   });
 
-  it("同一頁兩個 Google 圖示：id 不重複，且各自的 url(#…) 都指向自己 svg 內的 id", () => {
+  it("two Google icons on one page: ids don't repeat, and each url(#...) points to an id inside its own svg", () => {
     const { container } = render(
       <div>
         <ProviderIcon icon={{ type: "builtin", name: "google" }} />
@@ -59,7 +59,7 @@ describe("ProviderIcon", () => {
     });
   });
 
-  it("upload → <img alt=\"\" aria-hidden> src＝url、object-contain、不可拖曳", () => {
+  it("upload -> <img alt='' aria-hidden> src = url, object-contain, not draggable", () => {
     const { container } = render(<ProviderIcon icon={{ type: "upload", url: URL_V1 }} className="mr-1" />);
     const img = container.querySelector("img")!;
     expect(img).toHaveAttribute("src", URL_V1);
@@ -70,14 +70,14 @@ describe("ProviderIcon", () => {
     expect(img).toHaveClass("h-4", "w-4", "shrink-0", "object-contain", "mr-1");
   });
 
-  it("upload 載入失敗 → 改為通用圖示（不留破圖）", () => {
+  it("upload fails to load -> falls back to the generic icon (no broken image left)", () => {
     const { container } = render(<ProviderIcon icon={{ type: "upload", url: URL_V1 }} />);
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("svg")).toHaveAttribute("data-provider-icon", "generic");
   });
 
-  it("失敗後 DTO 換成新網址（換圖、?v= 遞增）→ 重新顯示 <img>；回到已失敗的網址 → 仍是通用圖示", () => {
+  it("after a failure the DTO gets a new URL (image changes, ?v= increments) -> <img> shows again; going back to the already failed URL -> still the generic icon", () => {
     const { container, rerender } = render(<ProviderIcon icon={{ type: "upload", url: URL_V1 }} />);
     fireEvent.error(container.querySelector("img")!);
     rerender(<ProviderIcon icon={{ type: "upload", url: URL_V2 }} />);
@@ -87,7 +87,7 @@ describe("ProviderIcon", () => {
     expect(container.querySelector("svg")).toHaveAttribute("data-provider-icon", "generic");
   });
 
-  it("null（不顯示）與 undefined（少欄位的舊 fixture）都不渲染任何節點", () => {
+  it("null (hidden) and undefined (old fixtures missing the field) both render no node", () => {
     for (const icon of [null, undefined] as Array<ProviderIconDto | undefined>) {
       const { container, unmount } = render(<ProviderIcon icon={icon} />);
       expect(container.firstChild, String(icon)).toBeNull();
@@ -95,7 +95,7 @@ describe("ProviderIcon", () => {
     }
   });
 
-  it("放進按鈕不改可及名稱（四種形都一樣）", () => {
+  it("placing it in a button doesn't change the accessible name (same for all four shapes)", () => {
     const icons: ProviderIconDto[] = [{ type: "builtin", name: "gitlab" }, { type: "builtin", name: "google" }, { type: "builtin", name: "generic" }, { type: "upload", url: URL_V1 }];
     for (const icon of icons) {
       const { unmount } = render(

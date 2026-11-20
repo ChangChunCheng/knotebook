@@ -11,8 +11,8 @@ import { buildTestApp } from "./helpers.js";
 import { createOidcRuntimeRegistry } from "../src/auth/oidc-client.js";
 import type { OidcTestHook } from "../src/auth/oidc-test-hook.js";
 
-// #211：callback 其餘失敗路徑（code 交換、userinfo、race 重查、catch-all）的 log 不得再帶整個 `err`
-// （DrizzleQueryError 的 params 可能含登入者的 sub／email；fetch 錯誤的 message 可能含網址）。
+// The remaining callback failure paths (code exchange, userinfo, race re-check, catch-all) must not log the whole `err`: a
+// DrizzleQueryError's params may hold the signing-in user's sub/email, and a fetch error's message may hold a URL (#211).
 
 const ISSUER_URL = "https://idp.example.com";
 const SECRET = "LEAKME-sub-and-email@example.com";
@@ -56,14 +56,14 @@ function expectNoRawErr(out: string[], line: Line): void {
   expect(out.join("")).not.toContain(SECRET);
 }
 
-/** 模擬帶值的 DB 錯誤（DrizzleQueryError 形：message 與 params 都有使用者值）。 */
+/** Simulates a DB error carrying values (DrizzleQueryError shape: message and params both contain user values). */
 function dbErrorWithValues(code: string): Error {
   const cause = Object.assign(new Error(`duplicate key value (${SECRET})`), { code, detail: `Key (email)=(${SECRET}) already exists.` });
   return Object.assign(new Error(`Failed query: insert ... params: ${SECRET}`, { cause }), { params: [SECRET], code });
 }
 
-describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
-  it("code 交換失敗：不記 err，只記 errName 摘要", async () => {
+describe("OIDC callback failure paths don't log the whole err (#211)", () => {
+  it("code exchange failure: no err, only an errName summary", async () => {
     const { app, fakeIdp, out } = await appWithLogs();
     await runCallback(app, fakeIdp, { sub: "u1", email: "a@example.com", email_verified: true }, idp => idp.failNext("token"));
     const line = lineFor(out, "OIDC code 交換失敗");
@@ -71,7 +71,7 @@ describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
     expect(line).toHaveProperty("errName");
   });
 
-  it("userinfo 取得失敗：不記 err，只記 errName 摘要", async () => {
+  it("userinfo failure: no err, only an errName summary", async () => {
     const { app, fakeIdp, out } = await appWithLogs();
     fakeIdp.omitFromIdToken(["email"]);
     await runCallback(app, fakeIdp, { sub: "u2", email: "b@example.com", email_verified: true }, idp => idp.failNext("userinfo"));
@@ -80,7 +80,7 @@ describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
     expect(line).toHaveProperty("errName");
   });
 
-  it("race 重查後仍失敗（DB 錯誤）：走 redactDbError，只記 code／constraint／context", async () => {
+  it("failure after the race re-check (DB error): goes through redactDbError, logging only code/constraint/context", async () => {
     const hook: OidcTestHook = async point => {
       if (point === "login-identity-missed") throw dbErrorWithValues("23505");
     };
@@ -92,7 +92,7 @@ describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
     expect(line).not.toHaveProperty("params");
   });
 
-  it("callback catch-all（未預期的 DB 錯誤）：不記 err／params", async () => {
+  it("callback catch-all (unexpected DB error): no err/params", async () => {
     const hook: OidcTestHook = async point => {
       if (point === "login-identity-missed") throw dbErrorWithValues("XX000");
     };
@@ -103,7 +103,7 @@ describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
     expect(line).toMatchObject({ code: "XX000", context: "OIDC callback" });
   });
 
-  it("callback catch-all（非 DB 的未預期錯誤）：不記 err，只記 errName 摘要", async () => {
+  it("callback catch-all (unexpected non-DB error): no err, only an errName summary", async () => {
     const hook: OidcTestHook = async point => {
       if (point === "login-identity-missed") throw new Error(`boom ${SECRET}`);
     };
@@ -115,13 +115,13 @@ describe("OIDC callback 失敗路徑的 log 不帶整個 err（#211）", () => {
   });
 });
 
-describe("開機建管理員失敗的 log（#211）", () => {
+describe("startup admin-creation failure log (#211)", () => {
   function capture(err: unknown): { out: string; lines: Line[] } {
     const lines: Line[] = [];
     const out: string[] = [];
     const log = {
       error(obj: object, msg: string): void {
-        // 模擬 pino：err 欄位會被序列化成 message／stack／可列舉屬性（含 params）。
+        // Simulates pino: the err field is serialized into message/stack/enumerable properties (including params).
         const e = (obj as { err?: unknown }).err;
         const ser = e instanceof Error ? { ...e, message: e.message, stack: e.stack } : e;
         const line = { ...obj, ...(e === undefined ? {} : { err: ser }), msg };
@@ -134,14 +134,14 @@ describe("開機建管理員失敗的 log（#211）", () => {
   }
   const drizzleShaped = (cause: Error): Error => Object.assign(new Error(`Failed query: insert into users params: ${SECRET}`, { cause }), { params: [SECRET] });
 
-  it("DrizzleQueryError 形、帶 SQLSTATE：只記 code／context", () => {
+  it("DrizzleQueryError shape with an SQLSTATE: logs only code/context", () => {
     const { out, lines } = capture(drizzleShaped(Object.assign(new Error(`dup ${SECRET}`), { code: "23505" })));
     expect(out).not.toContain(SECRET);
     expect(lines[0]).toMatchObject({ code: "23505", context: "實例初始化" });
     expect(lines[0]).not.toHaveProperty("err");
   });
 
-  it("DrizzleQueryError 形、cause 沒有 code（連線中斷）：不記 err，記 name", () => {
+  it("DrizzleQueryError shape whose cause has no code (connection dropped): no err, logs the name", () => {
     const { out, lines } = capture(drizzleShaped(new Error("Connection terminated unexpectedly")));
     expect(out).not.toContain(SECRET);
     expect(lines[0]).toMatchObject({ code: null, context: "實例初始化" });
@@ -149,19 +149,19 @@ describe("開機建管理員失敗的 log（#211）", () => {
     expect(lines[0]).not.toHaveProperty("err");
   });
 
-  it("已知的「尚未初始化」錯誤：原樣記（訊息可行動）", () => {
+  it("the known \"not initialized\" error: logged as is (the message is actionable)", () => {
     const { lines } = capture(Object.assign(new Error("此實例尚未初始化：請設定 ADMIN_EMAIL"), { name: INSTANCE_NOT_INITIALIZED }));
     expect(lines[0]).toHaveProperty("err");
     expect((lines[0]!.err as { message: string }).message).toContain("ADMIN_EMAIL");
   });
 
-  it("結構守衛：index.ts 呼叫 logInitFailure", () => {
+  it("structure guard: index.ts calls logInitFailure", () => {
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/index.ts"), "utf8");
     const catchAt = src.indexOf("catch (err)", src.indexOf("await initializeInstance("));
     expect(src.slice(catchAt, src.indexOf("process.exit(1)", catchAt))).toContain("logInitFailure(logger, err)");
   });
 
-  it("結構守衛：index.ts 載入站台限制失敗走 redactDbError，不記整個 err", () => {
+  it("structure guard: index.ts site-limits loading failure goes through redactDbError and doesn't log the whole err", () => {
     const src = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/index.ts"), "utf8");
     const catchAt = src.indexOf("catch (err)", src.indexOf("await SiteLimits.load("));
     const block = src.slice(catchAt, src.indexOf("process.exit(1)", catchAt));

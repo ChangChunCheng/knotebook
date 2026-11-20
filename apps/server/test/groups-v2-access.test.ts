@@ -1,7 +1,4 @@
-/**
- * #175：`resolveNoteAccess` 的矩陣。群組筆記的 role 從不是 owner；
- * 非成員的站台 admin 在筆記上沒有任何特權；群組筆記上的殘留逐人分享列不給權限。
- */
+/** A group note's role is never owner; a non-member site admin has no privilege on notes; residual per-person share rows on group notes grant nothing. */
 import { describe, expect, it } from "vitest";
 import type { NotePermissions } from "@knotebook/shared";
 import {
@@ -14,7 +11,7 @@ const P = (o: Partial<NotePermissions>): NotePermissions => ({ ...NO_PERMISSIONS
 const NONE: NoteAccess = { role: "none", ownerId: null, groupId: null, permissions: NO_PERMISSIONS };
 
 describe("#175 resolveNoteAccess", () => {
-  it("矩陣：個人 owner／逐人 editor／viewer／陌生人／群組成員；群組 × 內建管理員／一般成員／只讀自訂／刪除限定自訂／公開連結限定自訂／無閱讀自訂／非成員；非成員站台 admin／身為成員的站台 admin；不存在；非 UUID", async () => {
+  it("matrix: personal owner / per-person editor / viewer / stranger / group member; group x built-in admin / regular member / read-only custom / delete-only custom / public-link-only custom / no-read custom / non-member; non-member site admin / site admin who is a member; nonexistent; non-UUID", async () => {
     const { db } = await buildTestApp();
     const [owner, ed, vw, stranger, admin, member, reader, blind, deleter, publisher] = await Promise.all(
       Array.from({ length: 10 }, () => seedUser(db)),
@@ -31,10 +28,10 @@ describe("#175 resolveNoteAccess", () => {
       { userId: memberSiteAdmin.id, role: "member" },
     ]);
     await setMemberRole(db, g.id, reader!.id, await seedRole(db, g.id, "Reader", { canRead: true }));
-    // 無閱讀旗標但勾了管理成員（兩個管理旗標不蘊含閱讀）——筆記上仍是 none
+    // No read flag but with manage-members ticked (neither manage flag implies read) - still none on the note
     await setMemberRole(db, g.id, blind!.id, await seedRole(db, g.id, "Nothing", { canManageMembers: true }));
-    // 刪除與公開連結各自獨立的兩個角色：讓 delete 與 managePublicLink／changeSlug 在矩陣裡可分辨，
-    // 也讓「把刪除當成編輯」分得出來
+    // Two roles with delete and public link independent of each other: makes delete and managePublicLink/changeSlug distinguishable in the matrix,
+    // and also tells apart "treating delete as edit"
     await setMemberRole(db, g.id, deleter!.id, await seedRole(db, g.id, "Del", { canRead: true, canDelete: true }));
     await setMemberRole(db, g.id, publisher!.id, await seedRole(db, g.id, "Pub", { canRead: true, canManagePublicLink: true }));
     const groupNote = await seedNote(db, { groupId: g.id });
@@ -53,19 +50,19 @@ describe("#175 resolveNoteAccess", () => {
       ["無閱讀自訂", blind!.id, groupNote.id, NONE],
       ["非成員", stranger!.id, groupNote.id, NONE],
       ["非成員站台 admin", siteAdmin.id, groupNote.id, NONE],
-      // 站台 admin 身分不加任何筆記旗標——身為一般成員就照一般成員角色（沒有 delete）
+      // A site admin identity adds no note flags - as a regular member they get the regular member role (no delete)
       ["身為一般成員的站台 admin", memberSiteAdmin.id, groupNote.id, { role: "editor", ownerId: null, groupId: g.id, permissions: P({ read: true, edit: true }) }],
       ["不存在", owner!.id, "00000000-0000-4000-8000-00000000dead", NONE],
       ["非 UUID", owner!.id, "not-a-uuid", NONE],
     ];
-    // expect.soft：每一列各自報紅，不在第一列失敗就中止
+    // expect.soft: each row reports red on its own, not aborting at the first failure
     for (const [label, userId, noteId, expected] of cases) {
       expect.soft(await resolveNoteAccess(db, userId, noteId), label).toEqual(expected);
       expect.soft(await resolveRole(db, userId, noteId), label).toBe(expected.role);
     }
   });
 
-  it("群組筆記上的殘留逐人分享列（群組筆記不該有分享列，DB 直塞）不給非成員任何權限；成員另有分享列時以群組角色為準", async () => {
+  it("residual per-person share rows on group notes (a group note shouldn't have share rows, inserted directly into the DB) grant a non-member nothing; when a member also has a share row the group role prevails", async () => {
     const { db } = await buildTestApp();
     const [admin, reader, outsider] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: reader.id, role: "member" }]);
@@ -77,13 +74,13 @@ describe("#175 resolveNoteAccess", () => {
     expect(await resolveNoteAccess(db, reader.id, note.id)).toEqual({ role: "viewer", ownerId: null, groupId: g.id, permissions: P({ read: true }) });
   });
 
-  it("roleFromGroupFlags：edit→editor、只有 read→viewer、兩者皆否→none", () => {
+  it("roleFromGroupFlags: edit -> editor, read only -> viewer, neither -> none", () => {
     expect(roleFromGroupFlags({ canRead: true, canEdit: true })).toBe("editor");
     expect(roleFromGroupFlags({ canRead: true, canEdit: false })).toBe("viewer");
     expect(roleFromGroupFlags({ canRead: false, canEdit: false })).toBe("none");
   });
 
-  it("單次 SELECT：notes PK、兩把成員／分享索引、group_roles PK；沒有 Seq Scan", async () => {
+  it("single SELECT: notes PK, the two member/share indexes, group_roles PK; no Seq Scan", async () => {
     const { db } = await buildTestApp();
     const { userId, noteId } = await seedPlannerData(db.$client);
     const plan = await planOf(db.$client, accessQuery(db, userId, noteId).toSQL());

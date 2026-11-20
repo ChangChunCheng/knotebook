@@ -1,25 +1,29 @@
 /**
- * 儲存配額的結構性守衛。剝註解後掃 `src/`（剝法同 s14-structure.test.ts 的 `code()`）。
- * 誠實：字面掃描——改名重匯出、別名呼叫、經另一模組轉手等刻意規避守不到；行為面由 storage-quota-race.test.ts 守。
- *   ① `insert(uploads)` 只在上傳（`insertUploadInTx`）與複製（`copyNoteInTx`）（新增 uploads 列的路徑必須進白名單）
- *   ② `assertSpaceRoomInTx(` 呼叫形只在白名單五檔；除 avatars/tx/avatars.ts（三次）外各恰一次；delete-group.ts 那一次在
- *      `transferGroupInTx` 函式體內，avatars/tx/avatars.ts 的三次分別在 `insertAvatarInTx`（上傳形與 OIDC 形共用同一處）、
- *      `replaceOidcAvatarInTx`（只在換原圖的分支；找不到候選時它改呼叫 `insertAvatarInTx`）、`updateAvatarDisplayInTx` 函式體內各恰一次，
- *      `selectAvatarInTx`、`deleteAvatarInTx`（只讓用量減少或不變）不呼叫；
- *      quota.ts 恰一次宣告形、0 次呼叫形；其他檔 0 次
- *   ③ `pg_advisory` 只在 quota.ts 與資料夾結構鎖 folders/tx/lock.ts（第二種 advisory 鎖；鍵前綴 `knotebook.folders:` 與容量鎖的
- *      `knotebook.storage:` 不同，不共用 key 空間）
- *   ④ quota.ts 取鎖那個 `tx.execute(` 呼叫不含 `sum(`；之後另有 SUM 查詢（兩句）
- *   ⑤ 白名單檔裡 `assertSpaceRoomInTx(` 早於同函式的 `writeSlugInTx(`／`insertNoteWithAutoSlug(`（空間鎖先於 slug 寫入的字面守衛）
- *   ⑥ quota.ts、白名單四檔與其路由檔不出現 isolationLevel／setTransaction／set transaction（限定範圍：#93 的
- *      search-query.ts 合法使用 setTransaction，所以不掃整個 src/）
- *   ⑦ HTTP 409 的訊息字面只在 storage/space.ts（STORAGE_QUOTA_EXCEEDED_MESSAGE）——errors.ts 的 helper 與
- *      StorageQuotaExceeded 都引用它；字面散在兩處時，改一處另一處就漂
- *   ⑧ `update(uploads)` 只在 notes/tx/move.ts、恰一次，且在 moveNoteToGroupInTx 內 `writeSlugInTx(…)` 整個呼叫結束之後、
- *      `recordRedirectsInTx(` 之前（#247：不在會隨撞 slug 重試重跑的 callback 裡）
- *   ⑨ 鎖等待上限不寫死數字：`(storage)lockTimeoutMs` 不接數字字面、`lock_timeout` 不設數字或 `'<n>ms'` 字面；唯一的數字是 quota.ts 的
- *      `DEFAULT_STORAGE_LOCK_TIMEOUT_MS = 5000`。注入值有生效的整合測試（lock-timeout-bound.ts 那一族）只抓得到「落回這個常數」，
- *      寫死別的數字它們分不出來——由這條補上。
+ * Structural guard for storage quota: scans `src/` with comments stripped (same stripping as `code()` in s14-structure.test.ts).
+ * Literal scan only: renamed re-exports, aliased calls and hand-offs through another module are deliberate evasions it can't catch;
+ * behaviour is covered by storage-quota-race.test.ts.
+ * - `insert(uploads)` appears only in upload (`insertUploadInTx`) and copy (`copyNoteInTx`); any new path that adds `uploads` rows
+ *   must join the whitelist.
+ * - `assertSpaceRoomInTx(` calls appear only in the five whitelisted files, once each except avatars/tx/avatars.ts (three). The
+ *   delete-group.ts call is inside the `transferGroupInTx` body; the three in avatars/tx/avatars.ts are one each inside
+ *   `insertAvatarInTx` (shared by the upload and OIDC forms), `replaceOidcAvatarInTx` (only in the branch that replaces the original
+ *   image; with no candidate found it calls `insertAvatarInTx` instead) and `updateAvatarDisplayInTx`; `selectAvatarInTx` and
+ *   `deleteAvatarInTx` (usage only shrinks or stays) don't call it. quota.ts has exactly one declaration and no calls; other files none.
+ * - `pg_advisory` appears only in quota.ts and the folder structure lock folders/tx/lock.ts (a second kind of advisory lock; its key
+ *   prefix `knotebook.folders:` differs from the capacity lock's `knotebook.storage:`, so the key spaces don't overlap).
+ * - The `tx.execute(` call in quota.ts that takes the lock does not contain `sum(`; the SUM query comes after it, as separate statements.
+ * - In the whitelisted files `assertSpaceRoomInTx(` precedes `writeSlugInTx(` / `insertNoteWithAutoSlug(` in the same function (the
+ *   space lock before the slug write).
+ * - quota.ts, the whitelisted files and their route files contain no isolationLevel / setTransaction / set transaction. Scoped to those
+ *   files because the search-query.ts transaction legitimately uses setTransaction, so all of src/ can't be scanned.
+ * - The HTTP 409 message literal appears only in storage/space.ts (STORAGE_QUOTA_EXCEEDED_MESSAGE); the helper in errors.ts and
+ *   StorageQuotaExceeded both reference it, since with the literal in two places changing one lets the other drift.
+ * - `update(uploads)` appears once, in notes/tx/move.ts, inside moveNoteToGroupInTx after the whole `writeSlugInTx(…)` call and before
+ *   `recordRedirectsInTx(` (#247: not inside a callback that reruns when a slug collision forces a retry).
+ * - The lock wait limit is never a hard-coded number: `(storage)lockTimeoutMs` is not followed by a number literal and `lock_timeout`
+ *   is not set to a number or `'<n>ms'` literal; the only number is `DEFAULT_STORAGE_LOCK_TIMEOUT_MS = 5000` in quota.ts. The integration
+ *   tests that inject a value (the lock-timeout-bound.ts family) only catch a fall-back to this constant and can't tell a different
+ *   hard-coded number apart, which this scan covers.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -39,7 +43,7 @@ function code(p: string): string {
 const rel = (p: string) => path.relative(SRC, p).split(path.sep).join("/");
 const at = (f: string) => code(path.join(SRC, f));
 
-/** `src[open]` 是 `(` 或 `{`：回傳配對的內文。 */
+/** `src[open]` must be `(` or `{`: returns the matching inner text. */
 function balanced(src: string, open: number): { body: string; end: number } {
   const o = src[open]!, c = o === "(" ? ")" : "}";
   let depth = 0;
@@ -49,14 +53,13 @@ function balanced(src: string, open: number): { body: string; end: number } {
   }
   throw new Error(`不配對：${open}`);
 }
-/** `function name(` 的函式體區間 [start, end]。 */
 function fnBody(src: string, name: string): { start: number; end: number } {
   const m = new RegExp(`\\bfunction\\s+${name}\\b`).exec(src);
   if (!m) throw new Error(`找不到 function ${name}`);
   const paren = src.indexOf("(", m.index);
   const afterParams = balanced(src, paren).end;
-  // 函式體的 `{`＝參數之後第一個「前一個非空白字元是 `)` 或 `>`」的 `{`——跳過回傳型別裡的物件型別
-  // （`Promise<{ removedShareUserIds: string[] }>` 的 `{` 前一個字元是 `<`）。
+  // The body's `{` is the first `{` after the parameters whose previous non-space character is `)` or `>`, which skips object types in the return type
+  // (the `{` in `Promise<{ removedShareUserIds: string[] }>` follows `<`).
   let brace = afterParams;
   for (;;) {
     brace = src.indexOf("{", brace + 1);
@@ -71,16 +74,16 @@ const WHITELIST = ["uploads/tx/insert-upload.ts", "notes/tx/copy.ts", "notes/tx/
 const CALL = /(?<!function\s+)\bassertSpaceRoomInTx\(/g;
 const DECL = /\bfunction\s+assertSpaceRoomInTx\(/g;
 
-describe("儲存配額結構性守衛", () => {
+describe("storage quota structure guard", () => {
   const files = walk(SRC);
 
-  it("① insert(uploads) 只在 uploads/tx/insert-upload.ts 與 notes/tx/copy.ts", () => {
-    expect(files.length).toBeGreaterThan(50); // 非空洞：真的掃到了 src/
+  it("insert(uploads) appears only in uploads/tx/insert-upload.ts and notes/tx/copy.ts", () => {
+    expect(files.length).toBeGreaterThan(50); // non-vacuous: src/ was actually scanned
     const hits = files.filter(p => /\.insert\(\s*uploads\s*\)/.test(code(p))).map(rel).sort();
     expect(hits).toEqual(["notes/tx/copy.ts", "uploads/tx/insert-upload.ts"]);
   });
 
-  it("② assertSpaceRoomInTx 呼叫形：白名單五檔（avatars 三次、其餘各一次）、其他 0 次；quota.ts 恰一次宣告形；delete-group 那次在 transferGroupInTx 內、avatars 的三次分別在 insertAvatarInTx、replaceOidcAvatarInTx 與 updateAvatarDisplayInTx 內", () => {
+  it("assertSpaceRoomInTx calls: five whitelisted files (avatars three, the rest one each), none elsewhere; quota.ts has one declaration; delete-group's call is in transferGroupInTx, avatars' three are in insertAvatarInTx, replaceOidcAvatarInTx and updateAvatarDisplayInTx", () => {
     const counts: Record<string, number> = {};
     for (const p of files) {
       const n = [...code(p).matchAll(CALL)].length;
@@ -105,11 +108,11 @@ describe("儲存配額結構性守衛", () => {
     expect(callsIn("deleteAvatarInTx")).toBe(0);
   });
 
-  it("③ pg_advisory 只在 storage/tx/quota.ts 與 folders/tx/lock.ts（資料夾結構鎖，鍵前綴不同）", () => {
+  it("pg_advisory appears only in storage/tx/quota.ts and folders/tx/lock.ts (folder structure lock, different key prefix)", () => {
     expect(files.filter(p => /pg_advisory/.test(code(p))).map(rel).sort()).toEqual(["folders/tx/lock.ts", "storage/tx/quota.ts"]);
   });
 
-  it("④ quota.ts：取鎖那個 tx.execute( 不含 sum(；之後另有 SUM 查詢", () => {
+  it("quota.ts: the lock-taking tx.execute( does not contain sum(; a SUM query follows separately", () => {
     const q = at("storage/tx/quota.ts");
     const lockAt = q.indexOf("pg_advisory_xact_lock");
     expect(lockAt).toBeGreaterThan(-1);
@@ -121,7 +124,7 @@ describe("儲存配額結構性守衛", () => {
     expect(q.slice(end)).toMatch(/sumUploadSizeSql\(\)/);
   });
 
-  it("⑤ 空間鎖早於同函式的 slug 寫入", () => {
+  it("space lock precedes the slug write in the same function", () => {
     const cases: Array<[string, string, RegExp]> = [
       ["notes/tx/copy.ts", "copyNoteInTx", /\binsertNoteWithAutoSlug\(/],
       ["notes/tx/move.ts", "moveNoteToGroupInTx", /\bwriteSlugInTx\(/],
@@ -139,21 +142,21 @@ describe("儲存配額結構性守衛", () => {
     }
   });
 
-  it("⑥ 限定範圍不得設隔離等級", () => {
+  it("scoped files must not set an isolation level", () => {
     const scoped = ["storage/tx/quota.ts", ...WHITELIST, "routes/uploads.ts", "routes/avatars.ts", "avatars/oidc-job.ts", "routes/notes.ts", "routes/note-content.ts", "routes/note-sharing.ts", "routes/groups.ts", "notes/copy-note.ts", "notes/move-note.ts"];
-    // 非空洞：每個限定檔都讀得到內容（at 讀不到會 throw）
+    // non-vacuous: every scoped file has content (`at` throws if it can't read one)
     for (const f of scoped) expect(at(f).length, `${f} 非空`).toBeGreaterThan(100);
     const bad = scoped.filter(f => /isolationLevel|setTransaction|set\s+transaction/i.test(at(f)));
     expect(bad).toEqual([]);
   });
 
-  it("⑦ 配額訊息字面只在 storage/space.ts（errors.ts 與 quota.ts 都引用常數）", () => {
+  it("the quota message literal appears only in storage/space.ts (errors.ts and quota.ts reference the constant)", () => {
     const hits = files.filter(p => code(p).includes("This space's storage quota is full.")).map(rel).sort();
     expect(hits).toEqual(["storage/space.ts"]);
     expect(at("http/errors.ts")).toContain("STORAGE_QUOTA_EXCEEDED_MESSAGE");
   });
 
-  it("⑧ update(uploads) 只在 notes/tx/move.ts 恰一次，位在 writeSlugInTx(…) 呼叫之後、recordRedirectsInTx( 之前（#247）", () => {
+  it("update(uploads) appears once, in notes/tx/move.ts, after the writeSlugInTx(...) call and before recordRedirectsInTx( (#247)", () => {
     const hits = files.filter(p => /\.update\(\s*uploads\s*\)/.test(code(p))).map(rel).sort();
     expect(hits).toEqual(["notes/tx/move.ts"]);
     const src = at("notes/tx/move.ts");
@@ -170,12 +173,12 @@ describe("儲存配額結構性守衛", () => {
     expect(up > wsEnd && up < rr, "UPDATE uploads 必須在 writeSlugInTx(…) 整個呼叫之後、recordRedirectsInTx 之前").toBe(true);
   });
 
-  it("⑨ 鎖等待上限不寫死數字：唯一的數字字面是 quota.ts 的 DEFAULT_STORAGE_LOCK_TIMEOUT_MS = 5000", () => {
+  it("lock wait limit is not hard-coded: the only number literal is DEFAULT_STORAGE_LOCK_TIMEOUT_MS = 5000 in quota.ts", () => {
     const LITERALS = [
-      /(?<![A-Za-z0-9_])(?:storage)?lockTimeoutMs\s*(?::|=|\?\?|\|\|)\s*\d+/gi, // lockTimeoutMs: 300、storageLockTimeoutMs ?? 5000
-      /lock_timeout[^;\n]*?['"`]\s*\d+\s*(?:ms|s|min)?\s*['"`]/gi, //              set_config('lock_timeout', '300ms', …)、= '2s'
-      /lock_timeout\s*(?:=|to)\s*\d+/gi, //                                         set local lock_timeout = 300
-      /\w*LOCK_TIMEOUT_MS\s*=\s*\d+/g, //                                           常數定義
+      /(?<![A-Za-z0-9_])(?:storage)?lockTimeoutMs\s*(?::|=|\?\?|\|\|)\s*\d+/gi, // lockTimeoutMs: 300, storageLockTimeoutMs ?? 5000
+      /lock_timeout[^;\n]*?['"`]\s*\d+\s*(?:ms|s|min)?\s*['"`]/gi, // set_config('lock_timeout', '300ms', …), = '2s'
+      /lock_timeout\s*(?:=|to)\s*\d+/gi, // set local lock_timeout = 300
+      /\w*LOCK_TIMEOUT_MS\s*=\s*\d+/g, // constant definition
     ];
     const hits = files.flatMap(p => {
       const src = code(p);

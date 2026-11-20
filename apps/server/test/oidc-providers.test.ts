@@ -9,8 +9,8 @@ import { createOidcRuntimeRegistry } from "../src/auth/oidc-client.js";
 import { linkedEnabledProvidersWithIssuer, listEnabledProvidersForConfig, loadEnabledProvider, loadLegacyProvider, openClientSecret, providerConfiguration, recordResolvedIssuer } from "../src/auth/oidc-providers.js";
 import { SecretDecryptError } from "../src/lib/sealed-secret.js";
 
-describe("auth/oidc-providers（#187）", () => {
-  it("recordResolvedIssuer：版本述詞——舊版本不覆寫新設定；同值不寫；NULL → 寫", async () => {
+describe("auth/oidc-providers (#187)", () => {
+  it("recordResolvedIssuer: version predicate: an old version doesn't overwrite a new config; same value isn't written; NULL -> written", async () => {
     const { db } = await buildTestApp();
     const p = await seedAuthProvider(db, { issuerUrl: "https://gitlab.example/" });
     expect(await recordResolvedIssuer(db, { id: p.id, configVersion: 1 }, "https://gitlab.example")).toBe(true);
@@ -21,7 +21,7 @@ describe("auth/oidc-providers（#187）", () => {
     expect(row!.r).toBeNull();
   });
 
-  it("providerConfiguration：尾斜線形——provider 填 https://gitlab.example/、IdP 回無斜線 → 成功並寫 resolved_issuer＝無斜線；大寫 host 同", async () => {
+  it("providerConfiguration: trailing-slash form: provider is https://gitlab.example/, IdP returns without the slash -> succeeds and resolved_issuer is written without the slash; uppercase host likewise", async () => {
     for (const [issuerUrl, idpIssuer] of [["https://gitlab.example/", "https://gitlab.example"], ["https://GitLab.Example", "https://gitlab.example"]] as const) {
       const { db } = await buildTestApp();
       const idp = createFakeIdp(idpIssuer);
@@ -34,7 +34,7 @@ describe("auth/oidc-providers（#187）", () => {
     }
   });
 
-  it("openClientSecret：AAD 綁 provider id——把 A 的密文搬到 B 解不開；secret NULL → SecretDecryptError", async () => {
+  it("openClientSecret: AAD is bound to the provider id: moving A's ciphertext to B can't be decrypted; secret NULL -> SecretDecryptError", async () => {
     const { db } = await buildTestApp();
     const a = await seedAuthProvider(db, { issuerUrl: "https://a.example", clientSecret: "secret-a" });
     const b = await seedAuthProvider(db, { issuerUrl: "https://b.example", clientSecret: null, enabled: false });
@@ -43,7 +43,7 @@ describe("auth/oidc-providers（#187）", () => {
     expect(() => openClientSecret(testConfig.appSecret, b)).toThrow(SecretDecryptError);
   });
 
-  it("查詢：loadEnabledProvider 不回停用的；loadLegacyProvider 只回啟用中的 legacy；listEnabledProvidersForConfig 只列啟用、依 sort_order 排、只有 id、displayName 與 icon", async () => {
+  it("queries: loadEnabledProvider doesn't return disabled ones; loadLegacyProvider returns only an enabled legacy; listEnabledProvidersForConfig lists only enabled, ordered by sort_order, with only id, displayName and icon", async () => {
     const { db } = await buildTestApp();
     const legacy = await seedAuthProvider(db, { issuerUrl: "https://l.example", legacyCallback: true, displayName: "Legacy", sortOrder: 5 });
     const g = await seedAuthProvider(db, { issuerUrl: "https://g.example", displayName: "G", sortOrder: 1 });
@@ -59,7 +59,7 @@ describe("auth/oidc-providers（#187）", () => {
     expect(await loadLegacyProvider(db)).toBeNull();
   });
 
-  it("linkedEnabledProvidersWithIssuer：用 effective issuer＝coalesce(resolved_issuer, issuer_url) 對身分；停用的不列", async () => {
+  it("linkedEnabledProvidersWithIssuer: matches identities by effective issuer = coalesce(resolved_issuer, issuer_url); disabled ones aren't listed", async () => {
     const { db } = await buildTestApp();
     const [u] = await db.insert(users).values({ email: "u@x", displayName: "U" }).returning();
     const slash = await seedAuthProvider(db, { issuerUrl: "https://gitlab.example/", resolvedIssuer: "https://gitlab.example", displayName: "GitLab" });
@@ -70,7 +70,7 @@ describe("auth/oidc-providers（#187）", () => {
       { userId: u!.id, issuer: "https://off.example", sub: "2" },
     ]);
     expect(await linkedEnabledProvidersWithIssuer(db, u!.id)).toEqual([{ id: slash.id, displayName: "GitLab", icon: GENERIC, effectiveIssuer: "https://gitlab.example" }]);
-    // resolved_issuer 為 NULL 時退回 issuer_url 字面：帶尾斜線的字面對不上無斜線的身分。
+    // With resolved_issuer NULL it falls back to the issuer_url literal: a literal with a trailing slash doesn't match a slash-less identity.
     await db.update(authProviders).set({ resolvedIssuer: null }).where(eq(authProviders.id, slash.id));
     expect(await linkedEnabledProvidersWithIssuer(db, u!.id)).toEqual([]);
     expect(off.enabled).toBe(false);

@@ -1,7 +1,3 @@
-/**
- * 資料夾：`NoteDto.folderId`（呼叫者視角）與 `sizeBytes`（只有 `GET /api/notes`）。
- * 資料夾還沒有寫入 API——位置一律以 helper 直寫 `notes.folder_id`／`note_placements`。
- */
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -18,7 +14,7 @@ import { buildCollabTestApp, buildTestApp } from "./helpers.js";
 import { seedAttachment } from "./storage-helpers.js";
 import { markTrashed } from "./trash-helpers.js";
 
-/** 既有的 14 鍵（`notes.test.ts` 的那組）。 */
+/** The existing 14 keys (the set from `notes.test.ts`). */
 const BASE_KEYS = [
   "createdAt", "group", "groupId", "id", "lastEdited", "ownerHandle", "ownerId", "permissions", "prevSlug", "role", "slug", "slugIsCustom", "title", "updatedAt",
 ];
@@ -44,8 +40,8 @@ async function listOf(app: FastifyInstance, userId: string): Promise<Map<string,
 }
 
 /**
- * O 的個人筆記 N 在 O 的資料夾 FO，分享給 S（editor，放進自己的 shared 資料夾 FS）、E（editor，無放置）、V（viewer，無放置）；
- * 群組 G（O、M 為成員）的筆記 GN 在群組資料夾 FG；O 的根層筆記 R（旁觀者）。N 帶非空的垃圾桶快照欄（洩漏時看得到）。
+ * O's personal note N is in O's folder FO, shared with S (editor, put in S's own shared folder FS), E (editor, no placement) and V (viewer, no placement);
+ * group G (O and M are members) has note GN in group folder FG; O's root-level note R (bystander). N carries non-empty trash snapshot columns (visible if leaked).
  */
 async function scene(db: Db) {
   const [o, s, e, v, m] = await Promise.all(Array.from({ length: 5 }, () => seedUser(db)));
@@ -67,8 +63,8 @@ async function scene(db: Db) {
   return { o, s, e, v, m, g, n, r, gn, FO: fo.id, FS: fs.id, FG: fg.id };
 }
 
-describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
-  it("DTO-1 清單：O 看 N＝FO、R＝null；S 看 N＝自己的放置 FS；V 看 N＝null；M 看 GN＝FG", async () => {
+describe("folders: NoteDto.folderId (caller's perspective)", () => {
+  it("list: O sees N = FO, R = null; S sees N = own placement FS; V sees N = null; M sees GN = FG", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     const ofO = await listOf(app, c.o.id);
@@ -81,7 +77,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect((await listOf(app, c.m.id)).get(c.gn.id)?.folderId).toBe(c.FG);
   });
 
-  it("DTO-2 :ref：O→FO、S→FS、V→null、M 看 GN→FG；O 看 R→null", async () => {
+  it(":ref: O -> FO, S -> FS, V -> null, M sees GN -> FG; O sees R -> null", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     expect(ok(await req(app, "GET", `/api/notes/${c.n.id}`, c.o.id)).folderId).toBe(c.FO);
@@ -91,7 +87,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(ok(await req(app, "GET", `/api/notes/${c.r.id}`, c.o.id)).folderId).toBeNull();
   });
 
-  it("DTO-3 by-path：S→FS、V→null、O→FO；by-group-path：M→FG", async () => {
+  it("by-path: S -> FS, V -> null, O -> FO; by-group-path: M -> FG", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     const path = `/api/notes/by-path/${c.o.handle}/${c.n.slug}`;
@@ -101,7 +97,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(ok(await req(app, "GET", `/api/notes/by-group-path/${c.g.id}/${c.gn.slug}`, c.m.id)).folderId).toBe(c.FG);
   });
 
-  it("DTO-4 PATCH：S 改 N 的標題 → FS（不是 FO）；E（無放置）→ null；O → FO；M 改 GN → FG", async () => {
+  it("PATCH: S changing N's title -> FS (not FO); E (no placement) -> null; O -> FO; M changing GN -> FG", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     expect(ok(await req(app, "PATCH", `/api/notes/${c.n.id}`, c.s.id, { title: "by S" })).folderId).toBe(c.FS);
@@ -112,7 +108,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(ok(await req(app, "PATCH", `/api/notes/${c.gn.id}`, c.m.id, { title: "by M" })).folderId).toBe(c.FG);
   });
 
-  it("DTO-5 move 回應：O 把在 FO 的個人筆記移入 G → folderId null（trigger 自癒）", async () => {
+  it("move response: O moves a personal note in FO into G -> folderId null (trigger self-heals)", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     const p = await seedNote(db, { ownerId: c.o.id }, { title: "P" });
@@ -121,7 +117,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(dto).toMatchObject({ id: p.id, groupId: c.g.id, folderId: null });
   });
 
-  it("DTO-6 POST 裸建／copy（個人、群組）回應：folderId null", async () => {
+  it("POST bare create/copy (personal, group) response: folderId null", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     expect(ok(await req(app, "POST", "/api/notes", c.o.id, {}), 201).folderId).toBeNull();
@@ -130,7 +126,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(ok(await req(app, "POST", `/api/notes/${c.n.id}/copy`, c.o.id, { groupId: c.g.id }), 201).folderId).toBeNull();
   });
 
-  it("DTO-6 POST 帶 content 回應：folderId null、鍵集合＝既有＋folderId", async () => {
+  it("POST with content response: folderId null, key set = existing + folderId", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const dto = ok(await req(ctx.app, "POST", "/api/notes", u.id, { title: "C", content: "hi" }), 201);
@@ -138,7 +134,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(Object.keys(dto).sort()).toEqual(SINGLE_KEYS);
   });
 
-  it("DTO-7 還原回應：O 的 N 移入垃圾桶 → restore → restored[0].folderId＝FO", async () => {
+  it("restore response: O's N moved to the trash -> restore -> restored[0].folderId = FO", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     await markTrashed(db.$client, c.n.id, c.o.id);
@@ -150,7 +146,7 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
     expect(body.restored[0]!.folderId).toBe(c.FO);
   });
 
-  it("DTO-8 欄位集合：清單＝既有＋folderId＋sizeBytes；:ref／PATCH／POST／by-path＝既有＋folderId；都不含垃圾桶快照欄", async () => {
+  it("key sets: list = existing + folderId + sizeBytes; :ref/PATCH/POST/by-path = existing + folderId; none contains the trash snapshot columns", async () => {
     const { app, db } = await buildTestApp();
     const c = await scene(db);
     for (const dto of (await listOf(app, c.s.id)).values()) expect(Object.keys(dto).sort()).toEqual(LIST_KEYS);
@@ -165,14 +161,14 @@ describe("資料夾：NoteDto.folderId（呼叫者視角）", () => {
   });
 });
 
-describe("資料夾：sizeBytes", () => {
-  it("DTO-9 內文 123 bytes＋附件 10、20 → 153；R → 0；S 看 N 也是 153；SQL 外層欄帶表名", async () => {
+describe("folders: sizeBytes", () => {
+  it("body 123 bytes + attachments 10 and 20 -> 153; R -> 0; S viewing N also gets 153; the outer SQL column carries the table name", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const c = await scene(db);
     await db.$client.query("insert into note_states (note_id, ydoc) values ($1, decode(repeat('00', 123), 'hex'))", [c.n.id]);
     await seedAttachment(db, uploadsDir, c.n.id, c.o.id, 10, { noFile: true });
     await seedAttachment(db, uploadsDir, c.n.id, c.o.id, 20, { noFile: true });
-    // 旁觀者：別篇的狀態與附件不算進 N。
+    // Bystanders: other notes' state and attachments don't count toward N.
     await db.$client.query("insert into note_states (note_id, ydoc) values ($1, decode(repeat('00', 7), 'hex'))", [c.gn.id]);
     await seedAttachment(db, uploadsDir, c.gn.id, c.m.id, 1000, { noFile: true });
     const ofO = await listOf(app, c.o.id);
@@ -187,13 +183,13 @@ describe("資料夾：sizeBytes", () => {
       expect(text).toContain(`s.note_id = "notes"."id"`);
       expect(text).toContain(`u.note_id = "notes"."id"`);
     }
-    // 單表 select：字面外層欄不能退化成 `${notes.id}`（會渲染成裸 "id"，在 uploads u 裡解析成 u.id）。
+    // Single-table select: the literal outer column must not degrade to `${notes.id}` (it would render as a bare "id" and resolve to u.id inside uploads u).
     const single = db.select({ x: noteSizeBytesSql() }).from(notes).toSQL().sql;
     expect(single).toContain(`s.note_id = "notes"."id"`);
     expect(single).toContain(`u.note_id = "notes"."id"`);
   });
 
-  it("DTO-10 量測（不斷言門檻）：2000 篇＋note_states，GET /api/notes 三次中位數；查詢層有無 sizeBytes 對照", async () => {
+  it("measurement (no threshold asserted): 2000 notes + note_states, median of three GET /api/notes; compared with and without sizeBytes at the query layer", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     await db.$client.query(

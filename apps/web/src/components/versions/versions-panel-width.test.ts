@@ -12,13 +12,13 @@ import {
 
 const KEY = "versions.panelWidth";
 
-describe("版本面板寬度工具", () => {
+describe("versions panel width utilities", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.localStorage.removeItem(KEY);
   });
 
-  it("常數：預設 320、範圍 240–560、步進 16、獨立的 key（不與 sidebar.width 共用）", () => {
+  it("constants: default 320, range 240-560, step 16, and its own key (not shared with sidebar.width)", () => {
     expect(VERSIONS_PANEL_WIDTH_DEFAULT).toBe(320);
     expect(VERSIONS_PANEL_WIDTH_MIN).toBe(240);
     expect(VERSIONS_PANEL_WIDTH_MAX).toBe(560);
@@ -33,7 +33,7 @@ describe("版本面板寬度工具", () => {
     [300.6, 301],
     [560, 560],
     [9999, 560],
-  ])("clamp(%d) → %d", (input, expected) => {
+  ])("clamp(%d) -> %d", (input, expected) => {
     expect(clampVersionsPanelWidth(input)).toBe(expected);
   });
 
@@ -47,19 +47,19 @@ describe("版本面板寬度工具", () => {
     ["240", 240],
     ["560", 560],
     ["400", 400],
-  ])("讀到 %j → %d", (raw, expected) => {
+  ])("reading %j -> %d", (raw, expected) => {
     if (raw !== null) window.localStorage.setItem(KEY, raw);
     expect(readVersionsPanelWidth()).toBe(expected);
   });
 
-  it("讀取丟錯 → 預設", () => {
+  it("read throws -> default", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
     expect(readVersionsPanelWidth()).toBe(320);
   });
 
-  it("寫入：非預設值存字串；等於預設時移除鍵；寫入丟錯不外洩", () => {
+  it("write: a non-default value is stored as a string; the default removes the key; a write error does not leak out", () => {
     writeVersionsPanelWidth(400);
     expect(window.localStorage.getItem(KEY)).toBe("400");
     writeVersionsPanelWidth(320);

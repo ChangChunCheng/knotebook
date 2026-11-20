@@ -1,28 +1,3 @@
-/**
- * #108：跨工具的驗收族——拒絕族（案 24–28(a)／29b／30／32／32b）、
- * 串行（案 22）、以及案 14c 後半／14d。
- *
- * 這是「兩支寫入工具都在了」之後才有鑑別力的一批：各自的既有測試檔（
- * `mcp-edit-note.test.ts`／`mcp-create-note.test.ts`）已經驗過各工具**自己**的行為，
- * 本檔驗的是**跨工具**的東西——同一顆桶被兩支工具共用、同一個 service 讓 REST 與 MCP
- * 串行、同一套「拒絕就零副作用」紀律要在多種拒絕原因下都成立。
- *
- * 每一種拒絕都斷言（能斷的就斷）**四件事**（M6）：無新 `note_ai_edits` 列、live doc 內容
- * 位元組不變、`hocuspocus.documents` 未因此新增文件、無 presence 被 touch。共用的
- * `snapshot()`／`expectNoSideEffects()` 收在檔頭，避免四件事在每一案各寫一份、漏一件。
- *
- * ⚠ **presence 的「沒被 touch」逐案分兩種形，不是全部等價**：拒絕路徑本身都在
- * `applyToNote` 真正 touch presence 之前就返回，差別在**呼叫 `snapshot()` 那一刻 awareness
- * 是不是已經因為「前面那發鋪陳用的成功呼叫」而非空**：
- * - **before 時 awareness 為空**（key 集合比較與深比對在這裡等價，走 key 集合即可）：
- *   案 24／25／26／27／28(a)／32／32b——這些案要嘛目標筆記從沒被任何呼叫碰過，要嘛
- *   `before` snapshot 拍在任何成功呼叫之前。
- * - **before 時 awareness 已非空**（key 集合比較對「偷 touch」零鑑別力，必須走深比對）：
- *   案 30、並排 GW1／GW3／GW5（同樣先有一發成功的 append）——`before` 之前先有一發**成功**的 `append`（「先改一次」）讓這顆 token 的名牌現身，
- *   之後若 handler 偷跑一次 touch，只會「就地更新同一個 clientId 的 state」（`presence.ts:147`
- *   的 `emit(existing,"updated")`），key 集合一個字都不變——`mcp-edit-note.test.ts` 的對應案
- *   （`:258-268`）那個雷本檔只有案 30 與 GW1／GW3／GW5 會踩到，見案 30 內的深度比對與突變記述（GW 各案走 expectNoSideEffects 的 key 集合比較，其 presence 面由案 30 的深比對涵蓋）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -63,7 +38,6 @@ async function callTool(app: FastifyInstance, token: string, name: string, args:
   return { status: res.statusCode, result: res.json().result };
 }
 
-/** 成功呼叫的 `structuredContent`（順手守住鏡像等式）。 */
 function payloadOf<T>(call: ToolCall): T {
   expect(call.status).toBe(200);
   expect(call.result.isError).toBeUndefined();
@@ -71,7 +45,6 @@ function payloadOf<T>(call: ToolCall): T {
   return call.result.structuredContent as unknown as T;
 }
 
-/** 我們自產的 (4b) 工具錯誤。 */
 function errorOf(call: ToolCall): Record<string, unknown> & { code?: string; message?: string } {
   expect(call.status).toBe(200);
   expect(call.result.isError).toBe(true);
@@ -82,7 +55,7 @@ function errorOf(call: ToolCall): Record<string, unknown> & { code?: string; mes
 const editNote = (app: FastifyInstance, token: string, args: Record<string, unknown>) => callTool(app, token, "edit_note", args);
 const createNote = (app: FastifyInstance, token: string, args: Record<string, unknown> = {}) => callTool(app, token, "create_note", args);
 
-/** REST 側的同一篇 outline——`sectionId`／`fingerprint` 的**獨立**真相。 */
+/** Outline read via REST: an independent source of truth for `sectionId`/`fingerprint`. */
 async function restOutline(app: FastifyInstance, noteId: string, token: string) {
   const res = await getContent(app, noteId, token);
   expect(res.statusCode).toBe(200);
@@ -106,10 +79,10 @@ interface Scene {
   disconnect: () => void;
 }
 
-/** ⚠ heading 一律**同級**：`## B` 會被 sectionize 併進 A 段（#106 三棒踩過三次）。 */
+/** Headings must all be the same level: `## B` would be sectionized into A's section. */
 const THREE_SECTIONS = "# A\n\n第一段內容\n\n# B\n\n第二段內容\n\n# C\n\n第三段內容";
 
-/** owner ＋ 一顆讀寫 PAT（名稱固定 "Claude Code" ⇒ agent label "claude"）＋ 一篇筆記。 */
+/** PAT named "Claude Code" gives agent label "claude". */
 async function scene(
   markdown: string | null = THREE_SECTIONS,
   opts: Parameters<typeof buildCollabTestApp>[0] = {}
@@ -128,8 +101,7 @@ async function scene(
   return { ctx, ownerId: owner.id, session, token, tokenId, noteId: note.id, disconnect };
 }
 
-/** M6 四件零副作用的快照。`documents.get(noteId)` 可能是 `undefined`（例如目標筆記從沒被
- *  任何人開過的情境，見案 26）——那種情況 docText 視為空字串、awareness key 集合視為空。 */
+/** `documents.get(noteId)` may be `undefined` (note never opened by anyone): doc text then counts as empty and awareness keys as empty. */
 interface SideEffectSnapshot {
   editsCount: number;
   docText: string;
@@ -149,17 +121,17 @@ async function snapshot(ctx: CollabTestCtx, noteId: string): Promise<SideEffectS
 
 async function expectNoSideEffects(ctx: CollabTestCtx, noteId: string, before: SideEffectSnapshot): Promise<void> {
   const after = await snapshot(ctx, noteId);
-  expect(after.editsCount, "M6：無新 note_ai_edits 列").toBe(before.editsCount);
-  expect(after.docText, "M6：live doc 內容位元組不變").toBe(before.docText);
-  expect(after.documentsSize, "M6：hocuspocus.documents 未因此新增文件").toBe(before.documentsSize);
-  expect(after.awarenessKeys, "M6：無新名牌加入 awareness（本檔全是拒絕案，見檔頭）").toEqual(before.awarenessKeys);
+  expect(after.editsCount, "無新 note_ai_edits 列").toBe(before.editsCount);
+  expect(after.docText, "live doc 內容位元組不變").toBe(before.docText);
+  expect(after.documentsSize, "hocuspocus.documents 未因此新增文件").toBe(before.documentsSize);
+  // Key-set comparison only discriminates when awareness was empty at `before`; where an earlier successful call made it non-empty
+  // (see the fingerprint_mismatch case), a stray touch would only update that clientId's state in place, so that case compares deeply. In the side-by-side cases that call this after a successful append, the key-set comparison can't see such an in-place touch either.
+  expect(after.awarenessKeys, "無新名牌加入 awareness（本檔全是拒絕案）").toEqual(before.awarenessKeys);
 }
 
-describe("#108 拒絕族：四件零副作用逐案照斷", () => {
-  // 案 24：scope 不足（唯讀憑證呼叫 edit_note）→ (4a) 形，不是 insufficient_scope。
-  // 本案的價值在四件零副作用照斷——與 `mcp-tools-list.test.ts` 案 10 的差異是那邊只斷
-  // note_ai_edits 一件，本檔統一走完整四件。
-  it("scope 不足（唯讀憑證呼叫 edit_note）→ SDK 的 (4a) 形，四件零副作用（案 24）", async () => {
+describe("rejections: four zero-side-effect checks per case", () => {
+  // Unlike `mcp-tools-list.test.ts`, which asserts only note_ai_edits, this runs all four zero-side-effect checks.
+  it("insufficient scope (read-only credential calls edit_note) -> SDK error (no structuredContent), no side effects", async () => {
     const s = await scene();
     const { token: ro } = await seedTokenForUser(s.ctx.db, s.ownerId, "notes:read", "Reader");
     const before = await snapshot(s.ctx, s.noteId);
@@ -174,8 +146,7 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s.disconnect();
   });
 
-  // 案 25：viewer 呼叫 edit_note → forbidden。
-  it("viewer 呼叫 edit_note → forbidden，四件零副作用（案 25）", async () => {
+  it("viewer calls edit_note -> forbidden, no side effects", async () => {
     const s = await scene();
     const viewer = await s.ctx.createUser({ email: `v-${randomUUID()}@example.com`, password: PASSWORD });
     await s.ctx.share(s.noteId, viewer.id, "viewer");
@@ -190,14 +161,9 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s.disconnect();
   });
 
-  // 案 26：role === "none"（別人的私有筆記）→ not_found，訊息與案 17（`NOTE_NOT_FOUND_MESSAGE`）
-  // 逐位元組同形。⚠ 另外持一顆自己的 `edit` 桶，順手驗「`edit` 桶排在角色檢查之後扣、
-  // role===none 的 404 不啃它」——這是下面的突變（把 edit 桶移到 resolveRole 之前）
-  // 唯一抓得住的地方（案 27 對那條突變零鑑別力，見該案註解）。
-  // 突變實測（`edit-note.ts` 把 `edit` 桶消耗那段移到 `resolveRole` 之前）：
-  // 只有本案紅——`role===none 的 404 不得啃掉 edit 桶: expected 29 to be 30`（桶被啃掉一格）；
-  // 其餘各案（含案 27）全綠，已 revert。
-  it("角色為 none（別人的私有筆記）→ not_found，訊息與案 17 逐位元組同形，不啃 edit 桶，四件零副作用（案 26）", async () => {
+  // Also holds its own `edit` limiter to check it is charged after the role check (a role===none 404 must not consume it): this catches moving the edit limiter before resolveRole,
+  // which a limit:0 case can't.
+  it("role none (someone else's private note) -> not_found with exactly the same message as a missing note, edit limiter untouched, no side effects", async () => {
     const edit = new FixedWindowLimiter(EDIT_LIMIT);
     const s = await scene(THREE_SECTIONS, { limiters: { edit } });
     const stranger = await s.ctx.createUser({ email: `x-${randomUUID()}@example.com`, password: PASSWORD });
@@ -206,7 +172,7 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
 
     const call = await editNote(s.ctx.app, s.token, { note_id: strangerNote.id, op: "append", markdown: "不該寫進去" });
     await expectNoSideEffects(s.ctx, strangerNote.id, before);
-    // 順序守衛：`edit` 桶還是滿的——持有者手上這顆桶的 key 是裸 userId（`ctx.userId`）。
+    // Ordering guard: the `edit` limiter is still full; its key is the bare userId (`ctx.userId`).
     let left = 0;
     while (edit.consume(s.ownerId)) left += 1;
     expect(left, "role===none 的 404 不得啃掉 edit 桶").toBe(EDIT_LIMIT.limit);
@@ -217,11 +183,9 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s.disconnect();
   });
 
-  // 案 27：`edit` 桶用罄 → too_many_requests。
-  // ⚠ **本案對案 26 那條「edit 桶移到 resolveRole 之前」的突變確定零鑑別力**：本案的桶
-  // `limit:0`，`consume()` 恆回 `false`，不管排在角色檢查前或後結果都是 `too_many_requests`
-  // ——順序調換對本案的可觀察行為一個字都不改，守衛落在案 26 身上（見該案的突變記述）。
-  it("edit 桶用罄 → too_many_requests，四件零副作用（案 27）", async () => {
+  // limit:0 makes consume() always false, so this case cannot detect the edit limiter moving before the role check
+  // (the role===none case above covers that).
+  it("edit limiter exhausted -> too_many_requests, no side effects", async () => {
     const s = await scene(THREE_SECTIONS, { limiters: { edit: new FixedWindowLimiter({ limit: 0, windowMs: 600_000 }) } });
     const before = await snapshot(s.ctx, s.noteId);
 
@@ -233,9 +197,7 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s.disconnect();
   });
 
-  // 案 28(a)：佇列忙碌逾時（`editingQueueWaitMs: 50` ＋ `beforeMerge` 卡住）→ edit_note 回
-  // `server_busy`。第一發卡在 `beforeMerge` 裡（佔住這篇筆記的佇列），第二發等不到、逾時。
-  it("佇列忙碌逾時（editingQueueWaitMs: 50 ＋ beforeMerge 卡住）→ edit_note 回 server_busy，四件零副作用（案 28(a)）", async () => {
+  it("queue wait timeout (editingQueueWaitMs: 50 with beforeMerge stuck) -> edit_note returns server_busy, no side effects", async () => {
     let entered = false;
     let release: () => void = () => {};
     const hold = new Promise<void>(r => {
@@ -262,18 +224,13 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     expect(err.code).toBe("server_busy");
 
     release();
-    await first; // 讓第一發跑完，避免懸空 promise 拖到下一案。
+    await first; // let the first request finish so no dangling promise leaks into the next case
     s.disconnect();
   });
 
-  // 案 29b：兩種我們自產、而且 HTTP 上到得了的寫入側錯誤——`forbidden`（viewer，同案 25 的
-  // 造法）與 `fingerprint_mismatch`——都在 `ERROR_CODES` 裡，且 `content[0].text` 鏡像
-  // `structuredContent`。⚠ 案 29b 舉的 `insufficient_scope` 在整合層
-  // （走 HTTP）不可達：唯讀憑證根本沒有 `edit_note` 可呼叫（案 24 的 (4a) 形），
-  // 讀寫憑證在 `requireWriteScope` 第 1 步（session 或 scope 檢查）就放行——這是那條規則
-  // 漏列的第四處，逐字記在這裡免得之後被判成漏做。
-  it("寫入側的兩種我們自產錯誤（forbidden／fingerprint_mismatch）都在 ERROR_CODES 裡，且 content 鏡像 structuredContent（案 29b）", async () => {
-    // forbidden：viewer 呼叫 edit_note（造法同案 25）。
+  // `insufficient_scope` is unreachable over HTTP: a read-only credential has no edit_note to call, and a read-write one passes
+  // requireWriteScope's session/scope check, so this case covers only forbidden and fingerprint_mismatch.
+  it("both write-side errors we produce (forbidden, fingerprint_mismatch) are in ERROR_CODES, and content mirrors structuredContent", async () => {
     const s1 = await scene();
     const viewer = await s1.ctx.createUser({ email: `v-${randomUUID()}@example.com`, password: PASSWORD });
     await s1.ctx.share(s1.noteId, viewer.id, "viewer");
@@ -285,7 +242,6 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     expect(forbiddenCall.result.structuredContent!.code).toBe("forbidden");
     s1.disconnect();
 
-    // fingerprint_mismatch：過期 if_match（造法同 mcp-edit-note.test.ts 案 20）。
     const s2 = await scene();
     const before = await restOutline(s2.ctx.app, s2.noteId, s2.token);
     payloadOf<EditPayload>(await editNote(s2.ctx.app, s2.token, { note_id: s2.noteId, op: "append", markdown: "先改一次" }));
@@ -304,19 +260,10 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s2.disconnect();
   });
 
-  // 案 30：指紋不符 → fingerprint_mismatch（零副作用面；回應形由案 20 守，本案不重複）。
-  // ⚠ **本案是本檔唯一「before 時 awareness 已非空」的案**（見檔頭列舉）：拿 `before` 快照
-  //   之前先有一發**成功**的 `append`（「先改一次」，為了讓 `last.fingerprint` 過期而必須
-  //   先寫一次），那一發會 touch presence——`snapshot()` 的 key 集合對「fingerprint_mismatch
-  //   那條路徑偷 touch」因此零鑑別力，改走 `mcp-edit-note.test.ts:258-268`的深度
-  //   比對：同一顆 clientId 的整個 state（`structuredClone`）逐位元組比對。
-  //   突變實測（`edit-note.ts` 的 `mismatchError` 回傳前偷插一次
-  //   `ctx.presence.touch(args.note_id, ctx.tokenId!, { name: "mut", color: "#000", handle: "mut", label: "x" },
-  //   { kind: "doc-start" })`）：**只有深度比對那一行紅**（`beat` 從 2 變 3、`user.name` 從
-  //   `"user-… (claude)"` 變 `"mut"`），`expectNoSideEffects()` 的四件（含 key 集合）排在它
-  //   之前先跑、維持全綠——證明 key 集合對「fingerprint_mismatch 偷 touch」這條路徑確定零
-  //   鑑別力，深度比對才是活的。已 revert。
-  it("過期 if_match → fingerprint_mismatch，四件零副作用（presence 走深度比對，案 30；回應形由案 20 守）", async () => {
+  // Awareness is already non-empty at `before`: the preceding successful append (needed to make `last.fingerprint` stale) touched
+  // presence. A stray touch on the fingerprint_mismatch path would only update the same clientId's state in place (key set
+  // unchanged), so snapshot()'s key-set comparison cannot catch it; compare that clientId's whole state (structuredClone) instead.
+  it("stale if_match -> fingerprint_mismatch, no side effects (presence compared deeply)", async () => {
     const s = await scene();
     const before0 = await restOutline(s.ctx.app, s.noteId, s.token);
     payloadOf<EditPayload>(await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: "先改一次" }));
@@ -347,10 +294,8 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     s.disconnect();
   });
 
-  // 案 32：兩支寫入工具各跑一次，`tokenWrite` 桶（覆寫成 `limit: 1`）用罄 → 被擋。
-  // ⚠ `create_note` 那一發**要帶 `content`**（規格逐字）；`tokenWrite` 由測試自己持有並
-  // 直接 `consume()` 吃掉唯一一格，不必先發一次浪費的成功呼叫。
-  it("兩支寫入工具各跑一次：tokenWrite 桶（limit: 1）用罄 → 被擋（案 32）", async () => {
+  // `create_note` must carry `content`; the test owns `tokenWrite` and consume()s its single slot directly, avoiding a wasted successful call.
+  it("both write tools: tokenWrite limiter (limit: 1) exhausted -> blocked", async () => {
     {
       const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
       const s = await scene(THREE_SECTIONS, { limiters: { tokenWrite } });
@@ -371,7 +316,7 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
       const before = await countNotes(s.ctx, s.ownerId);
 
       const call = await createNote(s.ctx.app, s.token, { title: "T", content: "內容" });
-      expect(await countNotes(s.ctx, s.ownerId), "M6：notes 表零新增列").toBe(before);
+      expect(await countNotes(s.ctx, s.ownerId), "notes 表零新增列").toBe(before);
 
       const err = errorOf(call);
       expect(err.code).toBe("too_many_requests");
@@ -379,14 +324,10 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
     }
   });
 
-  // 案 32b（Important 6，必辦）：扣點順序的唯一守衛。第一發打別人的私有筆記（role===none）→
-  // not_found，但 `tokenWrite` 已被啃掉（`requireWriteScope` 排在 `resolveRole` 之前，
-  // 對齊 REST 的 preHandler 扣點順序）；緊接著對自己的合法筆記發一發合法的 `edit_note` →
-  // 被 `too_many_requests` 擋下。案 32 兩發都打看得見的筆記，對這個順序**確定**零鑑別力。
-  // 突變實測（`edit-note.ts` 把 `requireWriteScope(ctx)` 移到 `resolveRole` 之後）：
-  // 只有本案紅（`expected undefined to be true`——第二發不再被擋，直接寫成功，`errorOf` 的
-  // `isError` 斷言先炸）；其餘各案（含案 32）全綠，已 revert。
-  it("扣點順序的唯一守衛：role=none 那發雖 404 仍啃 tokenWrite，緊接著合法一發被擋（案 32b）", async () => {
+  // Catches a change of the charging order: the first request hits someone else's private note (role===none) -> not_found, but
+  // `tokenWrite` is consumed (`requireWriteScope` runs before `resolveRole`, matching the REST preHandler order); the next
+  // valid edit_note on the caller's own note is blocked with too_many_requests. A case that targets only visible notes can't detect this order.
+  it("edit_note charging order: the role=none request still consumes tokenWrite despite its 404, so the next valid request is blocked", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const s = await scene(THREE_SECTIONS, { limiters: { tokenWrite } });
     const stranger = await s.ctx.createUser({ email: `x-${randomUUID()}@example.com`, password: PASSWORD });
@@ -405,16 +346,10 @@ describe("#108 拒絕族：四件零副作用逐案照斷", () => {
   });
 });
 
-describe("#108 串行（案 22）", () => {
-  // ⚠ 不釘結果碼形——改釘在併發本身：A（REST）卡在 `beforeMerge`，B（MCP）
-  // 在那段期間發出，斷言 B 沒有進入 `beforeMerge`（`inFlight`／`maxInFlight` 計數形，照抄
-  // `test/unit/editing-queue.test.ts:26-48`）。
-  // 突變實測（`app.ts` 的 `mcpRoutes({...})` 呼叫把共用的 `writes` 換成
-  // `new NoteWriteService({...})`——MCP 自己一份 `NoteWriteQueue`，繞過與 REST 共用的實例）：
-  // 本案紅在 `B 在 A 還卡著時沒有進入 beforeMerge: expected 2 to be 1`（`maxInFlight === 2`，
-  // B 沒有排隊、直接跟 A 併發跑進 `beforeMerge`）。這是共用寫入佇列重構唯一的行為面守衛，
-  // 已 revert。
-  it("REST 與 MCP 寫入同一篇筆記時仍然串行（inFlight 計數形，不是結果碼形，案 22）", async () => {
+describe("serialization", () => {
+  // Assert concurrency itself, not result codes: A (REST) stalls in `beforeMerge`, B (MCP) is issued meanwhile, and B must not
+  // enter `beforeMerge` (inFlight/maxInFlight counters). Catches MCP and REST using separate write queue instances.
+  it("REST and MCP writes to the same note stay serialized (inFlight counters, not result codes)", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     let releaseA: () => void = () => {};
@@ -434,7 +369,6 @@ describe("#108 串行（案 22）", () => {
     const s = await scene(THREE_SECTIONS, { editingTestHooks: { beforeMerge } });
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
 
-    // A：REST `POST /:id/edits`，卡在 beforeMerge。
     const a = s.ctx.app.inject({
       method: "POST",
       url: `/api/notes/${s.noteId}/edits`,
@@ -443,7 +377,7 @@ describe("#108 串行（案 22）", () => {
     });
     await waitFor("A 已卡在 beforeMerge（佔住佇列）", 2_000, () => inFlight === 1);
 
-    // B：MCP edit_note，同一篇筆記，帶**同一個**已被 A 佔用而必過期的 if_match。
+    // B: MCP edit_note on the same note with the same if_match, which A's hold makes stale.
     const b = editNote(s.ctx.app, s.token, {
       note_id: s.noteId,
       op: "replace_all",
@@ -451,7 +385,7 @@ describe("#108 串行（案 22）", () => {
       if_match: rest.fingerprint,
     });
 
-    await new Promise(r => setTimeout(r, 30)); // 串行被破壞的話，這段時間足夠讓 B 併行跑進 beforeMerge
+    await new Promise(r => setTimeout(r, 30)); // long enough for B to reach beforeMerge in parallel if serialization were broken
     expect(inFlight, "前提守衛：A 此刻確實還卡著，否則整案空轉").toBe(1);
     expect(maxInFlight, "B 在 A 還卡著時沒有進入 beforeMerge").toBe(1);
 
@@ -459,7 +393,7 @@ describe("#108 串行（案 22）", () => {
     const aRes = await a;
     expect(aRes.statusCode, "A 的 REST 寫入成功").toBe(201);
     const bCall = await b;
-    // 附帶斷言（不是守點）：落敗方（B，if_match 已過期）拿到下列碼之一。
+    // Incidental assertion (not a guard): the loser (B, stale if_match) gets one of these codes.
     expect(bCall.result.isError).toBe(true);
     expect(["fingerprint_mismatch", "section_not_found", "server_busy"]).toContain(bCall.result.structuredContent!.code);
     expect(maxInFlight).toBe(1);
@@ -467,15 +401,12 @@ describe("#108 串行（案 22）", () => {
   });
 });
 
-describe("#108 案 14c 後半／14d", () => {
-  // 14c 後半：段落被截斷（`truncated: true`）時 `read_note_section` **不回** `fingerprint`；
-  // 此時拿一個猜的／過期的 `if_match` 去 `replace_section` → `fingerprint_mismatch`。
-  // （前半——讀完整段含 fingerprint——在 `mcp-content.test.ts` 案 14c 前半已有。）
-  it("段落被截斷時 read_note_section 不回 fingerprint；拿猜的 if_match 去 replace_section → fingerprint_mismatch（案 14c 後半）", async () => {
+describe("truncated section and zero-read bypass", () => {
+  it("truncated section: read_note_section returns no fingerprint; a guessed if_match on replace_section -> fingerprint_mismatch", async () => {
     const LONG = "L".repeat(9_000);
     const s = await scene(`# Long\n\n${LONG}`);
     const rest = await restOutline(s.ctx.app, s.noteId, s.token);
-    const target = rest.outline[1]!; // 「Long」段
+    const target = rest.outline[1]!; // the "Long" section
 
     const page = payloadOf<{ section: { fingerprint?: string }; truncated: boolean }>(
       await callTool(s.ctx.app, s.token, "read_note_section", { note_id: s.noteId, section_id: target.sectionId })
@@ -483,7 +414,7 @@ describe("#108 案 14c 後半／14d", () => {
     expect(page.truncated).toBe(true);
     expect(page.section.fingerprint).toBeUndefined();
 
-    // 猜的／過期的 if_match：格式合法（16 hex）但呼叫端從沒真的讀到過它。
+    // A guessed/stale if_match: valid format (16 hex) but the caller never actually read it.
     const guessed = "0".repeat(16);
     const call = await editNote(s.ctx.app, s.token, {
       note_id: s.noteId,
@@ -497,12 +428,10 @@ describe("#108 案 14c 後半／14d", () => {
     s.disconnect();
   });
 
-  // 14d：期望結果是「成功」——零讀取繞過。`append` 一顆非空 block（不帶 `if_match`）→
-  // 成功，回應帶整篇 `fingerprint`；再拿它 `replace_all` → 成功。**這是刻意行為不是洞**
-  // （(A) 裁決）：使用者會在筆記裡看到那段垃圾，而且 `note_ai_edits` 有一列、撤得回。
-  // ⚠ `markdown: "\n"` 造不出來（`isBlankParseResult` 會回 `empty_content`）——測資是一顆
-  //   真的非空 block。⚠ 測資用一篇已有內容、且 ≤100 段的筆記（`THREE_SECTIONS`）。
-  it("append 不讀就寫、成功且回整篇 fingerprint，再用它 replace_all 也成功（案 14d）", async () => {
+  // Expected to succeed (zero-read bypass), intentionally and not a hole: the user sees the junk in the note and note_ai_edits has
+  // a row, so it can be undone. `markdown: "\n"` can't be used (`isBlankParseResult` returns empty_content); the data is a real
+  // non-empty block, in a note that already has content and <= 100 sections (`THREE_SECTIONS`).
+  it("append without reading succeeds and returns the whole-note fingerprint; replace_all with it also succeeds", async () => {
     const s = await scene(THREE_SECTIONS);
     const appended = payloadOf<EditPayload>(
       await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: "# 零讀取追加\n\n沒讀過就寫的內容" })
@@ -520,19 +449,19 @@ describe("#108 案 14c 後半／14d", () => {
   });
 });
 
-// 並排：寫入面整筆拒絕不合格的並排與尺寸；MCP／REST 共用 parseMarkdownForNote。
+// MCP and REST share parseMarkdownForNote.
 const ROW2 = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1">\n\nB\n\n</div>\n</div>`;
 const FIVE_COLS = `<div data-kb-columns style="display:flex;gap:16px">\n${[1, 2, 3, 4, 5].map(i => `<div data-kb-column style="flex:1">\n\nc${i}\n\n</div>`).join("\n")}\n</div>`;
 const FLEX_DIV = '<div style="display:flex"><div><p>L</p></div><div><p>R</p></div></div>';
 const FIGURE_IMG = '<figure><img alt="p" src="/api/uploads/u9" width="300"></figure>';
 const BARE_IMG = '<img alt="p" src="/api/uploads/u9" width="300">';
-/** REST 400 的訊息（草稿；`unsupported_size` 不提格子；改成每個觸發條件都成立的版本）——逐字。 */
+/** Verbatim REST 400 message (unsupported_columns). */
 const REST_COLUMNS_MESSAGE =
   "That markdown has layout or editor-internal HTML this editor cannot store, so nothing was written. Write side-by-side columns exactly as GET /api/notes/:id/content returns them: <div data-kb-columns style=\"display:flex;gap:16px\"> holding 2 to 4 <div data-kb-column style=\"flex:N\"> columns, N from 0.1 to 10 with at most two decimal places, with a blank line after each column's opening tag and another before its </div>, at the top level of the markdown, not nested inside a list, a quote or anything else. Other <div> elements cannot use display:flex or display:grid, and no element can carry data-node-type.";
 const REST_SIZE_MESSAGE =
   "An image width or table column width in that markdown is not in a form this editor can store, so nothing was written. Write sizes exactly as GET /api/notes/:id/content returns them, as whole numbers of pixels from 32 to 4000: an image's width on the <img> inside a <figure> that is outside any table, the <img> carrying only alt (optional), src and width, in that order, and a table's column widths as colwidth on its first row's cells, one comma-separated value for each column a cell spans, left empty for a column with no width.";
 
-describe("並排與尺寸：寫入面拒絕不合格的形", () => {
+describe("side-by-side and size: writes reject unsupported shapes", () => {
   const stateOf = async (s: Scene) => {
     const [r] = await s.ctx.db.select({ y: noteStates.ydoc }).from(noteStates).where(eq(noteStates.noteId, s.noteId));
     return r ? Buffer.from(r.y).toString("base64") : null;
@@ -541,7 +470,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
   const restEdit = (s: Scene, payload: Record<string, unknown>) =>
     s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.noteId}/edits`, headers: bearer(s.token), payload });
 
-  it("GW1：MCP edit_note append 五欄 → unsupported_columns、訊息逐字，note_states 位元組相同、edit 記錄只多先前那一筆成功的（假綠守衛：同一路徑的合法兩欄成功）", async () => {
+  it("MCP edit_note append of five columns -> unsupported_columns, verbatim message, note_states byte-identical, only the earlier successful edit recorded (false-green guard: a valid two-column append on the same path succeeds)", async () => {
     const s = await scene();
     const ok = payloadOf<EditPayload>(await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: ROW2 }));
     expect(ok.editId).toBeTruthy();
@@ -552,7 +481,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     const err = errorOf(await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: FIVE_COLS }));
     expect(err.code).toBe("unsupported_columns");
     expect(err.message).toBe(writeFailureMessage("unsupported_columns"));
-    expect(err.message).toContain("side-by-side columns"); // 碼與句子沒有配錯（上一行兩邊同取自 writeFailureMessage；逐字由 write-messages.test.ts 釘）
+    expect(err.message).toContain("side-by-side columns"); // the code and sentence aren't mismatched (both from writeFailureMessage above; verbatim text is pinned by write-messages.test.ts)
 
     await expectNoSideEffects(s.ctx, s.noteId, before);
     expect(await stateOf(s)).toBe(stateBefore);
@@ -560,7 +489,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     s.disconnect();
   });
 
-  it("GW2：REST POST /api/notes 帶 display:flex 的 div → 400 unsupported_columns、訊息逐字，沒有建出筆記", async () => {
+  it("REST POST /api/notes with a display:flex div -> 400 unsupported_columns, verbatim message, no note created", async () => {
     const s = await scene();
     const okRes = await s.ctx.app.inject({ method: "POST", url: "/api/notes", headers: bearer(s.token), payload: { title: "OK", content: ROW2 } });
     expect(okRes.statusCode).toBe(201);
@@ -574,7 +503,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     s.disconnect();
   });
 
-  it("GW3：REST POST /api/notes/:id/edits append 裸的帶寬 img → 400 unsupported_size、訊息逐字（不提表格格子），note_states 不變", async () => {
+  it("REST POST /api/notes/:id/edits append of a bare img with width -> 400 unsupported_size, verbatim message, note_states unchanged", async () => {
     const s = await scene();
     expect((await restEdit(s, { op: "append", markdown: FIGURE_IMG })).statusCode).toBe(201);
     const before = await snapshot(s.ctx, s.noteId);
@@ -590,7 +519,7 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     s.disconnect();
   });
 
-  it("GW4：MCP create_note 帶裸的帶寬 img → unsupported_size、訊息逐字，沒有建出筆記（假綠守衛：<figure> 形成功）", async () => {
+  it("MCP create_note with a bare img with width -> unsupported_size, verbatim message, no note created (false-green guard: the <figure> form succeeds)", async () => {
     const s = await scene();
     payloadOf(await createNote(s.ctx.app, s.token, { title: "Fig", content: FIGURE_IMG }));
     const before = await countNotes(s.ctx, s.ownerId);
@@ -598,12 +527,12 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
     const err = errorOf(await createNote(s.ctx.app, s.token, { title: "Bare", content: BARE_IMG }));
     expect(err.code).toBe("unsupported_size");
     expect(err.message).toBe(writeFailureMessage("unsupported_size"));
-    expect(err.message).toContain("image width"); // 同上
+    expect(err.message).toContain("image width");
     expect(await countNotes(s.ctx, s.ownerId)).toBe(before);
     s.disconnect();
   });
 
-  it("GW5：core parse 丟例外的輸入（<div data-content-type=\"paragraph\">）→ REST 400 unsupported_block（不是 500），什麼都沒寫", async () => {
+  it("input on which core parse throws (<div data-content-type=\"paragraph\">) -> REST 400 unsupported_block (not 500), nothing written", async () => {
     const s = await scene();
     expect((await restEdit(s, { op: "append", markdown: "普通的一段" })).statusCode).toBe(201);
     const before = await snapshot(s.ctx, s.noteId);
@@ -619,20 +548,18 @@ describe("並排與尺寸：寫入面拒絕不合格的形", () => {
   });
 });
 
-describe("#108 案 21b(ii) 的 HTTP 落點（「無任何落盤」那一半）", () => {
-  // ⚠ **這半段的 schema 層 safeParse 斷言在 `test/unit/mcp-write-schemas.test.ts`**——這裡
-  //   只補「同一份 payload 經 tools/call 打進去」的那一半：需要 `buildCollabTestApp()`（真
-  //   DB），與 `vitest.unit.config.ts` 刻意不帶 `globalSetup`（保證 `test:unit` 永不用
-  //   docker）衝突，所以搬到這個既有的整合測試檔。
-  it("markdown 含 NUL：經 HTTP 也是 SDK 的 (4a) 形、note_ai_edits 零新增列（案 21b(ii)）", async () => {
+describe("schema rejections over HTTP persist nothing (schema half in test/unit/mcp-write-schemas.test.ts)", () => {
+  // The schema-level safeParse assertion lives in `test/unit/mcp-write-schemas.test.ts`; this covers the same payload through
+  // tools/call, which needs `buildCollabTestApp()` (real DB). That conflicts with `vitest.unit.config.ts` deliberately having no
+  // `globalSetup` (so `test:unit` never uses docker), hence this existing integration file.
+  it("markdown containing NUL: over HTTP too an SDK error (no structuredContent) and no new note_ai_edits row", async () => {
     const s = await scene(null);
     const before = await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.noteId));
 
     const call = await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "append", markdown: "x" + NUL });
     expect(call.status).toBe(200);
     expect(call.result.isError).toBe(true);
-    // SDK 自己拒絕 input schema 驗證失敗的呼叫——(4a) 形，沒有 `structuredContent`（我們的
-    // handler 從沒被呼叫到，`toolError()` 也就沒有機會產生它）。
+    // The SDK itself rejects input-schema failures: no `structuredContent`, since our handler is never called and `toolError()` never runs.
     expect(call.result.structuredContent).toBeUndefined();
 
     const after = await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.noteId));
@@ -640,7 +567,7 @@ describe("#108 案 21b(ii) 的 HTTP 落點（「無任何落盤」那一半）",
     s.disconnect();
   });
 
-  it("create_note 空字串 title：經 HTTP 也是 (4a) 形、notes 表零新增列（案 21b(ii)）", async () => {
+  it("create_note with an empty-string title: over HTTP too an SDK error, no new notes row", async () => {
     const s = await scene(null);
     const before = await countNotes(s.ctx, s.ownerId);
 

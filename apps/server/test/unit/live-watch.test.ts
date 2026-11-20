@@ -1,6 +1,6 @@
 /**
- * `live-watch.ts`：套用期間活文件被改了哪些頂層 block；合併時只在改到這次寫入在意的 block 時才算衝突。
- * 文件用真的編輯器建（BlockNote 的 blockGroup／blockContainer 結構），「瀏覽器」是另一份文件、改完把 update 套進活文件。
+ * `live-watch.ts`: which top-level blocks of the live document were changed during apply; on merge, a conflict only counts when a block this write cares about was changed.
+ * Documents are built with the real editor (BlockNote's blockGroup/blockContainer structure); the "browser" is another document whose update is applied to the live one after editing.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -28,7 +28,7 @@ async function liveDoc(): Promise<Y.Doc> {
   }
   return doc;
 }
-/** 「瀏覽器」：同步 live 的一份，跑 `f`（編輯器操作），把 update 套回 live。 */
+/** The "browser": a document synced from live runs `f` (an editor operation), then its update is applied back to live. */
 async function browser(live: Y.Doc, f: (ed: EditorSession["editor"]) => void): Promise<void> {
   const b = new Y.Doc();
   Y.applyUpdate(b, Y.encodeStateAsUpdate(live));
@@ -44,7 +44,7 @@ async function browser(live: Y.Doc, f: (ed: EditorSession["editor"]) => void): P
 const guardA = (live: Y.Doc): MergeGuard => ({ kind: "blocks", items: containerItems(live.getXmlFragment(YDOC_FRAGMENT), ["h1", "a1", "a2"]), anchors: [] });
 
 describe("LiveWatch", () => {
-  it("containerItems：基底裡這些 block 的頂層容器 item id（在別份文件也一樣）", async () => {
+  it("containerItems: the top-level container item ids of these blocks in the base (the same in another document)", async () => {
     const live = await liveDoc();
     const ids = containerItems(live.getXmlFragment(YDOC_FRAGMENT), ["a1", "b1"]);
     expect(ids).toHaveLength(2);
@@ -53,7 +53,7 @@ describe("LiveWatch", () => {
     expect(containerItems(copy.getXmlFragment(YDOC_FRAGMENT), ["a1", "b1"])).toEqual(ids);
   });
 
-  it("別段（B）打字、在文件尾端加段落 → 不衝突；none 永不衝突；any 衝突", async () => {
+  it("typing in another section (B) or adding a paragraph at the end of the document -> no conflict; none never conflicts; any conflicts", async () => {
     const live = await liveDoc();
     const w = new LiveWatch(live);
     await browser(live, ed => ed.updateBlock("b1", { content: "third, typed" }));
@@ -64,7 +64,7 @@ describe("LiveWatch", () => {
     w.stop();
   });
 
-  it("改到目標段的 block（打字、改屬性、刪掉）→ 衝突", async () => {
+  it("changing the target section's block (typing, changing attributes, deleting) -> conflict", async () => {
     for (const f of [
       (ed: EditorSession["editor"]) => ed.updateBlock("a2", { content: "second, typed" }),
       (ed: EditorSession["editor"]) => ed.updateBlock("a1", { props: { textColor: "red" } } as never),
@@ -80,7 +80,7 @@ describe("LiveWatch", () => {
     }
   });
 
-  it("新段落緊接在目標段最後一顆後面（會落進目標段）→ 衝突；插在下一段開頭之後 → 不衝突", async () => {
+  it("a new paragraph right after the target section's last block (it would land in the target section) -> conflict; inserted after the start of the next section -> no conflict", async () => {
     const live = await liveDoc();
     const guard = guardA(live);
     const w = new LiveWatch(live);
@@ -94,7 +94,7 @@ describe("LiveWatch", () => {
     w2.stop();
   });
 
-  it("錨點（撤回刪段）：被刪 → 衝突；只是被改字 → 不衝突（同舊的錨點重核對）", async () => {
+  it("anchor (undo of a deleted section): deleted -> conflict; only text changed -> no conflict (re-checked against the same old anchor)", async () => {
     const live = await liveDoc();
     const anchor: MergeGuard = { kind: "blocks", items: [], anchors: containerItems(live.getXmlFragment(YDOC_FRAGMENT), ["b1"]) };
     const w = new LiveWatch(live);
@@ -105,7 +105,7 @@ describe("LiveWatch", () => {
     w.stop();
   });
 
-  it("stop 之後的改動不記；沒有任何改動 → any 也不衝突", async () => {
+  it("changes after stop are not recorded; with no changes at all, any doesn't conflict either", async () => {
     const live = await liveDoc();
     const w = new LiveWatch(live);
     expect(w.conflicts({ kind: "any" })).toBe(false);
@@ -116,10 +116,10 @@ describe("LiveWatch", () => {
 });
 
 /**
- * 合併後的內容：真的 editOp（worker 同一支）＋真的 LiveWatch；瀏覽器在 AI 做事期間改活文件，守衛放行就合併，比對最後的
- * markdown 與順序——不只看 conflicts 的回傳值。
+ * Content after merging: the real editOp (the same one the worker uses) plus the real LiveWatch; the browser edits the live document while the AI works,
+ * and when the guard lets it through the result is merged; the final markdown and order are compared, not just the return value of conflicts.
  */
-describe("守衛放行後合併的內容", () => {
+describe("content merged after the guard lets through", () => {
   const H = (t: string) => ({ type: "heading", props: { level: 1 }, content: t });
   const P = (t: string) => ({ type: "paragraph", content: t });
   const base = [H("A"), P("a1 text"), P("a2 text"), H("B"), P("b1 text"), P("b2 text"), H("C"), P("c1 text")];
@@ -149,13 +149,13 @@ describe("守衛放行後合併的內容", () => {
     return { conflict, markdown: md.result.markdown };
   }
 
-  it("別段（A）打字：合併，A 的修改與 B 的新內容都在、順序不變", async () => {
+  it("typing in another section (A): merged, both A's change and B's new content are present, order unchanged", async () => {
     const r = await scenario(ed => ed.updateBlock(ed.document[1]!.id, { content: "a1 text EDITED" }));
     expect(r.conflict).toBe(false);
     expect(r.markdown).toBe("# A\n\na1 text EDITED\n\na2 text\n\n# B\n\nAI-NEW\n\n# C\n\nc1 text\n");
   });
 
-  it("在 B 標題正前方（A 段末尾）插一段：合併，那段留在 A、在 # B 之前（不被排到 AI 新內容後面搬進 B）——跑 10 次（每次 client id 不同）", async () => {
+  it("inserting a paragraph right before the B heading (at the end of A): merged, that paragraph stays in A, before # B (not reordered after the AI's new content or moved into B) - run 10 times (a different client id each time)", async () => {
     for (let i = 0; i < 10; i++) {
       const r = await scenario(ed => ed.insertBlocks([P("USER-NEW")] as never, ed.document[3]!.id, "before"));
       expect(r.conflict).toBe(false);
@@ -163,7 +163,7 @@ describe("守衛放行後合併的內容", () => {
     }
   }, 60_000);
 
-  it("在 B 最後一顆後面插一段：衝突、不合併（那段會落進 B）——活文件保留使用者的修改、沒有 AI 內容", async () => {
+  it("inserting a paragraph after B's last block: conflict, not merged (the paragraph would land in B) - the live document keeps the user's change, with no AI content", async () => {
     const r = await scenario(ed => ed.insertBlocks([P("USER-AFTER-b2")] as never, ed.document[5]!.id, "after"));
     expect(r.conflict).toBe(true);
     expect(r.markdown).toBe("# A\n\na1 text\n\na2 text\n\n# B\n\nb1 text\n\nb2 text\n\nUSER-AFTER-b2\n\n# C\n\nc1 text\n");

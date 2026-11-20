@@ -1,14 +1,8 @@
 /**
- * #108：`/api/mcp` 的**傳輸層形狀**。
+ * This family uses `buildTestApp` (**no collab**): it tests the transport layer, which is unrelated to collab.
  *
- * 這一族用 `buildTestApp`（**無 collab**）——測的是傳輸層，與 collab 無關，而且只有它
- * 收得到 `Partial<AppDeps>` 的 `mcpTestHooks` 注入縫。
- *
- * ⚠ **這個 app 上有工具了**（`list_notes`／`search_notes` 只查 DB，依註冊規則在無
- * collab 的 app 上照樣註冊），所以 `tools/list`／`tools/call` 回的是真的工具清單／結果。
- * 本檔刻意**不**斷言那些 body——工具面的驗收全在 `mcp-notes.test.ts`（含案 29(a)/(b)/(c)）。
- * 當時的零工具形回的是 `-32601 Method not found`（那兩個 handler 由第一次
- * `registerTool()` 裝上）；那個形今天已經到不了，成因記在 `routes/mcp.ts` 檔頭。
+ * This app does have tools (`list_notes`/`search_notes` only query the DB and register even without collab), so `tools/list`/`tools/call` return real lists/results; this file deliberately
+ * does **not** assert those bodies: tool-level acceptance is in the per-tool files such as `mcp-notes.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -21,8 +15,7 @@ import type { Db } from "../src/db/index.js";
 
 const ISSUER = "http://localhost:3000";
 
-// 刻意不用 `helpers.ts` 既有的 `insertPasswordUser`——本族任何一案都不需要密碼登入，
-// 借用它會讓每個測試多付一次 argon2 雜湊的真實成本（本檔案案例數乘下來是 18 次）。
+// Deliberately not `helpers.ts`'s `insertPasswordUser`: no test here needs password login, and borrowing it would cost one real argon2 hash per test.
 async function seedUser(db: Db): Promise<string> {
   const [user] = await db
     .insert(users)
@@ -31,7 +24,6 @@ async function seedUser(db: Db): Promise<string> {
   return user!.id;
 }
 
-/** 一個帶讀寫 PAT 的 app（本族全部只需要「認證過得去」）。 */
 async function appWithToken(
   overrides: Partial<AppDeps> = {}
 ): Promise<{ app: TestApp["app"]; db: Db; token: string; userId: string }> {
@@ -41,8 +33,8 @@ async function appWithToken(
   return { app, db, token, userId };
 }
 
-describe("#108 /api/mcp 傳輸層形狀", () => {
-  it("案 2：有效 token 的 POST initialize → 200，單一 JSON-RPC 回應（不是 501）", async () => {
+describe("#108 /api/mcp transport-layer shape", () => {
+  it("valid token POST initialize -> 200, a single JSON-RPC response (not 501)", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpPost(app, INITIALIZE, { token });
     expect(res.statusCode).toBe(200);
@@ -54,26 +46,23 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(body.result.serverInfo.name).toBe("knotebook");
     expect(body.result.serverInfo.version).toBeTruthy();
     expect(body.result.instructions).toBeTruthy();
-    // ⚠ `capabilities.tools.listChanged` 的順序斷言在 `mcp-tools-list.test.ts`，
-    // 這裡刻意不斷言：本檔測的是傳輸層，而那條契約要有 `registerTool` 才有鑑別力。
+    // The ordering assertion for `capabilities.tools.listChanged` is in `mcp-tools-list.test.ts` and deliberately not asserted here: this file tests the transport layer, and that contract is only discriminating when `registerTool` exists.
   });
 
-  it("案 2b：同一 app 連兩發 tools/list 都回 200（stateless transport 沒有被跨請求重用）", async () => {
+  it("two tools/list calls in a row on the same app both return 200 (the stateless transport isn't reused across requests)", async () => {
     const { app, token } = await appWithToken();
-    // ⚠ 敘述是「都 200」不是「都成功」：鑑別力刻意只放在狀態碼層，body 一個字都不看
-    // （零工具形下兩發都是 -32601，有工具後是真的清單——兩種形都該綠）。
-    // transport／server 若被跨請求重用，SDK 會丟
-    // `Stateless transport cannot be reused across requests.`，第二發變 500。
+    // The claim is "both 200", not "both succeed": discrimination is deliberately at the status-code level and the body isn't looked at (with different tool sets both bodies are valid).
+    // If the transport/server were reused across requests the SDK would throw `Stateless transport cannot be reused across requests.` and the second call would be 500.
     const first = await mcpPost(app, rpc("tools/list", undefined, 1), { token });
     const second = await mcpPost(app, rpc("tools/list", undefined, 2), { token });
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
   });
 
-  it("案 2e：三發請求之後 close() 恰被呼叫三次（含搬運段丟例外的那一發）", async () => {
+  it("after three requests close() is called exactly three times (including the one where the transfer stage throws)", async () => {
     let closes = 0;
     let n = 0;
-    // `beforeReply` 是 app 級單一函式、每一發都會被呼叫——「只在第三發丟」是測試自己數的。
+    // `beforeReply` is one app-level function called on every request, so "throw only on the third" is counted by the test.
     const { app, token } = await appWithToken({
       mcpTestHooks: {
         afterClose: () => {
@@ -88,15 +77,14 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     await mcpPost(app, INITIALIZE, { token });
     await mcpPost(app, rpc("tools/list", undefined, 2), { token });
     const third = await mcpPost(app, INITIALIZE, { token });
-    // ⚠ 刻意不斷言前兩發的 body——第 (2) 發的語意在註冊工具之後已經從 `-32601`
-    // 變成真的工具清單，這一案守的是 `close()` 的計數，與 body 無關。
-    // 若這一案日後紅了而斷言變多了，是有人多加了 body 斷言，刪斷言不要改實作。
+    // Deliberately not asserting the first two bodies: the semantics of the second changed from `-32601` to a real tool list once tools were registered; this test guards `close()` counting, independent of the body.
+    // If it ever goes red while the assertions grew, someone added a body assertion: delete the assertion, don't change the implementation.
     expect(closes).toBe(3);
     expect(third.statusCode).toBe(500);
     expect(third.json()).toEqual({ error: { code: "internal", message: expect.any(String) } });
   });
 
-  it("案 3：有效 token 的 GET → 405 ＋ Allow: POST ＋ JSON-RPC error body", async () => {
+  it("valid token GET -> 405 + Allow: POST + JSON-RPC error body", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpRequest(app, "GET", { token });
     expect(res.statusCode).toBe(405);
@@ -104,7 +92,7 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(res.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32000, message: expect.any(String) } });
   });
 
-  it("案 3：有效 token 的 DELETE → 405 ＋ Allow: POST ＋ JSON-RPC error body", async () => {
+  it("valid token DELETE -> 405 + Allow: POST + JSON-RPC error body", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpRequest(app, "DELETE", { token });
     expect(res.statusCode).toBe(405);
@@ -112,7 +100,7 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(res.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32000, message: expect.any(String) } });
   });
 
-  it("案 4：未帶憑證的 GET → 401 ＋ challenge（不是 405——405 不得排在認證之前）", async () => {
+  it("GET without credentials -> 401 + challenge (not 405: 405 must not be ordered before authentication)", async () => {
     const { app } = await buildTestApp();
     const res = await mcpRequest(app, "GET");
     expect(res.statusCode).toBe(401);
@@ -121,8 +109,8 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(challenge).toContain(`resource_metadata="${ISSUER}/.well-known/oauth-protected-resource/api/mcp"`);
   });
 
-  // #181 CH：challenge 一次給齊四個 scope（漏 notes:delete，守規矩的 client 就不會要刪除權）。
-  it("CH：未帶憑證的 POST initialize → 401，challenge 的 scope 是 read write move delete 四項", async () => {
+  // #181: the challenge lists all four scopes at once (without notes:delete, a compliant client would never ask for delete permission).
+  it("POST initialize without credentials -> 401, the challenge scopes are the four: read write move delete", async () => {
     const { app } = await buildTestApp();
     const res = await mcpPost(app, INITIALIZE);
     expect(res.statusCode).toBe(401);
@@ -130,7 +118,7 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(challenge).toContain(`scope="notes:read notes:write notes:move notes:delete"`);
   });
 
-  it("案 5：401／405／200／403 四種回應都帶 nosniff", async () => {
+  it("401 / 405 / 200 / 403 responses all carry nosniff", async () => {
     const { app, token } = await appWithToken();
     const unauthorized = await mcpRequest(app, "GET");
     const methodNotAllowed = await mcpRequest(app, "GET", { token });
@@ -154,16 +142,15 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     }
   });
 
-  it("案 6：Content-Type: text/plain → 本站標準形 415（全域守衛排在 SDK 之前）", async () => {
+  it("Content-Type: text/plain -> the site's standard 415 (the global guard is ordered before the SDK)", async () => {
     const { app, token } = await appWithToken();
-    // ⚠ 對 handler 實作零鑑別力：擋下它的是全域 `onRequest` 守衛的 415，排在我們的 handler
-    // 之前、也在 SDK 之前——就算實作還停在舊的 501 暫時形，這一案照樣會綠。
+    // No discrimination against the handler implementation: what blocks it is the global `onRequest` guard's 415, ordered before our handler and before the SDK; even if the implementation were still the old 501 stub this test would stay green.
     const res = await mcpPost(app, INITIALIZE, { token, contentType: "text/plain" });
     expect(res.statusCode).toBe(415);
     expect(res.json()).toEqual({ error: { code: "unsupported_media_type", message: expect.any(String) } });
   });
 
-  it("案 6b：Accept 少一個 media type → 406（⚠ SDK 特徵化測試，對我們的實作零鑑別力）", async () => {
+  it("Accept missing a media type -> 406 (SDK characterization test, no discrimination against our implementation)", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpPost(app, INITIALIZE, { token, accept: "application/json" });
     expect(res.statusCode).toBe(406);
@@ -172,83 +159,79 @@ describe("#108 /api/mcp 傳輸層形狀", () => {
     expect(body.error.message).toContain("Not Acceptable");
   });
 
-  // Origin 守衛——四發全部帶有效 token：守衛排在 `authenticateTokenOrSession` 之後，
-  // 不帶 token 一律先拿 401，會讓人誤以為守衛沒接上。
-  it("案 7a：Origin ＝ Host ＝ evil.example（都不是 PUBLIC_URL host）→ 403", async () => {
+  // Origin guard: all four calls carry a valid token, because the guard runs after `authenticateTokenOrSession`; without a token you would always get 401 first and wrongly conclude the guard isn't wired.
+  it("Origin = Host = evil.example (neither is the PUBLIC_URL host) -> 403", async () => {
     const { app, token } = await appWithToken();
-    // 殺「只比 Origin 對 request.host」的寫法——那種寫法在這一發會放行（兩者相等）。
+    // Kills implementations that only compare Origin against request.host: they would let this call through (the two are equal).
     const res = await mcpPost(app, INITIALIZE, { token, origin: "http://evil.example", host: "evil.example" });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: { code: "forbidden", message: "Origin check failed: the request's Origin and Host must both match this site's address (PUBLIC_URL)." } });
   });
 
-  it("案 7b：Origin ＝ PUBLIC_URL host、Host ＝ evil.example → 403", async () => {
+  it("Origin = PUBLIC_URL host, Host = evil.example -> 403", async () => {
     const { app, token } = await appWithToken();
-    // 殺「只比 Origin 對 PUBLIC_URL」的寫法。
+    // Kills implementations that only compare Origin against PUBLIC_URL.
     const res = await mcpPost(app, INITIALIZE, { token, origin: `http://${PUBLIC_HOST}`, host: "evil.example" });
     expect(res.statusCode).toBe(403);
   });
 
-  it("案 7c：Origin: null 與不可解析的 Origin → 403（不是 500）", async () => {
+  it("Origin: null and an unparseable Origin -> 403 (not 500)", async () => {
     const { app, token } = await appWithToken();
-    // 殺「new URL(origin) 沒包 try/catch」的寫法——那種寫法這兩發都是 500。
+    // Kills implementations where `new URL(origin)` isn't wrapped in try/catch: both calls would be 500.
     for (const origin of ["null", "%%%"]) {
       const res = await mcpPost(app, INITIALIZE, { token, origin, host: PUBLIC_HOST });
       expect(res.statusCode, origin).toBe(403);
     }
   });
 
-  it("案 7d：不帶 Origin、Host 任意 → 正常處理（刻意的放行面）", async () => {
+  it("no Origin, any Host -> handled normally (a deliberate allowance)", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpPost(app, INITIALIZE, { token, host: "whatever.example" });
     expect(res.statusCode).toBe(200);
   });
 
-  it("案 7a′：GET ＋ 壞 Origin ＋ 壞 Host → 403（不是 405——守衛掛在三條 route 上且排在 handler 之前）", async () => {
+  it("GET + bad Origin + bad Host -> 403 (not 405: the guard is attached to all three routes and runs before the handler)", async () => {
     const { app, token } = await appWithToken();
-    // 只把守衛掛在 POST 上的實作，會讓這一發變成 405 而不是 403。
+    // An implementation that only guards POST would make this 405 instead of 403.
     const res = await mcpRequest(app, "GET", { token, origin: "http://evil.example", host: "evil.example" });
     expect(res.statusCode).toBe(403);
   });
 
-  it("案 21c ＋ 30b：body 超過 262 144 bytes → 413 content_too_large，且一個 server 實例都沒建", async () => {
+  it("body over 262144 bytes -> 413 content_too_large and no server instance was created", async () => {
     let closes = 0;
     const { app, token } = await appWithToken({ mcpTestHooks: { afterClose: () => { closes += 1; } } });
     const huge = rpc("tools/list", { pad: "x".repeat(300_000) });
     const res = await mcpPost(app, huge, { token });
     expect(res.statusCode).toBe(413);
     expect(res.json()).toEqual({ error: { code: "content_too_large", message: expect.any(String) } });
-    // 拒絕零副作用的邊界形：handler 之前就被擋下來，所以 `afterClose` 一次都沒被呼叫。
+    // Boundary shape of a rejection with zero side effects: it is blocked before the handler, so `afterClose` is never called.
     expect(closes).toBe(0);
   });
 
-  it("P1：壞 JSON body → 本站標準形 400 bad_request（不是 JSON-RPC -32700）", async () => {
+  it("malformed JSON body -> the site's standard 400 bad_request (not JSON-RPC -32700)", async () => {
     const { app, token } = await appWithToken();
-    // 擋下它的是 Fastify 的 content-type parser，在我們的 handler 之前、也在 SDK 之前——
-    // 工具描述裡那一格寫的是 SDK 單飛時的行為。
-    // ⚠ 對 handler 實作零鑑別力：就算實作還停在舊的 501 暫時形，這一案照樣會綠；它釘住的是
-    // 這個實測事實與規格描述之間的落差，不是我們的實作。
+    // What blocks it is Fastify's content-type parser, before our handler and before the SDK; the JSON-RPC parse-error code (-32700) is unreachable here (see the header of `src/routes/mcp.ts`).
+    // No discrimination against the handler: even if the implementation were still the old 501 stub this test would stay green; it pins the observed behaviour (the site's 400 rather than -32700), not our implementation.
     const res = await mcpPost(app, undefined, { token, raw: "{not json" });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: { code: "bad_request", message: expect.any(String) } });
   });
 
-  it("P1(i)：不帶 Content-Type、不帶 body 的 POST → SDK 的 415 -32000（Fastify 直接進 handler）", async () => {
+  it("POST with no Content-Type and no body -> the SDK's 415 -32000 (Fastify goes straight into the handler)", async () => {
     const { app, token } = await appWithToken();
     const res = await mcpPost(app, undefined, { token, contentType: null });
     expect(res.statusCode).toBe(415);
     const body = res.json();
     expect(body.error.code).toBe(-32000);
-    // 這句字串來自 SDK，SDK 升版措辭變了這裡可能要跟著改；但跟 6b／P1／P1(ii) 不同，
-    // 這一案有鑑別力——它證明的是 SDK 真的接上了、`parsedBody` 有送進去。
+    // This string comes from the SDK; if an SDK upgrade rewords it this may need to follow. Unlike the other transport-parser tests in this file, this one does discriminate:
+    // it proves the SDK is really wired and `parsedBody` is passed in.
     expect(body.error.message).toContain("Unsupported Media Type");
   });
 
-  it("P1(ii)：帶 Content-Type: application/json 但空 body 的 POST → 本站標準形 400 bad_request", async () => {
+  it("POST with Content-Type: application/json but an empty body -> the site's standard 400 bad_request", async () => {
     const { app, token } = await appWithToken();
-    // ⚠ 對 handler 實作零鑑別力：擋下它的是 content-type parser 的 400，在我們的 handler
-    // 之前——就算實作還停在舊的 501 暫時形，這一案照樣會綠；它釘住的是實測事實
-    // 與工具描述的誤導，不是我們的實作。
+    // No discrimination against the handler: what blocks it is the content-type parser's 400, before our handler; even if the implementation were still the old 501 stub this test would stay green.
+    // It pins the observed behaviour (the site's 400), not our implementation.
     const res = await mcpPost(app, undefined, { token, raw: "" });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: { code: "bad_request", message: expect.any(String) } });

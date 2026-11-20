@@ -46,7 +46,7 @@ afterEach(async () => {
 describe("remainingLabel", () => {
   const at = (ms: number) => remainingLabel(iso(NOW + ms), NOW, t);
 
-  it("TD1 ceil、最小 1；null → null", () => {
+  it("ceil, minimum 1; null -> null", () => {
     expect(at(3.5 * DAY_MS)).toBe("4 days left");
     expect(at(DAY_MS)).toBe("1 day left");
     expect(at(DAY_MS + 1)).toBe("2 days left");
@@ -56,7 +56,7 @@ describe("remainingLabel", () => {
     expect(remainingLabel(null, NOW, t)).toBeNull();
   });
 
-  it("TD1 zh-TW", async () => {
+  it("zh-TW", async () => {
     await i18n.changeLanguage("zh-TW");
     expect(at(3.5 * DAY_MS)).toBe("剩 4 天");
   });
@@ -66,38 +66,38 @@ describe("trashDetailLine", () => {
   const line = (i: TrashItemDto, locale = "en") => trashDetailLine(i, { now: NOW, t, locale });
   const deletedDate = new Date(NOW - 2 * DAY_MS).toLocaleDateString("en");
 
-  it("TD2 個人：只有時間段；NULL 保留天數 → 刪除日期", () => {
+  it("personal: time span only; NULL retention days -> deletion date", () => {
     expect(line(item({ id: "p" }))).toBe("3 days left");
     expect(line(item({ id: "p", purgeAt: null }))).toBe(`Deleted ${deletedDate}`);
   });
 
-  it("TD2 群組：群組名 · 刪除者 · 剩餘", () => {
+  it("group: group name, deleter and remaining time joined by a middle dot", () => {
     expect(line(item({ id: "w", group: GROUP, deletedBy: AMY }))).toBe("R&D · Deleted by Amy · 3 days left");
   });
 
-  it("TD2 群組：刪除者帳號已刪", () => {
+  it("group: the deleter's account was deleted", () => {
     expect(line(item({ id: "w", group: GROUP, deletedBy: null }))).toBe("R&D · Deleted by a deleted account · 3 days left");
   });
 
-  it("TD2 群組＋NULL 保留天數：時間段只放日期", () => {
+  it("group + NULL retention days: the time span holds only the date", () => {
     expect(line(item({ id: "w", group: GROUP, deletedBy: AMY, purgeAt: null }))).toBe(`R&D · Deleted by Amy · ${deletedDate}`);
   });
 
-  it("TD2 zh-TW 群組", async () => {
+  it("zh-TW group", async () => {
     await i18n.changeLanguage("zh-TW");
     expect(line(item({ id: "w", group: GROUP, deletedBy: AMY }), "zh-TW")).toBe("R&D · Amy 刪除 · 剩 3 天");
   });
 });
 
-describe("trashDetailLine × 資料夾路徑", () => {
+describe("trashDetailLine x folder path", () => {
   const line = (i: TrashItemDto, locale = "en") => trashDetailLine(i, { now: NOW, t, locale });
   const RD = { id: "g2", name: "研發組" };
 
-  it("TD-F1 個人 [A, B]、剩 3 天 → A › B · 3 days left（無「我的筆記」前綴）", () => {
+  it("personal [A, B], 3 days left -> folder path then days left (no 'My notes' prefix)", () => {
     expect(line(item({ id: "p", folderPath: ["A", "B"] }))).toBe("A › B · 3 days left");
   });
 
-  it("TD-F2 群組 [團隊週報]：en 由既有鍵組；zh 研發組 › 團隊週報 · Amy 刪除 · 剩 3 天", async () => {
+  it("group with one folder: en is composed from existing keys; zh puts group name, folder path, deleter and remaining time on one line", async () => {
     const w = item({ id: "w", group: RD, deletedBy: AMY, folderPath: ["團隊週報"] });
     expect(line(w)).toBe("研發組 › 團隊週報 · Deleted by Amy · 3 days left");
     await i18n.changeLanguage("zh-TW");
@@ -105,23 +105,23 @@ describe("trashDetailLine × 資料夾路徑", () => {
   });
 });
 
-describe("trashLocationLine（第二行的 title：太長時 title 給完整路徑）", () => {
-  it("TP-F1 個人 [A, B] → A › B（無「我的筆記」前綴、不含時間段）", () => {
+describe("trashLocationLine (title of the second line: gives the full path when it is too long)", () => {
+  it("personal [A, B] -> path A to B (no 'My notes' prefix, no time span)", () => {
     expect(trashLocationLine(item({ id: "p", folderPath: ["A", "B"] }))).toBe("A › B");
   });
 
-  it("TP-F2 群組 [團隊週報] → 研發組 › 團隊週報", () => {
+  it("group with one folder -> group name then folder path", () => {
     expect(trashLocationLine(item({ id: "w", group: { id: "g2", name: "研發組" }, deletedBy: AMY, folderPath: ["團隊週報"] }))).toBe("研發組 › 團隊週報");
   });
 
-  it("TP-F3 個人根層 → 空字串；群組根層 → 群組名", () => {
+  it("personal root -> empty string; group root -> group name", () => {
     expect(trashLocationLine(item({ id: "r" }))).toBe("");
     expect(trashLocationLine(item({ id: "g", group: GROUP }))).toBe("R&D");
   });
 });
 
 describe("trashItemTitle", () => {
-  it("TD3 有 purgeAt：兩個時間；NULL：只有移入時間", () => {
+  it("with purgeAt: two times; NULL: only the moved-in time", () => {
     const i = item({ id: "a" });
     const deletedAt = new Date(i.deletedAt).toLocaleString("en", SHORT);
     const purgeAt = new Date(i.purgeAt!).toLocaleString("en", SHORT);
@@ -135,13 +135,13 @@ describe("trashItemTitle", () => {
   });
 });
 
-describe("日期 formatter 快取", () => {
+describe("date formatter cache", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  // 每案用別處沒用過的語系：快取是模組層的，用過的語系不會再建。
-  it("TD8 同語系每種格式只建一次 Intl.DateTimeFormat；剩餘天數有值時不格式化刪除日期；輸出同 toLocale*", () => {
+  // Each case uses a locale no other case used: the cache is module-level, so a locale already used is not built again.
+  it("per locale, each format builds Intl.DateTimeFormat once; the deletion date is not formatted when remaining days has a value; output equals toLocale*", () => {
     const ctor = vi.spyOn(Intl, "DateTimeFormat");
     const items = [item({ id: "a" }), item({ id: "b", deletedAt: iso(NOW - 5 * DAY_MS) }), item({ id: "c", group: GROUP })];
 
@@ -163,7 +163,7 @@ describe("日期 formatter 快取", () => {
 });
 
 describe("splitTrashSections", () => {
-  it("TD4 個人在前、各區保留輸入順序；不改輸入陣列", () => {
+  it("personal first, each section keeps input order; the input array is not modified", () => {
     const w1 = item({ id: "w1", group: GROUP });
     const p1 = item({ id: "p1" });
     const w2 = item({ id: "w2", group: GROUP });
@@ -178,11 +178,11 @@ describe("splitTrashSections", () => {
 });
 
 describe("selectedTrashIds", () => {
-  it("TD7 照清單順序（個人在前）、略過不在清單的鍵", () => {
+  it("follows list order (personal first), skips keys not in the list", () => {
     const w1 = item({ id: "w1", group: GROUP });
     const p1 = item({ id: "p1" });
     const p2 = item({ id: "p2" });
-    // 勾選順序 w1 → p2 → p1，外加一個清單上沒有的鍵（重抓後消失）。
+    // Checked in the order w1, p2, p1, plus a key that is not in the list (it disappeared after a refetch).
     const keys = new Set(["note:w1", "note:gone", "note:p2", "note:p1"]);
     expect(selectedTrashIds([w1, p1, p2], keys)).toEqual(["p1", "p2", "w1"]);
     expect(selectedTrashIds([w1, p1, p2], new Set(["note:gone"]))).toEqual([]);
@@ -192,7 +192,7 @@ describe("selectedTrashIds", () => {
 describe("canRestoreAfterTrash", () => {
   const groupNote = (permissions: NoteDto["permissions"]): Pick<NoteDto, "group" | "permissions"> => ({ group: GROUP, permissions });
 
-  it("TD5 個人恆可；群組要 edit 且 delete", () => {
+  it("personal is always allowed; a group needs edit and delete", () => {
     expect(canRestoreAfterTrash({ group: null, permissions: VIEWER_PERMS })).toBe(true);
     expect(canRestoreAfterTrash(groupNote(OWNER_PERMS))).toBe(true);
     expect(canRestoreAfterTrash(groupNote({ ...VIEWER_PERMS, delete: true }))).toBe(false);
@@ -201,13 +201,13 @@ describe("canRestoreAfterTrash", () => {
 });
 
 describe("trashResultMessage", () => {
-  it("TD6 en：skipped 為 0 不加後綴", () => {
+  it("en: no suffix when skipped is 0", () => {
     expect(trashResultMessage("restore", 2, 0, t)).toBe("Restored 2 notes");
     expect(trashResultMessage("restore", 1, 1, t)).toBe("Restored 1 note, 1 no longer in the trash");
     expect(trashResultMessage("purge", 3, 0, t)).toBe("Permanently deleted 3 notes");
   });
 
-  it("TD6 zh-TW", async () => {
+  it("zh-TW", async () => {
     await i18n.changeLanguage("zh-TW");
     expect(trashResultMessage("restore", 1, 2, t)).toBe("已還原 1 篇，2 篇已不在垃圾桶");
   });

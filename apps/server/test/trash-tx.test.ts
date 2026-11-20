@@ -1,7 +1,4 @@
-/**
- * #181：垃圾桶四支交易本體（`notes/tx/trash.ts`）。直接在 `db.transaction` 裡呼叫，不經路由；
- * 每句 UPDATE／DELETE 都有旁觀者列在場（同人另一篇、別人一篇、另一篇垃圾桶筆記）。
- */
+// Every UPDATE/DELETE statement runs with bystander rows present (same owner's other note, someone else's note, another trashed note).
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -17,7 +14,7 @@ import { freshDb } from "./helpers.js";
 import { noteState, seedNote, seedShare, seedUser, sharesOf, waitForBlockedOrSettled } from "./group-helpers.js";
 import { markTrashed, sixRoleScene, trashCols } from "./trash-helpers.js";
 
-/** drizzle logger 會記交易控制語句——數 SQL 前先濾掉。 */
+/** The drizzle logger also records transaction-control statements: filter them out before counting SQL. */
 const TXN_CONTROL = /^(begin|commit|rollback)\b/i;
 
 async function seedUploadRow(db: Db, noteId: string, uploaderId: string): Promise<string> {
@@ -29,21 +26,21 @@ const uploadIdsOf = async (db: Db, noteId: string) =>
 const exists = async (db: Db, noteId: string) => (await db.select({ id: notes.id }).from(notes).where(eq(notes.id, noteId))).length === 1;
 
 class Rollback extends Error {}
-/** 在交易裡跑 fn、拿回傳值，然後 rollback（同一個場景可以再跑別的參數）。 */
+/** Run fn in a transaction, take its return value, then roll back (the same scenario can be run again with other parameters). */
 async function rolledBack<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
   let out: T | undefined;
   await expect(db.transaction(async tx => { out = await fn(tx); throw new Rollback(); })).rejects.toBeInstanceOf(Rollback);
   return out as T;
 }
 
-/** 還原的輸入：不帶群組與空間（不取 groups KS 與結構鎖；資料夾功能加入後的完整鎖序見 `folders-trash.test.ts`）。 */
+/** Restore input: no group and no spaces (takes no groups KS and no structure locks; the full lock order with folders is in `folders-trash.test.ts`). */
 const restoreIn = (ids: readonly string[], by: string): TrashRestoreInput => ({ ids, by, groupIds: [], spaces: [], lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS });
 
-/** 兩個 uuid 由大到小（輸入順序刻意與 id 升冪相反）。 */
+/** Two uuids in descending order (the input order is deliberately opposite to ascending id). */
 const desc = (...ids: string[]) => [...ids].sort().reverse();
 
 describe("#181 trashNotesInTx", () => {
-  it("TX-T1 移入正路：deleted_at＝同交易的 now()、deleted_by＝操作者；updated_at、分享、公開欄位、上傳、note_states 都不動；旁觀者不動", async () => {
+  it("move happy path: deleted_at = the same transaction's now(), deleted_by = operator; updated_at, shares, public fields, uploads, note_states untouched; bystanders untouched", async () => {
     const { db, pool } = await freshDb();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const n = await seedNote(db, { ownerId: u.id }, { publicToken: "a".repeat(43), publicSlug: "alias-t1" });
@@ -71,7 +68,7 @@ describe("#181 trashNotesInTx", () => {
     expect(await trashCols(pool, others.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("TX-T2 權限：群組 admin／editDelete／deleteOnly 可移入，member／editOnly／readOnly forbidden，outsider notFound；個人筆記的分享 editor forbidden、outsider notFound", async () => {
+  it("permissions: group admin/editDelete/deleteOnly may move; member/editOnly/readOnly forbidden, outsider notFound; a personal note's shared editor forbidden, outsider notFound", async () => {
     const { db, pool } = await freshDb();
     const s = await sixRoleScene(db);
     const cases: Array<[string, string, "trashed" | "forbidden" | "notFound"]> = [
@@ -102,7 +99,7 @@ describe("#181 trashNotesInTx", () => {
     expect(await trashCols(pool, p.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("TX-T3 已在垃圾桶 → notFound，deleted_at／deleted_by 不被覆寫；隨機 uuid → notFound", async () => {
+  it("already in trash -> notFound, deleted_at/deleted_by not overwritten; random uuid -> notFound", async () => {
     const { db, pool } = await freshDb();
     const s = await sixRoleScene(db);
     const gn = await seedNote(db, { groupId: s.groupId });
@@ -117,7 +114,7 @@ describe("#181 trashNotesInTx", () => {
     expect(await db.transaction(tx => trashNotesInTx(tx, { ids: [missing], by: s.admin.id }))).toEqual({ trashed: [], notFound: [missing], forbidden: [] });
   });
 
-  it("TX-T4 多篇（輸入未排序）各自分類；ids 空 → 三個空陣列、不發任何 SQL", async () => {
+  it("several notes (unsorted input) are classified individually; empty ids -> three empty arrays, no SQL issued", async () => {
     const { db, pool } = await freshDb();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const ok1 = await seedNote(db, { ownerId: u.id });
@@ -140,7 +137,7 @@ describe("#181 trashNotesInTx", () => {
     expect(queries.filter(q => !TXN_CONTROL.test(q.trim()))).toEqual([]);
   });
 
-  it("TX-L1 鎖序：移入／還原／永久刪除的第一句 SQL 都是依 id 升冪的 FOR UPDATE（spaces 空）", async () => {
+  it("lock order: the first SQL of move / restore / permanent delete is a FOR UPDATE in ascending id (spaces empty)", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [a, b] = await Promise.all([seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id })]);
@@ -170,7 +167,7 @@ describe("#181 trashNotesInTx", () => {
 });
 
 describe("#181 restoreNotesInTx", () => {
-  it("TX-R1 還原正路：兩欄清成 NULL、分享與公開欄位原樣；旁觀的垃圾桶筆記仍在垃圾桶、活筆記不動", async () => {
+  it("restore happy path: both columns cleared to NULL, shares and public fields as they were; the bystander's trashed note stays in trash, live notes untouched", async () => {
     const { db, pool } = await freshDb();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const n = await seedNote(db, { ownerId: u.id }, { publicToken: "r".repeat(43), publicSlug: "alias-r1" });
@@ -194,7 +191,7 @@ describe("#181 restoreNotesInTx", () => {
     expect(await trashCols(pool, live.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("TX-R2 分類：活筆記 not_in_trash、不存在 not_found、deleteOnly／editOnly／分享 editor not_found、editDelete done；done 與 skipped 都照輸入順序", async () => {
+  it("classification: live note not_in_trash, missing not_found, deleteOnly/editOnly/shared editor not_found, editDelete done; done and skipped both keep input order", async () => {
     const { db, pool } = await freshDb();
     const s = await sixRoleScene(db);
     const [t1, t2, live] = [await seedNote(db, { groupId: s.groupId }), await seedNote(db, { groupId: s.groupId }), await seedNote(db, { groupId: s.groupId })];
@@ -227,7 +224,7 @@ describe("#181 restoreNotesInTx", () => {
 });
 
 describe("#181 purgeTrashedNotesInTx", () => {
-  it("TX-P1 永久刪除：垃圾桶那篇與其 uploads 列消失、回 uploadIds；活筆記 not_in_trash 且列與子表都在", async () => {
+  it("permanent delete: the trashed note and its uploads rows disappear, uploadIds returned; a live note is not_in_trash and its row and child tables stay", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const trashed = await seedNote(db, { ownerId: u.id });
@@ -246,7 +243,7 @@ describe("#181 purgeTrashedNotesInTx", () => {
     expect(await db.select({ id: noteStates.noteId }).from(noteStates).where(eq(noteStates.noteId, live.id))).toHaveLength(1);
   });
 
-  it("TX-P2 沒垃圾桶權（deleteOnly）→ not_found、列仍在", async () => {
+  it("no trash right (deleteOnly) -> not_found, row stays", async () => {
     const { db, pool } = await freshDb();
     const s = await sixRoleScene(db);
     const gn = await seedNote(db, { groupId: s.groupId });
@@ -258,7 +255,7 @@ describe("#181 purgeTrashedNotesInTx", () => {
 });
 
 describe("#181 purgeExpiredBatchInTx", () => {
-  it("TX-E1 清理一批：只取早於保留期的，依 deleted_at 升冪；limit 1 只回最舊那篇；回被刪的 uploadIds", async () => {
+  it("cleanup batch: takes only those older than the retention period, ordered by deleted_at ascending; limit 1 returns only the oldest; returns the deleted uploadIds", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [over, under, old, live] = [
@@ -278,7 +275,7 @@ describe("#181 purgeExpiredBatchInTx", () => {
       .toEqual([over.id, under.id, live.id].sort());
   });
 
-  it("TX-E3 邊界嚴格小於：恰好 7 天不刪、7 天又 1 秒刪（同交易內 now() 固定）", async () => {
+  it("strictly-less boundary: exactly 7 days is kept, 7 days + 1 second is deleted (now() is fixed within one transaction)", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const [x, y] = [await seedNote(db, { ownerId: u.id }), await seedNote(db, { ownerId: u.id })];
@@ -291,7 +288,7 @@ describe("#181 purgeExpiredBatchInTx", () => {
     expect(await exists(db, x.id)).toBe(true);
   });
 
-  it("TX-E2 SKIP LOCKED：到期列被別的交易鎖住時不等、回空；放鎖後下一輪刪掉", async () => {
+  it("SKIP LOCKED: due rows locked by another transaction are not waited for and an empty result returns; after the lock is released the next round deletes them", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });
@@ -312,8 +309,8 @@ describe("#181 purgeExpiredBatchInTx", () => {
   });
 });
 
-describe("#181 垃圾桶交易的測試縫", () => {
-  it("TX-H1 四支各在鎖後呼叫自己的點，ctx.noteId＝第一篇（spaces 空）", async () => {
+describe("test hooks of the trash transactions", () => {
+  it("each of the four calls its own point after the lock, ctx.noteId = the first note (spaces empty)", async () => {
     const { db, pool } = await freshDb();
     const u = await seedUser(db);
     const [a, b, c] = [await seedNote(db, { ownerId: u.id }), await seedNote(db, { ownerId: u.id }), await seedNote(db, { ownerId: u.id })];

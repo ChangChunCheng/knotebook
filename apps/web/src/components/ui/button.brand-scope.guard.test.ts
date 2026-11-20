@@ -4,31 +4,27 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "./strip-comments.test-helper";
 
 /**
- * 來源層守衛：`brandSolid`／`brandDeep` 是主色實心鈕的
- * 兩階，見 `ui/button.tsx` 規範——**依所在表面二選一、不得混用**：`brandSolid`
- * 給頁面層級的唯一主動作（登入、授權同意、全頁錯誤的主要出路），`brandDeep` 給
- * modal／panel 內部的唯一主動作。兩階刻意設計成「不會同時出現在同一個畫面」，
- * 但這個不變量目前只靠 code review 撐著——沒有東西擋住有人在第五個檔案裡也用
- * `brandSolid`，讓某個畫面同時看到兩種主色實心塊。
+ * Source-level guard: `brandSolid` / `brandDeep` are the two tiers of the filled brand-color button (see the `ui/button.tsx` convention):
+ * choose by surface, never mix. `brandSolid` is for the single primary action at page level (sign-in, authorization consent, the main way out of a
+ * full-page error); `brandDeep` is for the single primary action inside a modal/panel. The two tiers are designed never to appear on one screen,
+ * but that invariant otherwise rests on code review alone: nothing stops someone from using `brandSolid` in yet another file and
+ * putting two kinds of filled brand block on one screen.
  *
- * 這裡機械釘住目前唯一合法的七個呼叫端；出現第八個就會在這裡先紅，逼著寫的人
- * 回頭想一次「這個畫面到底是頁面層級還是 modal/panel 內部」，而不是靜默疊加。
- * （#187 加入 `pages/LinkAccountPage.tsx`：與登入頁同層的整頁，「以密碼確認並連結」是
- * 該頁唯一的主動作；SSO 證明與取消為 outline——`LinkAccountPage.test.tsx` 斷言該頁恰一顆實心鈕。
- * #187 加入 `pages/RegisterPage.tsx`：與登入頁同層的整頁，「建立帳號」是唯一主動作。
- * #286 加入 `pages/ResetPasswordPage.tsx`：與登入頁同層的未登入整頁，「Set password」是表單畫面唯一的主動作
- * （`ResetPasswordPage.test.tsx` P12 斷言恰一顆實心鈕）。）
+ * This pins the seven currently legitimate call sites mechanically; an eighth fails here first, so the author must reconsider whether the screen is
+ * page-level or modal/panel-internal instead of silently stacking on.
+ * (#187 added `pages/LinkAccountPage.tsx`: a full page at the same level as sign-in, where "confirm with password and link" is the page's primary action;
+ * the SSO proof and cancel are outline, see `LinkAccountPage.test.tsx`.
+ * #187 added `pages/RegisterPage.tsx`: a full page at the sign-in level whose primary action is "create account".
+ * #286 added `pages/ResetPasswordPage.tsx`: a signed-out full page at the sign-in level whose form's primary action is "Set password"
+ * (see `ResetPasswordPage.test.tsx`).)
  *
- * 掃描語意刻意剝註解（跟 `theme.*` 系列同慣例，跟 `card.guard.test.ts` 的「含
- * 註解」相反）：`brandSolid` 這個名字本身常被拿來在別處的註解裡**解釋**兩階的
- * 差異（例如 `SettingsAccountSection.tsx` 說明 `ChangePasswordForm` 在
- * `/change-password` 整頁用 `brandSolid`）——那是文件、不是第二個呼叫端，剝掉
- * 註解才不會把說明性文字誤判成違規。真正要抓的是 `variant="brandSolid"`／
- * `variant={... "brandSolid" ...}` 這類會實際渲染出主色實心鈕的程式碼。
+ * Scanning strips comments on purpose (same convention as the `theme.*` series, the opposite of `card.guard.test.ts` which includes comments):
+ * the name `brandSolid` is often used in comments elsewhere to explain the difference between the tiers (e.g. `SettingsAccountSection.tsx` explains that
+ * `ChangePasswordForm` uses `brandSolid` on the full `/change-password` page); that is documentation, not a second call site, so stripping comments
+ * avoids flagging it. What matters is code like `variant="brandSolid"` / `variant={... "brandSolid" ...}` that actually renders a filled brand button.
  *
- * `ui/button.tsx` 本身（定義 `brandSolid` 這個 variant 的地方）與 `.test.` 檔
- * 排除在掃描集之外——它們是定義與測試，不是「這個畫面渲染出一顆 brandSolid 鈕」
- * 的呼叫端。
+ * `ui/button.tsx` itself (where the variant is defined) and `.test.` files are excluded from the scan: they are the definition and tests,
+ * not call sites that render a brandSolid button.
  */
 
 const ALLOWED_FILES = [
@@ -49,17 +45,17 @@ function listTsxFiles(dir: string): string[] {
     if (!entry.name.endsWith(".tsx")) continue;
     if (entry.name.includes(".test.")) continue;
     const full = `${entry.parentPath}/${entry.name}`.replace(/\\/g, "/");
-    if (full.endsWith("/components/ui/button.tsx")) continue; // 定義site，不是呼叫端
+    if (full.endsWith("/components/ui/button.tsx")) continue; // the definition, not a call site
     files.push(full);
   }
   return files;
 }
 
-describe("brandSolid 呼叫端範圍守衛", () => {
-  it("brandSolid（剝註解後）只出現在七個既知的頁面層級呼叫端", () => {
+describe("brandSolid call-site scope guard", () => {
+  it("brandSolid (comments stripped) appears only in the seven known page-level call sites", () => {
     const root = `${process.cwd()}/src`;
     const tsxFiles = listTsxFiles(root);
-    // 釘遞迴確實走到深層子目錄（比照 card.guard.test.ts 的同款釘法）。
+    // Pin that the recursion really reached deep subdirectories (same approach as card.guard.test.ts).
     expect(tsxFiles.some((p) => p.endsWith("/auth/guards.tsx"))).toBe(true);
 
     const offenders = tsxFiles

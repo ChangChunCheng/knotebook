@@ -3,17 +3,17 @@ import { ApiFail } from "@/api/client";
 import { classifyAddError, isRateLimited, parseEmailList, runBulkAdd } from "./bulk-add";
 
 describe("parseEmailList", () => {
-  it("逗號、分號、空白、換行都能分隔；空段略過", () => {
+  it("commas, semicolons, spaces and line breaks all separate; empty segments are skipped", () => {
     expect(parseEmailList(" a@x.com,b@x.com;c@x.com d@x.com\ne@x.com\r\n\tf@x.com ,, ;").emails).toEqual([
       "a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com",
     ]);
   });
 
-  it("大小寫不分去重，保留第一次出現的寫法", () => {
+  it("case-insensitive dedup, keeping the first spelling", () => {
     expect(parseEmailList("Ann@X.com, ann@x.com\nANN@x.COM, bob@x.com").emails).toEqual(["Ann@X.com", "bob@x.com"]);
   });
 
-  it("剝掉信件收件人欄的 <…> 與引號（名字不算）；不像 email 的片段進 invalid（也去重）；all 依輸入順序", () => {
+  it("strips the <...> and quotes of a mail recipient field (the name does not count); fragments that do not look like an email go to invalid (also deduplicated); all follows input order", () => {
     expect(parseEmailList('"Ann" <ann@x.com>; nope, nope, <bob@x.com>, @x.com')).toEqual({
       emails: ["ann@x.com", "bob@x.com"],
       invalid: ["nope", "@x.com"],
@@ -21,7 +21,7 @@ describe("parseEmailList", () => {
     });
   });
 
-  it("從信件收件人欄貼上 `名字 <地址>`：名字（含空白、含逗號的引號名）不列成 invalid", () => {
+  it("pasting `name <address>` from a mail recipient field: the name (including spaces, and quoted names containing commas) is not listed as invalid", () => {
     expect(parseEmailList("Ann Lee <ann@x.com>; Bob Chen <bob@x.com>")).toEqual({
       emails: ["ann@x.com", "bob@x.com"],
       invalid: [],
@@ -34,7 +34,7 @@ describe("parseEmailList", () => {
     });
   });
 
-  it("同一段混用空白分隔的地址與 `名字 <地址>`：括號外像 email 的照收（依原順序），名字略過；空的 <> 不吃掉旁邊的地址", () => {
+  it("mixing space-separated addresses and `name <address>` in one segment: email-looking text outside the brackets is accepted (in original order), the name is skipped; an empty <> does not swallow the neighbouring address", () => {
     expect(parseEmailList("a@x.com b@x.com Carol <c@x.com>")).toEqual({
       emails: ["a@x.com", "b@x.com", "c@x.com"],
       invalid: [],
@@ -43,7 +43,7 @@ describe("parseEmailList", () => {
     expect(parseEmailList("ann@x.com <>")).toEqual({ emails: ["ann@x.com"], invalid: [], all: ["ann@x.com"] });
   });
 
-  it("有 <…> 的段裡，括號外含 `@` 但不像 email 的（打錯的地址）進 invalid，不當名字吞掉", () => {
+  it("in a segment with <...>, text outside the brackets that contains `@` but does not look like an email (a mistyped address) goes to invalid and is not swallowed as a name", () => {
     expect(parseEmailList("bob@@x.com Carol <c@x.com>")).toEqual({
       emails: ["c@x.com"],
       invalid: ["bob@@x.com"],
@@ -52,7 +52,7 @@ describe("parseEmailList", () => {
     expect(parseEmailList("bob@ Carol <c@x.com>")).toEqual({ emails: ["c@x.com"], invalid: ["bob@"], all: ["bob@", "c@x.com"] });
   });
 
-  it("全形逗號、分號、頓號與全形空白也能分隔（與半形同義）", () => {
+  it("full-width comma, semicolon, enumeration comma and full-width space also separate (same as the half-width ones)", () => {
     expect(parseEmailList("a@x.com，b@x.com；c@x.com、d@x.com　e@x.com")).toEqual({
       emails: ["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"],
       invalid: [],
@@ -60,7 +60,7 @@ describe("parseEmailList", () => {
     });
   });
 
-  it("沒有 <…> 的段仍依空白切；單獨加引號的地址照收", () => {
+  it("a segment without <...> still splits on whitespace; a lone quoted address is accepted", () => {
     expect(parseEmailList('a@x.com b@x.com, "c@x.com"')).toEqual({
       emails: ["a@x.com", "b@x.com", "c@x.com"],
       invalid: [],
@@ -68,25 +68,25 @@ describe("parseEmailList", () => {
     });
   });
 
-  it("空字串 → 什麼都沒有", () => {
+  it("an empty string gives nothing", () => {
     expect(parseEmailList("  \n ")).toEqual({ emails: [], invalid: [], all: [] });
   });
 });
 
 describe("classifyAddError", () => {
-  it("逐項結果略過；其餘停下", () => {
+  it("per-item results are skipped; everything else stops", () => {
     expect(classifyAddError(new ApiFail(404, "user_not_found", "x"))).toBe("notFound");
     expect(classifyAddError(new ApiFail(409, "already_member", "x"))).toBe("alreadyMember");
     expect(classifyAddError(new ApiFail(400, "invalid_body", "x"))).toBe("invalid");
-    expect(classifyAddError(new ApiFail(404, "not_found", "x"))).toBe("stop"); // 群組不見了／我已不是成員
-    expect(classifyAddError(new ApiFail(404, "role_not_found", "x"))).toBe("stop"); // 角色被刪
-    expect(classifyAddError(new ApiFail(403, "forbidden", "x"))).toBe("stop"); // 管理權被收回
+    expect(classifyAddError(new ApiFail(404, "not_found", "x"))).toBe("stop"); // the group is gone / I am no longer a member
+    expect(classifyAddError(new ApiFail(404, "role_not_found", "x"))).toBe("stop"); // role deleted
+    expect(classifyAddError(new ApiFail(403, "forbidden", "x"))).toBe("stop"); // management rights revoked
     expect(classifyAddError(new ApiFail(429, "too_many_requests", "x"))).toBe("stop");
     expect(classifyAddError(new ApiFail(500, "internal", "x"))).toBe("stop");
     expect(classifyAddError(new TypeError("Failed to fetch"))).toBe("stop");
   });
 
-  it("isRateLimited 只認 429", () => {
+  it("isRateLimited recognizes only 429", () => {
     expect(isRateLimited(new ApiFail(429, "too_many_requests", "x"))).toBe(true);
     expect(isRateLimited(new ApiFail(500, "internal", "x"))).toBe(false);
     expect(isRateLimited(new Error("x"))).toBe(false);
@@ -94,7 +94,7 @@ describe("classifyAddError", () => {
 });
 
 describe("runBulkAdd", () => {
-  it("依序送出；added／notFound／alreadyMember／invalid 逐項記錄、繼續；onProgress 每項一次", async () => {
+  it("sends in order; added/notFound/alreadyMember/invalid are recorded per item and it continues; onProgress is called once per item", async () => {
     const order: string[] = [];
     const add = vi.fn(async (email: string) => {
       order.push(email);
@@ -120,7 +120,7 @@ describe("runBulkAdd", () => {
     expect(onProgress.mock.calls).toEqual([[1, 5], [2, 5], [3, 5], [4, 5], [5, 5]]);
   });
 
-  it("非預期錯誤 → 停下：那一項 failed、其後 notProcessed、不再送出", async () => {
+  it("unexpected error stops: that item is failed, the following are notProcessed and nothing more is sent", async () => {
     const boom = new ApiFail(500, "internal", "x");
     const add = vi.fn(async (email: string) => {
       if (email === "b@x.com") throw boom;
@@ -137,7 +137,7 @@ describe("runBulkAdd", () => {
     ]);
   });
 
-  it("429 → 停下（不硬跑剩下的），cause 是 429", async () => {
+  it("429 stops (does not push through the rest), the cause is 429", async () => {
     const limited = new ApiFail(429, "too_many_requests", "x");
     const add = vi.fn(async (email: string) => {
       if (email !== "a@x.com") throw limited;
@@ -149,18 +149,18 @@ describe("runBulkAdd", () => {
     expect(report.results.map((r) => r.outcome)).toEqual(["added", "failed", "notProcessed"]);
   });
 
-  it("網路錯誤（非 ApiFail）也停下", async () => {
+  it("a network error (not ApiFail) also stops", async () => {
     const report = await runBulkAdd(["a@x.com"], () => Promise.reject(new TypeError("Failed to fetch")));
     expect(report.results).toEqual([{ email: "a@x.com", outcome: "failed" }]);
     expect(report.stopped?.cause).toBeInstanceOf(TypeError);
   });
 
-  it("signal abort（停止鈕／關對話框／卸載）→ 正在送的那一筆跑完並記結果，其後不送、記 notProcessed、cancelled", async () => {
+  it("signal abort (stop button / dialog close / unmount): the one being sent finishes and its result is recorded, nothing is sent after, the rest are recorded as notProcessed, cancelled", async () => {
     const controller = new AbortController();
     const add = vi.fn(async (email: string) => {
       if (email === "b@x.com") {
-        controller.abort(); // 送 b 的期間按了停止
-        throw new ApiFail(404, "user_not_found", "x"); // 那一筆照常記結果
+        controller.abort(); // stop pressed while b is being sent
+        throw new ApiFail(404, "user_not_found", "x"); // that item's result is still recorded
       }
       return {};
     });
@@ -180,7 +180,7 @@ describe("runBulkAdd", () => {
     expect(onProgress.mock.calls).toEqual([[1, 4], [2, 4]]);
   });
 
-  it("一開始就 abort → 一筆都不送；最後一筆送完才 abort → 不算 cancelled", async () => {
+  it("aborting at the very start sends nothing; aborting after the last item has been sent does not count as cancelled", async () => {
     const aborted = new AbortController();
     aborted.abort();
     const add = vi.fn(async () => ({}));

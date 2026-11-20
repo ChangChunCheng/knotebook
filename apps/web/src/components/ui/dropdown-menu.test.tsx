@@ -32,12 +32,12 @@ function renderOpenMenu() {
   );
 }
 
-describe("選單項在粗指標下撐到 40px 以上", () => {
+describe("menu items grow to at least 40px on coarse pointers", () => {
   it.each([
     ["menuitem", "plain item"],
     ["menuitemcheckbox", "checkbox item"],
     ["menuitem", "sub trigger"],
-  ] as const)("%s「%s」：py-1.5 之外多一個 pointer-coarse:py-2.5", (role, name) => {
+  ] as const)("%s '%s': pointer-coarse:py-2.5 on top of py-1.5", (role, name) => {
     renderOpenMenu();
     const item = screen.getByRole(role, { name });
     expect(item).toHaveClass("py-1.5");
@@ -45,7 +45,7 @@ describe("選單項在粗指標下撐到 40px 以上", () => {
   });
 });
 
-describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊", () => {
+describe("phoneSheet: on phones (< 640) it is a bottom sheet and other widths are unchanged", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -70,7 +70,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     );
   }
 
-  /** 瀏覽器的一下：pointerdown 再 click（Radix 原本在 pointerdown 開；sheet 形改在 click 開）。 */
+  /** One browser click: pointerdown then click (Radix originally opens on pointerdown; the sheet form opens on click). */
   function open(): HTMLElement {
     const trigger = screen.getByRole("button", { name: "open" });
     fireEvent.pointerDown(trigger, { button: 0 });
@@ -92,7 +92,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     "overflow-y-auto",
   ];
 
-  it("手機：內容是 sheet（滿寬、上圓角、底部 safe area、跟著鍵盤、kb-sheet 進出場），呼叫端的寬度限制被蓋掉；小標題在最上面、接一條分隔線", () => {
+  it("phone: the content is a sheet (full width, rounded top, bottom safe area, follows the keyboard, kb-sheet enter/exit) and the caller's width limit is overridden; the small heading is at the top followed by a separator", () => {
     stubLayoutTier("phone");
     render(<Harness />);
     const menu = open();
@@ -106,7 +106,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     expect(title.nextElementSibling).toHaveAttribute("role", "separator");
   });
 
-  it("手機：列至少 48px 高、16px 字（粗指標的 py-2.5 換掉）；分隔線伸到兩側（-mx-2）；sheetRow 的 RadioItem 同樣是列，色點那種不是", () => {
+  it("phone: rows are at least 48px tall with 16px text (replacing the coarse-pointer py-2.5); the separator extends to both sides (-mx-2); a sheetRow RadioItem is a row too, a color-dot one is not", () => {
     stubLayoutTier("phone");
     render(<Harness />);
     const menu = open();
@@ -121,7 +121,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     expect(within(menu).getByRole("menuitemradio", { name: "dot radio" })).not.toHaveClass("min-h-12");
   });
 
-  it.each([["浮動（640-1279）", "overlay"], ["固定（>= 1280）", "docked"]] as const)("%s：與沒帶 phoneSheet 一樣（沒有 sheet class、沒有小標題，列與分隔線照舊）", (_label, tier) => {
+  it.each([["floating (640-1279)", "overlay"], ["docked (>= 1280)", "docked"]] as const)("%s: same as without phoneSheet (no sheet classes, no small heading, rows and separator unchanged)", (_label, tier) => {
     stubLayoutTier(tier);
     render(<Harness />);
     const menu = open();
@@ -136,7 +136,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     expect(screen.getByTestId("sep")).not.toHaveClass("-mx-2");
   });
 
-  it("手機但沒帶 phoneSheet：照舊是小選單", () => {
+  it("phone without phoneSheet: still a small menu", () => {
     stubLayoutTier("phone");
     render(<Harness phoneSheet={false} />);
     const menu = open();
@@ -145,7 +145,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     expect(within(menu).queryByText("Row title")).toBeNull();
   });
 
-  it("手機：仍是 Radix 選單——role menu／menuitem、方向鍵移動焦點、選項目關閉、Esc 關閉且焦點回觸發鈕", async () => {
+  it("phone: still a Radix menu - role menu/menuitem, arrow keys move focus, choosing an item closes it, Esc closes it and focus returns to the trigger button", async () => {
     stubLayoutTier("phone");
     const onSelect = vi.fn();
     render(<Harness onSelect={onSelect} />);
@@ -164,7 +164,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("手機：點 sheet 外（背板）關閉", async () => {
+  it("phone: clicking outside the sheet (the backdrop) closes it", async () => {
     stubLayoutTier("phone");
     render(<Harness />);
     open();
@@ -172,7 +172,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("手機判斷只在選單開著時訂閱（側欄每列的 ⋮ 平常不各掛一份）", async () => {
+  it("the phone check subscribes only while the menu is open (each sidebar row's kebab menu does not hold its own subscription normally)", async () => {
     const handle = stubLayoutTier("phone");
     render(<Harness />);
     expect(handle.listenerCount(PHONE_QUERY)).toBe(0);
@@ -183,7 +183,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
     expect(handle.listenerCount(PHONE_QUERY)).toBe(0);
   });
 
-  it("手機：開著時把鍵盤高度（--kb-inset）與看得見的高度（--kb-visible-h）寫到內容上；其他寬度不寫", () => {
+  it("phone: while open, writes the keyboard height (--kb-inset) and the visible height (--kb-visible-h) onto the content; other widths do not", () => {
     const original = Object.getOwnPropertyDescriptor(window, "visualViewport");
     const viewport = Object.assign(new EventTarget(), { height: 500, offsetTop: 0, scale: 1 });
     Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true, writable: true });
@@ -205,7 +205,7 @@ describe("phoneSheet：手機（< 640）是貼底的 sheet，其他寬度照舊"
   });
 });
 
-describe("DropdownMenuMainLevel：手機 sheet 裡子選單展開時主層不渲染", () => {
+describe("DropdownMenuMainLevel: in a phone sheet the main level is not rendered while a submenu is expanded", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -225,7 +225,7 @@ describe("DropdownMenuMainLevel：手機 sheet 裡子選單展開時主層不渲
     );
   }
 
-  it("手機 sheet：drilled → 主層項目不在；沒 drilled → 在", () => {
+  it("phone sheet: drilled -> main-level items are absent; not drilled -> present", () => {
     stubLayoutTier("phone");
     renderLevel(true);
     expect(screen.queryByRole("menuitem", { name: "main item" })).toBeNull();
@@ -235,14 +235,14 @@ describe("DropdownMenuMainLevel：手機 sheet 裡子選單展開時主層不渲
     expect(screen.getByRole("menuitem", { name: "main item" })).toBeInTheDocument();
   });
 
-  it("不是 sheet（640 以上）：drilled 也照常渲染（就地展開形不換掉內容）", () => {
+  it("not a sheet (640 and up): drilled still renders normally (the in-place expansion does not replace the content)", () => {
     stubLayoutTier("overlay");
     renderLevel(true);
     expect(screen.getByRole("menuitem", { name: "main item" })).toBeInTheDocument();
   });
 });
 
-describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一下的 click 不會落到剛升起的選單項上）", () => {
+describe("when phoneSheet opens: the sheet form does not open on pointerdown (so the same tap's click does not land on the just-raised menu item)", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -258,10 +258,10 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
       </DropdownMenu>
     );
   }
-  // 選單開著時 Radix 把選單外標成 aria-hidden：要在開之前拿觸發鈕。
+  // While a menu is open Radix marks everything outside it as aria-hidden: grab the trigger before opening.
   const trigger = () => screen.getByRole("button", { name: "open", hidden: true });
 
-  it("手機：pointerdown 被擋下、不開；同一下的 click 才開，而且不選任何項目", () => {
+  it("phone: pointerdown is blocked and does not open; the click of the same tap opens it and selects no item", () => {
     stubLayoutTier("phone");
     const onSelect = vi.fn();
     render(<Harness onSelect={onSelect} />);
@@ -272,7 +272,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("手機：pointerdown 不是在這顆鈕上按下的 click（例如在背板按下關掉選單、放開時落在鈕上）不會打開；輔助技術的 click（detail 0）照樣開", () => {
+  it("phone: a click whose pointerdown did not occur on this button (e.g. pressing on the backdrop to close the menu and releasing on the button) does not open it; an assistive-technology click (detail 0) still opens it", () => {
     stubLayoutTier("phone");
     render(<Harness />);
     fireEvent.click(trigger(), { detail: 1 });
@@ -281,7 +281,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  it("手機：按下後被捲動接手（pointercancel）、或沒放開就失去捕捉（拖走）：之後的 click 不會打開；觸控正常放開（pointerup 後才 lostpointercapture）照樣開", () => {
+  it("phone: when scrolling takes over after pressing (pointercancel) or capture is lost before release (dragged away), the later click does not open it; a normal touch release (lostpointercapture after pointerup) still opens it", () => {
     stubLayoutTier("phone");
     render(<Harness />);
     fireEvent.pointerDown(trigger(), { button: 0 });
@@ -299,7 +299,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  it("手機：鍵盤 Enter／ArrowDown 照常打開（keydown），之後的 click 不會把它關掉", () => {
+  it("phone: keyboard Enter / ArrowDown still opens it (keydown) and the later click does not close it", () => {
     stubLayoutTier("phone");
     render(<Harness />);
     fireEvent.keyDown(trigger(), { key: "Enter" });
@@ -312,7 +312,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  it("受控：click 開啟經過 onOpenChange(true)", () => {
+  it("controlled: opening by click goes through onOpenChange(true)", () => {
     stubLayoutTier("phone");
     const onOpenChange = vi.fn();
     render(<Harness open={false} onOpenChange={onOpenChange} />);
@@ -322,7 +322,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(onOpenChange).toHaveBeenCalledWith(true);
   });
 
-  it.each([["640 以上帶 phoneSheet", "overlay", true], ["手機但沒帶 phoneSheet", "phone", false]] as const)("%s：照 Radix 原本在 pointerdown 開", (_label, tier, phoneSheet) => {
+  it.each([["640 and up with phoneSheet", "overlay", true], ["phone without phoneSheet", "phone", false]] as const)("%s: opens on pointerdown as Radix does by default", (_label, tier, phoneSheet) => {
     stubLayoutTier(tier);
     render(<Harness phoneSheet={phoneSheet} />);
     fireEvent.pointerDown(trigger(), { button: 0 });
@@ -331,7 +331,7 @@ describe("phoneSheet 的開啟時機：sheet 形不在 pointerdown 開（同一�
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  it("sheet 開著時跨過 640 → 整個選單關掉（受控的收到 onOpenChange(false)）；沒帶 phoneSheet 的照舊開著", () => {
+  it("crossing 640 while the sheet is open -> the whole menu closes (a controlled one receives onOpenChange(false)); one without phoneSheet stays open as before", () => {
     const handle = stubLayoutTier("phone");
     const onOpenChange = vi.fn();
     render(<Harness open onOpenChange={onOpenChange} />);

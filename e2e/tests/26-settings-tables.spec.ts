@@ -4,20 +4,21 @@ import { IDP_CONTROL_ORIGIN } from "../ports.js";
 import { ADMIN, createUserViaInvite, loginAs, randomEmail } from "./helpers.js";
 
 /**
- * 設定表格幾何守衛。
- *
- * 一支測試、五段：自建資料 → 1280×800 對齊 → 1024×768 框內捲動、sticky、遮擋、Tab → 390×844 卡片（不橫捲、操作鈕在視窗內、Tab 走完）→ 清理。
- * 量測都在頁內一次 evaluate 完成（getBoundingClientRect；表頭文字範圍用 Range）。cell 的「內容左緣」＝cell 最後一個子元素的左緣
- * （cell 內容一律包成單一個 flex-1 min-w-0 子元素；手機用的欄名排在它前面、sm 起不顯示）。欄種由欄序推：有啟用欄時它是最後一欄、操作欄在它左邊；
- * 沒有啟用欄時操作欄是最後一欄。
- * 個人設定的三張表以一個 SSO 首登建立的新使用者量：e2e 疊只有一個讓新帳號首登的 OIDC 服務（「SSO」），所以「登入方式」只有 1 列；PAT 建立額度是每人計，新使用者不吃 admin 的額度。
- * 清理：結尾以 API 刪掉自建的 token、群組、方案、登入服務、AI 動作與供應商、撤銷自建的邀請；使用者沒有刪除 API，留著（名稱帶隨機碼）。
+ * All measuring happens in one in-page evaluate (getBoundingClientRect; header text extents via Range). A cell's "content left
+ * edge" = the left edge of its last child element (cell content is always wrapped in a single flex-1 min-w-0 child; the column
+ * name used on phones comes before it and is hidden from sm up). Column kinds are inferred from the column index: with an
+ * enabled column it is the last column and the actions column is left of it; without an enabled column the actions column is
+ * last.
+ * The three personal-settings tables are measured with a new user created by an SSO first login: the e2e stack has one OIDC
+ * provider that lets new accounts in on first login ("SSO"), so "Sign-in methods" has only 1 row; the PAT creation quota is
+ * per user, so a new user does not draw on the admin's quota.
+ * Cleanup: at the end the API deletes the tokens, groups, plans, sign-in providers, AI actions and providers it created and
+ * revokes the invitations it created; users have no delete API and stay (names carry a random code).
  */
 
 const RUN = randomUUID().slice(0, 8);
 const ROOT_CONTROL_URL = `${IDP_CONTROL_ORIGIN}/control/next-login`;
-/** #267 的「最後活動」欄英文欄名（以 #267 實際合入的 i18n 為準）。 */
-const LAST_ACTIVE_HEADER = "Last active";
+const LAST_ACTIVE_HEADER = "Last active"; // must match the English string merged in #267's i18n
 const CUSTOM_LABEL = "t26-custom";
 
 const N = {
@@ -45,11 +46,11 @@ const SSO_EMAIL = randomEmail();
 const USER_PASSWORD = "e2e-t26-user-password";
 
 interface TableSpec {
-  /** 表格（與頂層表的捲動框）的可及名稱 */
+  /** Accessible name of the table (and of the top-level table's scroll box) */
   label: string;
-  /** 欄名（強制順序；操作欄是 sr-only 文字，textContent 一樣讀得到） */
+  /** Column names (forced order; the actions column is sr-only text, which textContent still reads) */
   headers: string[];
-  /** 操作欄的鈕數（0＝沒有操作欄） */
+  /** Number of buttons in the actions column (0 = no actions column). */
   buttons: number;
   enabled: boolean;
   minRows: number;
@@ -120,7 +121,6 @@ async function call<R>(page: Page, method: "post" | "patch" | "put", url: string
   return (text === "" ? undefined : JSON.parse(text)) as R;
 }
 
-/** SSO 首登（同 05-oidc 情境一）：設定 fake-idp 下一次登入的 claims → 登入頁按「Sign in with SSO」→ 自動建帳進站（e2e 疊的 SSO 由 global-setup 建、已開自動建帳）。 */
 async function signInSsoUser(page: Page): Promise<void> {
   const control = await page.request.put(ROOT_CONTROL_URL, {
     data: { sub: `e2e-t26-${randomUUID()}`, email: SSO_EMAIL, email_verified: true, name: N.ssoUser },
@@ -131,9 +131,9 @@ async function signInSsoUser(page: Page): Promise<void> {
   await expect(page, "SSO 首登要自動建帳並進站（SSO 服務要開自動建帳）").toHaveURL(/\/$/, { timeout: 20_000 });
 }
 
-/** 自建所有表的資料；回傳群組 A 的 id（成員表的頁面）。 */
+/** Seeds data for all tables; returns group A's id (the page of the members table). */
 async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
-  // AI：兩個不同類型的供應商（A 兩個模型、B 一個）。模型與自建動作建成停用、非預設：不影響其他 spec 的 AI 解析。
+  // AI: two providers of different types (A has two models, B one). Models and the custom action are created disabled and non-default, so they do not affect other specs' AI resolution.
   const providerA = await call<{ id: string }>(admin, "post", "/api/admin/ai/providers", {
     name: N.providerA,
     type: "anthropic",
@@ -168,7 +168,6 @@ async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
   });
   created.actions.push(action.id);
 
-  // 登入服務：建立時一律停用（不上登入頁）。
   created.authProviders.push(
     (await call<{ id: string }>(admin, "post", "/api/admin/auth/providers", { template: "oidc", displayName: N.idpA, issuerUrl: "http://fake-idp:9400/t26-a", clientId: "t26-a" })).id,
   );
@@ -176,7 +175,7 @@ async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
     (await call<{ id: string }>(admin, "post", "/api/admin/auth/providers", { template: "gitlab", displayName: N.idpB, issuerUrl: "https://gitlab.example.com/t26", clientId: "t26-b" })).id,
   );
 
-  // 使用者：email 長短差很多；長的那位顯示名也是一長串無空白。
+  // Users: email lengths differ a lot; the long one's display name is also a long run without spaces.
   await createUserViaInvite(admin, { email: SHORT_EMAIL, password: USER_PASSWORD, displayName: "T26 Short" });
   await createUserViaInvite(admin, {
     email: LONG_EMAIL,
@@ -184,17 +183,16 @@ async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
     displayName: `T26-long-display-name-without-any-spaces-${RUN}`,
   });
 
-  // 邀請：兩張未使用的，備註帶 RUN，其中一張是無空白的長備註（上限 100 code point 內）。
+  // Invitations: two unused ones with the note carrying RUN, one of them a long note without spaces (within the 100 code point limit).
   for (const label of [N.inviteShort, N.inviteLong]) {
     const invite = await call<{ invite: { id: string } }>(admin, "post", "/api/admin/invites", { expiresInDays: 1, label });
     created.invites.push(invite.invite.id);
   }
 
-  // 儲存方案
   created.plans.push((await call<{ id: string }>(admin, "post", "/api/admin/storage-plans", { name: N.planA, quotaBytes: 1048576 })).id);
   created.plans.push((await call<{ id: string }>(admin, "post", "/api/admin/storage-plans", { name: N.planB, quotaBytes: null })).id);
 
-  // 群組：A＝admin＋三人；B＝admin＋SSO 使用者。SSO 使用者兩個都在（我的群組 2 列）。
+  // Group A: admin + three people; group B: admin + the SSO user (the SSO user is in both, so My groups has 2 rows).
   const groupA = await call<{ id: string }>(admin, "post", "/api/groups", { name: N.groupA });
   created.groups.push(groupA.id);
   const groupB = await call<{ id: string }>(admin, "post", "/api/groups", { name: N.groupB });
@@ -202,7 +200,6 @@ async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
   for (const email of [SHORT_EMAIL, LONG_EMAIL, SSO_EMAIL]) await call(admin, "put", `/api/groups/${groupA.id}/members`, { email });
   await call(admin, "put", `/api/groups/${groupB.id}/members`, { email: SSO_EMAIL });
 
-  // API token（SSO 使用者自己的）：一支派生 label、一支自訂 label。
   created.tokens.push((await call<{ id: string }>(sso, "post", "/api/auth/tokens", { name: N.tokenPlain, scope: "notes:read", expiresInDays: null })).id);
   const labeled = await call<{ id: string }>(sso, "post", "/api/auth/tokens", { name: N.tokenLabeled, scope: "notes:read notes:write", expiresInDays: 30 });
   created.tokens.push(labeled.id);
@@ -210,7 +207,7 @@ async function seed(admin: Page, sso: Page, created: Created): Promise<string> {
   return groupA.id;
 }
 
-/** 清理：失敗也做、本身不 throw（不蓋掉主體的原錯）。 */
+/** Cleanup: runs even on failure and never throws itself (does not mask the body's original error). */
 async function cleanup(admin: Page, sso: Page, created: Created): Promise<void> {
   const attempt = async (what: string, run: () => Promise<{ ok(): boolean; status(): number }>): Promise<void> => {
     try {
@@ -263,7 +260,7 @@ async function measure(table: Locator): Promise<TableGeometry> {
         return {
           width: cr.width,
           height: cr.height,
-          // 內容包裝是最後一個子元素：手機用的欄名（sm 起 display:none）排在它前面。
+          // The content wrapper is the last child: the column name used on phones (display:none from sm up) comes before it.
           innerLeft: cell.lastElementChild!.getBoundingClientRect().left,
           buttonCount: rights.length,
           buttonsRight: rights.length > 0 ? Math.max(...rights) : null,
@@ -282,7 +279,6 @@ async function measure(table: Locator): Promise<TableGeometry> {
   });
 }
 
-/** 1280 頂層表檢查（左緣、啟用欄、操作欄、主欄高度）。 */
 function checkTable(spec: TableSpec, g: TableGeometry, where: string): void {
   const label = `${where}「${spec.label}」`;
   expect(g.headers.map((h) => h.text), `${label} 欄名順序`).toEqual(spec.headers);
@@ -322,7 +318,6 @@ function checkTable(spec: TableSpec, g: TableGeometry, where: string): void {
   }
 }
 
-/** 子表：子列開關中心、鈕群右緣與父列（供應商資料列）對齊。 */
 async function checkSubTable(page: Page, providerName: string, minRows: number, where: string): Promise<void> {
   const parent = await tableOf(page, T.providers)
     .getByRole("row", { name: providerName, exact: true })
@@ -353,7 +348,7 @@ async function checkSubTable(page: Page, providerName: string, minRows: number, 
   for (const child of children) {
     expect(Math.abs(child.switchCenter - parent.switchCenter), `${where} 子列「${child.name}」開關中心 vs 父列`).toBeLessThanOrEqual(1);
     expect(Math.abs(child.buttonsRight - parent.buttonsRight), `${where} 子列「${child.name}」鈕群右緣 vs 父列`).toBeLessThanOrEqual(1);
-    // 主欄 cell 高＝列高 − 計算後的下框線寬（子表最後一列不畫下框線，為 0）。
+    // Primary cell height = row height - computed bottom border width (the sub-table's last row draws no bottom border, so 0).
     expect(Math.abs(child.primaryHeight - (child.rowHeight - child.borderBottom)), `${where} 子列「${child.name}」主欄 cell 高度 vs 列內容高`).toBeLessThanOrEqual(0.5);
   }
 }
@@ -376,7 +371,6 @@ async function expectOverflowing(page: Page, spec: TableSpec, where: string): Pr
   );
 }
 
-/** 每個含 table 且溢出的捲動框：捲到最右後，表頭主欄格與每列主欄格的左緣＝捲動框左緣。回傳檢查過的捲動框名。 */
 async function expectStickyAfterScrollRight(page: Page, where: string): Promise<string[]> {
   const results = await content(page).evaluate((root) =>
     Array.from(root.querySelectorAll('[role="region"]'))
@@ -399,8 +393,10 @@ async function expectStickyAfterScrollRight(page: Page, where: string): Promise<
 }
 
 /**
- * 遮擋檢查：捲到最右；每列（含子表列，參照格＝其父列的頂層主欄格）只捲縱向進可視範圍；
- * 列內每個 button（含 switch）與參照格的水平重疊 ≤ 0.5px；非原生 disabled 的，中心點命中測試不得落在參照格或任何 sticky 格內。
+ * Occlusion check: scroll to the far right; each row (sub-table rows included, whose reference cell = its parent row's
+ * top-level primary cell) is scrolled into view vertically only; every button (switch included) in a row overlaps the
+ * reference cell horizontally by <= 0.5px; for non-natively-disabled ones, the hit test at the centre must not land on the
+ * reference cell or any sticky cell.
  */
 async function expectNotCovered(page: Page, spec: TableSpec, where: string): Promise<void> {
   const results = await boxOf(page, spec).evaluate((box) => {
@@ -430,8 +426,9 @@ async function expectNotCovered(page: Page, spec: TableSpec, where: string): Pro
       for (const control of Array.from(row.querySelectorAll(':scope > [role="cell"] button'))) {
         const r = control.getBoundingClientRect();
         const overlap = Math.max(0, Math.min(r.right, refRect.right) - Math.max(r.left, refRect.left));
-        // 命中測試（非原生 disabled）：中心點一定要命中元素（null＝不在視窗內，量法沒捲到位——紅，不空轉）、命中的要是這顆控制項本身
-        // （或它的子元素），且不得落在參照格或任何 sticky 格內。原生 disabled 的不做命中測試，landed／covered 記成通過。
+        // Hit test (non-natively-disabled): the centre must hit an element (null = not inside the viewport, i.e. the measurement
+        // did not scroll into place - red, not idle), what it hits must be this control itself (or its child), and must not land
+        // on the reference cell or any sticky cell. Natively disabled ones get no hit test; landed / covered are recorded as passing.
         let covered = false;
         let landed = true;
         if (!(control as HTMLButtonElement).disabled) {
@@ -452,10 +449,6 @@ async function expectNotCovered(page: Page, spec: TableSpec, where: string): Pro
   }
 }
 
-/**
- * 手機卡片：捲動框不溢出、沒有 sticky 格；每列（含子表列）的每顆按鈕與開關整顆在視窗內；
- * 從表內第一個控制項連按 Tab，走得到表內每個可聚焦的按鈕與開關（含子表）。
- */
 async function expectPhoneCards(page: Page, spec: TableSpec, where: string): Promise<void> {
   const viewportWidth = page.viewportSize()!.width;
   const m = await boxOf(page, spec).evaluate((box) => {
@@ -481,14 +474,13 @@ async function expectPhoneCards(page: Page, spec: TableSpec, where: string): Pro
   expect(m.scrollWidth, `${where}「${spec.label}」不得橫捲（scrollWidth ${m.scrollWidth}、clientWidth ${m.clientWidth}）`).toBeLessThanOrEqual(m.clientWidth);
   expect(m.sticky, `${where}「${spec.label}」手機沒有 sticky 格`).toBe(0);
   expect(m.rows, `${where}「${spec.label}」要有列`).toBeGreaterThan(0);
-  // 有操作欄或啟用欄的表一定要有控制項（沒有的表，例如只有連結的列，只驗不橫捲）
+  // A table with an actions or enabled column must have controls (a table without, e.g. rows with only links, is only checked for no horizontal scroll)
   if (spec.buttons > 0 || spec.enabled) expect(m.controls.length, `${where}「${spec.label}」要有控制項可檢查`).toBeGreaterThan(0);
   for (const control of m.controls) {
     expect(control.left, `${where}「${spec.label}」列「${control.row}」的「${control.control}」左緣`).toBeGreaterThanOrEqual(0);
     expect(control.right, `${where}「${spec.label}」列「${control.row}」的「${control.control}」右緣`).toBeLessThanOrEqual(viewportWidth);
   }
 
-  // Tab：把每個可聚焦（非原生 disabled）的控制項編號，從第一個開始連按，直到全部走過或超過上限。
   const total = await tableOf(page, spec).evaluate((table) => {
     const focusable = Array.from(table.querySelectorAll("button:not([disabled]), [role=switch]:not([disabled])")).filter((el) => el.getClientRects().length > 0);
     table.ownerDocument.querySelectorAll("[data-e2e-stop]").forEach((el) => el.removeAttribute("data-e2e-stop"));
@@ -508,7 +500,6 @@ async function expectPhoneCards(page: Page, spec: TableSpec, where: string): Pro
   expect(visited.size, `${where}「${spec.label}」Tab 要走到全部 ${total} 個控制項`).toBe(total);
 }
 
-/** 目前焦點元素與「它所在列的主欄格」的水平重疊；焦點不在表內回 null。 */
 async function focusedStop(table: Locator): Promise<Stop | null> {
   return table.evaluate((tableEl) => {
     const active = document.activeElement;
@@ -538,7 +529,6 @@ async function tabStops(page: Page, table: Locator, max: number, stopAfter: (sto
   return stops;
 }
 
-/** 使用者表捲到最右、從第一列 switch 連按 Tab 走過後續列。 */
 async function expectUsersTabUncovered(page: Page, width: number): Promise<void> {
   await boxOf(page, T.users).evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
@@ -553,10 +543,13 @@ async function expectUsersTabUncovered(page: Page, width: number): Promise<void>
 }
 
 /**
- * AI 動作表捲到最右，從捲動框連按 Tab 走到自建動作那一列（4 顆鈕）的「Move up」——整個操作欄最左的一顆鈕
- * （內建列只有 3 顆、靠右放，操作欄第 1 格只有自建列用到；最右時這一格左半壓在 sticky 名稱欄底下、整顆仍在
- * 捲動框內，瀏覽器聚焦時不捲，要靠 SettingsTable 捲動框的聚焦補捲才露出）。第一列的 Move up 在清單邊界是原生 disabled，Tab 會跳過，所以第一站是第一列的 Move down。
- * 每一站都量與 sticky 主欄的水平重疊。
+ * AI actions table scrolled to the far right; press Tab repeatedly from the scroll box to the custom action's row (4 buttons)
+ * "Move up" - the leftmost button of the whole actions column (built-in rows have only 3 buttons placed to the right; the
+ * first actions cell is used only by the custom row; at the far right the left half of this cell is under the sticky name
+ * column while the button is still entirely inside the scroll box, and browsers do not scroll on focus, so it appears only
+ * through the focus-scroll compensation of the SettingsTable scroll box). The first row's Move up is natively disabled at the
+ * list boundary and Tab skips it, so the first stop is the first row's Move down.
+ * Measure the horizontal overlap with the sticky primary column at every stop.
  */
 async function expectActionsTabUncovered(page: Page, width: number): Promise<void> {
   const box = boxOf(page, T.actions);
@@ -565,7 +558,7 @@ async function expectActionsTabUncovered(page: Page, width: number): Promise<voi
   });
   await expect(box, `${width}「Actions」捲動框溢出時要可聚焦`).toHaveAttribute("tabindex", "0");
   const table = tableOf(page, T.actions);
-  // 終點的前提：自建列操作欄的第一顆是 Move up，而且它是整個操作欄最左的鈕（左緣＝各列第一顆鈕左緣的最小值）。
+  // Precondition of the end point: the custom row's first actions button is Move up, and it is the leftmost button of the whole actions column (its left edge = the minimum of every row's first button's left edge).
   const target = await table.evaluate((tableEl, ownName) => {
     const firsts = Array.from(tableEl.querySelectorAll(':scope > [role="row"][aria-labelledby]')).map((row) => {
       const cells = row.querySelectorAll(':scope > [role="cell"]');
@@ -597,7 +590,7 @@ async function expectActionsTabUncovered(page: Page, width: number): Promise<voi
   }
 }
 
-test("26 設定表格幾何守衛", async ({ browser }) => {
+test("26 settings tables geometry guard", async ({ browser }) => {
   test.setTimeout(300_000);
   const created: Created = { providers: [], actions: [], authProviders: [], plans: [], groups: [], tokens: [], invites: [] };
   const adminContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -606,7 +599,7 @@ test("26 設定表格幾何守衛", async ({ browser }) => {
   const ssoPage = await ssoContext.newPage();
   try {
     let groupAId = "";
-    await test.step("自建資料（admin API＋SSO 首登的使用者）", async () => {
+    await test.step("seed data (admin API + a user from SSO first login)", async () => {
       await loginAs(adminPage, ADMIN.email, ADMIN.password);
       await expect(adminPage).toHaveURL(/\/$/);
       await signInSsoUser(ssoPage);
@@ -639,7 +632,7 @@ test("26 設定表格幾何守衛", async ({ browser }) => {
       { path: "/settings/groups", tables: [{ spec: T.myGroups, own: [N.groupA, N.groupB] }] },
     ];
 
-    await test.step("1280×800：頂層表對齊、模型子表、AI 代理頁跨表、內容區不橫捲", async () => {
+    await test.step("1280x800: top-level table alignment, models sub-table, AI agents page across tables, content area has no horizontal scroll", async () => {
       for (const [page, pages] of [
         [adminPage, adminPages],
         [ssoPage, ssoPages],
@@ -678,7 +671,7 @@ test("26 設定表格幾何守衛", async ({ browser }) => {
       }
     });
 
-    await test.step("1024×768：內容區不橫捲、必須溢出、sticky、遮擋、Tab", async () => {
+    await test.step("1024x768: content area has no horizontal scroll, must overflow, sticky, occlusion, Tab", async () => {
       await adminPage.setViewportSize({ width: 1024, height: 768 });
       await ssoPage.setViewportSize({ width: 1024, height: 768 });
       for (const [page, pages] of [
@@ -705,7 +698,7 @@ test("26 設定表格幾何守衛", async ({ browser }) => {
       }
     });
 
-    await test.step("390×844：每張表都是卡片：不橫捲、沒有 sticky、每列的操作鈕都在視窗內、Tab 走得到每個控制項", async () => {
+    await test.step("390x844: every table is a card: no horizontal scroll, no sticky, every row's actions inside the viewport, Tab reaches every control", async () => {
       await adminPage.setViewportSize({ width: 390, height: 844 });
       await ssoPage.setViewportSize({ width: 390, height: 844 });
       for (const [page, pages] of [

@@ -24,7 +24,7 @@ import { PreviewBanner } from "./PreviewBanner";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 vi.mock("@/lib/use-container-width", () => ({ useContainerWidth: () => widthRef.current }));
-// mermaid 本體在 jsdom 跑不起來：回一張固定的小 SVG。
+// mermaid itself cannot run under jsdom: return a fixed small SVG.
 vi.mock("@/lib/mermaid", () => ({
   renderMermaid: vi.fn(() => Promise.resolve({ ok: true, svg: "<svg viewBox='0 0 10 10'></svg>" })),
   cachedMermaid: vi.fn(() => null),
@@ -36,7 +36,7 @@ const widthRef = vi.hoisted(() => ({ current: 600 }));
 const NOTE = "n1";
 function b64(blocks: unknown[]): string {
   const doc = new Y.Doc();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock 泛型三元組
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock generic triple
   blocksToYXmlFragment(BlockNoteEditor.create({ schema: noteSchema }), blocks as any, doc.getXmlFragment(YDOC_FRAGMENT));
   return btoa(String.fromCharCode(...Y.encodeStateAsUpdate(doc)));
 }
@@ -72,8 +72,8 @@ function Probe() {
     </>
   );
 }
-/** `profile`：包在 VersionPreview **單獨**外面的 `<Profiler>` 的 onRender——只計 VersionPreview 子樹的 commit（PreviewBanner 也讀清單，不能算進來）。
- * `right`：「r」鈕把右邊設成那一版；「rc」鈕把右邊設回目前狀態（也拿來在 widthRef 變動後觸發一次 context 變動）。 */
+/** `profile`: onRender of a `<Profiler>` wrapped around VersionPreview **alone**: it counts only commits of the VersionPreview subtree (PreviewBanner also reads the list and must not be counted).
+ * `right`: the "r" button sets the right side to that version; the "rc" button sets it back to the current state (also used to trigger a context change after widthRef changes). */
 function Host({ doc, seq, seq2, right, forceSingle, profile }: { doc: Y.Doc; seq: number; seq2?: number; right?: number; forceSingle?: boolean; profile?: () => void }) {
   const value = useVersionsController({ noteId: NOTE, enabled: true });
   return (
@@ -98,7 +98,7 @@ function Host({ doc, seq, seq2, right, forceSingle, profile }: { doc: Y.Doc; seq
       <Probe />
       {value.preview && (
         <>
-          {/* 窄視窗整頁（forceSingle）沒有並排／單欄鈕——橫幅也要收到 narrow，否則 forceSingle 案的「沒有 Side by side 鈕」斷言打不過 */}
+          {/* A narrow full page (forceSingle) has no side-by-side / single-column buttons: the banner must also collapse to narrow, or the forceSingle case's no-Side-by-side-button assertion cannot hold */}
           <PreviewBanner narrow={forceSingle} />
           <Profiler id="version-preview" onRender={() => profile?.()}>
             <VersionPreview doc={doc} forceSingle={forceSingle} />
@@ -108,7 +108,7 @@ function Host({ doc, seq, seq2, right, forceSingle, profile }: { doc: Y.Doc; seq
     </VersionsProvider>
   );
 }
-/** `rightLater`：渲染「r」鈕但不自動按（先看 vs 目前狀態，之後才換右邊）。 */
+/** `rightLater`: renders the "r" button but does not press it automatically (look at it vs the current state first, change the right side afterwards). */
 function renderPreview(opts: { seq: number; seq2?: number; right?: number; rightLater?: boolean; live?: unknown[]; forceSingle?: boolean; profile?: () => void }) {
   const live = new Y.Doc();
   if (opts.live) {
@@ -128,7 +128,6 @@ function renderPreview(opts: { seq: number; seq2?: number; right?: number; right
   if (opts.right !== undefined && !opts.rightLater) fireEvent.click(screen.getByText("r"));
   return { live, queryClient };
 }
-/** 左 seq 1（V1）vs 活文件（V2）——預設比較：A changed、B deleted、C added。 */
 const routesV1 = () => ({
   [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(2), ver(1)]),
   [`/api/notes/${NOTE}/versions/2`]: { id: vid(2), seq: 2, ydoc: b64(V2) },
@@ -140,12 +139,11 @@ describe("VersionPreview", () => {
     await i18n.changeLanguage("en");
     window.localStorage.clear();
     dismissAllToasts();
-    // 預設 < 720（並排門檻）：單欄。
-    widthRef.current = 600;
+    widthRef.current = 600; // below the 720 side-by-side threshold: single column
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("預設＝左（選的版）vs 目前狀態（活文件 fork）：單欄唯讀編輯器、回貼 data-diff（A changed、B deleted 合成 id、C added）、未變更回貼 context、活文件零寫入", async () => {
+  it("default = left (the chosen version) vs the current state (a fork of the live document): a single-column read-only editor, data-diff pasted back (A changed, B deleted with a synthesized id, C added), unchanged blocks pasted back as context, and no writes to the live document", async () => {
     stub(routesV1());
     const { live } = renderPreview({ seq: 1, live: [...V2, { id: "D", type: "paragraph", content: "丁" }] });
     let updates = 0;
@@ -159,7 +157,7 @@ describe("VersionPreview", () => {
     expect(updates).toBe(0);
   });
 
-  it("carry：未變更的區塊不在 marks 裡，由 DiffEditor 回貼 context（vs 目前狀態）", async () => {
+  it("carry: unchanged blocks are not in the marks and DiffEditor pastes context back (vs the current state)", async () => {
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
       [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(V1) },
@@ -170,17 +168,17 @@ describe("VersionPreview", () => {
     expect(view.querySelector('[data-id="A"][data-diff="context"]')).not.toBeNull();
   });
 
-  it("兩快照：無關的 context 變動（splitMode）→ VersionPreview 確實 re-render，但不重建唯讀編輯器（BlockNoteEditor.create 呼叫數 0）；單欄套文章欄寬", async () => {
-    // 第二次回應**必須**與第一次不同。body 不變時 React Query 的 structural sharing 沿用舊 data 參照、
-    // VersionPreview 根本不 re-render（實測：body 不變 0 次、dirty 翻面 1 次），守衛有無 useMemo 都綠。
-    // 不能用「.bn-editor 同一節點」判斷——BlockNote 重建唯讀 editor 時 .bn-editor 根節點沿用，有無 useMemo 都綠。
-    // 唯一斷言是 BlockNoteEditor.create 在重抓之後的呼叫數（實測：原碼 0；拿掉 entries 或左快照的 useMemo 各 1）。
-    // 右邊是兩個快照（右選 seq 2），讓兩條快照 useMemo 都在路徑上。
-    // VersionPreview 不再讀清單的 data（`usePreviousTarget` 刪了；React Query 只在讀過的欄位變動時 re-render），
-    // 清單重抓本身已不會讓它 re-render——所以另用一次與 diff 無關的 context 變動（窄寬下 setSplitMode("single")，版面不變）
-    // 保證「確實 re-render」，再斷言沒重建。
-    // 下面那段清單重抓（dirty 翻面）保留為**回歸防線**：今天它對 VersionPreview 是空操作；若日後 VersionPreview 又讀清單 data，
-    // 它會跟著 re-render，這段就重新成為「清單重抓不重建」的守衛（create 呼叫數仍斷言 0）。
+  it("two snapshots: an unrelated context change (splitMode) -> VersionPreview does re-render but does not rebuild the read-only editor (BlockNoteEditor.create call count 0); the single column takes the article column width", async () => {
+    // The second response MUST differ from the first: when the body is unchanged React Query's structural sharing keeps the old data reference, so VersionPreview
+    // does not re-render at all and the check stays green with or without useMemo.
+    // Comparing the same `.bn-editor` node does not work either: when BlockNote rebuilds the read-only editor the `.bn-editor` root node is reused, so that check is green with or without useMemo.
+    // The assertion is BlockNoteEditor.create's call count after the refetch (expected 0).
+    // The right side is two snapshots (right selects seq 2), so both snapshot useMemos are on the path.
+    // VersionPreview does not read the list's data (React Query re-renders only when a field that was read changes),
+    // so a list refetch alone does not make it re-render: an unrelated context change (setSplitMode("single") at narrow width, layout unchanged)
+    // guarantees a real re-render, and then the assertion is that nothing was rebuilt.
+    // The list refetch below (dirty flipping) is kept as a regression guard: today it is a no-op for VersionPreview; if VersionPreview reads the list data,
+    // it re-renders with it and this part guards that a list refetch does not rebuild (the create count is still asserted to be 0).
     const routes: Record<string, unknown> = routesV1();
     stub(routes);
     const commits = vi.fn();
@@ -203,7 +201,7 @@ describe("VersionPreview", () => {
     }
   });
 
-  it("#297 V1：這篇的站內寬度是寬 → 單欄 diff 套寬欄，沒有標準的 max-w", async () => {
+  it("#297: this note's in-site width is wide -> the single-column diff takes the wide column, without the standard max-w", async () => {
     stub(routesV1());
     setNoteWidth(NOTE, "wide");
     renderPreview({ seq: 1, live: V2 });
@@ -212,7 +210,7 @@ describe("VersionPreview", () => {
     expect(view).not.toHaveClass("max-w-[clamp(42.5rem,85%,66rem)]");
   });
 
-  it("#297 V2：預覽開著時改寬度 → 單欄跟著變全寬，不重建唯讀編輯器", async () => {
+  it("#297: changing the width while previewing -> the single column follows to full width without rebuilding the read-only editor", async () => {
     stub(routesV1());
     renderPreview({ seq: 1, live: V2 });
     const view = await screen.findByTestId("diff-single");
@@ -229,8 +227,8 @@ describe("VersionPreview", () => {
     }
   });
 
-  it("vs 目前狀態：無關的 context 變動（splitMode）→ 不重建唯讀編輯器、不重讀活文件", async () => {
-    // 清單重抓那段同上一案：今天對 VersionPreview 是空操作，保留為回歸防線。
+  it("vs the current state: an unrelated context change (splitMode) -> the read-only editor is not rebuilt and the live document is not re-read", async () => {
+    // The list refetch part is the same as the previous case: a no-op for VersionPreview today, kept as a regression guard.
     const routes: Record<string, unknown> = routesV1();
     stub(routes);
     const commits = vi.fn();
@@ -251,7 +249,7 @@ describe("VersionPreview", () => {
     }
   });
 
-  it("右選某版 → 兩個快照比較，方向左→右（左 seq 2、右 seq 1：B added、C 刪除、A changed）；不讀活文件", async () => {
+  it("choosing a version on the right -> compares two snapshots in the direction left -> right (left seq 2, right seq 1: B added, C deleted, A changed); the live document is not read", async () => {
     stub(routesV1());
     renderPreview({ seq: 2, right: 1, live: [{ id: "Z", type: "paragraph", content: "活" }] });
     const view = await screen.findByTestId("diff-single");
@@ -260,11 +258,10 @@ describe("VersionPreview", () => {
     expect(view.querySelector('[data-id^="diff-del-"][data-diff="deleted"]')).not.toBeNull();
     expect(view.querySelector('[data-id="C"]')).toBeNull();
     expect(view.querySelector('[data-id="Z"]')).toBeNull();
-    // 刪除的那顆是 C 的文字
     expect(view.querySelector('[data-diff="deleted"]')).toHaveTextContent("丙");
   });
 
-  it("右選到比左新的版（左 seq 1、右 seq 2）照樣算、不換邊：C added、B 刪除；觸發鈕仍是左 seq 1、右 seq 2", async () => {
+  it("a right version newer than the left (left seq 1, right seq 2) is computed as is without swapping sides: C added, B deleted; the triggers stay left seq 1, right seq 2", async () => {
     stub(routesV1());
     renderPreview({ seq: 1, right: 2 });
     const view = await screen.findByTestId("diff-single");
@@ -277,7 +274,7 @@ describe("VersionPreview", () => {
     expect(screen.getByTestId("right-state")).toHaveTextContent('"seq":2');
   });
 
-  it("只看差異：未變更的區塊折成一行", async () => {
+  it("show only differences: unchanged blocks collapse to one line", async () => {
     const many = [{ id: "A", type: "paragraph", content: "甲" }, { id: "B", type: "paragraph", content: "乙" }, { id: "E", type: "paragraph", content: "戊" }];
     const many2 = [{ id: "A", type: "paragraph", content: "甲" }, { id: "B", type: "paragraph", content: "乙" }, { id: "E", type: "paragraph", content: "戊改" }];
     stub({
@@ -289,15 +286,15 @@ describe("VersionPreview", () => {
     expect(await screen.findByText("… 2 unchanged blocks …")).toBeInTheDocument();
   });
 
-  it("並排（門檻 720）：寬 >= 720 自動並排（兩顆唯讀編輯器、左右各標、grid 兩欄）；手動「單欄」蓋過", async () => {
+  it("side by side (threshold 720): width >= 720 switches to side by side automatically (two read-only editors, left and right labelled, a two-column grid); choosing Single column manually overrides it", async () => {
     stub(routesV1());
     widthRef.current = 720;
     renderPreview({ seq: 1, live: V2 });
     const split = await screen.findByTestId("diff-split");
-    // 窄時不走並排渲染，所以並排一律兩欄（沒有「窄時上下疊」的容器查詢）。
+    // Narrow does not render side-by-side, so side-by-side always has two columns (no container query stacks them when narrow).
     expect(split).toHaveClass("grid", "grid-cols-2");
     expect(split).not.toHaveClass("grid-cols-1");
-    // 垂直線貫穿整個預覽區高度：wrapper 至少撐滿捲動容器、內容 grid 填滿剩餘高度（右 section 的 border-l 隨 stretch 到底）。
+    // The vertical line runs the full height of the preview area: the wrapper fills at least the scroll container and the content grid fills the remaining height (the right section's border-l stretches to the bottom).
     expect(split.parentElement).toHaveClass("relative", "min-h-full", "flex", "flex-col");
     expect(split).toHaveClass("flex-1");
     const [left, right] = within(split).getAllByTestId("diff-pane");
@@ -311,7 +308,7 @@ describe("VersionPreview", () => {
     expect(single).not.toHaveClass("flex-1");
   });
 
-  describe("並排逐區塊對齊（左 seq 1＝[A 甲, B 乙]、右目前狀態＝[A 甲改, N 新, B 乙]：列 {0,0}{null,1}{1,2}）", () => {
+  describe("side-by-side block alignment (left seq 1 = [A, B], right current state = [A changed, N new, B]: rows {0,0}{null,1}{1,2})", () => {
     const INS_V1 = [{ id: "A", type: "paragraph", content: "甲" }, { id: "B", type: "paragraph", content: "乙" }];
     const INS_LIVE = [{ id: "A", type: "paragraph", content: "甲改" }, { id: "N", type: "paragraph", content: "新" }, { id: "B", type: "paragraph", content: "乙" }];
     const routesIns = () => ({
@@ -320,7 +317,7 @@ describe("VersionPreview", () => {
     });
     const rowOf = (pane: Element) => Array.from(pane.querySelectorAll<HTMLElement>(".bn-block-outer")).map((el) => [el.dataset.id, el.dataset.diffRow]);
 
-    it("兩欄頂層 block-outer 帶 data-diff-row：同列同號、單側列（N）只在右欄有該號；jsdom 高度全 0 → 沒有 spacer、沒有 inline margin", async () => {
+    it("top-level block-outer in both columns carries data-diff-row: the same row has the same number, a one-sided row (N) has its number only in the right column; jsdom heights are all 0 -> no spacer and no inline margin", async () => {
       stub(routesIns());
       widthRef.current = 900;
       renderPreview({ seq: 1, live: INS_LIVE });
@@ -337,7 +334,7 @@ describe("VersionPreview", () => {
       expect(split.querySelectorAll("section")[1]).toHaveClass("relative");
     });
 
-    it("量得到高度時（getBoundingClientRect 以文字長度假造：每字 12.4px、區塊 left 20／width 100）：矮側差值＋對面單側列整列高累加成下一顆的 margin-top（小數不四捨五入）；單側列對面有等高、收窄到區塊橫向範圍的 spacer；列變了先清舊 margin", async () => {
+    it("when heights are measurable (getBoundingClientRect faked from text length: 12.4px per character, block left 20 / width 100): the shorter side's difference plus the whole height of the opposite one-sided row accumulate into the next block's margin-top (decimals not rounded); a one-sided row gets an equal-height spacer opposite it, narrowed to the block's horizontal extent; when the rows change the old margins are cleared first", async () => {
       const orig = Element.prototype.getBoundingClientRect;
       const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
         if (!this.classList.contains("bn-block-outer")) return orig.call(this);
@@ -351,7 +348,7 @@ describe("VersionPreview", () => {
         const split = await screen.findByTestId("diff-split");
         const [left, right] = within(split).getAllByTestId("diff-pane");
         await waitFor(() => expect(rowOf(right)).toEqual([["A", "0"], ["N", "1"], ["B", "2"]]));
-        // 列 0：左 A 12.4、右 A「甲改」24.8 → 左欠 12.4；列 1：左空、整列 12.4 → 左 B 的 margin-top＝24.8（整數 offsetHeight 會得 24）。
+        // Row 0: left A is 12.4, right A is 24.8 -> left is short by 12.4; row 1: left empty, the whole row is 12.4 -> left B's margin-top = 24.8 (an integer offsetHeight would give 24).
         await waitFor(() => expect(left.querySelector<HTMLElement>('.bn-block-outer[data-id="B"]')!.style.marginTop).toBe("24.8px"));
         expect(left.querySelector<HTMLElement>('.bn-block-outer[data-id="A"]')!.style.marginTop).toBe("");
         for (const el of right.querySelectorAll<HTMLElement>(".bn-block-outer")) expect(el.style.marginTop).toBe("");
@@ -364,7 +361,7 @@ describe("VersionPreview", () => {
         expect(spacers[0].style.width).toBe("100px");
         expect(rightSec.querySelector(".kb-diff-spacer")).toBeNull();
         expect((leftSec as HTMLElement).style.paddingBottom).toBe("");
-        // 右邊換成 seq 1（與左相同）：左欄編輯器不重建（a 身分不變），上一輪寫的 margin 必須被清掉、spacer 消失。
+        // The right side switches to seq 1 (same as the left): the left editor is not rebuilt (identity a unchanged), and the margins written last round must be cleared and the spacer gone.
         const leftB = left.querySelector<HTMLElement>('.bn-block-outer[data-id="B"]')!;
         fireEvent.click(screen.getByText("r"));
         await waitFor(() => expect(rowOf(within(screen.getByTestId("diff-split")).getAllByTestId("diff-pane")[1])).toEqual([["A", "0"], ["B", "1"]]));
@@ -376,7 +373,7 @@ describe("VersionPreview", () => {
       }
     });
 
-    it("寬度不足（單欄）不回貼 data-diff-row、不產生 spacer", async () => {
+    it("insufficient width (single column) does not paste back data-diff-row and creates no spacer", async () => {
       stub(routesIns());
       widthRef.current = 600;
       renderPreview({ seq: 1, live: INS_LIVE });
@@ -387,12 +384,12 @@ describe("VersionPreview", () => {
     });
   });
 
-  it("並排時兩欄標頭是兩個下拉（左側 seq 1／右側 Current state），不是純文字 h3；橫幅沒有下拉", async () => {
+  it("in side-by-side the two column headers are two dropdowns (left seq 1 / right Current state), not plain-text h3; the banner has no dropdown", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, live: V2 });
     const split = await screen.findByTestId("diff-split");
-    // 標頭列與兩欄同一組 grid 兩欄（左右對齊），標頭列在兩欄之上。
+    // The header row shares the same two-column grid as the two columns (left/right aligned) and sits above them.
     const head = screen.getByTestId("diff-split-head");
     expect(head).toHaveClass("grid", "grid-cols-2", "gap-4");
     expect(head.compareDocumentPosition(split) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -400,7 +397,7 @@ describe("VersionPreview", () => {
     expect(within(leftCell).getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1));
     expect(within(rightCell).getByRole("button", { name: "Right side" })).toHaveTextContent("Current state");
     expect(document.querySelector('[data-testid="diff-split-head"] h3, [data-testid="diff-split"] h3')).toBeNull();
-    // 兩欄中間一條 1px border-border 垂直線：右欄（標頭右格＋內容右 section）帶 border-l，左欄不帶；標頭用 pb 而非 mb，線才連續。
+    // A 1px border-border vertical line between the columns: the right column (right header cell + right content section) carries border-l and the left does not; the header uses pb rather than mb so the line is continuous.
     const [leftSection, rightSection] = Array.from(split.children) as HTMLElement[];
     for (const el of [rightCell, rightSection]) expect(el).toHaveClass("border-l", "border-border");
     for (const el of [leftCell, leftSection]) expect(el).not.toHaveClass("border-l");
@@ -412,7 +409,7 @@ describe("VersionPreview", () => {
     expect(banner.queryByRole("button", { name: "Right side" })).not.toBeInTheDocument();
   });
 
-  it("並排、右選 seq 1 的快照讀取失敗（500）→ 欄標頭的下拉仍在；右選回「Current state」→ 錯誤消失、仍在預覽", async () => {
+  it("side by side, the snapshot read for right seq 1 fails (500) -> the column header dropdowns stay; choosing Current state on the right again -> the error disappears and the preview stays", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -437,7 +434,7 @@ describe("VersionPreview", () => {
     expect(await screen.findByTestId("diff-split")).toBeInTheDocument();
   });
 
-  it("並排、在欄標頭選一個未快取的版本（快照 pending）→ 標頭列仍在、同一顆觸發鈕仍掛載", async () => {
+  it("side by side, choosing an uncached version in the column header (snapshot pending) -> the header row stays and the same trigger button remains mounted", async () => {
     let release!: () => void;
     vi.stubGlobal(
       "fetch",
@@ -465,7 +462,7 @@ describe("VersionPreview", () => {
     expect(await screen.findByTestId("diff-split")).toBeInTheDocument();
   });
 
-  it("並排時「只看差異」不起作用 → 橫幅的開關 aria-disabled＋title 說明、點了不切；切回單欄後恢復可按", async () => {
+  it("show-only-differences has no effect in side-by-side -> the banner's switch is aria-disabled with an explanatory title and clicking does not toggle it; back in single column it is pressable again", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, live: V2 });
@@ -474,7 +471,7 @@ describe("VersionPreview", () => {
     const only = banner.getByRole("button", { name: "Only changes" });
     await waitFor(() => expect(only).toHaveAttribute("aria-disabled", "true"));
     expect(only).toHaveAttribute("title", "Only changes works in single column");
-    // 報讀器的說明走 aria-describedby 指向 sr-only 文字，不只靠 title（toHaveAccessibleDescription 會退回 title，分不出來，所以直接查參照）。
+    // The screen-reader description goes through aria-describedby pointing at sr-only text, not only title (toHaveAccessibleDescription falls back to title and could not tell them apart, so the referenced element is queried directly).
     const describedBy = only.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy!)).toHaveTextContent("Only changes works in single column");
@@ -484,14 +481,14 @@ describe("VersionPreview", () => {
     fireEvent.click(banner.getByRole("button", { name: "Single column" }));
     await screen.findByTestId("diff-single");
     await waitFor(() => expect(only).not.toHaveAttribute("aria-disabled"));
-    // 圖示鈕的 title 平時是名稱（hover 看得到），停用時才換成說明。
+    // The icon button's title is its name normally (visible on hover) and becomes the explanation only when disabled.
     expect(only).toHaveAttribute("title", "Only changes");
     expect(only).not.toHaveAttribute("aria-describedby");
     fireEvent.click(only);
     expect(only).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("預覽區 < 720 px → 沒有並排：「Side by side」「Single column」兩顆都不渲染，DOM 只有單欄 diff", async () => {
+  it("preview area < 720 px -> no side-by-side: neither the Side by side nor the Single column button is rendered and the DOM has only the single-column diff", async () => {
     stub(routesV1());
     widthRef.current = 719;
     renderPreview({ seq: 1, live: V2 });
@@ -506,11 +503,11 @@ describe("VersionPreview", () => {
     expect(screen.queryByTestId("diff-pane")).not.toBeInTheDocument();
   });
 
-  it("≥ 720 px 鈕存在、auto 以實際生效的「Side by side」為按下；選單欄 → 單欄按下；選回並排 → 兩欄；縮窄 → 只剩單欄且鈕消失；再變寬 → 回到選過的並排", async () => {
+  it(">= 720 px the buttons exist and auto shows the effective Side by side as pressed; choosing single column presses it; choosing side by side again -> two columns; narrowing -> only single column and the buttons disappear; widening again -> back to the chosen side by side", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, right: 2, live: V2 });
-    // 起點右邊是 seq 2；下面靠「rc」（右回目前狀態）／「r」（右回 seq 2）兩種 context 變動觸發重新 render。
+    // Start with right = seq 2; the "rc" (right back to the current state) / "r" (right back to seq 2) buttons trigger re-renders through the two kinds of context change below.
     await screen.findByTestId("diff-split");
     const banner = () => within(screen.getByTestId("preview-banner"));
     const split = () => banner().getByRole("button", { name: "Side by side" });
@@ -524,7 +521,6 @@ describe("VersionPreview", () => {
     fireEvent.click(split());
     expect(await screen.findByTestId("diff-split")).toHaveClass("grid-cols-2");
     expect(split()).toHaveAttribute("aria-pressed", "true");
-    // 縮窄：useContainerWidth 被 mock 成讀 widthRef，靠一次 context 變動（換右邊）觸發重新 render。
     widthRef.current = 600;
     fireEvent.click(screen.getByText("rc"));
     expect(await screen.findByTestId("diff-single")).toBeInTheDocument();
@@ -536,7 +532,7 @@ describe("VersionPreview", () => {
     await waitFor(() => expect(split()).toHaveAttribute("aria-pressed", "true"));
   });
 
-  it("寬時手動選單欄 → 縮到 < 720 → 再變回 ≥ 720 仍是單欄（手動選擇有保留，不被 auto 蓋掉）", async () => {
+  it("choosing single column manually while wide -> shrinking to < 720 -> back to >= 720 is still single column (the manual choice is kept and not overridden by auto)", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, right: 2, live: V2 });
@@ -544,7 +540,7 @@ describe("VersionPreview", () => {
     const banner = () => within(screen.getByTestId("preview-banner"));
     fireEvent.click(banner().getByRole("button", { name: "Single column" }));
     await screen.findByTestId("diff-single");
-    // 縮窄／變寬：useContainerWidth 被 mock 成讀 widthRef，靠一次 context 變動（換右邊）觸發重新 render。
+    // Narrowing / widening: useContainerWidth is mocked to read widthRef and a context change (changing the right side) triggers the re-render.
     widthRef.current = 600;
     fireEvent.click(screen.getByText("rc"));
     await waitFor(() => expect(banner().queryByRole("button", { name: "Single column" })).not.toBeInTheDocument());
@@ -556,7 +552,7 @@ describe("VersionPreview", () => {
     expect(screen.queryByTestId("diff-split")).not.toBeInTheDocument();
   });
 
-  it("樣式：切換鈕（並排／單欄、只看差異）閒置 hover 帶 hover:bg-brand/15、按下鈕帶 bg-brand/25＋hover:bg-brand/35（品牌色底上看得出），hover 不會換回 bg-accent", async () => {
+  it("style: the toggle buttons (side by side / single column, show only differences) carry hover:bg-brand/15 when idle and bg-brand/25 plus hover:bg-brand/35 when pressed (visible on a brand-colored background), and hover never goes back to bg-accent", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, live: V2 });
@@ -566,7 +562,7 @@ describe("VersionPreview", () => {
     await waitFor(() => expect(split).toHaveAttribute("aria-pressed", "true"));
     expect(split).toHaveClass("bg-brand/25", "hover:bg-brand/35");
     expect(split).not.toHaveClass("hover:bg-brand/15");
-    // ghost 的 hover:bg-accent：留著的話，滑鼠停在按下鈕上時按下底色會被蓋掉（真瀏覽器截圖 12／13 的現象）。
+    // ghost's hover:bg-accent: if it stayed, the pressed background would be overridden while the mouse rests on the pressed button.
     expect(split).not.toHaveClass("hover:bg-accent");
     const idle = banner.getByRole("button", { name: "Single column" });
     expect(idle).toHaveAttribute("aria-pressed", "false");
@@ -575,14 +571,14 @@ describe("VersionPreview", () => {
     expect(idle).not.toHaveClass("hover:bg-accent");
   });
 
-  it("樣式：並排兩欄的內文不套 justify（index.css 在 .kb-diff-split 之下把未自訂對齊的區塊改回 left；jsdom 不載 index.css，計算樣式由 e2e 截圖驗）", async () => {
+  it("style: the body of the two side-by-side columns does not use justify (index.css resets blocks without custom alignment to left under .kb-diff-split; jsdom does not load index.css, so the computed style needs a browser)", async () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const justifyAt = css.search(/text-align:\s*justify;/);
     const rule = /\.kb-diff-split \.bn-editor \.bn-block-content:not\(\[data-text-alignment\]\)\s*\{[^}]*text-align:\s*left;[^}]*\}/.exec(css);
     expect(justifyAt).toBeGreaterThan(-1);
     expect(rule, "找不到 .kb-diff-split 的 text-align:left 覆寫").not.toBeNull();
-    // 特性相同（0,4,0），靠出現順序勝出：覆寫必須在 justify 規則之後。
+    // Equal specificity (0,4,0): the later one wins by source order, so the override must come after the justify rule.
     expect(rule!.index).toBeGreaterThan(justifyAt);
     stub(routesV1());
     widthRef.current = 900;
@@ -590,7 +586,7 @@ describe("VersionPreview", () => {
     expect(await screen.findByTestId("diff-split")).toHaveClass("kb-diff-split");
   });
 
-  it("ready：清單背景重抓失敗（data 還在）→ 預覽留著，不變回「正在載入」", async () => {
+  it("ready: a background list refetch fails (data still there) -> the preview stays and does not go back to loading", async () => {
     let failList = false;
     const listUrl = `/api/notes/${NOTE}/versions?limit=50`;
     const calls: string[] = [];
@@ -619,7 +615,7 @@ describe("VersionPreview", () => {
     expect(screen.queryByText("An unexpected error occurred.")).not.toBeInTheDocument();
   });
 
-  it("#258：篩選清單（kind=manual）抓失敗 → 預覽照常顯示 diff，不出現錯誤、不卡在載入（預覽只吃快照，不訂閱清單）", async () => {
+  it("#258: fetching the filtered list (kind=manual) fails -> the preview still shows the diff, no error and no stuck loading (the preview uses only snapshots and does not subscribe to the list)", async () => {
     window.localStorage.setItem(KIND_FILTER_STORAGE_KEY, "manual");
     const calls: string[] = [];
     vi.stubGlobal(
@@ -638,11 +634,10 @@ describe("VersionPreview", () => {
     await waitFor(() => expect(queryClient.getQueryState(versionListKey(NOTE, "manual"))?.status).toBe("error"));
     expect(screen.queryByText("An unexpected error occurred.")).not.toBeInTheDocument();
     expect(screen.queryByText("Loading version…")).not.toBeInTheDocument();
-    // 也沒有為了預覽去抓「全部」那份清單。
     expect(calls).not.toContain(`/api/notes/${NOTE}/versions?limit=50`);
   });
 
-  it("forceSingle（窄視窗整頁）：一律單欄、沒有並排／單欄切換鈕", async () => {
+  it("forceSingle (narrow full page): always single column with no side-by-side / single-column toggle", async () => {
     stub(routesV1());
     widthRef.current = 1600;
     renderPreview({ seq: 1, live: V2, forceSingle: true });
@@ -650,7 +645,7 @@ describe("VersionPreview", () => {
     expect(screen.queryByRole("button", { name: "Side by side" })).not.toBeInTheDocument();
   });
 
-  it("非文字區塊 changed → 「已變更 · 看前後」按鈕，點開是兩顆唯讀 mini editor 的對話框", async () => {
+  it("a changed non-text block -> a see-before-and-after button that opens a dialog with two read-only mini editors", async () => {
     const i1 = [{ id: "I", type: "image", props: { url: "/api/uploads/1" } }];
     const i2 = [{ id: "I", type: "image", props: { url: "/api/uploads/2" } }];
     stub({
@@ -665,7 +660,7 @@ describe("VersionPreview", () => {
     expect(within(dialog).getAllByTestId("diff-pane")).toHaveLength(2);
   });
 
-  it("快照裡的 javascript: 圖片網址不會出現在任何 img src", async () => {
+  it("a javascript: image URL in a snapshot never appears in any img src", async () => {
     const bad = [{ id: "I", type: "image", props: { url: "javascript:alert(1)" } }];
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
@@ -678,7 +673,7 @@ describe("VersionPreview", () => {
     expect(srcs.some((s) => s.startsWith("javascript:"))).toBe(false);
   });
 
-  it("左邊快照 id 不符 → toast「這一版已經不存在」、離開預覽", async () => {
+  it("the left snapshot id mismatches -> a toast that this version no longer exists, and the preview is left", async () => {
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
       [`/api/notes/${NOTE}/versions/1`]: { id: "v-OTHER", seq: 1, ydoc: b64(V1) },
@@ -688,7 +683,7 @@ describe("VersionPreview", () => {
     await waitFor(() => expect(screen.getByTestId("preview-state")).toHaveTextContent("null"));
   });
 
-  it("右邊快照 id 不符 → 右邊回到目前狀態、toast 同一句、不離開預覽", async () => {
+  it("the right snapshot id mismatches -> the right side returns to the current state with the same toast and the preview is not left", async () => {
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(2), ver(1)]),
       [`/api/notes/${NOTE}/versions/2`]: { id: vid(2), seq: 2, ydoc: b64(V2) },
@@ -698,16 +693,16 @@ describe("VersionPreview", () => {
     expect(await screen.findByText("This version no longer exists. The list has been refreshed.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("right-state")).toHaveTextContent('"current"'));
     expect(screen.getByTestId("preview-state")).toHaveTextContent('"seq":2');
-    // 改比活文件（V1）：左 seq 2 → 右 V1：B added
+    // compares with the live document (V1) again: left seq 2 -> right V1: B added
     const view = await screen.findByTestId("diff-single");
     await waitFor(() => expect(view.querySelector('[data-id="B"][data-diff="added"]')).not.toBeNull());
     expect(screen.queryByText("An unexpected error occurred.")).not.toBeInTheDocument();
-    // toast 只出現一次（重設後右快照 query 停用，rightGone 不會再翻 true）。等一段讓可能的第二發有機會出現。
+    // The toast appears once (after the reset the right snapshot query is disabled, so rightGone does not flip to true again). Wait a while so a possible second one has a chance to show up.
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.getAllByText("This version no longer exists. The list has been refreshed.")).toHaveLength(1);
   });
 
-  it("右邊快照讀取失敗（非 id 不符）→ 預覽區顯示通用錯誤、不離開預覽", async () => {
+  it("the right snapshot read fails (not an id mismatch) -> the preview area shows a generic error and the preview is not left", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -724,7 +719,7 @@ describe("VersionPreview", () => {
     expect(screen.getByTestId("preview-state")).toHaveTextContent('"seq":2');
   });
 
-  it("橫幅：三顆模式鈕是圖示鈕（aria-label＋title＝名稱、沒有文字、h-7 w-7）、包在 ml-auto 容器裡置右；沒有 ✕（Close preview）", async () => {
+  it("banner: the three mode buttons are icon buttons (aria-label and title = name, no text, h-7 w-7) inside an ml-auto container aligned right; no close button (Close preview)", async () => {
     stub(routesV1());
     widthRef.current = 900;
     renderPreview({ seq: 1, live: V2 });
@@ -741,12 +736,10 @@ describe("VersionPreview", () => {
     });
     expect(buttons[0]).toHaveAttribute("title", "Side by side");
     expect(buttons[1]).toHaveAttribute("title", "Single column");
-    // 只看差異在並排時停用：title 換成說明。
     expect(buttons[2]).toHaveAttribute("title", "Only changes works in single column");
     expect(buttons[0].querySelector("svg")).toHaveAttribute("data-icon", "columns-2");
     expect(buttons[1].querySelector("svg")).toHaveAttribute("data-icon", "rows-3");
     expect(buttons[2].querySelector("svg")).toHaveAttribute("data-icon", "list-filter");
-    // 三顆同一個 ml-auto 容器（置右；真瀏覽器的實際位置由截圖驗【推】）。
     const group = buttons[0].parentElement!;
     expect(group).toHaveClass("ml-auto");
     expect(buttons[1].parentElement).toBe(group);
@@ -755,7 +748,7 @@ describe("VersionPreview", () => {
     expect(within(banner).queryByRole("button", { name: /close/i })).not.toBeInTheDocument();
   });
 
-  it("橫幅：bg-brand-soft（不是 bg-accent、不是 bg-primary）、「Previewing 名稱 (短 id)」、沒有時間／editors／Compare with；單欄時有左右兩個下拉（中間 →）", async () => {
+  it("banner: bg-brand-soft (not bg-accent or bg-primary), 'Previewing name (short id)', no time / editors / Compare with; in single column there are left and right dropdowns (an arrow between)", async () => {
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
       [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(V1) },
@@ -768,7 +761,6 @@ describe("VersionPreview", () => {
     expect(banner).toHaveClass("flex-nowrap");
     await waitFor(() => expect(within(banner).getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1)));
     expect(within(banner).getByRole("button", { name: "Right side" })).toHaveTextContent("Current state");
-    // 單欄時欄標頭列不存在，整頁上的下拉只有橫幅那一對。
     await screen.findByTestId("diff-single");
     expect(screen.queryByTestId("diff-split-head")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Left side" })).toHaveLength(1);
@@ -779,11 +771,11 @@ describe("VersionPreview", () => {
     expect(banner).not.toHaveTextContent("Compare with");
     expect(banner).not.toHaveTextContent("2026");
     expect(banner).not.toHaveTextContent("Previous version");
-    // 橫幅不再有 ✕；Esc 離開預覽由 NotePage.test「Esc（沒有浮層）」守，面板的離開方式由 VersionsPanel.test 守。
+    // The banner has no close button; leaving the preview with Esc is covered in NotePage.test.tsx and the panel's ways to leave in VersionsPanel.test.tsx.
     expect(within(banner).queryByRole("button", { name: "Close preview" })).not.toBeInTheDocument();
   });
 
-  it("「看前後」對話框開著時換一版預覽 → 對話框關掉，新一版的鈕照常出現", async () => {
+  it("switching the previewed version while the see-before-and-after dialog is open -> the dialog closes and the new version's button appears as usual", async () => {
     const img = (n: number) => [{ id: "I", type: "image", props: { url: `/api/uploads/${n}` } }];
     stub({
       [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(3), ver(2), ver(1)]),
@@ -800,7 +792,7 @@ describe("VersionPreview", () => {
     expect(await screen.findByRole("button", { name: "Changed · see before and after" })).toBeInTheDocument();
   });
 
-  it("#269：變動區塊內的 wikilink 以快取的現行標題呈現（renderDiff 收到 titleOf）；只改快照的區塊不標記；清單重抓、相關標題沒變不重建唯讀編輯器", async () => {
+  it("#269: a wikilink inside a changed block is shown with the cached current title (renderDiff receives titleOf); blocks changed only in the snapshot are not marked; a list refetch with unchanged related titles does not rebuild the read-only editor", async () => {
     const ID = "11111111-1111-4111-8111-111111111111";
     const W1 = [
       { id: "A", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: ID, snapshotTitle: "Old", label: "", anchorBlockId: "" } }, " a"] },
@@ -810,7 +802,7 @@ describe("VersionPreview", () => {
       { id: "A", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: ID, snapshotTitle: "New", label: "", anchorBlockId: "" } }, " b"] },
       { id: "B", type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: ID, snapshotTitle: "New", label: "", anchorBlockId: "" } }] },
     ];
-    // ownerHandle／groupId／slug：未變更區塊 B 由 MemberWikilink 渲染，命中時組 canonicalNotePath（兩者皆缺會 throw）。
+    // ownerHandle / groupId / slug: unchanged block B is rendered by MemberWikilink, which builds canonicalNotePath on a hit (it throws if they are missing).
     const notes = [{ id: ID, title: "Live Title", ownerHandle: "ann", groupId: null, slug: "live-title" }];
     stub({
       "/api/notes": notes,
@@ -821,7 +813,7 @@ describe("VersionPreview", () => {
     });
     const create = vi.spyOn(BlockNoteEditor, "create");
     try {
-      // 不用 renderPreview：未變更區塊 B 的 wikilink 由 MemberWikilink 渲染，它要 Router（useNavigate）——本案自帶 MemoryRouter。
+      // Not renderPreview: unchanged block B's wikilink is rendered by MemberWikilink, which needs a Router (useNavigate); this case brings its own MemoryRouter.
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       const commits = vi.fn();
       render(
@@ -837,14 +829,14 @@ describe("VersionPreview", () => {
       fireEvent.click(screen.getByText("r"));
       queryClient.setQueryData(["notes"], notes);
       const view = await screen.findByTestId("diff-single");
-      // 變動區塊 A 的 wikilink 走 renderDiff 的逐字層：顯示 titleOf 給的現行標題，不是快照 Old／New。
+      // Changed block A's wikilink goes through renderDiff's verbatim layer: it shows the current title from titleOf, not the snapshot's Old/New.
       await waitFor(() => expect(view.querySelector('[data-id="A"]')).toHaveTextContent("Live Title"));
       expect(within(view).queryByText("Old")).not.toBeInTheDocument();
       expect(view.querySelector('[data-id="B"]')?.closest("[data-diff]")?.getAttribute("data-diff") ?? "context").toBe("context");
       const before = create.mock.calls.length;
       const commitsBefore = commits.mock.calls.length;
-      // 清單重抓、多了一篇無關筆記：先等 VersionPreview 子樹確實 commit（hook 訂閱 ["notes"]），再數 create——
-      // 相關標題沒變 ⇒ titleOf 同一個函式 ⇒ 不重建唯讀編輯器。
+      // List refetch with an unrelated extra note: first wait until the VersionPreview subtree has really committed (the hook subscribes to ["notes"]), then count create calls;
+      // unchanged related titles => titleOf is the same function => the read-only editor is not rebuilt.
       act(() => queryClient.setQueryData(["notes"], [...notes, { id: "unrelated", title: "U", ownerHandle: "ann", groupId: null, slug: "u" }]));
       await waitFor(() => expect(commits.mock.calls.length).toBeGreaterThan(commitsBefore));
       expect(create.mock.calls.length).toBe(before);
@@ -853,13 +845,13 @@ describe("VersionPreview", () => {
     }
   });
 
-  it("預覽中的那一版被改名 → 橫幅與左邊觸發鈕立刻換成新名稱（清單那一列優先，不停在選取時記下的名稱）", async () => {
+  it("the previewed version is renamed -> the banner and the left trigger switch to the new name at once (the list row takes precedence over the name remembered at selection)", async () => {
     stub(routesV1());
     const { queryClient } = renderPreview({ seq: 1, live: V2 });
     const banner = await screen.findByTestId("preview-banner");
     await waitFor(() => expect(within(banner).getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1)));
     expect(banner).toHaveTextContent(`Previewing ${vlabel(1)}`);
-    expect(within(banner).getByText(`Previewing ${vlabel(1)}`)).toHaveAttribute("title", vlabel(1)); // 截斷的標籤整句靠 title 看全名
+    expect(within(banner).getByText(`Previewing ${vlabel(1)}`)).toHaveAttribute("title", vlabel(1)); // a truncated label is read in full through title
     act(() => {
       queryClient.setQueryData(versionListKey(NOTE, "all"), {
         pages: [list([ver(2), { ...ver(1), kind: "manual" as const, name: "改好的名字" }])],
@@ -870,7 +862,7 @@ describe("VersionPreview", () => {
     expect(within(banner).getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1, "改好的名字"));
   });
 
-  it("#462：外層有放大功能時，版本預覽的 mermaid 圖仍沒有放大鈕、圖本身也不是按鈕", async () => {
+  it("#462: with an outer zoom feature, the mermaid diagram in the version preview still has no zoom button and the diagram itself is not a button", async () => {
     const blocks = [{ id: "m1", type: "mermaid", props: { code: "graph TD; A-->B;" }, children: [] }] as unknown as DiffBlock[];
     render(
       <ThemeProvider>
@@ -886,8 +878,8 @@ describe("VersionPreview", () => {
     expect(box).not.toHaveAttribute("tabindex");
   });
 
-  describe("並排的 diff 標記與 split 頂層單位", () => {
-    // fixture 形同 version-diff.test.ts 的 VD 案；列與欄一律帶 id。
+  describe("side-by-side diff marks and split top-level units", () => {
+    // The fixture has the same shape as the column-diff cases in version-diff.test.ts; rows and columns always carry ids.
     const P = (text: string, id: string): DiffBlock => ({ id, type: "paragraph", props: {}, content: [{ type: "text", text, styles: {} }], children: [] });
     const col = (id: string, kids: DiffBlock[], width = 1): DiffBlock => ({ id, type: "column", props: { width }, children: kids });
     const row = (id: string, cols: DiffBlock[]): DiffBlock => ({ id, type: "columnList", props: {}, children: cols });
@@ -903,7 +895,7 @@ describe("VersionPreview", () => {
     };
     const colEl = (pane: Element, id: string) => pane.querySelector<HTMLElement>(`[data-node-type="column"][data-id="${id}"]`);
 
-    it("VP1 的只看變更結果建得起來（列的直接子節點全是欄）；c1 欄標 context、欄內 b1 標 changed", async () => {
+    it("the show-only-changes result builds (a row's direct children are all columns); column c1 is marked context and b1 inside it changed", async () => {
       const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b2", "b1")])]), P("z", "z9")];
       const pane = mountDiff(base(), b, true);
       await waitFor(() => expect(colEl(pane, "c1")).toHaveAttribute("data-diff", "context"));
@@ -913,14 +905,14 @@ describe("VersionPreview", () => {
       expect(colEl(pane, "c1")!.querySelector('.bn-block-outer[data-id="b1"]')).toHaveAttribute("data-diff", "changed");
     });
 
-    it("VP2（欄寬 1→2）→ c1 欄 data-diff=changed、c0 欄 context", async () => {
+    it("column width 1 -> 2: column c1 has data-diff=changed and column c0 is context", async () => {
       const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")], 2)]), P("z", "z9")];
       const pane = mountDiff(base(), b);
       await waitFor(() => expect(colEl(pane, "c1")).toHaveAttribute("data-diff", "changed"));
       expect(colEl(pane, "c0")).toHaveAttribute("data-diff", "context");
     });
 
-    it("VP4（刪一列、別處加一列，不收合）→ 被刪的列 data-diff=deleted、r2 data-diff=added，各一", async () => {
+    it("one row deleted and another added elsewhere, without collapsing: the deleted row has data-diff=deleted and r2 has data-diff=added, one each", async () => {
       const a = [P("x", "x0"), row("r1", [col("c0", [P("a", "a1")]), col("c1", [P("b", "b1")])]), P("z", "z9")];
       const b = [P("x", "x0"), P("z", "z9"), row("r2", [col("d0", [P("p", "p1")]), col("d1", [P("q", "q1")])])];
       const pane = mountDiff(a, b);
@@ -928,7 +920,7 @@ describe("VersionPreview", () => {
       expect(pane.querySelectorAll('[data-node-type="columnList"][data-diff="deleted"]')).toHaveLength(1);
     });
 
-    it("VP5（刪 c1、加 c2）合併渲染的列有 3 欄、建得起來：被刪的欄 deleted、c2 added", async () => {
+    it("c1 deleted and c2 added: the merged row renders with 3 columns and builds: the deleted column is deleted, c2 is added", async () => {
       const b = [P("x", "x0"), row("r", [col("c0", [P("a", "a1")]), col("c2", [P("n", "n1")])]), P("z", "z9")];
       const pane = mountDiff(base(), b);
       await waitFor(() => expect(colEl(pane, "c2")).toHaveAttribute("data-diff", "added"));
@@ -937,7 +929,7 @@ describe("VersionPreview", () => {
       expect(pane.querySelectorAll('[data-node-type="columnList"] > [data-node-type="column"]')).toHaveLength(3);
     });
 
-    it("VP3 並排：兩側各 [x, 列, z] → 兩欄頂層單位的 data-diff-row 依序 0、1、2（列算一個頂層單位，列內不逐欄對齊）", async () => {
+    it("side by side: both sides [x, row, z] -> the top-level units of both columns have data-diff-row 0, 1, 2 in order (a row counts as one top-level unit and columns inside it are not aligned one by one)", async () => {
       stub({
         [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
         [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(base()) },
@@ -951,7 +943,7 @@ describe("VersionPreview", () => {
       expect(rowsOf(left)).toEqual([["x0", "0"], ["r", "1"], ["z9", "2"]]);
     });
 
-    it("VP6 單欄預覽、只改欄寬 → 欄標 changed，但沒有「看前後」鈕（對話框只能單獨渲染那一欄、看不出寬度）", async () => {
+    it("single-column preview with only a column width change -> the column is marked changed but there is no see-before-and-after button (the dialog can render only that one column, where the width is invisible)", async () => {
       stub({
         [`/api/notes/${NOTE}/versions?limit=50`]: list([ver(1)]),
         [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(base()) },

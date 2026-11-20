@@ -1,9 +1,9 @@
 /**
- * 資料夾：併發（下）——刪群組（轉移、全刪）、共享放置、結構交易彼此。
- * 作法同 `folders-race.test.ts`：一方卡在自己交易內的縫，另一方送出後以
- * `waitForLockWaiters` 確認它真的在等鎖（**斷言**，不只是等待），放行後斷言勝方、錯誤碼與 DB 終值。每組兩種先後；每案都斷言沒有
- * 409 `server_busy`（40P01 經 `isRetryableTxError` 會變成它）與資料一致——RG-CN 例外：那組真的會死結，斷言的是 40P01 映成 409。
- * RG-PG／RG-DA 照 trash-race 的 RC-DL：測試連線持一篇的列鎖，讓兩方依序排在它後面（heap 序、created_at 序與 id 序相反的兩篇）。
+ * Concurrency (part two): group deletion (transfer, delete-all), shared placement, structure transactions against each other.
+ * Same approach as `folders-race.test.ts`: one side is held at a test hook inside its own transaction, the other is sent, and `waitForLockWaiters` confirms it really waits on a lock
+ * (an **assertion**, not just waiting); after release the winner, error code and final DB state are asserted. Each group runs both orders; every case asserts there is no
+ * 409 `server_busy` (40P01 becomes it via `isRetryableTxError`) and the data is consistent - except the delete-all vs creating-a-note-in-a-group-folder group, which really deadlocks and asserts that 40P01 maps to 409.
+ * The multi-id permanent-delete groups follow trash-race: the test connection holds one note's row lock and the two sides queue behind it in turn (two notes whose heap order and created_at order are opposite to id order).
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
@@ -49,7 +49,7 @@ function failed(r: Res, status: number, code: string): void {
   expect(errCode(r)).toBe(code);
 }
 
-/** 一次性測試縫（`trash-race.test.ts` 的慣例）：`hold` 登記的點第一次觸發時卡住，其餘觸發直接放行。 */
+/** One-shot test hooks (convention of `trash-race.test.ts`): the point registered by `hold` blocks the first time it fires, other firings pass straight through. */
 class Seams {
   private readonly handlers = new Map<string, () => Promise<void>>();
   on(name: GroupRacePoint, fn: () => Promise<void>): void {
@@ -61,7 +61,7 @@ class Seams {
     this.handlers.delete(name);
     await fn();
   }
-  /** 在 name 卡住：`entered` 在進縫時 resolve，`open()` 放行。 */
+  /** Blocks at name: `entered` resolves on entering the hook, `open()` releases. */
   hold(name: GroupRacePoint): { entered: Promise<void>; open: () => void } {
     let open!: () => void;
     let enter!: () => void;
@@ -76,12 +76,12 @@ class Seams {
   readonly group: GroupTestHook = point => this.fire(point);
 }
 
-/** 等請求走進縫；它若先回應了（沒走到縫）就直接失敗，不空等。 */
+/** Waits for the request to enter the hook; if it responds first (never reached the hook) it fails at once instead of waiting idly. */
 async function entered(seam: Promise<void>, req: Promise<Res>): Promise<void> {
   await Promise.race([seam, req.then(r => { throw new Error(`請求沒走到縫就回了 ${r.statusCode} ${r.body}`); })]);
 }
 
-/** 至少 n 條連線在等鎖（5 s 內）→ true；逾時 → false（呼叫端先放行、收尾，再以斷言判）。 */
+/** True if at least n connections are waiting on locks (within 5 s); false on timeout (the caller releases and cleans up first, then asserts). */
 async function sawLockWaiters(pool: Pool, n: number): Promise<boolean> {
   try {
     await waitForLockWaiters(pool, n);
@@ -91,7 +91,7 @@ async function sawLockWaiters(pool: Pool, n: number): Promise<boolean> {
   }
 }
 
-/** 沒有 409 server_busy（40P01／55P03 的映射）、沒有 5xx。鎖序倒置（例：建群組資料夾的結構鎖排到 groups KS 之前）會以 server_busy 在這裡紅。 */
+/** No 409 server_busy (the mapping of 40P01/55P03) and no 5xx. A reversed lock order (e.g. the structure lock of creating a group folder queued before groups KS) turns red here as server_busy. */
 function noBusy(...rs: Res[]): void {
   for (const r of rs) {
     expect(errCode(r), r.body).not.toBe("server_busy");
@@ -105,7 +105,7 @@ interface Scene {
   db: Db;
   pool: Pool;
   seams: Seams;
-  /** 等每一次 `releaseDeletingGate` 跑完（release 是 fire-and-forget）。 */
+  /** Waits for every `releaseDeletingGate` to finish (release is fire-and-forget). */
   gatesSettled(): Promise<void>;
 }
 
@@ -126,9 +126,9 @@ async function scene(): Promise<Scene> {
 }
 
 /**
- * first 卡在 point；second 送出；斷言 second 真的在等鎖、兩者都不是 server_busy／5xx。回 [first, second] 的回應。
- * `holdSecondUntilFirstReplies`：second 拿到鎖、走到這個縫之後，等 first 回完應答才繼續——first commit 之後在鎖外重讀組回應，
- * 不讓 second 搶在重讀前 commit（那會讓 first 偶爾回成 404）。同 `trash-race-ops.test.ts` 的 `opFirst`。
+ * first is held at point; second is sent; asserts second really waits on a lock and neither is server_busy/5xx. Returns the responses [first, second].
+ * `holdSecondUntilFirstReplies`: after second gets the lock and reaches this hook, it waits until first has replied - first re-reads outside the lock after commit
+ * to build its response, and second must not commit ahead of that re-read (that would make first occasionally answer 404). Same as `opFirst` in `trash-race-ops.test.ts`.
  */
 async function race(
   s: Scene,
@@ -137,7 +137,7 @@ async function race(
   second: () => Promise<Res>,
   holdSecondUntilFirstReplies?: GroupRacePoint,
 ): Promise<[Res, Res]> {
-  // Seams 以點名為鍵：同一點後登記的會蓋掉 first 的 hold。
+  // Hooks are keyed by point name: one registered later on the same point overrides first's hold.
   if (holdSecondUntilFirstReplies === point) throw new Error(`holdSecondUntilFirstReplies 不能與 point 同為 ${point}`);
   const h = s.seams.hold(point);
   let replied!: () => void;
@@ -154,7 +154,7 @@ async function race(
   return out;
 }
 
-/** 全庫不變量：沒有筆記或放置指向不存在的資料夾；活筆記沒有快照；父子、筆記與所在資料夾都同空間；資料夾樹無環。 */
+/** Whole-database invariants: no note or placement points at a nonexistent folder; live notes have no snapshot; parent/child and note/folder are in the same space; the folder tree has no cycle. */
 async function expectConsistent(pool: Pool): Promise<void> {
   const { rows } = await pool.query<Record<string, number>>(`select
     (select count(*)::int from notes n where n.folder_id is not null and not exists (select 1 from folders f where f.id = n.folder_id)) as dangling,
@@ -168,7 +168,7 @@ async function expectConsistent(pool: Pool): Promise<void> {
   expect(await cycles(pool)).toBe(0);
 }
 
-/** 遞迴 CTE 由每個資料夾往上走（`CYCLE` 子句偵測重複）；回成環的路徑數。 */
+/** Recursive CTE walks up from each folder (the `CYCLE` clause detects repeats); returns the number of paths that form a cycle. */
 async function cycles(pool: Pool): Promise<number> {
   const { rows } = await pool.query<{ n: number }>(`with recursive up(start_id, id, parent_id) as (
       select id, id, parent_id from folders
@@ -203,14 +203,14 @@ async function folderCountNamed(pool: Pool, name: string): Promise<number> {
   return (await pool.query<{ n: number }>("select count(*)::int as n from folders where name = $1", [name])).rows[0]!.n;
 }
 
-/** 內建管理員 q（發動者）與 r（接收者）的群組。 */
+/** A group whose admins are q (initiator) and r (recipient). */
 async function groupScene(s: Scene) {
   const [q, r] = [await seedUser(s.db), await seedUser(s.db)];
   const g = await seedGroup(s.db, GROUP_NAME, [{ userId: q.id, role: "admin" }, { userId: r.id, role: "admin" }]);
   return { q: q.id, r: r.id, g: g.id };
 }
 
-/** 測試連線持一篇的列鎖；回放鎖函式。 */
+/** The test connection holds one note's row lock; returns the release function. */
 async function holdRow(pool: Pool, id: string): Promise<() => Promise<void>> {
   const client: PoolClient = await pool.connect();
   await client.query("begin");
@@ -224,7 +224,7 @@ async function holdRow(pool: Pool, id: string): Promise<() => Promise<void>> {
   };
 }
 
-/** holder 持 rowId → first 排在它上（等 1）→ second 排上（等 2）→ 放掉。斷言兩段等待都有發生、都不是 server_busy／5xx。 */
+/** holder holds rowId -> first queues on it (waiter count 1) -> second queues (2) -> release. Asserts both waits happened and neither is server_busy/5xx. */
 async function queueBehind(s: Scene, rowId: string, first: () => Promise<Res>, second: () => Promise<Res>): Promise<[Res, Res]> {
   const release = await holdRow(s.pool, rowId);
   let p1: Promise<Res> | undefined;
@@ -245,8 +245,8 @@ async function queueBehind(s: Scene, rowId: string, first: () => Promise<Res>, s
 }
 
 /**
- * RG-PG／RG-DA 的場景（`deleteall3`／`purgeB` 形）：群組資料夾 F 裡兩篇垃圾桶筆記 a < b（id），但 b 先插（heap 序在前）、
- * slug 較小、created_at 較早——舊的全刪（不帶 ORDER BY）與轉移（依 created_at）都是 b 先鎖；永久刪除依 id 是 a 先。
+ * Scenario of the group-trash multi-id cases: two trashed notes a < b (by id) in group folder F, but b was inserted first (earlier in heap order), has the smaller slug
+ * and earlier created_at - old delete-all (no ORDER BY) and transfer (by created_at) both lock b first; permanent delete by id locks a first.
  */
 async function lockOrderScene(s: Scene) {
   const t = await groupScene(s);
@@ -255,7 +255,7 @@ async function lockOrderScene(s: Scene) {
   const now = Date.now();
   await s.db.insert(notes).values({ id: b, groupId: t.g, slug: "dl-1", folderId: F, createdAt: new Date(now - 60_000) });
   await s.db.insert(notes).values({ id: a, groupId: t.g, slug: "dl-2", folderId: F, createdAt: new Date(now) });
-  // 移入是 UPDATE、寫新的 tuple：照 b、a 的順序一句寫完，新版本的實體順序才維持 b 先。
+  // Moving to the trash is an UPDATE that writes new tuples: update b, then a, so the new versions keep b first in physical order.
   for (const id of [b, a]) {
     await s.pool.query(`update notes set deleted_at = now(), deleted_by = $2, trash_folder_path = '["F"]'::jsonb where id = $1`, [id, t.q]);
   }
@@ -264,8 +264,8 @@ async function lockOrderScene(s: Scene) {
   return { ...t, F, a, b };
 }
 
-describe("RG-PG 轉移與多 id 永久刪除群組垃圾桶筆記（依 id 鎖）", () => {
-  it("永久刪除先（排在 a 上）：永久刪除 200 purged [a, b]；轉移 204、轉走 0 篇，F 照樣收進接收者的新頂層", async () => {
+describe("transfer vs multi-id permanent delete of group trash notes (locks by id)", () => {
+  it("permanent delete first (queued on a): permanent delete 200 purged [a, b]; transfer 204, 0 notes transferred, F is still taken into the recipient's new top level", async () => {
     const s = await scene();
     const t = await lockOrderScene(s);
     const [pr, dr] = await queueBehind(s, t.a, () => purge(s.app, t.q, [t.a, t.b]), () => transfer(s.app, t.q, t.g, t.r));
@@ -279,7 +279,7 @@ describe("RG-PG 轉移與多 id 永久刪除群組垃圾桶筆記（依 id 鎖�
     await expectConsistent(s.pool);
   });
 
-  it("轉移先（排在 b 上、已鎖 a）：轉移 204、兩篇成了接收者垃圾桶裡的個人筆記（仍在 F）；永久刪除等 a → 發動者已無垃圾桶權 → 兩篇都 skipped not_found", async () => {
+  it("transfer first (queued on b, already holds a): transfer 204, both notes become personal notes in the recipient's trash (still in F); permanent delete waits for a -> the initiator no longer has trash rights -> both skipped not_found", async () => {
     const s = await scene();
     const t = await lockOrderScene(s);
     const [dr, pr] = await queueBehind(s, t.b, () => transfer(s.app, t.q, t.g, t.r), () => purge(s.app, t.q, [t.a, t.b]));
@@ -295,8 +295,8 @@ describe("RG-PG 轉移與多 id 永久刪除群組垃圾桶筆記（依 id 鎖�
   });
 });
 
-describe("RG-DA 全刪與多 id 永久刪除（heap 序與 id 序相反）", () => {
-  it("永久刪除先（排在 a 上）：永久刪除 200 purged [a, b]；全刪 204、群組與資料夾都不在", async () => {
+describe("delete-all vs multi-id permanent delete (heap order opposite to id order)", () => {
+  it("permanent delete first (queued on a): permanent delete 200 purged [a, b]; delete-all 204, group and folders gone", async () => {
     const s = await scene();
     const t = await lockOrderScene(s);
     const [pr, dr] = await queueBehind(s, t.a, () => purge(s.app, t.q, [t.a, t.b]), () => deleteAll(s.app, t.q, t.g));
@@ -308,7 +308,7 @@ describe("RG-DA 全刪與多 id 永久刪除（heap 序與 id 序相反）", () 
     await expectConsistent(s.pool);
   });
 
-  it("全刪先（排在 b 上、已鎖 a）：全刪 204；永久刪除等 a → 兩篇已不在 → 兩篇都 skipped not_found", async () => {
+  it("delete-all first (queued on b, already holds a): delete-all 204; permanent delete waits for a -> both notes are gone -> both skipped not_found", async () => {
     const s = await scene();
     const t = await lockOrderScene(s);
     const [dr, pr] = await queueBehind(s, t.b, () => deleteAll(s.app, t.q, t.g), () => purge(s.app, t.q, [t.a, t.b]));
@@ -321,8 +321,8 @@ describe("RG-DA 全刪與多 id 永久刪除（heap 序與 id 序相反）", () 
   });
 });
 
-describe("RG-FC 轉移與建群組資料夾", () => {
-  it("轉移先（停在 group-delete-locked，持 lockGroup、還沒取結構鎖）：建在群組根層的請求在 groups KS 上等 → 轉移 commit 後 404 group_not_found、沒有建出資料夾", async () => {
+describe("transfer vs creating a group folder", () => {
+  it("transfer first (stopped at group-delete-locked, holds lockGroup, hasn't taken the structure lock yet): a request creating at the group root waits on groups KS -> after the transfer commits 404 group_not_found, no folder created", async () => {
     const s = await scene();
     const t = await groupScene(s);
     const A = (await seedFolder(s.db, { group: t.g }, { name: "A" })).id;
@@ -337,7 +337,7 @@ describe("RG-FC 轉移與建群組資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("轉移先，建在群組資料夾 A 底下：在 groups KS 上等 → 404 folder_not_found（以資料夾 id 進來）、A 底下沒有新資料夾", async () => {
+  it("transfer first, creating under group folder A: waits on groups KS -> 404 folder_not_found (arrives by folder id), no new folder under A", async () => {
     const s = await scene();
     const t = await groupScene(s);
     const A = (await seedFolder(s.db, { group: t.g }, { name: "A" })).id;
@@ -350,14 +350,14 @@ describe("RG-FC 轉移與建群組資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("建立先（停在 folder-structure-locked，持 groups KS 與結構鎖）：轉移在 lockGroup 上等 → 建立 201；轉移看得到它，它在接收者的新頂層底下", async () => {
+  it("create first (stopped at folder-structure-locked, holds groups KS and the structure lock): transfer waits on lockGroup -> create 201; the transfer sees it, and it ends up under the recipient's new top level", async () => {
     const s = await scene();
     const t = await groupScene(s);
     const [cr, dr] = await race(s, "folder-structure-locked", () =>
       createFolder(s.app, t.q, { name: "S", space: { kind: "group", groupId: t.g } }), () => transfer(s.app, t.q, t.g, t.r));
     const S = okJson<FolderDto>(cr, 201).id;
     expect(dr.statusCode, dr.body).toBe(204);
-    // 群組原本沒有資料夾：新頂層是因為轉移看到了 S 才建的。
+    // The group had no folders: the new top level is created because the transfer saw S.
     const roots = await personalRoots(s.pool, t.r);
     expect(roots.map(f => f.name)).toEqual([GROUP_NAME]);
     expect(await folderRow(s.pool, S)).toMatchObject({ kind: "personal", owner_id: t.r, group_id: null, parent_id: roots[0]!.id, name: "S" });
@@ -365,7 +365,7 @@ describe("RG-FC 轉移與建群組資料夾", () => {
   });
 });
 
-describe("RG-FD 轉移與刪群組資料夾", () => {
+describe("transfer vs deleting a group folder", () => {
   async function setup(s: Scene) {
     const t = await groupScene(s);
     const [F, G] = await seedFolderChain(s.db, { group: t.g }, ["F", "G"]);
@@ -373,7 +373,7 @@ describe("RG-FD 轉移與刪群組資料夾", () => {
     return { ...t, F: F!, G: G!, a };
   }
 
-  it("轉移先（停在 group-delete-locked）：刪在 groups KS 上等 → 404 folder_not_found、什麼都沒移入垃圾桶；F 整棵在接收者的新頂層底下、a 活在 F、閘門已收", async () => {
+  it("transfer first (stopped at group-delete-locked): delete waits on groups KS -> 404 folder_not_found, nothing moved to the trash; the whole of F is under the recipient's new top level, a is live in F, gates released", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, fr] = await race(s, "group-delete-locked", () => transfer(s.app, t.q, t.g, t.r), () => delFolder(s.app, t.r, t.F));
@@ -391,7 +391,7 @@ describe("RG-FD 轉移與刪群組資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("刪先（停在 folder-delete-notes-locked）：轉移在 lockGroup 上等 → 刪 200；轉移後 F 不在、a 在垃圾桶並轉給接收者、快照前接新頂層名", async () => {
+  it("delete first (stopped at folder-delete-notes-locked): transfer waits on lockGroup -> delete 200; after the transfer F is gone, a is in the trash and handed to the recipient, snapshot prefixed with the new top-level name", async () => {
     const s = await scene();
     const t = await setup(s);
     const [fr, dr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.r, t.F), () => transfer(s.app, t.q, t.g, t.r));
@@ -402,12 +402,12 @@ describe("RG-FD 轉移與刪群組資料夾", () => {
     expect((await trashCols(s.pool, t.a))?.deleted_at).not.toBeNull();
     expect(await ownerOf(s.pool, t.a)).toEqual({ owner_id: t.r, group_id: null });
     expect(await noteFolderCols(s.pool, t.a)).toEqual({ folder_id: null, trash_folder_path: [GROUP_NAME, "F"] });
-    // 群組已沒有資料夾，新頂層是為了帶快照的垃圾桶筆記建的。
+    // The group has no folders any more; the new top level is created for the trashed note with a snapshot.
     expect((await personalRoots(s.pool, t.r)).map(f => f.name)).toEqual([GROUP_NAME]);
     await expectConsistent(s.pool);
   });
 
-  it("刪的預讀與開閘門之後、交易之前群組被轉移完：交易內 404 folder_not_found、接收者的 F 與 a 都沒動、閘門已收", async () => {
+  it("group fully transferred after the delete's pre-read and gate opening, before the transaction: inside the transaction 404 folder_not_found, the recipient's F and a untouched, gates released", async () => {
     const s = await scene();
     const t = await setup(s);
     const h = s.seams.hold("folder-delete-gated");
@@ -433,8 +433,8 @@ describe("RG-FD 轉移與刪群組資料夾", () => {
   });
 });
 
-describe("RG-RS 轉移與還原群組垃圾桶筆記（照路徑重建）", () => {
-  /** tn 在群組垃圾桶、根層、快照 ["F","X"]：F 還在、X 已不在。 */
+describe("transfer vs restoring group trash notes (rebuild by path)", () => {
+  /** tn is in the group trash, at root, snapshot ["F","X"]: F still exists, X is gone. */
   async function setup(s: Scene) {
     const t = await groupScene(s);
     const F = (await seedFolder(s.db, { group: t.g }, { name: "F" })).id;
@@ -444,11 +444,11 @@ describe("RG-RS 轉移與還原群組垃圾桶筆記（照路徑重建）", () =
     return { ...t, F, tn };
   }
 
-  it("還原先（停在 note-restore-locked，持 groups KS、結構鎖、筆記鎖）：轉移在 lockGroup 上等 → 還原 200、X 重建在 F 底下；轉移把 F›X 與 tn 一起收進接收者的新頂層", async () => {
+  it("restore first (stopped at note-restore-locked, holds groups KS, structure lock, note lock): transfer waits on lockGroup -> restore 200, X rebuilt under F; transfer takes F>X and tn together into the recipient's new top level", async () => {
     const s = await scene();
     const t = await setup(s);
     const rh = s.seams.hold("note-restore-locked");
-    // 轉移拿到鎖之後卡在第一個 slug 候選，等還原的回應（commit 後的重讀）回完才放行——否則重讀與轉移 commit 競速。
+    // After the transfer gets its locks it stops at the first slug candidate and waits for the restore's response (the re-read after commit) to finish - otherwise the re-read would race the transfer's commit.
     const th = s.seams.hold("group-transfer-slug-candidate");
     const restoring = restore(s.app, t.q, [t.tn]);
     await entered(rh.entered, restoring);
@@ -477,7 +477,7 @@ describe("RG-RS 轉移與還原群組垃圾桶筆記（照路徑重建）", () =
     await expectConsistent(s.pool);
   });
 
-  it("轉移先（停在 group-delete-locked），由另一位管理員還原：還原在 groups KS 上等 → 轉移後已無垃圾桶權 → skipped not_found；tn 在接收者垃圾桶、快照前接新頂層名", async () => {
+  it("transfer first (stopped at group-delete-locked), restored by another admin: restore waits on groups KS -> after the transfer no trash rights -> skipped not_found; tn in the recipient's trash, snapshot prefixed with the new top-level name", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, rr] = await race(s, "group-delete-locked", () => transfer(s.app, t.q, t.g, t.r), () => restore(s.app, t.q, [t.tn]));
@@ -490,7 +490,7 @@ describe("RG-RS 轉移與還原群組垃圾桶筆記（照路徑重建）", () =
     await expectConsistent(s.pool);
   });
 
-  it("轉移先，由接收者還原：還原在 groups KS 上等 → 轉移後是接收者的個人筆記、空間不在已取的鎖鍵裡 → 不重建、還原到接收者根層", async () => {
+  it("transfer first, restored by the recipient: restore waits on groups KS -> after the transfer it is the recipient's personal note and its space isn't among the locks already taken -> not rebuilt, restored to the recipient's root", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, rr] = await race(s, "group-delete-locked", () => transfer(s.app, t.q, t.g, t.r), () => restore(s.app, t.r, [t.tn]));
@@ -505,8 +505,8 @@ describe("RG-RS 轉移與還原群組垃圾桶筆記（照路徑重建）", () =
   });
 });
 
-describe("RG-RN 轉移與接收者改名個人根層資料夾（改成群組名）", () => {
-  /** 群組有資料夾 A（轉移會建新頂層）；接收者根層有 O「Old」。轉移由 q 發動、轉給 r（發動者 ≠ 接收者）。 */
+describe("transfer vs the recipient renaming a personal root folder (to the group name)", () => {
+  /** The group has folder A (the transfer creates a new top level); the recipient's root has O 'Old'. The transfer is initiated by q and given to r (initiator != recipient). */
   async function setup(s: Scene) {
     const t = await groupScene(s);
     const A = (await seedFolder(s.db, { group: t.g }, { name: "A" })).id;
@@ -514,7 +514,7 @@ describe("RG-RN 轉移與接收者改名個人根層資料夾（改成群組名�
     return { ...t, A, O };
   }
 
-  it("改名先（停在 folder-structure-locked，持接收者結構鎖）：轉移在接收者結構鎖上等 → 改名 200；新頂層是「研發組 (2)」、A 在它底下", async () => {
+  it("rename first (stopped at folder-structure-locked, holds the recipient's structure lock): transfer waits on the recipient's structure lock -> rename 200; the new top level is '研發組 (2)', A under it", async () => {
     const s = await scene();
     const t = await setup(s);
     const [nr, dr] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.r, t.O, { name: GROUP_NAME }), () => transfer(s.app, t.q, t.g, t.r));
@@ -527,7 +527,7 @@ describe("RG-RN 轉移與接收者改名個人根層資料夾（改成群組名�
     await expectConsistent(s.pool);
   });
 
-  it("轉移先（停在 folder-structure-locked，持群組與接收者結構鎖）：改名在接收者結構鎖上等 → 轉移 204、新頂層「研發組」；改名 409 folder_name_taken、O 仍叫 Old", async () => {
+  it("transfer first (stopped at folder-structure-locked, holds the group and recipient structure locks): rename waits on the recipient's structure lock -> transfer 204, new top level '研發組'; rename 409 folder_name_taken, O still named Old", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, nr] = await race(s, "folder-structure-locked", () => transfer(s.app, t.q, t.g, t.r), () => patchFolder(s.app, t.r, t.O, { name: GROUP_NAME }));
@@ -541,8 +541,8 @@ describe("RG-RN 轉移與接收者改名個人根層資料夾（改成群組名�
   });
 });
 
-describe("RG-DF 全刪與刪群組資料夾", () => {
-  /** 群組 F›G；F 裡活筆記 a、G 裡垃圾桶筆記 tg。 */
+describe("delete-all vs deleting a group folder", () => {
+  /** Group F>G; live note a in F, trashed note tg in G. */
   async function setup(s: Scene) {
     const t = await groupScene(s);
     const [F, G] = await seedFolderChain(s.db, { group: t.g }, ["F", "G"]);
@@ -553,7 +553,7 @@ describe("RG-DF 全刪與刪群組資料夾", () => {
     return { ...t, F: F!, G: G!, a, tg };
   }
 
-  it("全刪先（停在 group-delete-locked）：刪資料夾在 groups KS 上等 → 404 folder_not_found；全刪 204、群組、資料夾、兩篇都不在", async () => {
+  it("delete-all first (stopped at group-delete-locked): deleting the folder waits on groups KS -> 404 folder_not_found; delete-all 204, group, folders and both notes gone", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, fr] = await race(s, "group-delete-locked", () => deleteAll(s.app, t.q, t.g), () => delFolder(s.app, t.q, t.F));
@@ -565,7 +565,7 @@ describe("RG-DF 全刪與刪群組資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("刪資料夾先（停在 folder-delete-notes-locked）：全刪在 lockGroup 上等 → 刪 200（a 移入垃圾桶、F›G 刪掉）；全刪 204、垃圾桶裡的兩篇也被刪掉", async () => {
+  it("delete the folder first (stopped at folder-delete-notes-locked): delete-all waits on lockGroup -> delete 200 (a goes to the trash, F>G deleted); delete-all 204, the two notes in the trash are deleted too", async () => {
     const s = await scene();
     const t = await setup(s);
     const [fr, dr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.q, t.F), () => deleteAll(s.app, t.q, t.g));
@@ -578,10 +578,10 @@ describe("RG-DF 全刪與刪群組資料夾", () => {
   });
 });
 
-describe("RG-CN 全刪與在群組資料夾建立筆記（FK 檢查序是 pg_dump 還原後的樣子）", () => {
+describe("delete-all vs creating a note in a group folder (FK check order is as after a pg_dump restore)", () => {
   /**
-   * 同表的 RI 觸發器依名稱（`RI_ConstraintTrigger_c_<oid>`）序觸發。重建群組 FK 讓它的 OID 變大 → INSERT 先檢查資料夾 FK
-   * （pg_dump 依名稱建 FK、還原後就是這個序）。只動本案的資料庫（每案一個新庫）。
+   * Same-table RI triggers fire in name order (`RI_ConstraintTrigger_c_<oid>`). Recreating the group FK gives it a larger OID -> the INSERT checks the folder FK first
+   * (pg_dump creates FKs by name, so this is the order after a restore). Only touches this case's database (one new database per case).
    */
   async function flipFkOrder(pool: Pool): Promise<void> {
     await pool.query(`alter table notes drop constraint notes_group_id_groups_id_fk;
@@ -593,7 +593,7 @@ describe("RG-CN 全刪與在群組資料夾建立筆記（FK 檢查序是 pg_dum
   }
 
   for (const withContent of [false, true]) {
-    it(`全刪先（停在 group-delete-locked）${withContent ? "、帶 content" : ""}：INSERT 持 F 的 KS、在 groups KS 上等，全刪 CASCADE 刪 F 等 INSERT → 40P01；犧牲方 409 server_busy、另一方成功，建立方不是 5xx`, async () => {
+    it(`delete-all first (stopped at group-delete-locked)${withContent ? ", with content" : ""}: the INSERT holds F's KS and waits on groups KS, delete-all's CASCADE delete of F waits for the INSERT -> 40P01; the victim gets 409 server_busy, the other succeeds, the create side is never a 5xx`, async () => {
       const s = await scene();
       const t = await groupScene(s);
       const F = (await seedFolder(s.db, { group: t.g }, { name: "F" })).id;
@@ -609,14 +609,14 @@ describe("RG-CN 全刪與在群組資料夾建立筆記（FK 檢查序是 pg_dum
       expect(cr.statusCode, cr.body).toBeLessThan(500);
       expect(dr.statusCode, dr.body).toBeLessThan(500);
       if (errCode(cr) === "server_busy") {
-        // 一般時序：先開始等的 INSERT 先跑死結偵測、是犧牲者。
+        // Normal timing: the INSERT that started waiting first runs deadlock detection first and is the victim.
         expect(cr.statusCode, cr.body).toBe(409);
         expect(dr.statusCode, dr.body).toBe(204);
         expect(await groupExists(s.pool, t.g)).toBe(false);
         expect(await folderRow(s.pool, F)).toBeUndefined();
         expect((await s.pool.query("select 1 from notes where group_id = $1", [t.g])).rowCount).toBe(0);
       } else {
-        // INSERT 的偵測在成環前就跑過了 → 全刪是犧牲者、什麼都沒刪。
+        // The INSERT's detection ran before the cycle formed -> delete-all is the victim and nothing was deleted.
         failed(dr, 409, "server_busy");
         const n = okJson<NoteDto>(cr, 201);
         expect(await noteFolderCols(s.pool, n.id)).toEqual({ folder_id: F, trash_folder_path: null });
@@ -627,8 +627,8 @@ describe("RG-CN 全刪與在群組資料夾建立筆記（FK 檢查序是 pg_dum
   }
 });
 
-describe("共享放置與撤分享（API 版）", () => {
-  /** 擁有者 o 把 n 分享給 editor e；e 有自己的共享私人資料夾 SE。 */
+describe("shared placement vs share revocation (API version)", () => {
+  /** Owner o shares n with editor e; e has her own private shared folder SE. */
   async function setup(s: Scene) {
     const [o, e] = [await seedUser(s.db), await seedUser(s.db)];
     const n = await noteIn(s, { ownerId: o.id }, null);
@@ -637,7 +637,7 @@ describe("共享放置與撤分享（API 版）", () => {
     return { o: o.id, e: e.id, n, SE };
   }
 
-  it("放置先（停在 note-folder-locked，交易內已重判、upsert 之前）：撤分享不鎖 notes、直接 204 → 放行 → 放置撞分享 FK → 404 not_found、沒有放置列", async () => {
+  it("placement first (stopped at note-folder-locked, re-judged inside the transaction, before the upsert): revoking the share doesn't lock notes and returns 204 at once -> release -> the placement hits the share FK -> 404 not_found, no placement row", async () => {
     const s = await scene();
     const t = await setup(s);
     const h = s.seams.hold("note-folder-locked");
@@ -660,7 +660,7 @@ describe("共享放置與撤分享（API 版）", () => {
     await expectConsistent(s.pool);
   });
 
-  it("撤分享先（放置停在 note-folder-authorized，交易外授權之後）：撤分享 204 → 放置的交易內重判看不到這篇 → 404 not_found、沒有放置列", async () => {
+  it("revoke first (placement stopped at note-folder-authorized, after authorization outside the transaction): revoke 204 -> the placement's in-transaction re-judgement doesn't see the note -> 404 not_found, no placement row", async () => {
     const s = await scene();
     const t = await setup(s);
     const h = s.seams.hold("note-folder-authorized");
@@ -681,7 +681,7 @@ describe("共享放置與撤分享（API 版）", () => {
   });
 });
 
-describe("RS-MM 搬資料夾與搬資料夾（互為父子）", () => {
+describe("moving folders vs moving folders (parent and child of each other)", () => {
   async function setup(s: Scene) {
     const u = (await seedUser(s.db)).id;
     const A = (await seedFolder(s.db, { personal: u }, { name: "A" })).id;
@@ -689,7 +689,7 @@ describe("RS-MM 搬資料夾與搬資料夾（互為父子）", () => {
     return { u, A, B };
   }
 
-  it("A 進 B 先（停在 folder-structure-locked）：B 進 A 在結構鎖上等 → A 200 在 B 底下；B 409 folder_cycle、仍在根層；樹無環", async () => {
+  it("A into B first (stopped at folder-structure-locked): B into A waits on the structure lock -> A 200 under B; B 409 folder_cycle, still at root; tree has no cycle", async () => {
     const s = await scene();
     const t = await setup(s);
     const [ar, br] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.u, t.A, { parentId: t.B }), () => patchFolder(s.app, t.u, t.B, { parentId: t.A }));
@@ -700,7 +700,7 @@ describe("RS-MM 搬資料夾與搬資料夾（互為父子）", () => {
     await expectConsistent(s.pool);
   });
 
-  it("B 進 A 先：A 進 B 在結構鎖上等 → B 200 在 A 底下；A 409 folder_cycle、仍在根層；樹無環", async () => {
+  it("B into A first: A into B waits on the structure lock -> B 200 under A; A 409 folder_cycle, still at root; tree has no cycle", async () => {
     const s = await scene();
     const t = await setup(s);
     const [br, ar] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.u, t.B, { parentId: t.A }), () => patchFolder(s.app, t.u, t.A, { parentId: t.B }));
@@ -712,7 +712,7 @@ describe("RS-MM 搬資料夾與搬資料夾（互為父子）", () => {
   });
 });
 
-describe("RS-CC 建立與建立同名（lower() 比對）", () => {
+describe("create vs create with the same name (lower() comparison)", () => {
   async function setup(s: Scene) {
     const u = (await seedUser(s.db)).id;
     const P = (await seedFolder(s.db, { personal: u }, { name: "P" })).id;
@@ -723,7 +723,7 @@ describe("RS-CC 建立與建立同名（lower() 比對）", () => {
   }
 
   for (const [first, second] of [["Docs", "docs"], ["docs", "Docs"]] as const) {
-    it(`「${first}」先（停在 folder-structure-locked）：「${second}」在結構鎖上等 → 「${first}」201；「${second}」409 folder_name_taken、P 底下只有一個`, async () => {
+    it(`'${first}' first (stopped at folder-structure-locked): '${second}' waits on the structure lock -> '${first}' 201; '${second}' 409 folder_name_taken, only one under P`, async () => {
       const s = await scene();
       const t = await setup(s);
       const [r1, r2] = await race(s, "folder-structure-locked", () => createFolder(s.app, t.u, { name: first, parentId: t.P }), () =>
@@ -736,8 +736,8 @@ describe("RS-CC 建立與建立同名（lower() 比對）", () => {
   }
 });
 
-describe("RS-RR 改名與還原照路徑重建同名", () => {
-  /** 根層 O「Old」；tn 在垃圾桶、根層、快照 ["Docs"]（原資料夾已不在）。 */
+describe("rename vs restore rebuilding the same name by path", () => {
+  /** Root O 'Old'; tn is in the trash, at root, snapshot ["Docs"] (the original folder is gone). */
   async function setup(s: Scene) {
     const u = (await seedUser(s.db)).id;
     const O = (await seedFolder(s.db, { personal: u }, { name: "Old" })).id;
@@ -747,7 +747,7 @@ describe("RS-RR 改名與還原照路徑重建同名", () => {
     return { u, O, tn };
   }
 
-  it("還原先（停在 note-restore-locked，持結構鎖）：改名在結構鎖上等 → 還原 200、重建出新的「Docs」；改名 409 folder_name_taken、O 仍叫 Old", async () => {
+  it("restore first (stopped at note-restore-locked, holds the structure lock): rename waits on the structure lock -> restore 200, a new 'Docs' rebuilt; rename 409 folder_name_taken, O still named Old", async () => {
     const s = await scene();
     const t = await setup(s);
     const [rr, nr] = await race(s, "note-restore-locked", () => restore(s.app, t.u, [t.tn]), () => patchFolder(s.app, t.u, t.O, { name: "Docs" }));
@@ -760,7 +760,7 @@ describe("RS-RR 改名與還原照路徑重建同名", () => {
     await expectConsistent(s.pool);
   });
 
-  it("改名先（停在 folder-structure-locked）：還原在結構鎖上等 → 改名 200「DOCS」；還原以 lower() 併進 O、不另建", async () => {
+  it("rename first (stopped at folder-structure-locked): restore waits on the structure lock -> rename 200 'DOCS'; restore merges into O via lower(), no new one created", async () => {
     const s = await scene();
     const t = await setup(s);
     const [nr, rr] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.u, t.O, { name: "DOCS" }), () => restore(s.app, t.u, [t.tn]));
@@ -772,7 +772,7 @@ describe("RS-RR 改名與還原照路徑重建同名", () => {
   });
 });
 
-describe("RN-TR 放置與移入垃圾桶（同篇）", () => {
+describe("placement vs moving to the trash (same note)", () => {
   async function setup(s: Scene) {
     const u = (await seedUser(s.db)).id;
     const F1 = (await seedFolder(s.db, { personal: u }, { name: "F1" })).id;
@@ -781,10 +781,10 @@ describe("RN-TR 放置與移入垃圾桶（同篇）", () => {
     return { u, F1, F2, n };
   }
 
-  it("放置先（停在 note-folder-locked，持筆記 FU）：移入在筆記鎖上等 → 放置 200；移入 204、快照是新位置", async () => {
+  it("placement first (stopped at note-folder-locked, holds note FU): move to trash waits on the note lock -> placement 200; move 204, snapshot is the new position", async () => {
     const s = await scene();
     const t = await setup(s);
-    // 移入在放置 commit 時拿到筆記鎖；停在 note-trash-locked 等放置回完應答，不和放置 commit 後的重讀競速。
+    // The move gets the note lock when the placement commits; it stops at note-trash-locked to wait for the placement's response to finish, so it doesn't race the placement's post-commit re-read.
     const [pr, tr] = await race(s, "note-folder-locked", () => place(s.app, t.u, t.n, t.F2), () => trashNote(s.app, t.u, t.n), "note-trash-locked");
     expect(okJson<NoteDto>(pr, 200).folderId).toBe(t.F2);
     expect(tr.statusCode, tr.body).toBe(204);
@@ -793,7 +793,7 @@ describe("RN-TR 放置與移入垃圾桶（同篇）", () => {
     await expectConsistent(s.pool);
   });
 
-  it("移入先（停在 note-trash-locked）：放置在筆記鎖上等 → 移入 204；放置 404 not_found、位置與快照是原處", async () => {
+  it("move first (stopped at note-trash-locked): placement waits on the note lock -> move 204; placement 404 not_found, position and snapshot are the original", async () => {
     const s = await scene();
     const t = await setup(s);
     const [tr, pr] = await race(s, "note-trash-locked", () => trashNote(s.app, t.u, t.n), () => place(s.app, t.u, t.n, t.F2));
@@ -805,8 +805,8 @@ describe("RN-TR 放置與移入垃圾桶（同篇）", () => {
   });
 });
 
-describe("RN-CM 複製（建立副本）與來源移入群組", () => {
-  /** 管理員 u 的個人資料夾 P 裡一篇 n；群組資料夾 GF。 */
+describe("copy ('make a copy') vs moving the source into a group", () => {
+  /** Admin u has note n in personal folder P; group folder GF. */
   async function setup(s: Scene) {
     const g = await sixRoleScene(s.db);
     const u = g.admin.id;
@@ -823,7 +823,7 @@ describe("RN-CM 複製（建立副本）與來源移入群組", () => {
     return rows;
   }
 
-  it("複製先（停在 note-copy-locked，持 P 與來源 KS）：移入在來源 FU 上等 → 複製 201 在 P；移入 200 到 GF", async () => {
+  it("copy first (stopped at note-copy-locked, holds P and source KS): move waits on source FU -> copy 201 in P; move 200 into GF", async () => {
     const s = await scene();
     const t = await setup(s);
     const [cr, mr] = await race(s, "note-copy-locked", () => copy(s.app, t.u, t.n, { folderId: t.P }), () => move(s.app, t.u, t.n, { groupId: t.groupId, folderId: t.GF }));
@@ -836,7 +836,7 @@ describe("RN-CM 複製（建立副本）與來源移入群組", () => {
     await expectConsistent(s.pool);
   });
 
-  it("移入先（停在 note-move-locked，持來源 FU、groups KS、GF KS）：複製在來源 KS 上等 → 移入 200；複製 201、副本仍在 P（個人）", async () => {
+  it("move first (stopped at note-move-locked, holds source FU, groups KS, GF KS): copy waits on source KS -> move 200; copy 201, the copy is still in P (personal)", async () => {
     const s = await scene();
     const t = await setup(s);
     const [mr, cr] = await race(s, "note-move-locked", () => move(s.app, t.u, t.n, { groupId: t.groupId, folderId: t.GF }), () => copy(s.app, t.u, t.n, { folderId: t.P }));

@@ -7,16 +7,11 @@ import App from "./App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * Issue #66 接線案 12：釘預設匯出的 App() 最外層**真的**包了 AppErrorBoundary——
- * 其餘測試都只 render AppRoutes，app 級那層在那些路徑上根本不會被執行到。
+ * Pins that the default-exported App() really wraps its outermost layer in AppErrorBoundary. Other tests render only AppRoutes, so that layer never runs there.
  *
- * 獨立成第三個檔案（不與案 11/11a 同檔）：這裡的 vi.mock("./pages/HomePage") 是
- * 檔案級 hoisted，同檔的話任何走到 `/` 的案子都會莫名拿到 app 級 fallback。
+ * Kept in its own file: vi.mock("./pages/HomePage") is hoisted file-wide, so in a shared file any case reaching `/` would get the app-level fallback.
  *
- * 前提：render 預設匯出 App＝內含 BrowserRouter，讀真實 window.location——
- * **不得 stub location**（router 會拿到假 Location 而炸）；vitest jsdom 環境預設
- * URL 是 http://localhost:3000/，pathname `/` 走 catch-all → HomePage（mock 丟
- * 非 chunk 錯誤）。QueryClientProvider 由測試自備（App 不含，提供者在 main.tsx）。
+ * The default-export App contains BrowserRouter and reads the real window.location: do not stub location (the router would get a fake Location and crash). jsdom's default URL makes pathname `/` hit the catch-all -> HomePage (mocked to throw a non-chunk error). QueryClientProvider comes from the test (App doesn't include it; main.tsx provides it).
  */
 
 vi.mock("./pages/HomePage", () => ({
@@ -77,8 +72,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("App — app 級 ErrorBoundary 接線（issue #66 案 12）", () => {
-  it("案 12：樹內 render 丟非 chunk 錯誤 → app 級 fallback 專屬文案（無白屏）", async () => {
+describe("App - app-level ErrorBoundary wiring (#66)", () => {
+  it("non-chunk render error in the tree -> app-level fallback text, no blank screen", async () => {
     const queryClient = new QueryClient();
     render(
       <QueryClientProvider client={queryClient}>
@@ -86,7 +81,7 @@ describe("App — app 級 ErrorBoundary 接線（issue #66 案 12）", () => {
       </QueryClientProvider>,
     );
 
-    // 最終狀態等待，守門力在斷言內容；冷啟餘裕靠 test/setup.ts 的全域 asyncUtilTimeout，不另設單案上限
+    // Waits for a final state; the assertion content is what guards. Cold-start headroom comes from the global asyncUtilTimeout in test/setup.ts, so no per-test limit.
     await waitFor(() => expect(screen.getByText("Something went wrong")).toBeInTheDocument());
   });
 });

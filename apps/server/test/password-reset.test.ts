@@ -1,8 +1,5 @@
-/**
- * #286 無登入端點：inspect 與以重設連結設定新密碼、登出手段與「不動 PAT／OAuth」、
- * 並發、帳密開關、miss 桶、argon2 前判斷與嘗試桶、kind 隔離、錯誤遮蔽。
- * 每案各建一個 app（fresh DB），限流桶不跨案累積；未注入的案跑生產額度的桶。共編連線的關閉在 `collab-revocation.test.ts`。
- */
+// Each case builds its own app (fresh DB), so rate-limit buckets do not accumulate across cases; cases that inject no limiters run with production quotas.
+// Closing of collab connections on revocation is covered in `collab-revocation.test.ts`.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { count, eq, sql } from "drizzle-orm";
@@ -20,7 +17,6 @@ import { generateOneTimeToken } from "../src/auth/one-time-link.js";
 import { RESET_LINK_INVALID_MESSAGE } from "../src/auth/tx/password-reset.js";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 
-// hashPassword 包成 vi.fn(actual)：預設行為與真實實作一致（比照 admin-users.test.ts）。
 vi.mock("../src/auth/password.js", async () => {
   const actual = await vi.importActual<typeof import("../src/auth/password.js")>("../src/auth/password.js");
   return { ...actual, hashPassword: vi.fn(actual.hashPassword) };
@@ -37,9 +33,9 @@ const NEW_PASSWORD = "brand-new-password-286";
 const USER_DTO_KEYS = ["autoVersions", "avatar", "displayName", "email", "handle", "hasPassword", "id", "isAdmin", "mustChangePassword"];
 const REDACTED = "重設密碼時發生非預期的資料庫錯誤（錯誤本體已遮蔽）";
 const LOOKUP_REDACTED = "查詢重設密碼連結時發生非預期的資料庫錯誤（錯誤本體已遮蔽）";
-/** 同 `admin-password-reset.test.ts`：DrizzleQueryError 的 params 落進 JSON log 的兩形。 */
+// The two forms in which DrizzleQueryError params land in the JSON log (as in admin-password-reset.test.ts).
 const PARAMS_LEAK = /params: |"params"\s*:/;
-/** 所有無效原因（含交易內並發造成的）回同一個 body，不洩漏原因。 */
+// Every invalid reason, including concurrent changes inside the transaction, returns this same body so the reason does not leak.
 const INVALID_BODY = { error: { code: "reset_link_invalid", message: RESET_LINK_INVALID_MESSAGE } };
 
 function spyCollabHooks(): CollabHooks {
@@ -54,7 +50,6 @@ function spyCollabHooks(): CollabHooks {
   };
 }
 
-/** pino 的 `logMethod` hook（結構化欄位）＋ stream（整份輸出字串）兩路一起收。 */
 function logged() {
   const lines: Array<{ msg?: string; obj: Record<string, unknown> }> = [];
   const out: string[] = [];
@@ -87,14 +82,12 @@ async function setup(overrides: Partial<AppDeps> = {}) {
 
 type Ctx = Awaited<ReturnType<typeof setup>>;
 
-/** 經 admin POST 產生連結，回明文 token 與產生回應的 expiresAt。 */
 async function issue(ctx: Ctx, targetId: string): Promise<{ token: string; expiresAt: string }> {
   const res = await ctx.app.inject({ method: "POST", url: `/api/admin/users/${targetId}/password-reset`, cookies: ctx.adminCookies, payload: { expiresInHours: 1 } });
   expect(res.statusCode, res.body).toBe(201);
   return res.json() as { token: string; expiresAt: string };
 }
 
-/** 只覆寫重設連結的兩顆桶（其餘照生產額度）。 */
 function resetLimiters(over: { miss?: number; attempt?: number }): Pick<AppDeps, "limiters"> {
   return {
     limiters: freshLimiters({
@@ -150,16 +143,16 @@ async function setPasswordLogin(db: Db, enabled: boolean) {
   await db.update(siteSettings).set({ passwordLoginEnabled: enabled });
 }
 
-describe("POST /api/auth/password-reset（完成）", () => {
-  it("C1：新密碼生效、其他 session 立即登出、must_change_password 清除、回應 UserDto 並簽新 session", async () => {
+describe("POST /api/auth/password-reset (complete)", () => {
+  it("new password takes effect, other sessions are logged out at once, must_change_password is cleared, response is a UserDto with a new session", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db, { mustChangePassword: true });
     const loggedIn = await login(app, target.email, OLD_PASSWORD);
     expect(loggedIn.statusCode).toBe(200);
     const other = sessionOf(loggedIn);
-    expect((await me(app, other)).statusCode).toBe(200); // gate 快取熱起來
-    // 登入已寫過 last_login_at；歸零後才看得出完成路徑有沒有寫。
+    expect((await me(app, other)).statusCode).toBe(200); // warm the gate cache
+    // Login already wrote last_login_at; zero it so we can tell whether the completion path writes it.
     await db.update(users).set({ lastLoginAt: null }).where(eq(users.id, target.id));
     const { token } = await issue(ctx, target.id);
 
@@ -193,7 +186,7 @@ describe("POST /api/auth/password-reset（完成）", () => {
     expect(out).not.toContain(hashToken(token));
   });
 
-  it("C3：用過、被取代、取消、過期、形狀不合 → inspect 與完成都 410；缺欄或多欄 → 400 invalid_body", async () => {
+  it("used, superseded, cancelled, expired or malformed token -> inspect and complete both 410; missing or extra field -> 400 invalid_body", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -234,8 +227,8 @@ describe("POST /api/auth/password-reset（完成）", () => {
     expect((await linkOf(db, live)).usedAt).toBeNull();
   });
 
-  // 安全關鍵：完成重設只動 users 與 one_time_links——agent 的 token 全部照常可用。
-  it("C4：完成前建立的 PAT、OAuth access／refresh、transfer token 完成後都照常可用；四張表列數不變", async () => {
+  // Completing a reset also replaces the user's own sessions; agent tokens (PAT, OAuth, transfer) keep working.
+  it("PAT, OAuth access/refresh and transfer token created before completion all still work afterwards; row counts of the four tables unchanged", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -264,7 +257,7 @@ describe("POST /api/auth/password-reset（完成）", () => {
     expect((await complete(app, token)).statusCode).toBe(200);
     const after = await counts();
 
-    // 列數與四種 token 的結果收成一個斷言：任何一條防線被拿掉，失敗輸出一次列出全部受影響的項目。
+    // Row counts and the four token results fold into one assertion: if any defence is removed, one failure lists everything affected.
     const viaPat = await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${patToken}` } });
     const viaAccess = await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${access}` } });
     const refreshed = await exchange(app, { grant_type: "refresh_token", refresh_token: refresh, client_id: code.clientId });
@@ -278,8 +271,7 @@ describe("POST /api/auth/password-reset（完成）", () => {
     }).toEqual({ counts: before, pat: 200, oauthAccess: 200, oauthRefresh: 200, transfer: 201 });
   });
 
-  // 安全關鍵：兩發並發恰好一發成功；token_version 只加一次。
-  it("C5：raw client 持 users 列鎖時兩發完成排隊 → 放行後 [200, 410]、token_version = 1", async () => {
+  it("two completions queued behind a raw client's users row lock -> after release [200, 410] and token_version = 1", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -305,9 +297,9 @@ describe("POST /api/auth/password-reset（完成）", () => {
   });
 });
 
-describe("停用與重設", () => {
-  // 停用的撤銷由 disableUserInTx 負責；本案驗的是端點對撤銷後的連結回 410、重新啟用不復活。
-  it("C6：經 API 停用 → inspect 與完成 410；重新啟用後仍 410", async () => {
+describe("disable and reset", () => {
+  // Revocation itself is done by disableUserInTx; this checks the endpoint's answer for a revoked link and that re-enabling does not revive it.
+  it("disabling via the API -> inspect and complete 410; still 410 after re-enabling", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -320,7 +312,7 @@ describe("停用與重設", () => {
     expectInvalid(await complete(app, token));
   });
 
-  it("C6：完成先、停用後（同一把 users 列鎖排隊）→ 完成 200、停用 204，完成簽的 session 被停用作廢", async () => {
+  it("complete first, disable second (queued on the same users row lock) -> complete 200, disable 204, and the session issued by complete is invalidated by the disable", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -345,7 +337,7 @@ describe("停用與重設", () => {
     expect((await me(app, sessionOf(doneRes))).statusCode).toBe(401);
   });
 
-  it("C6：停用先、完成後 → 停用 204、完成 410；連結已撤銷未使用", async () => {
+  it("disable first, complete second -> disable 204, complete 410; link revoked and unused", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -372,7 +364,7 @@ describe("停用與重設", () => {
     expect(link.usedAt).toBeNull();
   });
 
-  it("C6 防禦：DB 直接停用（未經撤銷）→ inspect 200、完成 410、password_hash 不變", async () => {
+  it("defensive: disabled directly in the DB (no revocation) -> inspect 200, complete 410, password_hash unchanged", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -387,8 +379,8 @@ describe("停用與重設", () => {
 });
 
 describe("POST /api/auth/password-reset/inspect", () => {
-  // 嘗試桶上限 1：inspect 若也扣嘗試桶，最後的完成會變 429（inspect 不扣嘗試桶）。
-  it("C2：200 只回 email／expiresAt；連打 3 次不消耗連結也不扣嘗試桶；用過之後 410", async () => {
+  // Attempt bucket limit is 1: if inspect also consumed it, the final completion would be 429.
+  it("200 returns only email/expiresAt; 3 inspects consume neither the link nor the attempt bucket; 410 once used", async () => {
     const ctx = await setup(resetLimiters({ attempt: 1 }));
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -407,9 +399,9 @@ describe("POST /api/auth/password-reset/inspect", () => {
   });
 });
 
-describe("帳密登入開關", () => {
-  // 嘗試桶上限 2：關閉期間連送 3 發完成都是 403、不扣桶，所以重新開啟後第一發就能完成。
-  it("C7：DB 關閉 → inspect 403、完成連送 3 發都 403（不是 429），連結列不動；重新開啟 → 同一 token 完成 200", async () => {
+describe("password login switch", () => {
+  // Attempt bucket limit is 2: three completions while off are all 403 and not charged, so the first one after re-enabling can complete.
+  it("DB off -> inspect 403 and three completions all 403 (not 429), link row untouched; re-enabled -> same token completes 200", async () => {
     const ctx = await setup(resetLimiters({ attempt: 2 }));
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -432,7 +424,7 @@ describe("帳密登入開關", () => {
     expect((await complete(app, token)).statusCode).toBe(200);
   });
 
-  it("C7：PASSWORD_LOGIN_FORCE_ENABLE＋DB 關閉 → 完成 200", async () => {
+  it("PASSWORD_LOGIN_FORCE_ENABLE with DB off -> complete 200", async () => {
     const ctx = await setup({ config: { ...testConfig, passwordLoginForceEnable: true } });
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -443,9 +435,8 @@ describe("帳密登入開關", () => {
   });
 });
 
-describe("argon2 之前的判斷與 hash 忙碌", () => {
-  // 前半（安全關鍵）：能在 argon2 之前判斷的都先判，太短、帳密關閉、無效連結都不跑 hashPassword。
-  it("C9：太短 400、帳密關閉 403、無效連結 410 都不呼叫 hashPassword；成功那一發恰好一次", async () => {
+describe("checks before argon2 and hash busy", () => {
+  it("too short 400, password login off 403 and invalid link 410 never call hashPassword; the successful request calls it exactly once", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -470,8 +461,7 @@ describe("argon2 之前的判斷與 hash 忙碌", () => {
     expect(hashPassword).toHaveBeenCalledTimes(1);
   });
 
-  // 後半（安全關鍵）：嘗試桶在長度檢查之前扣，太短的密碼也算；超限那一發不跑 argon2。
-  it("C9b：嘗試桶上限 2 → 太短兩發 400、第三發（長度足夠）429 且不呼叫 hashPassword；連結未用；別人的連結照常 200", async () => {
+  it("attempt bucket limit 2 -> two too-short 400, third (long enough) 429 without calling hashPassword; link unused; another link still completes 200", async () => {
     const ctx = await setup(resetLimiters({ attempt: 2 }));
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -492,7 +482,7 @@ describe("argon2 之前的判斷與 hash 忙碌", () => {
     expect((await complete(app, otherToken)).statusCode).toBe(200);
   });
 
-  it("C10：HashBusyError → 429 server_busy、連結未用；重送 → 200", async () => {
+  it("HashBusyError -> 429 server_busy, link unused; resend -> 200", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -506,21 +496,20 @@ describe("argon2 之前的判斷與 hash 忙碌", () => {
   });
 });
 
-describe("miss 桶", () => {
-  // 安全關鍵：失敗才扣、有效 token 不預檢——同 IP 的無效 token 灌滿桶後，有效 token 仍 200。
-  it("C8：上限 3 → 同 IP 三發無效 410、第四發 429；緊接著同 IP 的有效 token inspect 與完成都 200；另一個 IP 的無效 token 410", async () => {
+describe("miss bucket", () => {
+  it("limit 3 -> three invalid 410 from one IP, fourth 429; right after, a valid token from that IP inspects and completes 200; an invalid token from another IP is 410", async () => {
     const ctx = await setup(resetLimiters({ miss: 3 }));
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
     const { token } = await issue(ctx, target.id);
-    // 每發一支新的、形狀合法但查無的 token：桶的 key 若混進 token，第四發就不會 429。
+    // Each request uses a fresh, well-formed but unknown token: if the bucket key included the token, the fourth would not be 429.
     const miss = () => generateOneTimeToken("password_reset");
 
     expectInvalid(await inspect(app, miss()));
     expectInvalid(await complete(app, miss()));
     expectInvalid(await inspect(app, miss()));
     expectTooMany(await complete(app, miss()));
-    // 桶已滿：inspect 的無效出口也經同一個 miss 桶（不是直接回 410）。
+    // Bucket is full: inspect's invalid exit also goes through the same miss bucket (not a direct 410).
     expectTooMany(await inspect(app, miss()));
 
     const inspected = await inspect(app, token);
@@ -531,8 +520,8 @@ describe("miss 桶", () => {
     expectInvalid(await inspect(app, miss(), "10.0.0.2"));
   });
 
-  // 交易內（並發造成）的 410 已以有效 token 通過查詢，不扣 miss 桶。
-  it("C13：上限 1 → 交易內的 410（DB 直接停用）之後，一發無效 token 仍是 410（不是 429）", async () => {
+  // A 410 inside the transaction (from a concurrent change) already passed the lookup with a valid token, so it does not charge the miss bucket.
+  it("limit 1 -> after an in-transaction 410 (disabled directly in the DB), one invalid token is still 410, not 429", async () => {
     const ctx = await setup(resetLimiters({ miss: 1 }));
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -543,14 +532,15 @@ describe("miss 桶", () => {
   });
 });
 
-describe("kind 隔離與錯誤遮蔽", () => {
-  it("C11：別的 kind 的列（雜湊相符、未過期）→ inspect 與完成 410（#285 起 'invite' 是合法 kind，改用假 kind；邀請 token 打重設端點見 invite-accept）", async () => {
+// An invite token against the reset endpoints is covered in invite-accept.test.ts.
+describe("kind isolation and error masking", () => {
+  it("a row of another kind (hash matches, unexpired) -> inspect and complete 410 (an invite is a valid kind since #285, so a fake kind is used)", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
     await db.execute(sql.raw("ALTER TABLE one_time_links DROP CONSTRAINT one_time_links_kind_chk"));
     const token = generateOneTimeToken("password_reset");
-    // 不能改成「不帶 target 的邀請列」：findActiveResetLink 以 target 的 inner join 查，會因 join 而不是 kind 述詞而綠。
+    // Must not use an invite row without target: findActiveResetLink inner-joins on target, so it would pass because of the join and not the kind predicate.
     await db.execute(
       sql`insert into one_time_links (kind, token_hash, target_user_id, expires_at) values ('t285_other', ${hashToken(token)}, ${target.id}, now() + interval '1 hour')`,
     );
@@ -559,7 +549,7 @@ describe("kind 隔離與錯誤遮蔽", () => {
     expect((await linkOf(db, token)).usedAt).toBeNull();
   });
 
-  it("C12：交易的非預期 DB 錯誤 → 500，log 遮蔽（無 password hash、無 params）；連結未用", async () => {
+  it("unexpected DB error in the transaction -> 500 and the log is masked (no password hash, no params); link unused", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);
@@ -574,7 +564,7 @@ describe("kind 隔離與錯誤遮蔽", () => {
     expect((await linkOf(db, token)).usedAt).toBeNull();
   });
 
-  it("C12b：交易外雜湊查詢的非預期 DB 錯誤 → inspect 與完成都 500，log 遮蔽（無 token_hash、無 params）", async () => {
+  it("unexpected DB error in the hash lookup outside the transaction -> inspect and complete both 500, log masked (no token_hash, no params)", async () => {
     const ctx = await setup();
     const { app, db } = ctx;
     const target = await insertPasswordUser(db);

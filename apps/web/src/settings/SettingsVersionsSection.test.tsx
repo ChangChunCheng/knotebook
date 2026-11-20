@@ -9,8 +9,8 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 站台版本設定（#247 起嵌在 `/admin/storage` 方案頁、方案表之後）：走真的 AppRoutes（站台管理 modal＋AdminSections lazy chunk），
-// 形比照 SettingsStorageSection.test.tsx。
+// Site version settings (since #247 embedded in the `/admin/storage` plans page, after the plan table): runs through the real AppRoutes (site admin modal + the AdminSections lazy chunk),
+// shaped like SettingsStorageSection.test.tsx.
 
 function res(status: number, body?: unknown): Response {
   return { ok: status < 400, status, json: () => (body === undefined ? Promise.reject(new Error("no body")) : Promise.resolve(body)) } as unknown as Response;
@@ -41,7 +41,7 @@ function stubAdmin({ settings, patchStatus }: { settings: VersionSettingsDto; pa
       if (url === "/api/notes" && method === "GET") return Promise.resolve(res(200, []));
       if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(res(200, { plans: [], defaults: { userPlanId: "", groupPlanId: "" } }));
       if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(res(200, settings));
-      // 同頁的垃圾桶設定（#181）：沒有它會進錯誤態、多出一個 role=alert
+      // The trash settings on the same page (#181): without this it would enter an error state and add a role=alert
       if (url === "/api/admin/trash/settings" && method === "GET") return Promise.resolve(res(200, { retentionDays: 7 }));
       if (url === "/api/admin/versions/settings" && method === "PATCH") {
         if (patchStatus !== undefined && patchStatus >= 400) {
@@ -71,10 +71,10 @@ function renderAt(path: string) {
 }
 
 const SETTINGS: VersionSettingsDto = { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 7 };
-/** 同頁還有垃圾桶設定的「Save」——以版本保留群組的 region 圈定。 */
+/** The trash settings on the same page also have a Save, so scope to the version retention region. */
 const versionsSave = () => within(screen.getByRole("region", { name: "Keeping automatic versions" })).getByRole("button", { name: "Save" });
 
-describe("站台版本設定（/admin/storage 內，#247）", () => {
+describe("site version settings (inside /admin/storage, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -84,7 +84,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("頁首只有方案頁一個（h1 Storage plans）；版本設定是 h2「Version history」區塊，接在方案表之後；沒有「How notes keep their versions on this site.」；說明含「版本不佔額度」", async () => {
+  it("the header belongs only to the plans page (h1 Storage plans); version settings are an h2 \"Version history\" block after the plan table; no \"How notes keep their versions on this site.\"; the description mentions that versions don't count toward the quota", async () => {
     stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     await screen.findByRole("switch", { name: "Automatic versions" });
@@ -95,7 +95,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(screen.getByText(/Versions and note text don't count toward storage/)).toBeInTheDocument();
   });
 
-  it("載入：總開關、等待與兩個天數照 GET 顯示；等待說明帶 server 值", async () => {
+  it("load: master switch, wait and the two day counts follow the GET; the wait description carries the server value", async () => {
     stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     expect(await screen.findByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "true");
@@ -106,18 +106,18 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(screen.getByText(/All automatic versions from the last 7 days are kept; up to 30 days, one a day/)).toBeInTheDocument();
   });
 
-  it("總開關關閉的設定 → switch aria-checked=false（與載入案區分）", async () => {
+  it("master switch off -> switch aria-checked=false (distinguishes from the load case)", async () => {
     stubAdmin({ settings: { ...SETTINGS, autoVersionsEnabled: false } });
     renderAt("/admin/storage");
     expect(await screen.findByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("切總開關 → PATCH 只帶 { autoVersionsEnabled:false }，並失效 ['auth-config']", async () => {
+  it("toggling the master switch -> PATCH carries only { autoVersionsEnabled:false } and invalidates ['auth-config']", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     const { queryClient } = renderAt("/admin/storage");
     const sw = await screen.findByRole("switch", { name: "Automatic versions" });
-    // /admin/storage 上沒有任何元件訂閱 ['auth-config']，invalidate 只標 stale、不發請求——
-    // 不能等 GET /api/auth/config。先種一份快取，再斷言它被標成 invalidated。
+    // No component on /admin/storage subscribes to ['auth-config'], so invalidate only marks it stale and sends no request -
+    // can't wait for GET /api/auth/config. Seed a cache entry first, then assert it was marked invalidated.
     queryClient.setQueryData(["auth-config"], AUTH_CONFIG);
     expect(queryClient.getQueryState(["auth-config"])?.isInvalidated).toBe(false);
     expect(sw).toHaveAttribute("aria-checked", "true");
@@ -127,7 +127,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     await waitFor(() => expect(screen.getByRole("switch", { name: "Automatic versions" })).toHaveAttribute("aria-checked", "false"));
   });
 
-  it("天數不合法（前者 > 後者、非整數、0、3651、空）→ 不發請求、行內錯誤（每一組各自出現）", async () => {
+  it("invalid day counts (first > second, non-integer, 0, 3651, empty) -> no request, inline error (each group shows its own)", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     const keepAll = await screen.findByLabelText("Keep all for (days)");
@@ -135,7 +135,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     for (const [a, b] of [["40", "30"], ["1.5", "30"], ["0", "30"], ["7", "3651"], ["", "30"]]) {
       fireEvent.change(keepAll, { target: { value: a } });
       fireEvent.change(daily, { target: { value: b } });
-      // 改欄位會清掉上一組的錯誤——所以下面的 alert 是這一組送出才出現的
+      // Changing a field clears the previous group's error - so the alert below only appears when this group is submitted
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       fireEvent.click(versionsSave());
       expect(await screen.findByRole("alert")).toHaveTextContent("Use whole numbers with 1 ≤ first ≤ second ≤ 3650.");
@@ -143,7 +143,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
-  it("天數合法（F = D 也可）→ PATCH { keepAllDays, dailyUntilDays }、toast", async () => {
+  it("valid day counts (F = D also allowed) -> PATCH { keepAllDays, dailyUntilDays }, toast", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Keep all for (days)"), { target: { value: "14" } });
@@ -154,7 +154,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("server 回 400 invalid_body → 行內 errors.invalid_body", async () => {
+  it("server returns 400 invalid_body -> inline errors.invalid_body", async () => {
     stubAdmin({ settings: SETTINGS, patchStatus: 400 });
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Keep all for (days)"), { target: { value: "8" } });
@@ -163,7 +163,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("errors.invalid_body"));
   });
 
-  it("#272 等待不合法（0、61、abc、1.5、空）→ 不發請求、行內 waitInvalid（每一組各自出現）", async () => {
+  it("#272 invalid wait (0, 61, abc, 1.5, empty) -> no request, inline waitInvalid (each group shows its own)", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     const wait = await screen.findByLabelText("Wait before saving automatically (minutes)");
@@ -176,7 +176,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
-  it("#272 等待與天數同時不合法 → 只顯示等待那一句（先驗等待）", async () => {
+  it("#272 wait and day counts both invalid -> only the wait sentence shows (wait is validated first)", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Wait before saving automatically (minutes)"), { target: { value: "0" } });
@@ -188,7 +188,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
-  it("#272 等待合法 → PATCH 帶 { autoWaitMinutes, keepAllDays, dailyUntilDays }、toast", async () => {
+  it("#272 valid wait -> PATCH carries { autoWaitMinutes, keepAllDays, dailyUntilDays }, toast", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     fireEvent.change(await screen.findByLabelText("Wait before saving automatically (minutes)"), { target: { value: "12" } });
@@ -197,7 +197,7 @@ describe("站台版本設定（/admin/storage 內，#247）", () => {
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ autoWaitMinutes: 12, keepAllDays: 7, dailyUntilDays: 30 });
   });
 
-  it("前後空白與前導零照收（「 9 」→ 9、「05」→ 5）；全形「５」→ waitInvalid、不送", async () => {
+  it("leading / trailing whitespace and leading zeros are accepted (\" 9 \" -> 9, \"05\" -> 5); a full-width digit -> waitInvalid, not sent", async () => {
     const calls = stubAdmin({ settings: SETTINGS });
     renderAt("/admin/storage");
     const wait = await screen.findByLabelText("Wait before saving automatically (minutes)");

@@ -23,12 +23,10 @@ import { NoteList } from "./NoteList";
 import { pressTrigger } from "@/test/menu-trigger";
 import { OutlineMenuContext, type OutlineMenuValue } from "@/components/outline/outline-menu-context";
 
-// ⋮ 選單：複製連結（任何角色）＋移到垃圾桶（#181：不確認、成功 toast＋復原；#175 起看 `permissions.delete`，含
-// leavingRef 時序：刪除失敗且已進終態時，`NoteMenu` 必須自己補一套「同文案同
-// 終點」的終態出口——`NotePage` 的終態 effect 被這支 handler 自己設的
-// `leavingRef.current=true` 閘住，永遠不會再觸發，見 `NoteMenu.tsx` 檔頭）。
-// DropdownMenuTrigger 只掛 onPointerDown（Radix），純 `fireEvent.click` 開不了
-// ——比照 SettingsModal.test.tsx 開 UserMenu 的既有寫法。
+// The more menu: copy link (any role) + move to trash (#181: no confirm, success toast + undo; since #175 it looks at `permissions.delete`),
+// including the leavingRef timing: when a delete fails and the note is already in a terminal state, `NoteMenu` must provide the same-text, same-destination terminal exit itself -
+// NotePage's terminal effect is gated by the `leavingRef.current=true` this handler set and never fires again (see the header of `NoteMenu.tsx`).
+// DropdownMenuTrigger only listens to onPointerDown (Radix), so a plain `fireEvent.click` can't open it - same approach as SettingsModal.test.tsx opening UserMenu.
 
 interface FakeResponseInit {
   ok: boolean;
@@ -64,8 +62,7 @@ function openMenu(): void {
   pressTrigger(screen.getByRole("button", { name: "More" }));
 }
 
-// `onOpenEdits`（#138）在 `NoteMenuProps` 上是必填——這裡給一個 no-op 預設值，只有
-// 真的要觀測它的那一案才傳。
+// `onOpenEdits` (#138) is required on `NoteMenuProps`: a no-op default here, only passed by the case that observes it.
 function renderMenu(
   note: NoteDto,
   state: CollabState,
@@ -91,7 +88,7 @@ function renderMenu(
   );
 }
 
-/** 移到垃圾桶＋復原的假 server：DELETE 204、restore 回 `{ restored: [note] }`；`GET /api/notes`、`/api/groups` 回空。每筆記進 `calls`。 */
+/** Fake server for move to trash + undo: DELETE 204, restore returns `{ restored: [note] }`; `GET /api/notes` and `/api/groups` return empty. Every call is recorded in `calls`. */
 function trashFetch(note: NoteDto, opts: { onDelete?: () => void } = {}) {
   const calls: string[] = [];
   const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -114,7 +111,7 @@ function trashFetch(note: NoteDto, opts: { onDelete?: () => void } = {}) {
   return { fetchSpy, calls };
 }
 
-/** `NoteMenu` 只在筆記路由下渲染，`/` 是不含它的頁——導回首頁＝選單卸載（Toaster 在 router 之外，同 App.tsx）。 */
+/** `NoteMenu` only renders under a note route and `/` is a page without it: navigating home = the menu unmounts (the Toaster is outside the router, as in App.tsx). */
 function renderRoutedMenu(
   note: NoteDto,
   leavingRef: { current: boolean },
@@ -151,7 +148,7 @@ function groupMenuNote(perms: { edit: boolean; delete: boolean }): NoteDto {
   };
 }
 
-describe("NoteMenu（⋮ 選單）", () => {
+describe("NoteMenu (more menu)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -161,7 +158,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("owner：選單含複製連結與「刪除」兩項（移到垃圾桶）（垃圾桶圖示；沒有舊字「Delete note」）", () => {
+  it("owner: the menu has copy link and 'Delete' (move to trash) (trash icon; not the old text 'Delete note')", () => {
     renderMenu(OWNER_NOTE, CONNECTED, { current: false });
     openMenu();
 
@@ -171,11 +168,11 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByText(/Delete note/)).toBeNull();
   });
 
-  // #138：AI 修改紀錄項。狀態住在 `NotePage`（兩個觸發點共用），選單只負責關自己再
-  // 通知父層——`onSelect` 的三步形與刪除項逐字同形，見 `NoteMenu.tsx` 檔頭的 focus trap 說明。
-  // ⚠ 開選單一律用 `openMenu()`（`pressTrigger`：pointerdown 再 click）：Radix 的 trigger 在 pointerdown 開，
-  // 手機 sheet 形改在同一下的 click 開（本檔檔頭已記載）。
-  it("⋮ → AI 修改紀錄：關閉選單並呼叫 onOpenEdits", async () => {
+  // #138: AI edit history item. The state lives in `NotePage` (shared by two triggers); the menu only closes itself and then notifies the parent -
+  // the `onSelect` three-step shape is identical to the delete item's (see the focus trap note in the header of `NoteMenu.tsx`).
+  // Always open the menu with `openMenu()` (`pressTrigger`: pointerdown then click): the Radix trigger opens on pointerdown,
+  // the phone sheet shape opens on the click of the same press.
+  it("more menu -> AI edit history: closes the menu and calls onOpenEdits", async () => {
     const onOpenEdits = vi.fn();
     renderMenu(OWNER_NOTE, CONNECTED, { current: false }, undefined, onOpenEdits);
     openMenu();
@@ -185,7 +182,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
   });
 
-  it("非 owner（逐人分享 editor，permissions.delete false）：只有複製連結，沒有刪除項", () => {
+  it("non-owner (per-person share editor, permissions.delete false): only copy link, no delete item", () => {
     renderMenu({ ...OWNER_NOTE, role: "editor", permissions: EDITOR_PERMS }, CONNECTED, { current: false });
     openMenu();
 
@@ -193,9 +190,9 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 
-  // #175：刪除項看 `note.permissions.delete`，不再由 `role === "owner"` 推——群組筆記的 role
-  // 從不是 owner，但角色有 `can_delete` 的成員要能刪。
-  it("#175：群組筆記（role editor、permissions.delete true）→ 有刪除項", () => {
+  // #175: the delete item looks at `note.permissions.delete`, no longer derived from `role === "owner"`:
+  // a group note's role is never owner, but a member whose role has `can_delete` must be able to delete.
+  it("#175: group note (role editor, permissions.delete true) -> has the delete item", () => {
     const groupNote: NoteDto = {
       ...OWNER_NOTE,
       ownerId: null,
@@ -211,7 +208,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 
-  it("#175：個人筆記 role owner 但 permissions.delete false（刻意造的不一致 fixture）→ 沒有刪除項——看的是 permissions", () => {
+  it("#175: personal note with role owner but permissions.delete false (a deliberately inconsistent fixture) -> no delete item: what counts is permissions", () => {
     renderMenu({ ...OWNER_NOTE, permissions: { ...OWNER_PERMS, delete: false } }, CONNECTED, { current: false });
     openMenu();
 
@@ -219,7 +216,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 
-  it("#175：群組筆記的複製連結是 /g/<groupId>/<slug>", async () => {
+  it("#175: a group note's copy link is /g/<groupId>/<slug>", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const groupNote: NoteDto = {
@@ -241,7 +238,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     );
   });
 
-  it("複製連結成功 → toast「已複製」，選單隨後關閉", async () => {
+  it("copy link succeeds -> 'copied' toast, then the menu closes", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     renderMenu(OWNER_NOTE, CONNECTED, { current: false });
@@ -254,8 +251,8 @@ describe("NoteMenu（⋮ 選單）", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
   });
 
-  it("複製連結兩條路都失敗 → 開手動複製 Dialog（標題沿用 share.copyLink）", async () => {
-    vi.stubGlobal("navigator", {}); // 明文 http：整支 clipboard API 不存在
+  it("copy link fails both ways -> opens the manual copy Dialog (title reuses share.copyLink)", async () => {
+    vi.stubGlobal("navigator", {}); // plain http: the whole clipboard API doesn't exist
     Object.defineProperty(document, "execCommand", { value: vi.fn(() => false), configurable: true, writable: true });
 
     renderMenu(OWNER_NOTE, CONNECTED, { current: false });
@@ -270,14 +267,13 @@ describe("NoteMenu（⋮ 選單）", () => {
     Reflect.deleteProperty(document, "execCommand");
   });
 
-  it("NM-T2 owner 移到垃圾桶：不確認、點下即送（leavingRef 同步已是 true）→ 導回 / → toast 有 Undo", async () => {
+  it("owner moves to trash: no confirm, sent on click (leavingRef is already true synchronously) -> back to / -> toast has Undo", async () => {
     const leavingRef = { current: false };
-    // `waitFor` 內綁兩個各自單調的條件（fetchSpy 被呼叫過＋
-    // leavingRef 現在是 true）是恆真式——不管 `leavingRef.current = true` 擺在
-    // 送出請求「之前」還是「之後」，兩個條件最終都會同時成立，測不出時序。
-    // 真正有牙齒的做法：點下選單項之後**同步**斷言，並在 fetch spy 的 DELETE 分支**內側**
-    // （也就是請求真的被送出的那一瞬間）side-record 當下的 `leavingRef.current`——若實作把設定
-    // 搬到 `await deleteNote.mutateAsync(...)` 之後才做，這兩處讀到的值必然是 false，測試會紅。
+    // Two separately monotonic conditions inside `waitFor` (fetchSpy was called + leavingRef is now true) is a tautology: whether `leavingRef.current = true`
+    // is placed before or after sending the request, both conditions eventually hold together, so the order can't be detected.
+    // What has teeth: assert **synchronously** after clicking the menu item, and side-record the then-current `leavingRef.current`
+    // **inside** the fetch spy's DELETE branch (the moment the request is really sent): if the implementation moved the assignment
+    // after `await deleteNote.mutateAsync(...)`, both reads would be false and the test goes red.
     let leavingAtFetch: boolean | undefined;
     const { fetchSpy } = trashFetch(OWNER_NOTE, {
       onDelete: () => {
@@ -289,7 +285,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
-    // 不確認——沒有對話框，點下就送出。
+    // No confirm: no dialog, sent on click.
     expect(leavingRef.current).toBe(true);
     expect(screen.queryByRole("dialog")).toBeNull();
 
@@ -304,14 +300,14 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("NM-T3 選單已卸載（導回 / 之後）才按 Undo：照樣還原並導回該篇", async () => {
+  it("menu already unmounted (after going back to /) then pressing Undo: still restores and navigates back to that note", async () => {
     const { fetchSpy, calls } = trashFetch(OWNER_NOTE);
     renderRoutedMenu(OWNER_NOTE, { current: false }, fetchSpy);
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/"));
-    // `/` 不渲染 NoteMenu——toast 的「復原」只能靠建立 toast 時捕捉的 queryClient／navigate。
+    // `/` doesn't render NoteMenu: the toast's Undo can only rely on the queryClient/navigate captured when the toast was created.
     expect(screen.queryByRole("button", { name: "More" })).toBeNull();
 
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
@@ -319,7 +315,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(calls).toContain("POST /api/trash/restore");
   });
 
-  it("NM-T4 群組筆記只有刪除權（edit 假）：成功 toast 沒有 Undo、有說明誰能還原", async () => {
+  it("group note with only delete permission (edit false): the success toast has no Undo and says who can restore", async () => {
     const note = groupMenuNote({ edit: false, delete: true });
     const { fetchSpy } = trashFetch(note);
     renderRoutedMenu(note, { current: false }, fetchSpy);
@@ -331,7 +327,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("NM-T5 群組筆記有編輯＋刪除權：成功 toast 有 Undo", async () => {
+  it("group note with edit + delete permission: the success toast has Undo", async () => {
     const note = groupMenuNote({ edit: true, delete: true });
     const { fetchSpy } = trashFetch(note);
     renderRoutedMenu(note, { current: false }, fetchSpy);
@@ -342,7 +338,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("NM-T6 DELETE 掛起中：連點、再開選單點「Delete」都不重送（項目 disabled，DELETE 恰一次）", async () => {
+  it("while DELETE hangs: repeated clicks, and reopening the menu and clicking 'Delete', don't resend (item disabled, DELETE exactly once)", async () => {
     const pending = new Promise<Response>(() => {});
     const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -366,12 +362,12 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(again).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(again);
     fireEvent.keyDown(again, { key: "Enter" });
-    // 重送的話 mutateAsync → fetch 只隔幾個微任務；等一個 macrotask 讓它有機會落地再數。
+    // A resend would reach fetch only a few microtasks later; wait one macrotask so it has a chance to land before counting.
     await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     expect(deleteCount()).toBe(1);
   });
 
-  it("刪除失敗且非終態 → leavingRef 撥回 false，顯示錯誤 toast，不導頁", async () => {
+  it("delete fails and not terminal -> leavingRef is set back to false, error toast shown, no navigation", async () => {
     const leavingRef = { current: false };
     const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -393,11 +389,10 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
-  // 刪除失敗但已進終態時，`NotePage` 的終態 effect 被這支
-  // handler 自己設的 `leavingRef.current=true` 閘住，永遠不會再觸發——`NoteMenu`
-  // 必須自己就地補上同一套出口（同文案同終點），這裡真的分辨出「有 toast＋有
-  // 導頁」，不是舊版誤判的「不重複 toast、讓終態流程接手」（那條路根本不會走到）。
-  it("刪除失敗但已進終態（deleted）→ 就地 toast「已刪除」＋導回 /（NotePage 終態 effect 不會再觸發）", async () => {
+  // When a delete fails but the note is already in a terminal state, NotePage's terminal effect is gated by the `leavingRef.current=true` this handler set
+  // and never fires again - `NoteMenu` must provide the same exit itself (same text, same destination). This really distinguishes "toast + navigation"
+  // from the old misjudgement "no duplicate toast, let the terminal flow take over" (that path is never reached).
+  it("delete fails but already terminal (deleted) -> toast 'deleted' in place + back to / (NotePage's terminal effect won't fire again)", async () => {
     const leavingRef = { current: false };
     const fetchSpy = vi.fn(() =>
       Promise.resolve(
@@ -412,14 +407,14 @@ describe("NoteMenu（⋮ 選單）", () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText("This note has been deleted.")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
-    // leavingRef 維持 true——這個分支本來就該離開，不是「留在頁面上」的錯誤分支。
+    // leavingRef stays true: this branch is meant to leave, it isn't the "stay on the page" error branch.
     expect(leavingRef.current).toBe(true);
-    // 不是非終態那條「Something went wrong」的錯誤映射——文案要對得上終態出口。
+    // Not the "Something went wrong" error mapping of the non-terminal path: the text must match the terminal exit.
     expect(screen.queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
     expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
-  it("刪除失敗但已進終態（kicked）→ 就地 toast「已失去存取權」＋導回 /", async () => {
+  it("delete fails but already terminal (kicked) -> toast 'lost access' in place + back to /", async () => {
     const leavingRef = { current: false };
     const fetchSpy = vi.fn(() =>
       Promise.resolve(
@@ -438,15 +433,12 @@ describe("NoteMenu（⋮ 選單）", () => {
     expect(screen.queryByText("Moved to the trash", { exact: true })).toBeNull();
   });
 
-  // 覆蓋真實競態，回歸釘死「必須讀 stateRef.current，不能讀 closure
-  // 裡的 state」這件事本身。時間軸：按下確認鈕那一刻 `state` prop 還是
-  // connected（`handleConfirmDelete` closure 捕捉到的也是它）→ DELETE 請求送出
-  // 但**故意掛住不 settle**→ 共編這時收到 close(NOTE_DELETED)，父層把 `state`
-  // prop rerender 成 deleted → 這時候 DELETE 才失敗。若 catch 分支讀的是 closure
-  // 裡的 `state`（呼叫當下的 connected），會誤判成「非終態」走錯分支
-  // （leavingRef 撥回 false＋「Something went wrong」），跟正確的終態出口
-  // （toast「已刪除」＋導頁）文案/行為都不同，兩者不會混淆——這案能真的分辨。
-  it("stateRef 零守衛回歸案：點下當下 state=connected，DELETE 掛起期間收到終態 → 失敗時仍走終態出口", async () => {
+  // Covers a real race and pins that `stateRef.current` must be read, not the `state` in the closure. Timeline: when the confirm button is pressed the `state` prop is still
+  // connected (and so is what the `handleConfirmDelete` closure captured) -> the DELETE request is sent but **deliberately left hanging** -> collaboration receives
+  // close(NOTE_DELETED) and the parent re-renders the `state` prop as deleted -> only then does the DELETE fail. If the catch branch read the closure's `state`
+  // (connected at call time) it would misjudge "non-terminal" and take the wrong branch (leavingRef set back to false + "Something went wrong"), whose text/behaviour
+  // differs from the correct terminal exit (toast 'deleted' + navigation); the two can't be confused, so this case really distinguishes them.
+  it("stateRef regression case: state=connected at click time, a terminal state arrives while DELETE hangs -> on failure it still takes the terminal exit", async () => {
     const leavingRef = { current: false };
     let rejectDelete!: (err: unknown) => void;
     const deletePromise = new Promise<Response>((_resolve, reject) => {
@@ -455,7 +447,7 @@ describe("NoteMenu（⋮ 選單）", () => {
     const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (String(input) === `/api/notes/${OWNER_NOTE.id}` && method === "DELETE") {
-        return deletePromise; // 刻意掛住，直到測試手動 reject
+        return deletePromise; // deliberately hung until the test rejects it manually
       }
       throw new Error(`unexpected fetch: ${method} ${String(input)}`);
     });
@@ -489,14 +481,13 @@ describe("NoteMenu（⋮ 選單）", () => {
       expect(fetchSpy).toHaveBeenCalledWith(`/api/notes/${OWNER_NOTE.id}`, expect.objectContaining({ method: "DELETE" })),
     );
 
-    // DELETE 仍在飛行中（deferred，尚未 settle）——這時共編收到
-    // close(NOTE_DELETED)，state prop 變成 deleted。
+    // DELETE is still in flight (deferred, not settled) - collaboration now receives close(NOTE_DELETED) and the state prop becomes deleted.
     rerender(tree({ phase: "deleted" }));
 
     rejectDelete(new Error("boom"));
 
-    // 走終態出口：destructive toast「已刪除」＋導頁。若 `stateRef.current` 被改回
-    // `state`（closure 讀到建立當下的 connected），會走錯到非終態分支——本案必紅。
+    // Takes the terminal exit: destructive toast 'deleted' + navigation. If `stateRef.current` were changed back to `state`
+    // (the closure reads connected from creation time) it would take the non-terminal branch - this case must go red.
     await waitFor(() => expect(screen.getByText("This note has been deleted.")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("home landing")).toBeInTheDocument());
     expect(leavingRef.current).toBe(true);
@@ -505,8 +496,8 @@ describe("NoteMenu（⋮ 選單）", () => {
   });
 });
 
-// ── #175 ⋮「複製到我的筆記」，#216 起併入「複製到… → 我的筆記」──
-// 兩個外殼（頁首 NoteMenu、側欄 SidebarNoteMenu）共用 NoteMenuCore，各一案守「可見性」。
+// #175 more menu "Copy to my notes", merged into "Copy to... -> My notes" since #216.
+// The two shells (header NoteMenu, sidebar SidebarNoteMenu) share NoteMenuCore; one case each guards visibility.
 
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const GROUP_NOTE: NoteDto = {
@@ -516,7 +507,7 @@ const GROUP_NOTE: NoteDto = {
   role: "viewer",
   groupId: GROUP_ID,
   group: { id: GROUP_ID, name: "Workshop A" },
-  // 只讀角色：不能編輯也不能刪除，仍可複製到我的筆記（看得到即可讀）。
+  // Read-only role: can't edit or delete, can still copy to My notes (visible implies readable).
   permissions: { ...EDITOR_PERMS, edit: false, delete: false },
 };
 
@@ -530,8 +521,8 @@ function renderCopyMenu(
   note: NoteDto,
   fetchImpl: typeof fetch = vi.fn(() => Promise.reject(new Error("unexpected fetch"))) as unknown as typeof fetch,
 ) {
-  // #216：⋮ 選單掛載後會讀 `GET /api/groups`（決定要不要顯示「移動／複製到群組」）——這裡回空清單（兩項都不出現），
-  // 讓下面對 `fetchImpl` 呼叫次數／第一次呼叫的斷言只看複製本身。群組項的測試在 share/GroupTransfer.test.tsx。
+  // #216: after mounting, the more menu reads `GET /api/groups` (to decide whether to show "move/copy to group"): return an empty list here (neither item appears),
+  // so the assertions below on `fetchImpl` call counts / the first call look only at the copy itself. Group item tests are in share/GroupTransfer.test.tsx.
   const spy = fetchImpl;
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
     String(input) === "/api/groups" ? Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve([]) })) : spy(input, init),
@@ -557,7 +548,7 @@ function openAnyMenu(shell: "header" | "sidebar"): void {
   pressTrigger(screen.getByRole("button", { name }));
 }
 
-describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆記」（#216）", () => {
+describe("NoteMenu: copy to my notes is merged into 'Copy to... -> My notes' (#216)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -566,7 +557,7 @@ describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆
     vi.unstubAllGlobals();
   });
 
-  it.each(["header", "sidebar"] as const)("群組筆記／個人筆記的選單都沒有獨立的「Copy to my notes」項，改有「Copy to…」（%s）", async (shell) => {
+  it.each(["header", "sidebar"] as const)("group notes / personal notes: the menu has no standalone 'Copy to my notes' item, only 'Copy to...' (%s)", async (shell) => {
     renderCopyMenu(shell, GROUP_NOTE);
     openAnyMenu(shell);
     expect(await screen.findByTestId("note-menu-copy-to")).toHaveTextContent("Copy to…");
@@ -579,14 +570,14 @@ describe("NoteMenu：複製到我的筆記已併入「複製到… → 我的筆
     expect(screen.queryByRole("menuitem", { name: "Copy to my notes" })).not.toBeInTheDocument();
   });
 
-  it("群組筆記（有刪除權限）：Delete 照舊在選單裡", async () => {
+  it("group note (with delete permission): Delete is still in the menu", async () => {
     renderCopyMenu("header", { ...GROUP_NOTE, role: "editor", permissions: { ...EDITOR_PERMS, edit: true, delete: true } });
     openAnyMenu("header");
     expect(await screen.findByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 });
 
-describe("NoteMenu × 版本歷史", () => {
+describe("NoteMenu - version history", () => {
   function VersionsHost({ enabled, children }: { enabled: boolean; children: ReactNode }) {
     const value = useVersionsController({ noteId: OWNER_NOTE.id, enabled });
     return (
@@ -597,7 +588,7 @@ describe("NoteMenu × 版本歷史", () => {
     );
   }
 
-  /** provider: "enabled" | "disabled" | "none"（none＝側欄每列 ⋮ 的處境：沒有 VersionsProvider）。 */
+  /** provider: "enabled" | "disabled" | "none" (none = the situation of each sidebar row's more menu: no VersionsProvider). */
   function renderVersionsMenu(provider: "enabled" | "disabled" | "none") {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("unexpected fetch"))));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -622,7 +613,7 @@ describe("NoteMenu × 版本歷史", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  /** 可控的版面段（`test/layout-tier.ts`）：`installMatchMedia(true)` 是手機（< 640）；回傳的把手可改成任一段（會通知翻轉的查詢）。 */
+  /** Controllable layout tier (`test/layout-tier.ts`): `installMatchMedia(true)` is phone (< 640); the returned handle can switch to any tier (notifying the flipped queries). */
   let liveListeners = (): number => 0;
   function installMatchMedia(phone: boolean, tier: LayoutTier = phone ? "phone" : "docked"): (next: boolean | LayoutTier) => void {
     const handle = stubLayoutTier(tier);
@@ -633,7 +624,7 @@ describe("NoteMenu × 版本歷史", () => {
     };
   }
 
-  it("手機（沒有歷史泡泡）：canEdit → 「Version history」在「AI edit history」上方；沒有「Save current version」", async () => {
+  it("phone (no history bubble): canEdit -> 'Version history' above 'AI edit history'; no 'Save current version'", async () => {
     installMatchMedia(true);
     renderVersionsMenu("enabled");
     const menu = await openVersionsMenu();
@@ -644,7 +635,7 @@ describe("NoteMenu × 版本歷史", () => {
     expect(names).not.toContain("Save current version");
   });
 
-  it.each([["固定（>= 1280）", "docked"], ["浮動（640-1279）", "overlay"]] as const)("%s（有歷史泡泡）：沒有「Version history」也沒有「Save current version」", async (_label, tier) => {
+  it.each([["fixed (>= 1280)", "docked"], ["floating (640-1279)", "overlay"]] as const)("%s (has the history bubble): no 'Version history' and no 'Save current version'", async (_label, tier) => {
     installMatchMedia(false, tier);
     renderVersionsMenu("enabled");
     const menu = await openVersionsMenu();
@@ -653,9 +644,9 @@ describe("NoteMenu × 版本歷史", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Save current version" })).not.toBeInTheDocument();
   });
 
-  // 替身只翻版面段（`WIDE_POINTER_QUERY` 恆不成立）：描述的是觸控裝置（寬判準不翻）跨寬度的路徑。
-  // 手機的 ⋮ 是 sheet：開著時跨過 640 整個選單關掉（`DropdownMenu` 的 `phoneSheet`），重開時項目照新寬度。
-  it("視窗跨斷點：選單開著時跨過 640 → 選單關；寬側重開沒有「Version history」、回到窄重開又有", async () => {
+  // The stand-in only flips the layout tier (`WIDE_POINTER_QUERY` never matches): it describes a touch device (the wide criterion doesn't flip) crossing widths.
+  // The phone more menu is a sheet: crossing 640 while open closes the whole menu (`phoneSheet` of `DropdownMenu`); reopened, the items follow the new width.
+  it("window crosses a breakpoint: crossing 640 with the menu open -> the menu closes; reopened on the wide side there's no 'Version history', back on narrow it's there again", async () => {
     const setNarrow = installMatchMedia(true);
     renderVersionsMenu("enabled");
     const menu = await openVersionsMenu();
@@ -670,7 +661,7 @@ describe("NoteMenu × 版本歷史", () => {
     expect(within(narrow).getByRole("menuitem", { name: "Version history" })).toBeInTheDocument();
   });
 
-  it("卸載後 change 監聽被移除（不留訂閱）", async () => {
+  it("after unmount the change listener is removed (no subscription left)", async () => {
     installMatchMedia(true);
     const { unmount } = renderVersionsMenu("enabled");
     await openVersionsMenu();
@@ -679,14 +670,14 @@ describe("NoteMenu × 版本歷史", () => {
     expect(liveListeners()).toBe(0);
   });
 
-  it("窄：點「Version history」→ open()", async () => {
+  it("narrow: clicking 'Version history' -> open()", async () => {
     installMatchMedia(true);
     renderVersionsMenu("enabled");
     fireEvent.click(within(await openVersionsMenu()).getByRole("menuitem", { name: "Version history" }));
     expect(JSON.parse(screen.getByTestId("v-state").textContent!).mode).not.toBeNull();
   });
 
-  it("triggerRef（NotePage 交給版本歷史整頁當焦點退路）指到頁首 ⋮ 觸發鈕本身", () => {
+  it("triggerRef (NotePage hands it to the version history page as a focus fallback) points at the header more menu trigger itself", () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("unexpected fetch"))));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const triggerRef = createRef<HTMLButtonElement>();
@@ -701,7 +692,7 @@ describe("NoteMenu × 版本歷史", () => {
     expect(triggerRef.current).toBe(screen.getByRole("button", { name: "More" }));
   });
 
-  it.each([["disabled（viewer）"], ["none（側欄每列 ⋮，provider 之外）"]] as const)("%s → 窄視窗也不渲染", async (label) => {
+  it.each([["disabled (viewer)"], ["none (sidebar row menus, outside the provider)"]] as const)("%s -> not rendered at narrow width either", async (label) => {
     installMatchMedia(true);
     renderVersionsMenu(label.startsWith("disabled") ? "disabled" : "none");
     const menu = await openVersionsMenu();
@@ -711,7 +702,7 @@ describe("NoteMenu × 版本歷史", () => {
   });
 });
 
-describe("NoteMenu × 標題導覽（#465）", () => {
+describe("NoteMenu - heading outline (#465)", () => {
   function renderOutlineMenu(opts: { shell?: "header" | "sidebar"; value?: OutlineMenuValue | null }) {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("unexpected fetch"))));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -740,7 +731,7 @@ describe("NoteMenu × 標題導覽（#465）", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("手機、這篇有標題：頁首 ⋮ 有「Heading outline」、緊接在「Present」之後；選了 → 選單關、open 呼叫一次", async () => {
+  it("phone, the note has headings: the header more menu has 'Heading outline' right after 'Present'; choosing it -> menu closes, open called once", async () => {
     stubLayoutTier("phone");
     const open = vi.fn();
     renderOutlineMenu({ value: { available: true, open } });
@@ -752,11 +743,11 @@ describe("NoteMenu × 標題導覽（#465）", () => {
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Heading outline" }));
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     expect(open).toHaveBeenCalledTimes(1);
-    // 面板沒有觸發鈕：關閉時焦點交還 ⋮ 觸發鈕。
+    // The sheet has no trigger button: on close focus is handed back to the more menu trigger.
     expect(open).toHaveBeenCalledWith(screen.getByRole("button", { name: "More" }));
   });
 
-  it("手機、這篇沒有標題（available=false）→ 沒有", async () => {
+  it("phone, the note has no headings (available=false) -> none", async () => {
     stubLayoutTier("phone");
     renderOutlineMenu({ value: { available: false, open: vi.fn() } });
     const menu = await openOutlineMenu();
@@ -764,14 +755,14 @@ describe("NoteMenu × 標題導覽（#465）", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
   });
 
-  it("640-767：大綱已是手機形 → ⋮ 有「Heading outline」", async () => {
+  it("640-767: the outline is already the phone shape -> the more menu has 'Heading outline'", async () => {
     stubLayoutTier("compact");
     renderOutlineMenu({ value: { available: true, open: vi.fn() } });
     const menu = await openOutlineMenu();
     expect(within(menu).getByRole("menuitem", { name: "Heading outline" })).toBeInTheDocument();
   });
 
-  it.each([["固定（>= 1280）", "docked"], ["浮動（>= 768）", "overlay"]] as const)("%s（有右側細線）→ 沒有", async (_label, tier) => {
+  it.each([["fixed (>= 1280)", "docked"], ["floating (>= 768)", "overlay"]] as const)("%s (with the right-side thin line) -> none", async (_label, tier) => {
     stubLayoutTier(tier);
     renderOutlineMenu({ value: { available: true, open: vi.fn() } });
     const menu = await openOutlineMenu();
@@ -779,7 +770,7 @@ describe("NoteMenu × 標題導覽（#465）", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Heading outline" })).not.toBeInTheDocument();
   });
 
-  it.each([["provider 之外（實際的處境）", false], ["就算在 provider 之內", true]] as const)("側欄每列的 ⋮，%s → 手機也沒有", async (_label, inside) => {
+  it.each([["outside the provider (the real situation)", false], ["even inside the provider", true]] as const)("sidebar row more menu, %s -> none on phone either", async (_label, inside) => {
     stubLayoutTier("phone");
     renderOutlineMenu({ shell: "sidebar", value: inside ? { available: true, open: vi.fn() } : null });
     const menu = await openOutlineMenu(`Note actions for ${OWNER_NOTE.title}`);
@@ -788,13 +779,13 @@ describe("NoteMenu × 標題導覽（#465）", () => {
   });
 });
 
-// 頁首與側欄 ⋮ 共用 NoteMenuCore 的逐層子選單；同空間移動開著的那篇不離場。
-describe("NoteMenu × 逐層子選單", () => {
+// The header and sidebar more menus share NoteMenuCore's level-by-level submenus; a same-space move of the open note doesn't leave it.
+describe("NoteMenu - level-by-level submenus", () => {
   const A = folderDto({ id: "A", name: "A" });
   const A1 = folderDto({ id: "A1", name: "A1", parentId: "A" });
   const B = folderDto({ id: "B", name: "B" });
 
-  /** 群組空清單、資料夾 A ⊃ A1、B；`PUT /api/notes/:id/folder` 回放好的筆記。每筆記進 `calls`。 */
+  /** Empty groups, folder A containing A1, and B; `PUT /api/notes/:id/folder` returns the prepared note. Every call goes into `calls`. */
   function folderFetch(note: NoteDto) {
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
     const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -811,7 +802,7 @@ describe("NoteMenu × 逐層子選單", () => {
     return { fetchSpy, calls };
   }
 
-  /** 寬形（層疊）：鍵盤開 Move to… 的子選單（第一層），等「A」（SubTrigger，不帶「, open」）出現。 */
+  /** Wide form (stacked): open the Move to... submenu (first level) with the keyboard, and wait for "A" (SubTrigger, without ", open") to appear. */
   async function openMoveCascade(): Promise<HTMLElement> {
     const trigger = await screen.findByTestId("note-menu-move-to");
     trigger.focus();
@@ -831,13 +822,13 @@ describe("NoteMenu × 逐層子選單", () => {
     vi.unstubAllGlobals();
   });
 
-  // 寬形＝往旁層疊（Radix 巢狀子選單），窄形（jsdom 預設）＝就地展開逐層；頁首與側欄 ⋮ 同一套。
+  // Wide form = stacks to the side (Radix nested submenus), narrow form (jsdom default) = expands in place level by level; the header and sidebar more menus share the same set.
   it.each([
     ["header", "wide"],
     ["sidebar", "wide"],
     ["header", "narrow"],
     ["sidebar", "narrow"],
-  ] as const)("NM-H1 %s ⋮（%s）：寬形是層疊（開 A → Move here、A1，沒有 Back）；窄形是就地展開逐層（點「A, open」→ Back、Move here）", async (shell, form) => {
+  ] as const)("%s more menu (%s): wide form stacks (open A -> Move here, A1, no Back); narrow form expands in place level by level (click 'A, open' -> Back, Move here)", async (shell, form) => {
     mockWidePointer(form === "wide");
     const { fetchSpy } = folderFetch(OWNER_NOTE);
     renderCopyMenu(shell, OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -862,7 +853,7 @@ describe("NoteMenu × 逐層子選單", () => {
     }
   });
 
-  it("NM-W1 就地展開到第二層時跨判準（窄→寬）→ 選單關；回到窄再開 ⋮ → Move to… 是收合態、展開是第一層（groupExpanded／paths 已重設）", async () => {
+  it("in-place expansion at the second level crosses the criterion (narrow -> wide) -> the menu closes; back to narrow and reopening: Move to... is collapsed, expanding gives the first level (groupExpanded/paths were reset)", async () => {
     const mq = mockWidePointer(false);
     const { fetchSpy } = folderFetch(OWNER_NOTE);
     renderCopyMenu("header", OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -882,7 +873,7 @@ describe("NoteMenu × 逐層子選單", () => {
     expect(within(group).getAllByRole("menuitem").map((el) => el.getAttribute("aria-label") ?? el.textContent)).toEqual(["A, open", "B"]);
   });
 
-  it("NM-H2 同空間移動開著的那篇 → PUT 一次、toast，不設 leavingRef、不導頁", async () => {
+  it("same-space move of the open note -> one PUT, toast, no leavingRef set, no navigation", async () => {
     mockWidePointer(true);
     const leavingRef = { current: false };
     const { fetchSpy, calls } = folderFetch(OWNER_NOTE);
@@ -899,13 +890,13 @@ describe("NoteMenu × 逐層子選單", () => {
     expect(screen.queryByText("home landing")).toBeNull();
   });
 
-  // 手機（< 640）：⋮ 是貼底的 sheet；移動到…換掉整個 sheet 內容，最上面一列返回。頁首與側欄 ⋮ 同一套。
+  // Phone (< 640): the more menu is a bottom-attached sheet; "Move to..." replaces the whole sheet content with a back row at the top. The header and sidebar more menus share the same set.
   const sheetRows = (): string[] =>
     within(screen.getByRole("menu"))
       .getAllByRole("menuitem")
       .map((el) => el.getAttribute("aria-label") ?? el.textContent ?? "");
 
-  it.each(["header", "sidebar"] as const)("NM-S1 手機 %s ⋮：sheet、最上面是筆記標題、列 48px；640 以上照舊是小選單", async (shell) => {
+  it.each(["header", "sidebar"] as const)("phone %s more menu: sheet, the note title at top, rows 48px; from 640 up it's still a small menu", async (shell) => {
     stubLayoutTier("phone");
     const { fetchSpy } = folderFetch(OWNER_NOTE);
     renderCopyMenu(shell, OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -925,14 +916,13 @@ describe("NoteMenu × 逐層子選單", () => {
     const popover = await screen.findByRole("menu");
     expect(popover).not.toHaveAttribute("data-menu-sheet");
     expect(within(popover).queryByText(OWNER_NOTE.title)).toBeNull();
-    // 640 以上（觸控／窄）仍是就地展開：觸發項帶 aria-expanded，展開後主選單其他項還在
     const trigger = await screen.findByTestId("note-menu-move-to");
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(within(popover).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
   });
 
-  it.each(["header", "sidebar"] as const)("NM-S2 手機 %s ⋮：Move to… 換掉整個內容（返回列在最上、拿到焦點，標題換成 Move to…）；逐層進出；第一層的返回回主選單、焦點回 Move to…", async (shell) => {
+  it.each(["header", "sidebar"] as const)("phone %s more menu: Move to... replaces the whole content (the back row is at the top and gets focus, title changes to Move to...); level by level in and out; back from the first level returns to the main menu, focus returns to Move to...", async (shell) => {
     stubLayoutTier("phone");
     const { fetchSpy } = folderFetch(OWNER_NOTE);
     renderCopyMenu(shell, OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -961,7 +951,7 @@ describe("NoteMenu × 逐層子選單", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("note-menu-move-to")));
   });
 
-  it("NM-S3 手機：子選單裡 Esc 先回主選單（選單不關），再按 Esc 才關、焦點回 ⋮；ArrowLeft 同返回", async () => {
+  it("phone: Esc inside a submenu first returns to the main menu (menu doesn't close), a second Esc closes it and focus returns to the more menu; ArrowLeft also goes back", async () => {
     stubLayoutTier("phone");
     const { fetchSpy } = folderFetch(OWNER_NOTE);
     renderCopyMenu("header", OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -982,7 +972,7 @@ describe("NoteMenu × 逐層子選單", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "More" }));
   });
 
-  it("NM-S4 手機：子選單裡選目的地 → 選單關、同空間移動照常送出；重開是主選單", async () => {
+  it("phone: choosing a destination in a submenu -> menu closes, same-space move is sent as usual; reopening shows the main menu", async () => {
     stubLayoutTier("phone");
     const { fetchSpy, calls } = folderFetch(OWNER_NOTE);
     renderCopyMenu("header", OWNER_NOTE, fetchSpy as unknown as typeof fetch);
@@ -997,18 +987,16 @@ describe("NoteMenu × 逐層子選單", () => {
   });
 });
 
-// ── 最愛：⋮ 的「加入最愛／移出最愛」與移出確認框 ──
 
-describe("NoteMenu × 最愛", () => {
+describe("NoteMenu - favorites", () => {
   const FAV_NOTE = OWNER_NOTE;
   const jsonResponse = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
   const hang = () => new Promise<Response>(() => {});
 
   interface FavServer {
-    /** 此刻在最愛裡的 noteId，新到舊。 */
     favorites: string[];
-    /** 回應方式；"pending"＝掛住不回。 */
+    /** How to respond; "pending" = hang without replying. */
     get: "ok" | "pending";
     put: "ok" | "pending" | 404;
     del: "ok" | "pending" | 429;
@@ -1070,7 +1058,6 @@ describe("NoteMenu × 最愛", () => {
   const triggerName = (shell: "header" | "sidebar") => (shell === "header" ? "More" : `Note actions for ${FAV_NOTE.title}`);
   const openShellMenu = (shell: "header" | "sidebar") => pressTrigger(screen.getByRole("button", { name: triggerName(shell) }));
   const favItem = (name: "Add to favorites" | "Remove from favorites") => screen.findByRole("menuitem", { name });
-  /** 清單到了（項目不再 disabled）。 */
   const ready = (item: HTMLElement) => waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
 
   beforeEach(async () => {
@@ -1082,7 +1069,7 @@ describe("NoteMenu × 最愛", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["header", "sidebar"] as const)("%s 殼：最愛項是第一項、複製連結是第二項", async (shell) => {
+  it.each(["header", "sidebar"] as const)("%s shell: the favorites item is first, copy link is second", async (shell) => {
     stubFavServer();
     renderShell(shell);
     openShellMenu(shell);
@@ -1091,7 +1078,7 @@ describe("NoteMenu × 最愛", () => {
     expect(screen.getAllByRole("menuitem")[1]).toHaveTextContent("Copy link");
   });
 
-  it("不在最愛：空心星＋「Add to favorites」", async () => {
+  it("not in favorites: hollow star + 'Add to favorites'", async () => {
     stubFavServer({ favorites: [] });
     renderShell("header");
     openShellMenu("header");
@@ -1101,7 +1088,7 @@ describe("NoteMenu × 最愛", () => {
     expect(add.querySelector("svg")).toHaveAttribute("fill", "none");
   });
 
-  it("在最愛：實心星＋「Remove from favorites」", async () => {
+  it("in favorites: filled star + 'Remove from favorites'", async () => {
     stubFavServer({ favorites: [FAV_NOTE.id] });
     renderShell("header");
     openShellMenu("header");
@@ -1111,14 +1098,14 @@ describe("NoteMenu × 最愛", () => {
     expect(remove.querySelector("svg")).toHaveAttribute("fill", "currentColor");
   });
 
-  it("清單還沒到 → disabled、顯示「Add to favorites」", async () => {
+  it("list not arrived -> disabled, shows 'Add to favorites'", async () => {
     stubFavServer({ get: "pending" });
     renderShell("header");
     openShellMenu("header");
     expect(await favItem("Add to favorites")).toHaveAttribute("aria-disabled", "true");
   });
 
-  it.each(["header", "sidebar"] as const)("%s 殼：清單還沒到時鍵盤開選單，焦點在第一項、按 Enter 不送請求；清單到了再選才送", async (shell) => {
+  it.each(["header", "sidebar"] as const)("%s shell: opening the menu with the keyboard before the list arrives, focus is on the first item and Enter sends no request; choosing after the list arrives does send", async (shell) => {
     const server = stubFavServer({ get: "pending" });
     const { queryClient } = renderShell(shell);
     fireEvent.keyDown(screen.getByRole("button", { name: triggerName(shell) }), { key: "Enter" });
@@ -1130,7 +1117,6 @@ describe("NoteMenu × 最愛", () => {
     expect(count(server, `PUT /api/favorites/${FAV_NOTE.id}`)).toBe(0);
     expect(screen.getAllByRole("menuitem")[0]).toBe(add);
 
-    // 清單到了：同一個項目變可用，再選才送出
     act(() => queryClient.setQueryData(["favorites"], []));
     await ready(add);
     expect(add).toHaveFocus();
@@ -1138,7 +1124,7 @@ describe("NoteMenu × 最愛", () => {
     await waitFor(() => expect(count(server, `PUT /api/favorites/${FAV_NOTE.id}`)).toBe(1));
   });
 
-  it("按「Add」→ PUT /api/favorites/<id>、出「Added to favorites」", async () => {
+  it("pressing 'Add' -> PUT /api/favorites/<id>, 'Added to favorites' appears", async () => {
     const server = stubFavServer();
     renderShell("sidebar");
     openShellMenu("sidebar");
@@ -1149,7 +1135,7 @@ describe("NoteMenu × 最愛", () => {
     expect(count(server, `PUT /api/favorites/${FAV_NOTE.id}`)).toBe(1);
   });
 
-  it("加入失敗 → 出錯誤 toast、不出成功 toast", async () => {
+  it("add fails -> error toast, no success toast", async () => {
     stubFavServer({ put: 404 });
     renderShell("header");
     openShellMenu("header");
@@ -1160,7 +1146,7 @@ describe("NoteMenu × 最愛", () => {
     expect(screen.queryByText("Added to favorites")).toBeNull();
   });
 
-  it("按「Remove」→ 出確認框、還沒送 DELETE；Cancel → 沒送、焦點回 ⋮；再開、框內 Remove → 送 DELETE、框關、toast 沒有 Undo", async () => {
+  it("pressing 'Remove' -> confirm dialog, no DELETE yet; Cancel -> nothing sent, focus returns to the more menu; reopen, Remove in the dialog -> DELETE sent, dialog closes, toast has no Undo", async () => {
     const server = stubFavServer({ favorites: [FAV_NOTE.id] });
     renderShell("header");
     openShellMenu("header");
@@ -1187,7 +1173,7 @@ describe("NoteMenu × 最愛", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "More" })).toHaveFocus());
   });
 
-  it("DELETE 回 429 → 框關、錯誤 toast、快取不變、焦點回 ⋮", async () => {
+  it("DELETE returns 429 -> dialog closes, error toast, cache unchanged, focus returns to the more menu", async () => {
     stubFavServer({ favorites: [FAV_NOTE.id], del: 429 });
     const { queryClient } = renderShell("sidebar");
     openShellMenu("sidebar");
@@ -1203,7 +1189,7 @@ describe("NoteMenu × 最愛", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: triggerName("sidebar") })).toHaveFocus());
   });
 
-  it("移出請求還沒回來：確認框不關、兩顆鈕 disabled、Esc 無效、DELETE 只送一次", async () => {
+  it("removal request hasn't returned: the confirm dialog doesn't close, both buttons disabled, Esc has no effect, DELETE sent once", async () => {
     const server = stubFavServer({ favorites: [FAV_NOTE.id], del: "pending" });
     renderShell("sidebar");
     openShellMenu("sidebar");
@@ -1220,7 +1206,7 @@ describe("NoteMenu × 最愛", () => {
     expect(count(server, `DELETE /api/favorites/${FAV_NOTE.id}`)).toBe(1);
   });
 
-  it("送出中重開選單：PUT 掛住 → 該項 disabled；按它不送第二個請求", async () => {
+  it("reopening the menu while sending: PUT hangs -> that item is disabled; pressing it sends no second request", async () => {
     const server = stubFavServer({ put: "pending" });
     renderShell("header");
     openShellMenu("header");
@@ -1239,7 +1225,7 @@ describe("NoteMenu × 最愛", () => {
     expect(server.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
   });
 
-  it("選單沒開時不打 GET /api/favorites（十個側欄 ⋮）；打開一個才打一次", async () => {
+  it("when the menu isn't open GET /api/favorites isn't hit (ten sidebar more menus); opening one hits it once", async () => {
     const server = stubFavServer();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const notes = Array.from({ length: 10 }, (_, i) => ({ ...FAV_NOTE, id: `${FAV_NOTE.id.slice(0, -2)}${String(i).padStart(2, "0")}`, title: `Note ${i}` }));
@@ -1262,8 +1248,8 @@ describe("NoteMenu × 最愛", () => {
   });
 });
 
-// 最愛 tab 裡用列自己的 ⋮ 移出：那一列在 204 之後卸載，焦點要落到下一列／上一列／tabpanel，toast 不能隨列消失。
-describe("NoteMenu × 最愛 tab 的焦點", () => {
+// Removing with the row's own more menu in the Favorites tab: that row unmounts after the 204, focus must land on the next row / previous row / tabpanel, and the toast must not disappear with the row.
+describe("NoteMenu - Favorites tab focus", () => {
   const A = personalNote({ id: "fa", title: "Alpha" });
   const B = personalNote({ id: "fb", title: "Bravo" });
   const C = personalNote({ id: "fc", title: "Charlie" });
@@ -1280,7 +1266,7 @@ describe("NoteMenu × 最愛 tab 的焦點", () => {
     localStorage.clear();
   });
 
-  it("從 B、C、A 依序移出：焦點依序落在 C 的連結、A 的連結、tabpanel；三次都出現移出 toast", async () => {
+  it("removing B, C, A in turn: focus lands on C's link, A's link, then the tabpanel; the removal toast appears all three times", async () => {
     let favorites = [A.id, B.id, C.id];
     vi.stubGlobal(
       "fetch",
@@ -1345,7 +1331,7 @@ describe("NoteMenu × 最愛 tab 的焦點", () => {
     await waitFor(() => expect(screen.getByRole("tabpanel")).toHaveFocus());
   });
 
-  it("畫面上有兩份側欄實例（抽屜＋隱藏的靜態卡）：焦點退路只在開框的那份裡找", async () => {
+  it("two sidebar instances on screen (drawer + hidden static card): the focus fallback only looks inside the instance that opened the dialog", async () => {
     let favorites = [A.id, B.id, C.id];
     vi.stubGlobal(
       "fetch",
@@ -1409,7 +1395,7 @@ describe("NoteMenu × 最愛 tab 的焦點", () => {
   });
 });
 
-describe("NoteMenu × 寬度", () => {
+describe("NoteMenu - width", () => {
   function renderWidthMenu(shell: "header" | "sidebar" = "header", withToggle = true) {
     vi.stubGlobal("fetch", (input: RequestInfo | URL) =>
       Promise.resolve(fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(String(input) === "/api/folders" ? FOLDER_LIST_EMPTY : []) })),
@@ -1435,7 +1421,7 @@ describe("NoteMenu × 寬度", () => {
       </QueryClientProvider>,
     );
   }
-  // 選單開著時 Radix 把其他內容標 aria-hidden，所以查詢要帶 hidden。
+  // With the menu open Radix marks other content aria-hidden, so queries need `hidden`.
   const widthToggle = () => screen.getByRole("button", { name: /^Width:/, hidden: true });
 
   beforeEach(async () => {
@@ -1451,7 +1437,7 @@ describe("NoteMenu × 寬度", () => {
     vi.restoreAllMocks();
   });
 
-  it("頁首 ⋮ 有「Width」，側欄列 ⋮ 沒有", () => {
+  it("header more menu has 'Width', sidebar row more menus don't", () => {
     renderWidthMenu("header");
     openMenu();
     expect(screen.getByRole("menuitem", { name: "Width" })).toBeInTheDocument();
@@ -1463,7 +1449,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
-  it("手機（< 640）：頁首 ⋮ 沒有「Width」，其他項照舊；640 以上仍有", () => {
+  it("phone (< 640): header more menu has no 'Width', other items as usual; from 640 up it's there", () => {
     stubLayoutTier("phone");
     renderWidthMenu("header");
     openMenu();
@@ -1477,7 +1463,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByRole("menuitem", { name: "Width" })).toBeInTheDocument();
   });
 
-  it("寬形：Width 是子選單觸發項，展開後三個 menuitemradio、目前那個 aria-checked", async () => {
+  it("wide form: Width is a submenu trigger item; expanded it has three menuitemradio, the current one aria-checked", async () => {
     mockWidePointer(true);
     renderWidthMenu();
     openMenu();
@@ -1491,7 +1477,7 @@ describe("NoteMenu × 寬度", () => {
     expect(radios.map((el) => el.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
   });
 
-  it("已存的寬度：兩種形開出來都是那一項 aria-checked", async () => {
+  it("stored width: in both forms the opened menu has that item aria-checked", async () => {
     window.localStorage.setItem(`note.width.${OWNER_NOTE.id}`, "full");
     mockWidePointer(true);
     renderWidthMenu();
@@ -1511,7 +1497,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByRole("menuitemradio", { name: "Standard" })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("寬形：點「Wide」→ localStorage 寫入、頁首寬度鈕的名稱跟著變", async () => {
+  it("wide form: clicking 'Wide' -> written to localStorage, the header width button's name follows", async () => {
     mockWidePointer(true);
     renderWidthMenu();
     openMenu();
@@ -1523,11 +1509,10 @@ describe("NoteMenu × 寬度", () => {
     fireEvent.click(within(sub).getByRole("menuitemradio", { name: "Wide" }));
     expect(window.localStorage.getItem(`note.width.${OWNER_NOTE.id}`)).toBe("wide");
     expect(widthToggle()).toHaveAccessibleName("Width: Wide — click for Full width");
-    // 子選單形選了之後整個選單關掉
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("寬形：Esc 只收子選單，焦點回「Width」，主選單還開著", async () => {
+  it("wide form: Esc closes only the submenu, focus returns to 'Width', the main menu stays open", async () => {
     mockWidePointer(true);
     renderWidthMenu();
     openMenu();
@@ -1541,7 +1526,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByRole("menuitem", { name: "Width" })).toHaveFocus();
   });
 
-  it("窄形：點「Width」就地出現三項、不帶 aria-haspopup、選單仍開著；點「Full width」寫入且選單不關", () => {
+  it("narrow form: clicking 'Width' shows three items in place, no aria-haspopup, menu stays open; clicking 'Full width' writes it and the menu doesn't close", () => {
     mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1561,7 +1546,7 @@ describe("NoteMenu × 寬度", () => {
     expect(widthToggle()).toHaveAccessibleName("Width: Full width — click for Standard");
   });
 
-  it("窄形：Esc 先收合再關選單；重開是收合態", () => {
+  it("narrow form: Esc collapses first then closes the menu; reopening is collapsed", () => {
     mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1578,7 +1563,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
-  it("選單開著時跨過寬窄判準 → 關整個選單", () => {
+  it("crossing the wide/narrow criterion with the menu open -> closes the whole menu", () => {
     const mq = mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1588,7 +1573,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("窄形：跨到寬再跨回窄，重開 ⋮ 是收合態、第一下 Esc 就關選單", () => {
+  it("narrow form: crossing to wide and back to narrow, reopening the more menu is collapsed and the first Esc closes the menu", () => {
     const mq = mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1604,7 +1589,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("窄形：ArrowRight 展開、radio 上按 ArrowLeft 收合並把焦點還給「Width」", () => {
+  it("narrow form: ArrowRight expands, ArrowLeft on a radio collapses and returns focus to 'Width'", () => {
     mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1619,10 +1604,8 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
     expect(screen.getByRole("menuitem", { name: "Width" })).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByRole("menuitem", { name: "Width" })).toHaveFocus();
-    // 觸發項上按 ArrowLeft（已收合）不做事；選單還在
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Width" }), { key: "ArrowLeft" });
     expect(screen.getByRole("menu")).toBeInTheDocument();
-    // 焦點在觸發項、已展開時按 ArrowLeft 也收合
     const again = screen.getByRole("menuitem", { name: "Width" });
     again.focus();
     fireEvent.keyDown(again, { key: "ArrowRight" });
@@ -1633,7 +1616,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  it("窄形：寬度展開後點別的項目關選單，重開是收合態、第一下 Esc 就關選單", () => {
+  it("narrow form: after expanding width, clicking another item closes the menu, reopening is collapsed and the first Esc closes the menu", () => {
     mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1648,7 +1631,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("窄形：「Copy to…」展開後點別的項目關選單，重開是收合態", () => {
+  it("narrow form: after expanding 'Copy to...', clicking another item closes the menu, reopening is collapsed", () => {
     mockWidePointer(false);
     renderWidthMenu();
     openMenu();
@@ -1660,7 +1643,7 @@ describe("NoteMenu × 寬度", () => {
     expect(screen.getByTestId("note-menu-copy-to")).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("選單沒開時不訂閱寬度 store（開了才訂閱）", () => {
+  it("the width store isn't subscribed while the menu is closed (subscribed once it opens)", () => {
     const add = vi.spyOn(window, "addEventListener");
     const storageListeners = () => add.mock.calls.filter(([type]) => type === "storage").length;
     renderWidthMenu("header", false);

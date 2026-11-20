@@ -9,7 +9,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { SIDEBAR_WIDTH_DEFAULT } from "@/components/sidebar-width";
 
 const DEFAULT_PX = `${SIDEBAR_WIDTH_DEFAULT}px`;
-// 從預設寬度往右拖 80px（clientX 100 → 180）後的寬度。
+// Width after dragging 80px right from the default (clientX 100 -> 180).
 const DRAGGED = SIDEBAR_WIDTH_DEFAULT + 80;
 const DRAGGED_PX = `${DRAGGED}px`;
 
@@ -64,11 +64,9 @@ async function renderShell() {
 }
 
 /**
- * 側欄寬度把手。**全檔都是 state／attribute 斷言**：jsdom 沒有 CSS、沒有版面、
- * 沒有 `setPointerCapture`（這裡用 spy 補上）——「游標離開把手仍跟手」「把手真的蓋在
- * `gap-3` 上」「focus 時看得到線」這類行為只能手動驗。
+ * Assertions are on state/attributes only: jsdom has no CSS, no layout and no `setPointerCapture` (stubbed here with a spy), so "the cursor leaving the handle still tracks", "the handle really overlaps `gap-3`" and "the line is visible on focus" can only be checked by hand.
  */
-describe("AppShell 側欄寬度把手", () => {
+describe("AppShell sidebar width handle", () => {
   let setPointerCapture: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -89,7 +87,7 @@ describe("AppShell 側欄寬度把手", () => {
     document.documentElement.removeAttribute("data-accent");
   });
 
-  it("預設：320px、aria-valuenow/min/max、可聚焦、把手在 aside 內（把手位置是 class 斷言）", async () => {
+  it("default: 320px, aria-valuenow/min/max, focusable, handle inside the aside (handle position is a class assertion)", async () => {
     const { handle, aside } = await renderShell();
 
     expect(aside.style.width).toBe(DEFAULT_PX);
@@ -99,11 +97,11 @@ describe("AppShell 側欄寬度把手", () => {
     expect(handle).toHaveAttribute("aria-orientation", "vertical");
     expect(handle.tabIndex).toBe(0);
     expect(aside.contains(handle)).toBe(true);
-    // class 斷言，不是行為斷言：jsdom 沒有版面，量不到它是否真的蓋在 gap-3 上。
+    // Class assertion, not behaviour: jsdom has no layout, so it can't measure whether the handle really overlaps gap-3.
     expect(handle).toHaveClass("absolute", "left-full", "w-3", "cursor-col-resize");
   });
 
-  it("拖曳：夾在上下限、拖曳中鎖 body、放開才寫入", async () => {
+  it("drag: clamped to min/max, body locked while dragging, written only on release", async () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
@@ -128,13 +126,12 @@ describe("AppShell 側欄寬度把手", () => {
     expect(document.body.style.userSelect).toBe("");
     expect(document.body.style.cursor).toBe("");
 
-    // 拖曳已結束：之後的 move 不再改寬度。clientX 刻意選 180——若拖曳沒結束會算出
-    // 預設寬度加 80，與已夾到的下限 200 不同值，斷言才分得出來。
+    // The drag has ended: later moves don't change the width. clientX is deliberately 180: if the drag hadn't ended it would give default + 80, which differs from the clamped minimum 200.
     fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
     expect(aside.style.width).toBe("200px");
   });
 
-  it("pointercancel 也收尾：寫入、body 還原、之後的 move 不改寬度", async () => {
+  it("pointercancel also finishes: written, body restored, later moves don't change the width", async () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
@@ -150,7 +147,7 @@ describe("AppShell 側欄寬度把手", () => {
     expect(aside.style.width).toBe(DRAGGED_PX);
   });
 
-  it("lostpointercapture 也收尾（系統奪走 capture、沒有 pointerup／cancel 的那條路）", async () => {
+  it("lostpointercapture also finishes (the system takes the capture away, no pointerup/cancel)", async () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
@@ -167,9 +164,9 @@ describe("AppShell 側欄寬度把手", () => {
   });
 
   it.each([
-    [1, "中鍵"],
-    [2, "右鍵"],
-  ])("button=%i（%s）的 pointerdown 不開始拖曳", async (button) => {
+    [1, "middle"],
+    [2, "right"],
+  ])("button=%i (%s): pointerdown doesn't start a drag", async (button) => {
     const { handle, aside } = await renderShell();
 
     fireEvent.pointerDown(handle, { button, clientX: 100, pointerId: 1 });
@@ -181,19 +178,18 @@ describe("AppShell 側欄寬度把手", () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
-  it("把手的線：平常透明、hover 不畫線，只在鍵盤聚焦與拖曳中出線（class／attribute 契約，不是行為斷言）", async () => {
-    // hover 只換游標、不畫線。jsdom 沒有 CSS，只能釘 class 字串與屬性。
+  it("handle line: transparent normally, hover draws no line, only keyboard focus and dragging show it (class/attribute contract, not behaviour)", async () => {
+    // hover only changes the cursor, draws no line. jsdom has no CSS, so only class strings and attributes can be pinned.
     const { handle } = await renderShell();
     const line = handle.firstElementChild;
     if (!line) throw new Error("resize handle has no line element");
     expect(line).toHaveAttribute("aria-hidden", "true");
-    // 容器與線都不得有任何 hover 形的 class（group-hover/…、hover:…）。
     expect(handle.className).not.toMatch(/hover/);
     expect(line.className).not.toMatch(/hover/);
     expect(line).toHaveClass("group-focus-visible/resize:bg-ring", "group-data-[dragging]/resize:bg-ring");
 
-    // `group-data-[dragging]` 以「屬性存在」比對：平常必須完全沒有這個屬性——
-    // `data-dragging={dragging}` 會被 React 渲染成 "false"（存在），線就恆亮。
+    // `group-data-[dragging]` matches on attribute presence, so the attribute must be absent normally:
+    // `data-dragging={dragging}` renders as "false" (present) in React, which would keep the line always on.
     expect(handle).not.toHaveAttribute("data-dragging");
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
     expect(handle).toHaveAttribute("data-dragging");
@@ -201,7 +197,7 @@ describe("AppShell 側欄寬度把手", () => {
     expect(handle).not.toHaveAttribute("data-dragging");
   });
 
-  it("鍵盤：左右 16px、Home／End、到頂不再動、每次都寫入", async () => {
+  it("keyboard: left/right 16px, Home/End, no movement past the limit, written every time", async () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.keyDown(handle, { key: "ArrowRight" });
@@ -224,7 +220,7 @@ describe("AppShell 側欄寬度把手", () => {
     expect(handle).toHaveAttribute("aria-valuenow", "480");
   });
 
-  it("雙擊回預設並清掉儲存", async () => {
+  it("double-click resets to the default and clears the stored value", async () => {
     const { handle, aside } = await renderShell();
 
     fireEvent.keyDown(handle, { key: "End" });
@@ -235,7 +231,7 @@ describe("AppShell 側欄寬度把手", () => {
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
-  it("已存舊預設 256 → 維持 256px，不被改成新預設", async () => {
+  it("stored old default 256 -> stays 256px, not changed to the new default", async () => {
     window.localStorage.setItem(KEY, "256");
     const { aside } = await renderShell();
     expect(aside.style.width).toBe("256px");
@@ -248,15 +244,15 @@ describe("AppShell 側欄寬度把手", () => {
     ["300.5", DEFAULT_PX],
     ["", DEFAULT_PX],
     ["300", "300px"],
-  ])("讀到 %j → %s", async (raw, expected) => {
+  ])("reading %j -> %s", async (raw, expected) => {
     window.localStorage.setItem(KEY, raw);
     const { aside, handle } = await renderShell();
     expect(aside.style.width).toBe(expected);
     expect(handle).toHaveAttribute("aria-valuenow", expected.replace("px", ""));
   });
 
-  it("sidebar.width 讀取丟錯 → 預設、頁面照常渲染", async () => {
-    // 只對 sidebar.width 丟錯：theme.tsx 讀自己的鍵沒有 try/catch，全面丟錯會先炸在 ThemeProvider。
+  it("sidebar.width read throws -> default width, page still renders", async () => {
+    // Throw only for sidebar.width: theme.tsx reads its own key without try/catch, so throwing for everything would blow up in ThemeProvider first.
     const original = Storage.prototype.getItem;
     const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key: string) {
       if (key === KEY) throw new Error("storage blocked");

@@ -5,8 +5,6 @@ import { normalizeBody } from "../../src/transfer/normalize.js";
 import { yieldToLoop } from "../../src/transfer/yield.js";
 import { docWith, forkOf, makeBaseInMemory, planInMemory } from "./fixtures/transfer-sync.js";
 
-/** bulk transfer 的同步計畫（P1–P7）。 */
-
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
 type Candidates = Array<{ id: string; title: string; slug: string; groupId: string | null; ownerHandle: string }>;
@@ -22,15 +20,15 @@ const ok = <T extends { ok: boolean }>(r: T): Extract<T, { ok: true }> => {
 };
 const marks = (r: { plan: { decisions: Array<{ kind: string; mark: string }> } }) => r.plan.decisions.map(d => `${d.kind}:${d.mark}`);
 
-describe("P1 一次 scratch session、持 lease 期間零 DB", () => {
-  // #398：解析（含邊界 parse）在 lease 之外做（生產上在 parse worker 裡），scratch session 只在寫進預解析 block 時開——讓出時 inFlight 0（解析中）或 1（寫進 scratch 時）。
-  it("mounts 差 1（含邊界 parse）、結束後 inFlight 0、解析時不持 lease", async () => {
+describe("one scratch session, zero DB while holding the lease", () => {
+  // #398: parsing (including the boundary parse) happens outside the lease (in production inside the parse worker); the scratch session is opened only when writing pre-parsed blocks - so inFlight is 0 (while parsing) or 1 (while writing into scratch) at yields.
+  it("mounts differ by 1 (including the boundary parse), inFlight 0 afterwards, no lease held while parsing", async () => {
     const doc = await docWith(rt, [P("A"), P("B"), P("C")]);
     const b = await makeBaseInMemory(rt, doc);
     const live = forkOf(doc);
     const m0 = rt.mounts;
     const inFlightAtYield: number[] = [];
-    // `C` 之前貼一行 `X`（不空行）→ C 的邊界要在同一個 scratch session 裡 parse 一次
+    // a line `X` pasted before `C` (no blank line) -> C's boundary is parsed once in the same scratch session
     const r = ok(
       await planInMemory(rt, b, "A\n\nB2\n\nX\nC", live, {
         now: clock(25),
@@ -49,13 +47,13 @@ describe("P1 一次 scratch session、持 lease 期間零 DB", () => {
   });
 });
 
-describe("P2／P3 parse 失敗 → 整篇不寫", () => {
-  it("P2 改寫區 parse 失敗（unsupported_color）→ { ok: false }", async () => {
+describe("parse failure -> the whole note is not written", () => {
+  it("a rewrite region fails to parse (unsupported_color) -> { ok: false }", async () => {
     const doc = await docWith(rt, [P("A"), P("B")]);
     const b = await makeBaseInMemory(rt, doc);
     expect(await planInMemory(rt, b, 'A\n\nx <span style="color:tomato">orange-ish</span>', forkOf(doc))).toMatchObject({ ok: false, code: "unsupported_color" });
   });
-  it("P3 未閉合 `<!--` 貼在沒改的段上方 → empty_content；改寫一段並在前一行加未閉合 `<!--` → empty_content", async () => {
+  it("an unterminated `<!--` pasted above an unchanged segment -> empty_content; rewriting a paragraph and adding an unterminated `<!--` on the line before -> empty_content", async () => {
     const doc = await docWith(rt, [P("A"), P("B")]);
     const b = await makeBaseInMemory(rt, doc);
     expect(await planInMemory(rt, b, "A\n\n<!--\nB", forkOf(doc))).toMatchObject({ ok: false, code: "empty_content" });
@@ -63,8 +61,8 @@ describe("P2／P3 parse 失敗 → 整篇不寫", () => {
   });
 });
 
-describe("P3b 檔案層級未閉合的 code fence → 整篇不寫", () => {
-  it("0 行分隔清單上方加一行未閉合 ``` → { ok: false, code: unclosed_fence }、只 mount 一次、lease 已還", async () => {
+describe("file-level unclosed code fence -> the whole note is not written", () => {
+  it("an unclosed ``` line added above a 0-line-separated list -> { ok: false, code: unclosed_fence }, one mount only, lease returned", async () => {
     const doc = await docWith(rt, [P("Z"), { type: "bulletListItem", content: "a" }, { type: "bulletListItem", content: "b" }]);
     const b = await makeBaseInMemory(rt, doc);
     expect(await planInMemory(rt, b, "Z\n\n```\n* a\n* b", forkOf(doc))).toMatchObject({ ok: false, code: "unclosed_fence" });
@@ -72,14 +70,14 @@ describe("P3b 檔案層級未閉合的 code fence → 整篇不寫", () => {
   });
 });
 
-describe("P4 same 判準（「人先改過、檔案做同樣修改」與「倖存者全不見」的形已隨合併刪除，現況＝基底才會規劃）", () => {
-  it("沒有人改、agent 只換寫法（`*` → `-`）→ same（非衝突的區也先判 same，id 不換）", async () => {
+describe("same criterion (planning only happens when current = base)", () => {
+  it("no human edit, the agent only changes the spelling (`*` -> `-`) -> same (a non-conflicting region is also judged same first, ids not replaced)", async () => {
     const doc = await docWith(rt, [P("A"), { type: "bulletListItem", content: "item" }, P("C")]);
     const b = await makeBaseInMemory(rt, doc);
     expect(normalizeBody(b.body)).toBe("A\n\n* item\n\nC");
     expect(marks(ok(await planInMemory(rt, b, "A\n\n- item\n\nC", forkOf(doc))))).toEqual(["rewrite:same"]);
   });
-  it("對照：同內容的區沒有人改 → applied（不是 same 就會換 id）", async () => {
+  it("contrast: a region with the same content and no human edit -> applied (it would replace ids if it were not same)", async () => {
     const doc = await docWith(rt, [P("A"), P("B"), P("C")]);
     const b = await makeBaseInMemory(rt, doc);
     const r = ok(await planInMemory(rt, b, "A\n\nB2\n\nC", forkOf(doc)));
@@ -87,8 +85,8 @@ describe("P4 same 判準（「人先改過、檔案做同樣修改」與「倖�
   });
 });
 
-describe("P5 預解析 numbered 在清單中間的改寫 → start 被拿掉", () => {
-  it("改第 2 項 → stripStart、預解析沒有 start；清單第一項 → 保留", async () => {
+describe("a pre-parsed numbered in the middle of a list is rewritten -> start is stripped", () => {
+  it("changing item 2 -> stripStart, the pre-parse has no start; the first list item -> kept", async () => {
     const doc = await docWith(rt, [NL("a"), NL("b"), NL("c")]);
     const b = await makeBaseInMemory(rt, doc);
     const mid = ok(await planInMemory(rt, b, "1. a\n2. b2\n3. c", forkOf(doc)));
@@ -102,8 +100,8 @@ describe("P5 預解析 numbered 在清單中間的改寫 → start 被拿掉", (
   });
 });
 
-describe("P6／P7 讓出", () => {
-  it("P6 5 區 → yields ≥ 5（時間預算：每次讀時鐘前進 25 ms）", async () => {
+describe("yielding", () => {
+  it("5 regions -> yields >= 5 (time budget: the clock advances 25 ms per read)", async () => {
     const doc = await docWith(rt, Array.from({ length: 10 }, (_, i) => P(`p${i}`)));
     const b = await makeBaseInMemory(rt, doc);
     const body = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? `p${i} changed` : `p${i}`)).join("\n\n");
@@ -112,7 +110,7 @@ describe("P6／P7 讓出", () => {
     expect(r.plan.regions).toHaveLength(5);
     expect(yields).toBeGreaterThanOrEqual(5);
   });
-  it("P6c 確定性：每次讀時鐘前進 25 ms → open 之後 1 次＋每區 parse 之後 1 次＋每區寫進 scratch 之後 1 次（取代牆鐘門檻）", async () => {
+  it("deterministic: the clock advances 25 ms per read -> 1 after open + 1 after each region's parse + 1 after each region's write into scratch (replaces the wall-clock threshold)", async () => {
     const doc = await docWith(rt, Array.from({ length: 10 }, (_, i) => P(`p${i}`)));
     const b = await makeBaseInMemory(rt, doc);
     const body = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? `p${i} changed` : `p${i}`)).join("\n\n");
@@ -122,7 +120,7 @@ describe("P6／P7 讓出", () => {
     expect(r.plan.boundaryChecks).toBe(0);
     expect(yields).toBe(1 + 5 + 5);
   });
-  it("P6 對照：時鐘不前進 → 只有 open 之後那一次無條件讓出", async () => {
+  it("contrast: the clock does not advance -> only the unconditional yield after open", async () => {
     const doc = await docWith(rt, Array.from({ length: 10 }, (_, i) => P(`p${i}`)));
     const b = await makeBaseInMemory(rt, doc);
     const body = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? `p${i} changed` : `p${i}`)).join("\n\n");
@@ -130,7 +128,7 @@ describe("P6／P7 讓出", () => {
     ok(await planInMemory(rt, b, body, forkOf(doc), { now: clock(0), yieldFn: async () => void yields++ }));
     expect(yields).toBe(1);
   });
-  it("P7 從 I/O 回呼進入（預設 yieldFn）：第一區 parse（第一次讀 candidates）之前 timer 已跑", async () => {
+  it("entered from an I/O callback (default yieldFn): the timer has already run before the first region's parse (the first read of candidates)", async () => {
     const doc = await docWith(rt, [P("A"), P("B")]);
     const b = await makeBaseInMemory(rt, doc);
     let fired = false;
@@ -155,8 +153,8 @@ describe("P6／P7 讓出", () => {
   });
 });
 
-describe("#398：未閉合 fence 的判斷也經 runtime.parser（生產＝parse worker），不在主執行緒自己剖析", () => {
-  it("改過的行像 fence → 呼叫 parser.openFenceLine 一次（帶寫入者）；它說太複雜 → 整篇 unsupported_block／too_complex", async () => {
+describe("#398: the unclosed-fence check also goes through runtime.parser (production = the parse worker), not parsed on the main thread", () => {
+  it("a changed line that looks like a fence -> parser.openFenceLine is called once (with the writer); if it says too complex -> the whole note unsupported_block / too_complex", async () => {
     const calls: Array<[string, number]> = [];
     const inline = new EditingRuntime({ baseUrl: "http://localhost/" });
     const spyRt = new EditingRuntime({
@@ -179,8 +177,8 @@ describe("#398：未閉合 fence 的判斷也經 runtime.parser（生產＝parse
   });
 });
 
-describe("#398：邊界檢查的解析回太複雜 → 整檔太複雜（不把它當「邊界不成立」繼續解析下一段）", () => {
-  it("10 段黏在一行下面、每次解析都回 too_complex → planSync 回 unsupported_block／too_complex，解析只做了 1 次", async () => {
+describe("#398: a too-complex answer from the boundary-check parse -> the whole file is too complex (it is not treated as \"boundary does not hold\" and parsing continues with the next segment)", () => {
+  it("10 paragraphs stuck on one line, every parse answers too_complex -> planSync returns unsupported_block / too_complex, and parsing was done only once", async () => {
     let calls = 0;
     const inline = new EditingRuntime({ baseUrl: "http://localhost/" });
     const spyRt = new EditingRuntime({

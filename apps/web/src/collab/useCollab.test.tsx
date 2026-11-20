@@ -15,9 +15,9 @@ import {
   NOTE_SCHEMA_VERSION,
 } from "@knotebook/shared";
 
-// HocuspocusProvider 會開真的 WebSocket，jsdom 裡沒有對端。換成一個假的：把
-// configuration 收下來，讓測試直接扮演 server 觸發 onClose/onAuthenticated，並且
-// 記錄 disconnect/connect/destroy 的呼叫。
+// HocuspocusProvider opens a real WebSocket and jsdom has no peer. Replace it with a fake that stores the
+// configuration so tests can act as the server (trigger onClose/onAuthenticated) and records
+// disconnect/connect/destroy calls.
 interface FakeProvider {
   configuration: Record<string, unknown> & {
     token: () => Promise<string>;
@@ -100,7 +100,7 @@ function SyncedForProbe({ noteId }: { noteId: string | undefined }) {
 }
 const syncedForText = () => screen.getByTestId("synced-for").textContent;
 
-/** #138：文件更新通知那一案的探針——把 `useCollab` 回的 `doc` 露出來給測試操作。 */
+/** Exposes the `doc` returned by `useCollab` so tests can mutate it (#138 doc-update notification). */
 const docRef: { current: Y.Doc | null } = { current: null };
 function DocUpdateProbe({ onDocUpdate }: { onDocUpdate: () => void }) {
   const { doc } = useCollab({ noteId: NOTE_ID, onUnauthorized: () => {}, onDocUpdate });
@@ -119,7 +119,7 @@ describe("useCollab", () => {
     vi.useRealTimers();
   });
 
-  it("N7：provider 自建 socket——不傳 websocketProvider、不開 sessionAwareness", () => {
+  it("provider owns its socket: no websocketProvider is passed and sessionAwareness is off", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise(() => {})),
@@ -129,27 +129,27 @@ describe("useCollab", () => {
     const config = provider().configuration;
     expect(config.name).toBe(NOTE_ID);
     expect(String(config.url)).toMatch(/^wss?:\/\/.+\/collab$/);
-    // 共用 websocketProvider 會讓 disconnect() 變 no-op → 撤權流程整條失效。
+    // A shared websocketProvider would make disconnect() a no-op, breaking the whole revoke flow.
     expect(config).not.toHaveProperty("websocketProvider");
-    // sessionAwareness 會把 documentName 換成複合鍵，撞掉 server 的連線索引。
+    // sessionAwareness would turn documentName into a composite key, colliding with the server's connection index.
     expect(config.sessionAwareness).toBeUndefined();
   });
 
-  it("close 監聽走 provider.on('close')，不放進 configuration（放進去會被註冊兩次）", () => {
+  it("close listener goes through provider.on('close'), not the configuration (it would be registered twice there)", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise(() => {})),
     );
     render(<Probe />);
 
-    // provider 自管 socket 時會把同一個 configuration 交給內部的
-    // HocuspocusProviderWebsocket，configuration.onClose 因此會被掛兩次、每則
-    // socket close 觸發兩次——一次性的 pending 旗標會被第二次穿透。
+    // When the provider owns its socket it hands the same configuration to the inner HocuspocusProviderWebsocket,
+    // so configuration.onClose would be attached twice and fire twice per socket close; the one-shot pending flag
+    // would be consumed by the second call.
     expect(provider().configuration).not.toHaveProperty("onClose");
     expect(provider().listeners.get("close")).toHaveLength(1);
   });
 
-  it("disconnect() 沒有帶出 close 事件時，逾時保險絲仍會補一次重連", async () => {
+  it("when disconnect() yields no close event, the timeout fuse still triggers one reconnect", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal(
       "fetch",
@@ -165,7 +165,6 @@ describe("useCollab", () => {
     act(() => p.emit("close", { event: { code: 1000, reason: COLLAB_CLOSE_REVOKED } }));
     expect(p.connect).not.toHaveBeenCalled();
 
-    // 沒有任何 close 事件回來（socket 早就不在）——保險絲到期後自己重連。
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_100);
     });
@@ -173,7 +172,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("reconnecting-once");
   });
 
-  it("token function 打 collab-token endpoint，並用回應頂層的 role 驅動狀態", async () => {
+  it("token function calls the collab-token endpoint and drives state from the top-level role in the response", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -188,16 +187,15 @@ describe("useCollab", () => {
     const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`/api/notes/${NOTE_ID}/collab-token`);
     expect(init.method).toBe("POST");
-    // #269：token 請求帶 note schema 版本（閘門）。
+    // #269: the token request carries the note schema version (the client-outdated gate).
     expect(JSON.parse(String(init.body))).toEqual({ noteSchemaVersion: NOTE_SCHEMA_VERSION });
 
-    // 取到 token 還不算連上；onAuthenticated 才是 open。
     expect(phase()).toBe("connecting");
     act(() => config.onAuthenticated());
     expect(phase()).toBe("connected:editor");
   });
 
-  it("token 401 → 走登出回呼、不重試", async () => {
+  it("token 401 -> sign-out callback, no retry", async () => {
     const onUnauthorized = vi.fn();
     const fetchMock = vi.fn(() => Promise.resolve(apiFail(401, "unauthorized")));
     vi.stubGlobal("fetch", fetchMock);
@@ -212,7 +210,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
   });
 
-  it("token 429 → 退避重試（不是授權失敗，不得踢人）", async () => {
+  it("token 429 -> back off and retry (not an authorization failure, must not kick)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = vi
       .fn()
@@ -231,7 +229,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
   });
 
-  it("撤權雙擊：close(REVOKED) → disconnect+connect → token-role 'none' → kicked", async () => {
+  it("double-strike revoke: close(REVOKED) -> disconnect+connect -> token role 'none' -> kicked", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(tokenOk("editor")));
     vi.stubGlobal("fetch", fetchMock);
     render(<Probe />);
@@ -243,20 +241,19 @@ describe("useCollab", () => {
     act(() => p.configuration.onAuthenticated());
     expect(phase()).toBe("connected:editor");
 
-    // 第一擊：只 disconnect，**還不能** connect（socket 尚未真的關掉，
-    // HocuspocusProviderWebsocket.connect() 在 status 仍是 Connected 時會空轉）。
+    // First strike: only disconnect; must not connect yet (the socket is not really closed, and
+    // HocuspocusProviderWebsocket.connect() is a no-op while its status is still Connected).
     act(() => p.emit("close", { event: { code: 1000, reason: COLLAB_CLOSE_REVOKED } }));
     expect(phase()).toBe("reconnecting-once");
     expect(p.disconnect).toHaveBeenCalledTimes(1);
     expect(p.connect).not.toHaveBeenCalled();
 
-    // 我方 disconnect() 造成的 socket close（reason 空字串）必須被吞掉——否則觀察窗
-    // 會被重置成 connecting，第二擊就永遠等不到——並且**就在這一刻**發動那次重連。
+    // The socket close caused by our own disconnect() (empty reason) must be swallowed, otherwise the observation
+    // window resets to connecting and the second strike never arrives; the reconnect fires at exactly this moment.
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
     expect(phase()).toBe("reconnecting-once");
     expect(p.connect).toHaveBeenCalledTimes(1);
 
-    // 第二擊：重連時取回的 role 就是 'none'
     fetchMock.mockResolvedValue(tokenOk("none"));
     await act(async () => {
       await p.configuration.token();
@@ -265,7 +262,7 @@ describe("useCollab", () => {
     expect(p.disconnect).toHaveBeenCalledTimes(2);
   });
 
-  it("第二發 close(REVOKED) 同樣進 kicked（server 真的再送一次應用層 CLOSE 的路徑）", async () => {
+  it("a second close(REVOKED) also reaches kicked (the path where the server really sends another application-level CLOSE)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -282,7 +279,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("kicked");
   });
 
-  it("網路斷線（其他 reason）→ connecting，不呼叫 disconnect（交給 provider 內建退避）", async () => {
+  it("network drop (other reasons) -> connecting, no disconnect call (left to the provider's built-in backoff)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("owner"))),
@@ -300,7 +297,7 @@ describe("useCollab", () => {
     expect(p.disconnect).not.toHaveBeenCalled();
   });
 
-  it("N4 降級：連線中 token 回 viewer → 留在 connected 但角色改變", async () => {
+  it("downgrade: a token returning viewer while connected -> stays connected but the role changes", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(tokenOk("editor")));
     vi.stubGlobal("fetch", fetchMock);
     render(<Probe />);
@@ -319,7 +316,7 @@ describe("useCollab", () => {
     expect(p.disconnect).not.toHaveBeenCalled();
   });
 
-  it("close(NOTE_DELETED) → deleted 終態並停止重連", async () => {
+  it("close(NOTE_DELETED) -> deleted terminal state, reconnecting stops", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("owner"))),
@@ -336,7 +333,7 @@ describe("useCollab", () => {
     await waitFor(() => expect(p.disconnect).toHaveBeenCalled());
   });
 
-  it("token endpoint 404 → deleted（重連時筆記已不存在的保險絲）", async () => {
+  it("token endpoint 404 -> deleted (fuse for a note that no longer exists at reconnect time)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(apiFail(404, "not_found"))),
@@ -349,13 +346,13 @@ describe("useCollab", () => {
     expect(phase()).toBe("deleted");
   });
 
-  // ── issue #6：authenticationFailed（server 的 permission-denied Auth 訊息）────────
+  // issue #6: authenticationFailed (the server's permission-denied Auth message).
   //
-  // ⚠ 這一族的共同前提：Hocuspocus server 對 `onAuthenticate` 丟出的錯誤**只回一則
-  // permission-denied 訊息，socket 原封不動留著**（已對 4.5.0 `ClientConnection` 原始碼
-  // 核實），provider 也不會自己重連。沒接這個事件的話，畫面會永遠停在 connecting。
+  // Shared premise: for an error thrown from `onAuthenticate`, the Hocuspocus server sends back only one
+  // permission-denied message and leaves the socket as it is (Hocuspocus 4.5.0 `ClientConnection`); the provider
+  // does not reconnect on its own. Without handling this event the UI stays on connecting forever.
 
-  it("撤權落在握手完成之前：authenticationFailed → 重連一次 → role 'none' → kicked", async () => {
+  it("revoked before the handshake completes: authenticationFailed -> reconnect once -> role 'none' -> kicked", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(tokenOk("editor")));
     vi.stubGlobal("fetch", fetchMock);
     render(<Probe />);
@@ -363,7 +360,7 @@ describe("useCollab", () => {
     await act(async () => {
       await p.configuration.token();
     });
-    // 還沒 onAuthenticated：server 在握手當下就拒了，client 收不到任何 CLOSE(REVOKED)。
+    // Not yet onAuthenticated: the server rejected at handshake time, so the client never receives CLOSE(REVOKED).
     expect(phase()).toBe("connecting");
 
     act(() => p.emit("authenticationFailed", { reason: COLLAB_REJECT_FORBIDDEN }));
@@ -381,7 +378,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("kicked");
   });
 
-  it("reconnecting-once 期間再收 authenticationFailed → kicked（第二擊）", async () => {
+  it("authenticationFailed again during reconnecting-once -> kicked (second strike)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -399,7 +396,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("kicked");
   });
 
-  it("authenticationFailed(note-deleting) → deleted 終態（不繞第二擊）", async () => {
+  it("authenticationFailed(note-deleting) -> deleted terminal state (no second strike)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("owner"))),
@@ -415,7 +412,7 @@ describe("useCollab", () => {
     await waitFor(() => expect(p.disconnect).toHaveBeenCalled());
   });
 
-  it("token function 自己失敗換來的 authenticationFailed 不是授權裁決，不得踢人", async () => {
+  it("authenticationFailed caused by the token function's own failure is not an authorization verdict and must not kick", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal(
       "fetch",
@@ -430,23 +427,23 @@ describe("useCollab", () => {
     });
     await rejected;
 
-    // provider 在 getToken() 的 catch 裡直接呼叫 permissionDeniedHandler（見 dist 的
-    // `sendToken`）——reason 是本地字串而非 server 裁決；5xx/網路失敗不得踢人（N7）。
+    // The provider calls permissionDeniedHandler directly in the getToken() catch (see `sendToken` in dist): the
+    // reason is a local string, not a server verdict; 5xx/network failures must not kick.
     act(() => p.emit("authenticationFailed", { reason: "Failed to get token during sendToken(): ApiFail" }));
     expect(phase()).toBe("connecting");
     expect(p.disconnect).not.toHaveBeenCalled();
   });
 
-  it("換筆記：上一條連線遲到的 token 失敗不得吞掉新連線的授權拒絕", async () => {
-    // 舊 provider 被 destroy 之後，它那一發**還卡在飛的** token 請求仍會丟錯回來（退避
-    // 迴圈的 `disposed` 守衛只能讓它不再重試，召不回已經送出去的那一發）。「上一次取
-    // token 失敗了」的旗標若是挂在 hook 層（`useRef`）而非每條連線各一份，那一丟會把它
-    // 設回 true；而舊 provider 的 `authenticationFailed` 已因 `destroy()` 的
-    // `removeAllListeners()` 無人接收、永遠不會把它清掉。新筆記真的在握手前被撤權時，
-    // 那則拒絕就會被靜靜吞掉——issue #6 原封不動回來。
+  it("switching notes: a late token failure from the previous connection must not swallow the new connection's authorization rejection", async () => {
+    // After the old provider is destroyed, its still in-flight token request can still fail back (the backoff loop's
+    // `disposed` guard only stops retries; it cannot recall the request already sent). If the "last token fetch
+    // failed" flag lived at hook level (`useRef`) rather than per connection, that failure would set it back to true,
+    // and the old provider's `authenticationFailed` never clears it (`destroy()` ran `removeAllListeners()`). When the
+    // new note is then really revoked before the handshake, that rejection would be silently swallowed, bringing
+    // issue #6 back unchanged.
     //
-    // ⚠ 必須是**同一個元件實例換 noteId**（rerender）才測得到：unmount 再
-    // `render()` 是兩個元件實例、兩份獨立的 ref，滲漏本來就不會發生。
+    // Must be the same component instance with a changed noteId (rerender): unmount + `render()` makes two component
+    // instances with separate refs, so the leak could never occur.
     let failStale!: (err: unknown) => void;
     const staleFetch = new Promise<Response>((_resolve, reject) => {
       failStale = reject;
@@ -458,7 +455,6 @@ describe("useCollab", () => {
     const stale = provider(0);
     const staleToken = expect(stale.configuration.token()).rejects.toThrow();
 
-    // 換到另一篇：同一個 hook 實例、全新的一場連線，token 這次取得成功。
     fetchMock.mockReturnValue(Promise.resolve(tokenOk("editor")) as unknown as Promise<Response>);
     rerender(<Probe noteId={OTHER_NOTE_ID} />);
     const fresh = provider(1);
@@ -466,7 +462,6 @@ describe("useCollab", () => {
       await fresh.configuration.token();
     });
 
-    // 舊那發現在才失敗。
     await act(async () => {
       failStale(new Error("network went away"));
       await staleToken;
@@ -476,10 +471,10 @@ describe("useCollab", () => {
     expect(phase()).toBe("reconnecting-once");
   });
 
-  it("authenticationFailed(invalid-token) 不是授權裁決：不得踢人，改排一次重啟（issue #35）", async () => {
-    // token 驗不過、session 的 tokenVersion 被撤銷（帳號停用／別處改過密碼）、server 端
-    // DB 抖動都會落在這一桶。舊版一律翻成撤權 ⇒ 對一個權限完好的使用者說「你已失去存取權」
-    // 並把他導走。
+  it("authenticationFailed(invalid-token) is not an authorization verdict: no kick, schedule one restart instead (issue #35)", async () => {
+    // An unverifiable token, a session whose tokenVersion was revoked (account disabled / password changed elsewhere)
+    // and a server-side DB blip all land in this bucket. Treating any of them as a revoke would tell a user
+    // with intact access that they lost it and navigate them away.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -496,8 +491,8 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
     expect(p.disconnect).not.toHaveBeenCalled();
 
-    // 但也不能就這樣算了：socket 開著卻沒通過認證，provider 不會再取一次 token
-    // （issue #34/#39 那一族的靜默死路）。第一格 5 秒之後整條連線重來。
+    // But it can't just be left there: the socket is open yet unauthenticated, and the provider will not fetch a token
+    // again (the silent dead end of issues #34/#39). After the first 5s slot the whole connection restarts.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_500);
     });
@@ -507,9 +502,10 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
   });
 
-  it("authenticationFailed(server-error／不認得的 reason) 同樣不得踢人", async () => {
-    // server 端未預期例外會被 Hocuspocus 翻成字面值 "permission-denied"（我們改成明確的
-    // server-error，但舊 server／未來新 reason 都可能出現不認得的值）——一律歸「不是裁決」。
+  it("authenticationFailed(server-error / unrecognized reason) also must not kick", async () => {
+    // An unexpected server-side exception is translated by Hocuspocus to the literal "permission-denied" (we changed it
+    // to an explicit server-error, but an old server or a future new reason can produce unrecognized values); all of
+    // them count as "not a verdict".
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -524,14 +520,14 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
     act(() => p.emit("authenticationFailed", { reason: "permission-denied" }));
     expect(phase()).toBe("connecting");
-    // reason 缺席也一樣（`reason === undefined` 那個經典誤判）。
+    // A missing reason is the same (the classic `reason === undefined` misjudgment).
     act(() => p.emit("authenticationFailed", {}));
     expect(phase()).toBe("connecting");
   });
 
-  it("reconnecting-once 期間收到 invalid-token：不算第二擊，也不破壞收斂（issue #35）", async () => {
-    // 撤權觀察窗內收到一則「不是裁決」的拒絕——狀態不得前進到 kicked，排出去的那次重啟
-    // 也不得跟狀態 effect 自己那次重啟互相打架（雙重 disconnect／吞掉 pending 旗標）。
+  it("invalid-token during reconnecting-once: not a second strike and does not break convergence (issue #35)", async () => {
+    // A non-verdict rejection arrives inside the revoke observation window: state must not advance to kicked, and the
+    // scheduled restart must not clash with the one from the state effect itself (double disconnect / swallowing the pending flag).
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const fetchMock = vi.fn(() => Promise.resolve(tokenOk("editor")));
@@ -543,17 +539,14 @@ describe("useCollab", () => {
     });
     act(() => p.configuration.onAuthenticated());
 
-    // 第一擊。
     act(() => p.emit("close", { event: { code: 1000, reason: COLLAB_CLOSE_REVOKED } }));
     expect(phase()).toBe("reconnecting-once");
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
     expect(p.connect).toHaveBeenCalledTimes(1);
 
-    // 重連的握手被 server 以 invalid-token 拒絕——留在觀察窗，不是第二擊。
     act(() => p.emit("authenticationFailed", { reason: COLLAB_REJECT_INVALID_TOKEN }));
     expect(phase()).toBe("reconnecting-once");
 
-    // 重啟照排，且仍然帶得出重連。
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_500);
     });
@@ -561,7 +554,6 @@ describe("useCollab", () => {
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
     expect(p.connect).toHaveBeenCalledTimes(2);
 
-    // 真的被撤權時仍然收斂：重取的 token 回 'none' ⇒ 第二擊。
     fetchMock.mockResolvedValue(tokenOk("none"));
     await act(async () => {
       await p.configuration.token();
@@ -569,10 +561,10 @@ describe("useCollab", () => {
     expect(phase()).toBe("kicked");
   });
 
-  it("連上了就收掉還排著的重啟（否則那顆 timer 會把健康的連線拆掉重來）", async () => {
-    // 拒連在 t=0 排了 5 秒後的重啟，而 server 其實很快就恢復、provider 內建退避先連上了。
-    // 留著那顆 timer 的話，它會在 t=5 秒把一條健康的連線 disconnect，並多花一次
-    // collab-token 額度（per-user、跨分頁共用）。
+  it("connecting cancels a pending restart (otherwise that timer would tear down a healthy connection and redo it)", async () => {
+    // A rejection scheduled a restart in 5s at t=0, but the server recovered quickly and the provider's built-in
+    // backoff connected first. Leaving that timer would disconnect a healthy connection at t=5s and spend one more
+    // collab-token quota (per user, shared across tabs).
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -588,7 +580,6 @@ describe("useCollab", () => {
     act(() => p.emit("authenticationFailed", { reason: COLLAB_REJECT_INVALID_TOKEN }));
     expect(phase()).toBe("connecting");
 
-    // provider 自己的退避先把連線救回來了。
     act(() => p.configuration.onAuthenticated());
     expect(phase()).toBe("connected:editor");
 
@@ -599,9 +590,9 @@ describe("useCollab", () => {
     expect(phase()).toBe("connected:editor");
   });
 
-  it("終態要掐掉**拒連**排出去的那次重啟（不只 token 失敗那條）", async () => {
-    // stopRestartsRef 這道閘門在這個 commit 之後多了一個更常見的餵食者；沒有測試守著，
-    // 一次整理就會讓終態的連線被 timer 重新拉起來。
+  it("terminal state cancels the restart scheduled by a rejection, not only the one from a token failure", async () => {
+    // Rejections also feed the stopRestartsRef gate; without this case, a refactor could let a
+    // timer revive a terminal-state connection.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -617,7 +608,6 @@ describe("useCollab", () => {
     act(() => p.emit("authenticationFailed", { reason: COLLAB_REJECT_SERVER_ERROR }));
     expect(phase()).toBe("connecting");
 
-    // 重啟排好之後、開火之前，筆記被刪除 → 終態。
     act(() => p.emit("close", { event: { code: 1000, reason: COLLAB_CLOSE_NOTE_DELETED } }));
     expect(phase()).toBe("deleted");
     const disconnectsAtTerminal = p.disconnect.mock.calls.length;
@@ -625,13 +615,13 @@ describe("useCollab", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(120_000);
     });
-    // 一次也不能再重連——否則就是一條沒人接事件的殭屍連線。
+    // Must not reconnect again: that would be a zombie connection with nobody handling its events.
     expect(p.disconnect).toHaveBeenCalledTimes(disconnectsAtTerminal);
     expect(p.connect).not.toHaveBeenCalled();
     expect(phase()).toBe("deleted");
   });
 
-  it("拒連驅動的重啟同樣一次比一次寬（退避格子與 token 失敗共用一份）", async () => {
+  it("rejection-driven restarts also widen each time (backoff slots shared with token failure)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -651,8 +641,8 @@ describe("useCollab", () => {
     expect(p.disconnect).toHaveBeenCalledTimes(1);
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
 
-    // 第二次拒絕：不可以又在 5 秒後就來（server 還在壞，秒級重試只會加重它的負擔，
-    // 而且 collab-token 的額度是跨分頁共用的）。
+    // Second rejection: must not come again after 5s (the server is still unhealthy, second-level retries only add
+    // load, and the collab-token quota is shared across tabs).
     act(() => p.emit("authenticationFailed", { reason: COLLAB_REJECT_INVALID_TOKEN }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_500);
@@ -664,9 +654,10 @@ describe("useCollab", () => {
     expect(p.disconnect).toHaveBeenCalledTimes(2);
   });
 
-  it("換筆記：上一篇遲到的 404 也不得把新筆記打成 deleted（issue #36 的另一半）", async () => {
-    // 成功出口與 404 出口是同一個滲漏：兩者都會 dispatch 進 hook 層的狀態機。404 那一支
-    // 打進去的是**終態** deleted——比錯誤角色更難救（使用者會被導離一篇還在的筆記）。
+  it("switching notes: a late 404 from the previous note must not turn the new note into deleted (the other half of issue #36)", async () => {
+    // The success exit and the 404 exit are the same leak: both dispatch into the hook-level state machine. The 404 path
+    // dispatches the terminal state deleted, which is harder to recover than a wrong role (the user is navigated away
+    // from a note that still exists).
     let failStale!: (err: unknown) => void;
     const staleFetch = new Promise<Response>((_resolve, reject) => {
       failStale = reject;
@@ -687,7 +678,6 @@ describe("useCollab", () => {
     act(() => fresh.configuration.onAuthenticated());
     expect(phase()).toBe("connected:editor");
 
-    // 上一篇那一發現在才回來，而且是 404（那篇筆記被刪了）。
     await act(async () => {
       failStale(new ApiFail(404, "not_found", "gone"));
       await staleToken;
@@ -695,14 +685,14 @@ describe("useCollab", () => {
     expect(phase()).toBe("connected:editor");
   });
 
-  it("換筆記：上一篇遲到的 token **成功**回應不得打進新筆記的狀態機（issue #36）", async () => {
-    // `roleRef` 與 `dispatch` 都是 hook 層的（不隨 effect 重建），成功出口少了 `disposed`
-    // 守衛的話，上一篇還在飛的那一發回來時會打進新筆記：新筆記若正在 reconnecting-once
-    // （撤權觀察窗）而遲到的角色是上一篇的 'none'，就直接判成第二擊——使用者被踢出一篇
-    // 他其實有權限的筆記。
+  it("switching notes: a late token success from the previous note must not feed into the new note's state machine (issue #36)", async () => {
+    // `roleRef` and `dispatch` live at hook level (not rebuilt per effect); without the `disposed` guard on the success
+    // exit, the previous note's in-flight response would hit the new note: if the new note is in reconnecting-once
+    // (revoke observation window) and the late role is the previous note's 'none', it is judged a second strike and
+    // the user is kicked from a note they have access to.
     //
-    // ⚠ 必須是**同一個元件實例換 noteId**（rerender）：unmount 再 render 是兩個元件實例、
-    // 兩份獨立的 ref，滲漏本來就不會發生。
+    // Must be the same component instance with a changed noteId (rerender): unmount + render makes two component
+    // instances with separate refs, so the leak could never occur.
     let resolveStale!: (res: Response) => void;
     const staleFetch = new Promise<Response>(resolve => {
       resolveStale = resolve;
@@ -723,23 +713,21 @@ describe("useCollab", () => {
     act(() => fresh.configuration.onAuthenticated());
     expect(phase()).toBe("connected:editor");
 
-    // 新筆記進入撤權觀察窗。
     act(() => fresh.emit("close", { event: { code: 1000, reason: COLLAB_CLOSE_REVOKED } }));
     expect(phase()).toBe("reconnecting-once");
 
-    // 上一篇那一發現在才回來，帶著上一篇的角色 'none'。
     await act(async () => {
       resolveStale(tokenOk("none"));
       await staleToken;
     });
     expect(phase()).toBe("reconnecting-once");
 
-    // roleRef 也不能被舊值蓋掉——否則緊接著的 open 會帶錯角色。
+    // roleRef must not be overwritten by the stale value either, otherwise the following open carries the wrong role.
     act(() => fresh.configuration.onAuthenticated());
     expect(phase()).toBe("connected:editor");
   });
 
-  it("issue #48：synced 一開始是 false，provider 同步後變 true", async () => {
+  it("issue #48: synced starts false and becomes true after the provider syncs", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -748,13 +736,12 @@ describe("useCollab", () => {
     const p = provider();
     expect(syncedText()).toBe("false");
 
-    // provider 同步完成：先設 getter 再 emit（useCollab 的 handleSynced 讀 provider.synced）。
     p.synced = true;
     act(() => p.emit("synced", { state: true }));
     await waitFor(() => expect(syncedText()).toBe("true"));
   });
 
-  it("issue #48：synced 是 sticky——同步過之後斷線也不歸零（離線編輯有東西可併回）", async () => {
+  it("issue #48: synced is sticky - it does not reset on disconnect after syncing (offline edits have something to merge back into)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -765,13 +752,12 @@ describe("useCollab", () => {
     act(() => p.emit("synced", { state: true }));
     await waitFor(() => expect(syncedText()).toBe("true"));
 
-    // 底層 socket 斷線：synced 不得回到 false。
     p.synced = false;
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
     expect(syncedText()).toBe("true");
   });
 
-  it("issue #48：換筆記 → synced 歸零（新連線的 Y.Doc 是空的，還沒載入）", async () => {
+  it("issue #48: switching notes resets synced (the new connection's Y.Doc is empty and not loaded yet)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(tokenOk("editor"))),
@@ -786,10 +772,10 @@ describe("useCollab", () => {
     expect(syncedText()).toBe("false");
   });
 
-  // #138：文件 update → debounce → `onDocUpdate`（NotePage 據此失效 note query）。
-  // debouncer 掛在 `"synced"` handler 裡而**不是** effect 本體：初次同步那一批 update
-  // 的 origin 也是 provider，掛在本體的話一開頁就白白失效一次 note query。
-  it("同步後的遠端與本地 update 都通知；首次同步那一批不算", async () => {
+  // #138: doc update -> debounce -> `onDocUpdate` (NotePage uses it to invalidate the note query). The debouncer is
+  // attached in the `"synced"` handler, not the effect body: the initial-sync batch of updates also has the provider
+  // as origin, and attaching in the body would invalidate the note query once for nothing on page open.
+  it("remote and local updates after sync notify; the first-sync batch does not", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal(
       "fetch",
@@ -805,7 +791,6 @@ describe("useCollab", () => {
     const doc = docRef.current!;
     const text = doc.getText("t");
 
-    // ① synced 之前的遠端 update（＝初次同步那一批）不該通知
     act(() => {
       doc.transact(() => text.insert(0, "sync"), p);
     });
@@ -814,7 +799,6 @@ describe("useCollab", () => {
     });
     expect(onDocUpdate).not.toHaveBeenCalled();
 
-    // ② synced 之後的遠端 update 要通知，且多次合併成一次
     p.synced = true;
     act(() => p.emit("synced", { state: true }));
     act(() => {
@@ -826,8 +810,8 @@ describe("useCollab", () => {
     });
     expect(onDocUpdate).toHaveBeenCalledTimes(1);
 
-    // ③ 本地 origin（自己打字）也要通知：server 對自己的編輯一樣寫 `last_edited_*`，
-    // 不通知的話頁首「最後編輯」要重新整理才會更新
+    // A local origin (own typing) notifies too: the server writes `last_edited_*` for own edits the same way;
+    // without a notification the header's "last edited" only updates after a reload.
     act(() => {
       doc.transact(() => text.insert(0, "z"), { local: true });
     });
@@ -838,22 +822,21 @@ describe("useCollab", () => {
     vi.useRealTimers();
   });
 
-  it("拒連原因常數與 server 端字面值一致", () => {
-    // 共用包沒重建時這一組常數會是 undefined，於是 `reason === CONST` 靜靜地走錯分支
-    // （本修改開發時就踩過）。釘住字面值，那種環境會大聲失敗而不是假綠。
+  it("rejection reason constants match the server-side literals", () => {
+    // If the shared package was not rebuilt these constants are undefined, so `reason === CONST` silently takes the
+    // wrong branch. Pinning the literals makes such an environment fail loudly instead of passing falsely.
     expect(COLLAB_REJECT_NOTE_DELETING).toBe("note-deleting");
     expect(COLLAB_REJECT_INVALID_TOKEN).toBe("invalid-token");
     expect(COLLAB_REJECT_FORBIDDEN).toBe("forbidden");
     expect(COLLAB_REJECT_SERVER_ERROR).toBe("server-error");
   });
 
-  it("保險絲開火之後才回來的 close，仍然要帶出那一次重連（issue #34）", async () => {
-    // `HocuspocusProviderWebsocket.connect()` 開頭是 `if (status === Connected) return`，
-    // **而且那個 early return 發生在 `shouldConnect = true` 之前**。所以保險絲開火時若
-    // socket 還沒真的關掉，那一發 connect() 是空轉；若保險絲順手把 pending 旗標清掉，
-    // 稍後真正回來的 close 就會被當成一般斷線打回 `connecting`，而 provider 內建的退避
-    // 因為 `shouldConnect === false` 也不會啟動 ⇒ socket 關了、沒有人重連、永遠停在
-    // 「連線中」。
+  it("a close that arrives after the fuse fired still brings out that reconnect (issue #34)", async () => {
+    // `HocuspocusProviderWebsocket.connect()` starts with `if (status === Connected) return`, and that early return
+    // happens before `shouldConnect = true`. So if the socket is not really closed when the fuse fires, that connect()
+    // is a no-op; if the fuse also cleared the pending flag, the close that arrives later would be treated as a normal
+    // drop and sent back to `connecting`, and the provider's built-in backoff would not start either because
+    // `shouldConnect === false` => socket closed, nobody reconnects, stuck on "connecting" forever.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal(
       "fetch",
@@ -870,25 +853,24 @@ describe("useCollab", () => {
     expect(phase()).toBe("reconnecting-once");
     expect(p.disconnect).toHaveBeenCalledTimes(1);
 
-    // 保險絲開火（在真實 provider 上這一發可能完全空轉）。
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_100);
     });
 
-    // 真正的 close 現在才回來——它必須仍然帶出重連，而不是把狀態打回 connecting。
+    // The real close arrives only now: it must still bring out the reconnect, not reset the state to connecting.
     act(() => p.emit("close", { event: { code: 1006, reason: "" } }));
     expect(phase()).toBe("reconnecting-once");
     expect(p.connect).toHaveBeenCalledTimes(2);
   });
 
-  it("token 全部重試用完之後，連線會自己重來一次，不是靜默卡死（issue #39）", async () => {
-    // 退避表用完 → `fetchToken` 丟錯 → provider 在 `getToken()` 的 catch 裡直接呼叫
-    // `permissionDeniedHandler`，**socket 不關、也不會再取一次 token**。我們刻意不把
-    // 這一則 `authenticationFailed` 當成撤權（N7），於是狀態機收不到任何事件——沒有
-    // 這條自我修復，畫面就永遠停在「連線中」，連 server 回來了也不會恢復。
+  it("after all token retries are used up, the connection restarts itself once instead of hanging silently (issue #39)", async () => {
+    // Backoff table exhausted -> `fetchToken` throws -> the provider calls `permissionDeniedHandler` directly in the
+    // `getToken()` catch, and the socket neither closes nor fetches a token again. We deliberately do not treat this
+    // `authenticationFailed` as revocation, so the state machine receives no event; without this self-healing the UI
+    // stays on "connecting" forever, even after the server recovers.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    // 重啟間隔帶 ±25% 抖動（多分頁不要同相位重試）。把亂數釘在中點，delay 就回到標稱值，
-    // 這條測試才不是在賭時序。
+    // The restart interval has +-25% jitter (so tabs don't retry in phase). Pinning the random value at the midpoint
+    // makes the delay equal the nominal one, so the test isn't gambling on timing.
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const fetchMock = vi.fn(() => Promise.resolve(apiFail(503, "server_busy")));
     vi.stubGlobal("fetch", fetchMock);
@@ -902,13 +884,12 @@ describe("useCollab", () => {
     await rejected;
     act(() => p.emit("authenticationFailed", { reason: "Failed to get token during sendToken(): ApiFail" }));
 
-    // 不得踢人（N7）。
     expect(phase()).toBe("connecting");
     expect(p.connect).not.toHaveBeenCalled();
 
-    // 但要自己重來：等到重啟延遲（第一格 5 秒）之後，整個握手重跑一次
-    // （disconnect → close → connect）。刻意停在 5.5 秒——再多 0.5 秒就會連保險絲
-    // （重啟後 1 秒）也一起開火，那樣就分不出「close 帶出的重連」與「保險絲補的那一發」。
+    // But it must restart itself: after the restart delay (first slot 5s) the whole handshake reruns (disconnect ->
+    // close -> connect). The test stops at 5.5s on purpose: 0.5s more would also fire the fuse (1s after the restart),
+    // and the reconnect brought out by close could no longer be told from the one the fuse supplies.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_500);
     });
@@ -918,7 +899,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("connecting");
   });
 
-  it("重啟之後 token 終於成功 → 真的連上（自我修復要收斂，不只是「有再試」）", async () => {
+  it("after a restart the token finally succeeds -> really connected (self-healing converges, not just 'tried again')", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const fetchMock = vi.fn(() => Promise.resolve(apiFail(503, "server_busy")));
@@ -933,7 +914,6 @@ describe("useCollab", () => {
     await rejected;
     act(() => p.emit("authenticationFailed", { reason: "Failed to get token during sendToken(): ApiFail" }));
 
-    // server 修好了。
     fetchMock.mockResolvedValue(tokenOk("editor"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_500);
@@ -947,7 +927,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("connected:editor");
   });
 
-  it("重啟退避一次比一次寬（第二次不會又在 5 秒後就來）", async () => {
+  it("restart backoff widens each time (the second does not come again after 5s)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -973,7 +953,7 @@ describe("useCollab", () => {
     expect(p.disconnect).toHaveBeenCalledTimes(1);
 
     await failOnce();
-    // 第二格是 15 秒——6 秒時還不該來（退避表若被寫死成同一個值，這裡就會紅）。
+    // The second slot is 15s: at 6s it must not have come yet (if the backoff table were hardcoded to one value this would fail).
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6_000);
     });
@@ -985,10 +965,10 @@ describe("useCollab", () => {
     expect(p.disconnect).toHaveBeenCalledTimes(2);
   });
 
-  it("卸載會把排好的重啟一起帶走（否則會留下沒人接的殭屍連線）", async () => {
-    // `provider.destroy()` 之後那條 provider 的事件監聽器全被移除、連線檢查 interval 也停了。
-    // 這時若還有一個漏掉的 timer 去 `connect()`，它會真的開一條新的 WebSocket——而且沒有任何
-    // 人接它的事件，換一次筆記就漏一條。cleanup 的行序（先清 timer 再 destroy）靠這條守著。
+  it("unmount takes the scheduled restart with it (otherwise a zombie connection nobody handles remains)", async () => {
+    // After `provider.destroy()` all of that provider's event listeners are removed and its connection-check interval is
+    // stopped. A leaked timer calling `connect()` would open a new WebSocket nobody handles events for, leaking one per
+    // note switch. This test guards the order in cleanup (clear the timer first, then destroy).
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     vi.stubGlobal(
@@ -1012,7 +992,7 @@ describe("useCollab", () => {
     expect(p.connect).not.toHaveBeenCalled();
   });
 
-  it("卸載時銷毀 provider", () => {
+  it("unmount destroys the provider", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise(() => {})),
@@ -1023,7 +1003,7 @@ describe("useCollab", () => {
     expect(p.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("#269：authenticationFailed(client-outdated) → outdated、disconnect()、不排重啟（60 秒後仍沒有 connect）", async () => {
+  it("#269: authenticationFailed(client-outdated) -> outdated, disconnect(), no restart scheduled (still no connect after 60s)", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(tokenOk("editor"))));
     render(<Probe />);
@@ -1041,7 +1021,7 @@ describe("useCollab", () => {
     expect(phase()).toBe("outdated");
   });
 
-  it("#269 syncedFor：synced 後＝該篇 id；換筆記（含經過 undefined）歸 null；遲到的舊 provider synced 不得設回舊 id", () => {
+  it("#269 syncedFor: after synced = that note's id; switching notes (including through undefined) gives null; a late synced from an old provider must not set the old id back", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     const { rerender } = render(<SyncedForProbe noteId={NOTE_ID} />);
     expect(syncedForText()).toBe("null");
@@ -1051,7 +1031,7 @@ describe("useCollab", () => {
     expect(syncedForText()).toBe("null");
     rerender(<SyncedForProbe noteId={OTHER_NOTE_ID} />);
     expect(syncedForText()).toBe("null");
-    act(() => provider(0).emit("synced", { state: true })); // 舊 provider 遲到（假 provider 的 destroy 不清監聽器）
+    act(() => provider(0).emit("synced", { state: true })); // old provider is late (the fake provider's destroy does not clear listeners)
     expect(syncedForText()).toBe("null");
     act(() => provider(1).emit("synced", { state: true }));
     expect(syncedForText()).toBe(OTHER_NOTE_ID);
@@ -1059,17 +1039,16 @@ describe("useCollab", () => {
 });
 
 /**
- * issue #40：撤權重驗 deadline 與 token 重試表是一組跨端耦合的取捨——deadline（5s）
- * **刻意短於**重試表總和（7.5s），作為撤權的最後一道 fail-closed 保險（放寬 deadline
- * 會吃掉「撤銷存取 ≤10s」的餘裕；誤殺的實際代價與不變量見 shared 的
- * COLLAB_REVERIFY_DEADLINE_MS 註解，不在此重述）。舊註解宣稱「deadline 的餘裕含
- * client 重試退避」，為假，已改寫。
+ * Issue #40: the revoke re-verify deadline and the token retry table are a cross-side coupled trade-off. The
+ * deadline (5s) is deliberately shorter than the sum of the retry table (7.5s), as the last fail-closed safety
+ * net for revocation (loosening the deadline would eat the margin of "revoked access <= 10s"; the real cost of a
+ * wrongful kick and the invariant are in the COLLAB_REVERIFY_DEADLINE_MS comment in shared, not repeated here).
  *
- * 這條釘住該關係：把任一邊的數字調到讓關係反轉（deadline ≥ 重試總和）時會紅，逼調參
- * 的人回去重新面對這個取捨——不是「不准調」，是「不准不知不覺地調」。
+ * This pins that relationship: changing either number so the relationship flips (deadline >= retry sum) fails
+ * the test, forcing whoever tunes it to face the trade-off again: not "don't tune", but "don't tune unknowingly".
  */
-describe("撤權重驗 deadline vs token 重試表（issue #40）", () => {
-  it("deadline 刻意短於 client 最壞重試總和（fail-closed）", () => {
+describe("revoke re-verify deadline vs token retry table (issue #40)", () => {
+  it("the deadline is deliberately shorter than the client's worst-case retry sum (fail-closed)", () => {
     const worstCaseRetryMs = COLLAB_TOKEN_RETRY_DELAYS_MS.reduce((sum, d) => sum + d, 0);
     expect(COLLAB_REVERIFY_DEADLINE_MS).toBeLessThan(worstCaseRetryMs);
   });

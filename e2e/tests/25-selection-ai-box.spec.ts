@@ -3,19 +3,20 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, chooseSelectOption, adminNav, createNote, editorLocator, loginAs, openSelectionAiBox, openSiteAdmin, waitForEditorSelection } from "./helpers.js";
 
 /**
- * #263 框選 AI 框的幾何守衛（e2e「幾何」）。provider 自建（流程照 10-responsive）——「Default model」的勾選承重：
- * 全套順序下 04 留下的 provider 已被改指 `/slow`，不勾的話 auto 解析會選到它。
- * 量法：全頁滾軸量 `documentElement.scrollHeight <= clientHeight`；捲動後不固定等待，
- * 以 expect.poll 等框的位置跟上（floating-ui 的 ancestorScroll 回呼下一幀才派送）。捲動容器＝note-editor 的祖父（同 14-table-hover 的節點鏈）。
- * 位置分兩種（#263）：輸入／串流／錯誤態浮在首區塊上方（可 flip 到下方）；結果態（done）蓋在首區塊上——框頂＝首區塊
- * `.bn-block-outer` 頂、左緣對齊、不 flip，區塊頂捲出容器頂時夾在容器頂。
- * 另有一條格式工具列的區塊類型選單案例（#464）：多區塊選取套用 Heading 1 只改段落、表格內容不動；一次 Ctrl+Z 全部回來。
+ * The provider is created here (steps as in 10-responsive); ticking "Default model" is load-bearing: in a full run the
+ * provider 04 leaves behind has been switched to `/slow`, and without the tick auto resolution would pick it.
+ * After scrolling there is no fixed wait: expect.poll waits for the box position to catch up (floating-ui's ancestorScroll
+ * callback is dispatched on the next frame). The scroll container is the grandparent of note-editor (same node chain as
+ * 14-table-hover).
+ * Position (#263): the input / streaming / error states float above the first block (may flip below); the result state covers
+ * the first block - box top = the first block's `.bn-block-outer` top, left edges aligned, no flip, and clamped to the
+ * container's top when the block's top scrolls above it.
  */
 
 const RUN_ID = Date.now();
 const PROVIDER_NAME = `E2E Box Provider ${RUN_ID}`;
 const MODEL_DISPLAY_NAME = `E2E Box Model ${RUN_ID}`;
-const REWRITTEN_TEXT = "E2E rewritten text"; // ai-stub 固定輸出
+const REWRITTEN_TEXT = "E2E rewritten text"; // must equal FINAL_CONTENT in e2e/stubs/ai-stub.mjs
 
 test.describe.configure({ mode: "serial" });
 
@@ -56,18 +57,17 @@ async function scrollContainerRect(page: Page): Promise<{ top: number; bottom: n
   });
 }
 
-/** 主編輯器裡含該段文字的 `.bn-block-outer`（本檔的筆記全是平的段落，不會有巢狀外層一起中）。 */
+/** The `.bn-block-outer` in the main editor that contains that text (the notes in this file are all flat paragraphs, so a nested outer cannot match too). */
 function mainBlock(page: Page, text: string): Locator {
   return editorLocator(page).locator(".bn-block-outer").filter({ hasText: text });
 }
 
-/** 框與區塊的視窗座標差：框頂－區塊頂、框左－區塊左。 */
+/** Offsets of the box from the block in viewport coordinates: box top - block top (dy), box left - block left (dx). */
 async function boxVsBlock(box: Locator, block: Locator): Promise<{ dy: number; dx: number }> {
   const [b, r] = [(await box.boundingBox())!, (await block.boundingBox())!];
   return { dy: b.y - r.y, dx: b.x - r.x };
 }
 
-/** 在框裡送一條指令，等預覽出現 stub 的固定輸出（結果態）。 */
 async function runInstruction(box: Locator): Promise<void> {
   const input = box.getByRole("textbox", { name: "Instruction for the selected text" });
   await input.fill("Shorten it");
@@ -86,12 +86,12 @@ async function noPageScrollbar(page: Page): Promise<boolean> {
   return page.evaluate(() => document.documentElement.scrollHeight <= document.documentElement.clientHeight);
 }
 
-/** 框的內容整個放得下（框內不捲動）。框的 `size()` 會把最大高度壓到可用高度，所以「放不下」不會表現成 top 越界，而是框被壓扁。 */
+/** The box's content fits entirely (no scrolling inside the box). The box's `size()` clamps the max height to the available height, so "does not fit" shows up as a squashed box, not as top going out of bounds. */
 async function boxContentFits(box: Locator): Promise<boolean> {
   return box.evaluate((el) => el.scrollHeight <= el.clientHeight);
 }
 
-test("建 provider（/fast，勾 Default model）", async ({ browser }) => {
+test("create provider (/fast, Default model ticked)", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -105,7 +105,6 @@ test("建 provider（/fast，勾 Default model）", async ({ browser }) => {
     await providerDialog.locator("#ai-provider-base-url").fill("http://ai-stub:9500/fast");
     await providerDialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(providerDialog).not.toBeVisible();
-    // 「Add model」在供應商的明細列。
     await page.getByRole("row", { name: `${PROVIDER_NAME} details`, exact: true }).getByRole("button", { name: "Add model", exact: true }).click();
     const modelDialog = page.getByRole("dialog", { name: "Add model" });
     await modelDialog.getByLabel("Model ID", { exact: true }).fill("e2e-box-model");
@@ -120,7 +119,7 @@ test("建 provider（/fast，勾 Default model）", async ({ browser }) => {
   }
 });
 
-test("開框不長全頁滾軸；點內文（空選取）框仍在；在別段拖選後框消失", async ({ browser }) => {
+test("opening the box adds no page-wide scrollbar; clicking body text (empty selection) keeps the box; drag-selecting in another paragraph closes it", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -132,17 +131,20 @@ test("開框不長全頁滾軸；點內文（空選取）框仍在；在別段�
     const box = await openSelectionAiBox(page, paragraphs[4]!);
     expect(await noPageScrollbar(page)).toBe(true);
 
-    // 空選取：單擊第 7 段（只放游標）→ 框不關
     await editorLocator(page).getByText(paragraphs[7]!, { exact: true }).click();
-    await waitForEditorSelection(page); // 等 PM 的選取真的落到第 7 段（判定已跑過）再斷言
-    // 只斷言 toBeVisible 判不出「框被關了」：關閉時 BlockNote 的 GenericPopover 跑淡出轉場，轉場期間改顯示框最後一次的 innerHTML 複本（輸入框也在），
-    // DOM 晚一點才卸（實量：關框後 50ms 框仍在 DOM、500ms 時已卸；只斷言可見時，「空選取也關框」的突變照綠）。
-    // 所以等兩個畫格讓 React 提交選取變更排下的更新，再看外層 popover 的 inline opacity：關閉轉場把它設成 "0"（floating-ui useTransitionStyles 的預設，GenericPopover 沒改）。
+    await waitForEditorSelection(page); // wait until PM's selection really lands on paragraph 7 (the decision has run) before asserting
+    // Asserting only toBeVisible cannot tell that the box was closed: on close BlockNote's GenericPopover runs a fade-out
+    // transition and during it shows a copy of the box's last innerHTML (the input is in it too), and the DOM is unmounted a bit
+    // later (the box is still in the DOM 50 ms after closing and gone by 500 ms; with only a visibility assertion, a regression
+    // that closes the box on an empty selection stays green).
+    // So wait two frames for the update queued by React committing the selection change, then look at the outer popover's
+    // inline opacity: the closing transition sets it to "0" (the floating-ui useTransitionStyles default, which GenericPopover
+    // does not change).
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(box).toBeVisible();
     expect(await box.evaluate((el) => (el.parentElement as HTMLElement).style.opacity)).not.toBe("0");
 
-    // 拖選第 8 段（滑鼠非空選取）→ 框關（store 在 pointerdown 期間恆為 false，這條是 onSelectionChange 判定的守衛）
+    // The store is false throughout pointerdown, so this guards the onSelectionChange decision
     const target = editorLocator(page).getByText(paragraphs[8]!, { exact: true });
     const r = (await target.boundingBox())!;
     await page.mouse.move(r.x + 2, r.y + r.height / 2);
@@ -155,7 +157,7 @@ test("開框不長全頁滾軸；點內文（空選取）框仍在；在別段�
   }
 });
 
-test("捲動內文後框的 top 跟著變（釘在框選區塊旁）", async ({ browser }) => {
+test("scrolling the body moves the box's top with it (pinned beside the selected block)", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -174,9 +176,11 @@ test("捲動內文後框的 top 跟著變（釘在框選區塊旁）", async ({ 
   }
 });
 
-test("Ctrl+A 後開框、只框選首區塊時開框：框的 top ≥ 捲動容器的 top 且內容放得下；全選時內建工具列被壓住", async ({ browser }) => {
-  // 首區塊上方只剩 24px（捲動容器 top 70、首區塊 top 94；1280×720 實量），框（輸入態約 50px）得 flip 到區塊下方。拿掉 flip() 時框不會越過
-  // 容器頂（size() 把最大高度壓成可用的 14px、top 剛好貼齊 70，e2e 突變實量），所以除了 top 還要斷言框沒被壓扁（boxContentFits）。
+test("box opened after Ctrl+A, and box opened with only the first block selected: box top >= scroll container top and the content fits; with select-all the built-in toolbar is suppressed", async ({ browser }) => {
+  // Only 24px above the first block (scroll container top 70, first block top 94 at 1280x720), so the box (about 50px in the
+  // input state) must flip below the block. Without flip() the box would not cross the container top (size() clamps the max
+  // height to the available 14px and top lands exactly on 70), so besides top the test also asserts that the box is not
+  // squashed (boxContentFits).
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -193,9 +197,11 @@ test("Ctrl+A 後開框、只框選首區塊時開框：框的 top ≥ 捲動容�
     await expect(box).toBeVisible();
     expect((await box.boundingBox())!.y).toBeGreaterThanOrEqual(containerTop);
     expect(await boxContentFits(box)).toBe(true);
-    // 全選也算在框選目標內 → 內建工具列被壓住、不和框疊在一起（toHaveCount 會等工具列的收合轉場跑完）。註：Chromium 裡實按 Ctrl+A 後
-    // PM 的選取實量是 TextSelection（anchor 3、head 347，doc size 350），不是 AllSelection（from 0）——selectionInsideAnchor 對 from 的
-    // 夾回在這條路徑上不承重（e2e 突變拿掉它此案照綠），AllSelection 那半由單元測試守；本行守的是壓制公式本身。
+    // Select-all also counts as a box selection target -> the built-in toolbar is suppressed and does not overlap the box
+    // (toHaveCount waits for the toolbar's collapse transition to finish). Note: after a real Ctrl+A in Chromium PM's selection
+    // is a TextSelection (anchor 3, head 347, doc size 350), not an AllSelection (from 0), so selectionInsideAnchor's clamp of
+    // `from` is not load-bearing on this path (removing it keeps this case green); the AllSelection half is covered by unit
+    // tests, and this line guards the suppression formula itself.
     await expect(page.locator(".bn-formatting-toolbar")).toHaveCount(0);
     await expect(box).toBeVisible();
     await page.keyboard.press("Escape");
@@ -204,7 +210,6 @@ test("Ctrl+A 後開框、只框選首區塊時開框：框的 top ≥ 捲動容�
     const firstOnly = await openSelectionAiBox(page, paragraphs[0]!);
     expect((await firstOnly.boundingBox())!.y).toBeGreaterThanOrEqual(containerTop);
     expect(await boxContentFits(firstOnly)).toBe(true);
-    // 結果態改蓋在首區塊上：框頂＝首區塊頂（仍在容器頂之下）
     await runInstruction(firstOnly);
     await expect.poll(async () => Math.abs((await boxVsBlock(firstOnly, mainBlock(page, paragraphs[0]!))).dy)).toBeLessThanOrEqual(1);
     expect((await firstOnly.boundingBox())!.y).toBeGreaterThanOrEqual(containerTop);
@@ -213,9 +218,11 @@ test("Ctrl+A 後開框、只框選首區塊時開框：框的 top ≥ 捲動容�
   }
 });
 
-test("換行一致：同一段長文在預覽框內與正文中的渲染高度差 ≤ 1px", async ({ browser }) => {
-  // 視窗加高到 1000：框高上限 min(40vh, 可用高度)＝400px，預覽（原文一塊 126px＋一行新增＋按鈕列，整框實量 205px）放得下、不出捲軸。出捲軸時捲軸寬
-  // 會吃掉文字欄、換行就跟正文不同（列 known-limitations）——那不是本案要驗的，所以下面先斷言框內不捲動（前置條件）。
+test("consistent wrapping: the same long paragraph renders within 1px of the same height in the preview box and in the body", async ({ browser }) => {
+  // Viewport raised to 1000: the box's max height is min(40vh, available height) = 400px, and the preview (the original as one
+  // block of 126px + one added line + the button row, 205px for the whole box) fits without a scrollbar. With a scrollbar its
+  // width eats into the text column and wrapping differs from the body (listed in known-limitations); that is not what this
+  // case checks, so the box is first asserted not to scroll (precondition).
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
   try {
     const page = await context.newPage();
@@ -227,9 +234,9 @@ test("換行一致：同一段長文在預覽框內與正文中的渲染高度�
     const box = await openSelectionAiBox(page, long);
     await runInstruction(box);
     const preview = box.getByTestId("selection-ai-preview");
-    expect(await boxContentFits(box)).toBe(true); // 前置條件：框內沒有捲動
+    expect(await boxContentFits(box)).toBe(true); // precondition: no scrolling inside the box
 
-    // 原文與 stub 輸出不配對（相似度低）→ 預覽裡原文是一整塊 deleted，內容逐字等於正文
+    // The original and the stub output do not pair up (low similarity) -> in the preview the original is one whole deleted block whose content equals the body verbatim
     const previewBlock = preview.locator('[data-diff="deleted"] .bn-block-content').first();
     await expect(previewBlock).toContainText(long.slice(0, 40));
     const mainBlock = editorLocator(page).locator(".bn-block-content").filter({ hasText: long.slice(0, 40) }).first();
@@ -237,14 +244,14 @@ test("換行一致：同一段長文在預覽框內與正文中的渲染高度�
       mainBlock.evaluate((el) => el.getBoundingClientRect().height),
       previewBlock.evaluate((el) => el.getBoundingClientRect().height),
     ]);
-    expect(mainHeight).toBeGreaterThan(40); // 真的換了行（守衛不是單行的空轉）
+    expect(mainHeight).toBeGreaterThan(40); // the paragraph really wraps; with a single line the height comparison would prove nothing
     expect(Math.abs(mainHeight - previewHeight)).toBeLessThanOrEqual(1);
   } finally {
     await context.close();
   }
 });
 
-test("結果態蓋在被改區塊上：框頂＝首區塊頂 ±1px、左緣對齊、往下蓋住後面的段落；區塊貼近容器底也不 flip，框高壓到框頂以下的可用高度", async ({ browser }) => {
+test("result state covers the changed block: box top = first block top within 1px, left edges aligned, extends down over following paragraphs; a block near the container bottom does not flip and the box height is clamped to the available height below the box top", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -254,38 +261,36 @@ test("結果態蓋在被改區塊上：框頂＝首區塊頂 ±1px、左緣對�
     await writeParagraphs(page, paragraphs);
     await scrollContainerBy(page, -100_000);
 
-    // ── 中段：輸入態在區塊上方，結果態蓋上去 ──
     const box = await openSelectionAiBox(page, paragraphs[4]!);
     const block = mainBlock(page, paragraphs[4]!);
-    expect((await boxVsBlock(box, block)).dy).toBeLessThan(-10); // 前置：輸入態浮在區塊上方（位置不變）
+    expect((await boxVsBlock(box, block)).dy).toBeLessThan(-10); // precondition: the input state floats above the block (position unchanged)
     await runInstruction(box);
     await expect.poll(async () => Math.abs((await boxVsBlock(box, block)).dy)).toBeLessThanOrEqual(1);
     expect(Math.abs((await boxVsBlock(box, block)).dx)).toBeLessThanOrEqual(1);
-    // 往下延伸、蓋住下一段：框底在下一段的頂之下
     const boxRect = (await box.boundingBox())!;
     const nextRect = (await mainBlock(page, paragraphs[5]!).boundingBox())!;
     expect(boxRect.y + boxRect.height).toBeGreaterThan(nextRect.y + 1);
     await box.press("Escape");
     await expect(box).toBeHidden();
 
-    // ── 貼近容器底：區塊頂距容器底只剩 60px，放不下整個結果——不 flip 到區塊上方，框頂仍＝區塊頂、框內捲動 ──
+    // Near the container bottom: the block top is only 60px from the container bottom, so the whole result does not fit - no flip above the block, the box top still = the block top, scrolling inside the box
     const target = mainBlock(page, paragraphs[20]!);
     const container = await scrollContainerRect(page);
     await scrollContainerBy(page, (await target.boundingBox())!.y - (container.bottom - 60));
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - (container.bottom - 60))).toBeLessThanOrEqual(1);
     const low = await openSelectionAiBox(page, paragraphs[20]!);
     await runInstruction(low);
-    await expect.poll(async () => Math.abs((await target.boundingBox())!.y - (container.bottom - 60))).toBeLessThanOrEqual(1); // 開框／送出／完成都沒捲動
+    await expect.poll(async () => Math.abs((await target.boundingBox())!.y - (container.bottom - 60))).toBeLessThanOrEqual(1); // open / submit / completion all did not scroll
     await expect.poll(async () => Math.abs((await boxVsBlock(low, target)).dy)).toBeLessThanOrEqual(1);
     const lowRect = (await low.boundingBox())!;
     expect(lowRect.y + lowRect.height).toBeLessThanOrEqual(container.bottom + 1);
-    expect(await boxContentFits(low)).toBe(false); // 前置：真的放不下（否則 flip 不會觸發，「沒 flip」不證明什麼）
+    expect(await boxContentFits(low)).toBe(false); // precondition: it really does not fit (otherwise flip would not trigger and "no flip" proves nothing)
   } finally {
     await context.close();
   }
 });
 
-test("結果態隨捲動跟著區塊走；區塊頂捲出捲動容器頂時，框頂夾在容器頂", async ({ browser }) => {
+test("result state follows the block when scrolling; when the block top scrolls above the container top the box top is clamped to the container top", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -300,13 +305,11 @@ test("結果態隨捲動跟著區塊走；區塊頂捲出捲動容器頂時，�
     await runInstruction(box);
     await expect.poll(async () => Math.abs((await boxVsBlock(box, block)).dy)).toBeLessThanOrEqual(1);
 
-    // 小捲一段（區塊頂仍在容器內）：框跟著區塊走
     const startY = (await block.boundingBox())!.y;
     await scrollContainerBy(page, 50);
     await expect.poll(async () => (await block.boundingBox())!.y).toBeLessThan(startY - 40);
     await expect.poll(async () => Math.abs((await boxVsBlock(box, block)).dy)).toBeLessThanOrEqual(1);
 
-    // 把區塊頂捲到容器頂之上 40px：框頂夾在容器頂，不越過
     const containerTop = await scrollContainerTop(page);
     await scrollContainerBy(page, (await block.boundingBox())!.y - containerTop + 40);
     await expect.poll(async () => (await block.boundingBox())!.y).toBeLessThan(containerTop - 30);
@@ -317,10 +320,11 @@ test("結果態隨捲動跟著區塊走；區塊頂捲出捲動容器頂時，�
   }
 });
 
-test("開框、送出、完成都不改變筆記的捲動位置（框內焦點轉移一律 preventScroll）", async ({ browser }) => {
-  // 開框當下框還沒被 floating-ui 定位（還在 portal 原點），textarea.focus() 不帶 preventScroll 就把筆記捲過去：e2e 突變（開框焦點拿掉
-  // preventScroll）在本案量到開框那一步 scrollTop 150→0（1280×720、30 段、第 12 段）。第 12 段開框前後都在
-  // 可視範圍內，Playwright 的 click／fill／press 不需要自己捲動；量開框、送出、完成三個時點。
+test("opening, submitting and completing do not change the note's scroll position (focus moves inside the box always use preventScroll)", async ({ browser }) => {
+  // When the box opens it has not yet been positioned by floating-ui (still at the portal origin), so textarea.focus() without
+  // preventScroll would scroll the note: removing preventScroll from the open-box focus makes scrollTop go 150 -> 0 at the open
+  // step (1280x720, 30 paragraphs, paragraph 12). Paragraph 12 is within the visible range before and after opening, so
+  // Playwright's click / fill / press need no scrolling of their own; measure at three moments: open, submit, complete.
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
@@ -330,21 +334,18 @@ test("開框、送出、完成都不改變筆記的捲動位置（框內焦點�
     await writeParagraphs(page, paragraphs);
     await scrollContainerBy(page, -100_000);
     await scrollContainerBy(page, 150);
-    await expect.poll(() => scrollContainerScrollTop(page)).toBe(150); // 前置：真的捲在非零位置
+    await expect.poll(() => scrollContainerScrollTop(page)).toBe(150); // precondition: really scrolled to a non-zero position
     const scrolled = await scrollContainerScrollTop(page);
     const stays = async () => expect.poll(async () => Math.abs((await scrollContainerScrollTop(page)) - scrolled)).toBeLessThanOrEqual(1);
 
-    // 開框（焦點進輸入框）
     const box = await openSelectionAiBox(page, paragraphs[12]!);
     const input = box.getByRole("textbox", { name: "Instruction for the selected text" });
     await expect(input).toBeFocused();
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await stays();
-    // 送出（焦點移到取消鈕）
     await input.fill("Shorten it");
     await input.press("Enter");
     await stays();
-    // 完成（焦點移到框容器）
     await expect(box.getByTestId("selection-ai-preview")).toContainText(REWRITTEN_TEXT, { timeout: 15_000 });
     await expect(box).toBeFocused();
     await stays();
@@ -353,7 +354,8 @@ test("開框、送出、完成都不改變筆記的捲動位置（框內焦點�
   }
 });
 
-test("區塊類型選單：多區塊選取套用 Heading 1 只改段落、表格內容還在；一次復原全部回來", async ({ browser }) => {
+// #464: block type menu of the formatting toolbar
+test("block type menu: Heading 1 on a multi-block selection changes only paragraphs and keeps table content; one undo restores everything", async ({ browser }) => {
   const context = await browser.newContext();
   try {
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: E2E_ORIGIN });
@@ -375,7 +377,6 @@ test("區塊類型選單：多區塊選取套用 Heading 1 只改段落、表格
     await expect(editor.locator("table")).toBeVisible({ timeout: 10_000 });
     await expect(editor.getByText("r1c2", { exact: true })).toBeVisible();
 
-    // 全選：選取從段落開始、跨過表格；工具列左端的區塊類型選單（目前項目 Paragraph）
     await editor.getByText("alice paragraph", { exact: true }).click();
     await page.keyboard.press("ControlOrMeta+a");
     const toolbar = page.locator(".bn-formatting-toolbar");
@@ -388,7 +389,6 @@ test("區塊類型選單：多區塊選取套用 Heading 1 只改段落、表格
     await expect(editor.getByText("r1c1", { exact: true })).toBeVisible();
     await expect(editor.getByText("r1c2", { exact: true })).toBeVisible();
 
-    // 一次復原：兩段回到段落、表格仍在
     await page.keyboard.press("ControlOrMeta+z");
     await expect(editor.locator("h1")).toHaveCount(0);
     await expect(editor.getByText("alice paragraph", { exact: true })).toBeVisible();

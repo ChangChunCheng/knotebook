@@ -10,9 +10,8 @@ import { AppErrorBoundary } from "./ErrorBoundary";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 快捷鍵頁的 lazy chunk（ShortcutsLazy）載入失敗：只有對話框內容區出錯，對話框外殼（標題）與頁面照常，不冒到 AppErrorBoundary。
-// 骨架同 AppShell.trash-lazy-error.test.tsx：錯誤訊息照 Chromium 裸動態 import 失敗措辭，vitest 把 factory 的 reject 包成
-// 「error when mocking a module」、原錯誤放 cause，isChunkLoadError 本來就查 cause 一層。
+// ShortcutsLazy chunk fails to load: only the dialog content errors; the dialog shell (title) and page stay, nothing bubbles to AppErrorBoundary.
+// Same skeleton as AppShell.trash-lazy-error.test.tsx: the message mimics Chromium's bare dynamic-import failure; vitest wraps the factory's reject as "error when mocking a module" with the original in cause, and isChunkLoadError already checks one level of cause.
 
 vi.mock("@/components/shortcuts/ShortcutsLazy", () =>
   Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://localhost/assets/ShortcutsLazy-abc.js")),
@@ -76,7 +75,7 @@ async function openShortcuts(): Promise<void> {
   fireEvent.keyDown(window, { key: "/", ctrlKey: true });
 }
 
-describe("AppShell — 快捷鍵頁 chunk 載入失敗", () => {
+describe("AppShell - shortcuts page chunk fails to load", () => {
   let reload: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -92,7 +91,7 @@ describe("AppShell — 快捷鍵頁 chunk 載入失敗", () => {
     localStorage.clear();
   });
 
-  it("SE1 本 session 已自動重整過一次：對話框與標題仍在，內容區就地顯示 chunk 錯誤＋重試，app 不崩", async () => {
+  it("auto-reload already used once this session: dialog and title remain, content area shows the chunk error plus retry in place, app doesn't crash", async () => {
     sessionStorage.setItem(SHORTCUTS_FLAG, "1");
     stubFetch();
     renderApp();
@@ -107,7 +106,7 @@ describe("AppShell — 快捷鍵頁 chunk 載入失敗", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it("SE2 第一次失敗：用 shortcuts 自己的額度自動重整一次，NotePage 的額度不動、app 不崩", async () => {
+  it("first failure: auto-reloads once using shortcuts' own allowance, NotePage allowance untouched, app doesn't crash", async () => {
     stubFetch();
     renderApp();
     await openShortcuts();

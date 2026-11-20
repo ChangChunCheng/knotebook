@@ -9,14 +9,12 @@ import { buildCollabTestApp } from "./helpers.js";
 
 const PASSWORD = "correct-horse-battery";
 
-/** 在 doc 的共編 fragment 插入一個含文字的 XML 元素——模擬 BlockNote 的一次編輯。 */
 function insertParagraph(doc: Y.Doc, text: string): void {
   const element = new Y.XmlElement("paragraph");
   element.insert(0, [new Y.XmlText(text)]);
   doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [element]);
 }
 
-/** 輪詢等待條件成立（同步 check，比照 collab-sync/collab-revocation）。 */
 async function waitFor(label: string, timeoutMs: number, check: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -26,7 +24,7 @@ async function waitFor(label: string, timeoutMs: number, check: () => boolean): 
   throw new Error(`等待逾時（${timeoutMs}ms）：${label}`);
 }
 
-/** 同上，但 check 本身是 async（輪詢 DB 用）。 */
+/** Async check, for polling the DB. */
 async function waitForAsync(label: string, timeoutMs: number, check: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -40,8 +38,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
-  it("編輯後 ≤5s note_states 有資料，內容與編輯一致", async () => {
+describe("onLoadDocument/onStoreDocument + optimistic lock + bucketed backups", () => {
+  it("after an edit note_states has data within 5 s, content matching the edit", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-store1@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -63,7 +61,7 @@ describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
     expect(restored.getXmlFragment(YDOC_FRAGMENT).toString()).toBe("<paragraph>hello store</paragraph>");
   });
 
-  it("斷線重連：內容從 note_states 還原（文件確實從記憶體卸載後才重連）", async () => {
+  it("reconnect: content is restored from note_states (reconnecting only after the document really unloaded from memory)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-store2@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -79,16 +77,16 @@ describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
 
     a.disconnect();
 
-    // 確認文件真的從 Hocuspocus 記憶體卸載——否則重連可能拿到同一個仍在記憶體裡的
-    // Document 實例，測不到「真的從 DB 還原」這件事。
+    // Confirm the document really unloaded from Hocuspocus memory - otherwise the reconnect might get the same Document instance still in memory
+    // and not test "restored from DB".
     await waitFor("文件從記憶體卸載", 5_000, () => !ctx.collab.hocuspocus.documents.has(note.id));
 
     const b = await session.connect(note.id);
     expect(b.doc.getXmlFragment(YDOC_FRAGMENT).toString()).toBe("<paragraph>persisted content</paragraph>");
   });
 
-  it("同一個 15 分桶內兩次編輯 → 恰 1 筆 backup（第二次落地不重複備份）", async () => {
-    // 時鐘固定在 [10:00,10:15) 桶中段：兩次落地確定性同桶，不受真實牆鐘跨桶影響。
+  it("two edits inside the same 15-minute bucket -> exactly 1 backup (the second store doesn't back up again)", async () => {
+    // The clock is fixed in the middle of the [10:00,10:15) bucket: both stores deterministically land in the same bucket, unaffected by the real wall clock crossing a bucket.
     const ctx = await buildCollabTestApp({ storeSearchHooks: { now: () => new Date("2026-01-05T10:07:30Z") } });
     const owner = await ctx.createUser({ email: "owner-store3@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -107,53 +105,51 @@ describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
       return r?.version === 2;
     });
 
-    // 注入的固定時鐘讓兩次落地都在同一個 15 分桶——第一次因 lastBackupAt=null
-    // 必寫一筆；第二次未跨桶，必須被跳過。
+    // The injected fixed clock puts both stores in the same 15-minute bucket - the first necessarily writes one because lastBackupAt=null;
+    // the second doesn't cross a bucket and must be skipped.
     const backups = await ctx.db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, note.id));
     expect(backups.length).toBe(1);
   });
 
-  it("跨桶但內容未變（state vector 相等）→ 不寫新 backup（直接呼叫 store.ts：真實 15 分桶邊界無法在測試中等待，需要可控時鐘）", async () => {
+  it("crossing a bucket but content unchanged (equal state vector) -> no new backup (calls store.ts directly: the real 15-minute bucket boundary can't be waited for in a test, a controllable clock is needed)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-store4@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
 
-    // 這個子測試刻意不透過即時協作的 WebSocket 往返——backup-policy 的桶邊界對齊真實
-    // UTC 時鐘的 15 分鐘寬度，測試等不起；而「內容未變」的前提又要求兩次 store 之間
-    // doc 完全沒有新編輯（有編輯 sv 必然改變，測不到這條規則）。用獨立的
-    // `createNoteStore` 實例（同一個 ctx.db）搭配可控 `now` 直接驗證，是唯一可行的作法。
+    // This subtest deliberately avoids real-time collab WebSocket round trips - backup-policy's bucket boundaries align with the real UTC clock at 15-minute width,
+    // which a test can't wait for, and the "content unchanged" premise requires no new edit at all between the two stores (an edit necessarily changes sv,
+    // so this rule wouldn't be exercised). A standalone `createNoteStore` instance (same ctx.db) with a controllable `now` is the workable approach.
     let clock = new Date("2026-01-05T10:07:00Z");
     const store = createNoteStore({ db: ctx.db, now: () => clock });
 
     const doc = new Y.Doc();
-    await store.onLoadDocument(note.id, doc); // 無既有 row：sv 快取以空 doc 初始化
+    await store.onLoadDocument(note.id, doc); // no existing row: the sv cache is initialized with an empty doc
 
     insertParagraph(doc, "only edit");
-    await store.onStoreDocument(note.id, doc); // 首次 store：lastBackupAt=null→true 且 sv 與空 doc 不同 → 應寫 1 筆 backup
+    await store.onStoreDocument(note.id, doc); // first store: lastBackupAt=null -> true and sv differs from the empty doc -> should write 1 backup
 
     let backups = await ctx.db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, note.id));
     expect(backups.length).toBe(1);
 
-    // 跨到下一個 15 分桶（10:07 所在 [10:00,10:15) → 10:20 所在 [10:15,10:30)），doc
-    // 完全沒有再編輯，sv 應與快取相同。
+    // Cross into the next 15-minute bucket (10:07 in [10:00,10:15) -> 10:20 in [10:15,10:30)); the doc isn't edited again,
+    // so sv should equal the cache.
     clock = new Date("2026-01-05T10:20:00Z");
     await store.onStoreDocument(note.id, doc);
 
     backups = await ctx.db.select().from(noteStateBackups).where(eq(noteStateBackups.noteId, note.id));
-    expect(backups.length).toBe(1); // 沒有新增
+    expect(backups.length).toBe(1); // no new one added
 
-    // 佐證：note_states 仍照常被覆寫（唯一寫入者規則不受「跳過備份」影響）。
+    // Corroboration: note_states is still overwritten as usual (the sole-writer rule isn't affected by "skipping the backup").
     const [row] = await ctx.db.select({ version: noteStates.version }).from(noteStates).where(eq(noteStates.noteId, note.id)).limit(1);
     expect(row?.version).toBe(2);
   });
 
-  it("永久刪除期間 pending store 不復活資料列（用預設 noop hooks：DELETE 移入＋永久刪除落地時 store debounce 仍 pending）", async () => {
-    // 刻意用預設（noop）collabHooks，不是真實作——真實作的 beforeNoteDeleted
-    // 會在刪除交易前 flush+unload，讓 store 早於 DELETE 落地，測不到「資料列被復活」
-    // 這個競態；noop 才會讓 DELETE 在 store debounce 仍 pending 時搶先落地，正是本規則
-    // 存在的理由（刪除閘門依賴這條規則成立）。
-    // #181：DELETE 只移入垃圾桶（列還在，落單的 store 照寫）——「筆記不存在就丟棄」要靠永久刪除才走得到，
-    // 所以移入後同一個 debounce 窗內直接呼叫永久刪除的交易本體。
+  it("a pending store during permanent deletion doesn't resurrect the row (using the default noop hooks: when DELETE moves it into the trash and the permanent deletion lands, the store debounce is still pending)", async () => {
+    // Deliberately use the default (noop) collabHooks, not the real implementation - the real beforeNoteDeleted flushes + unloads before the delete transaction,
+    // so the store would land before the DELETE and the "row resurrected" race wouldn't be tested; noop lets the DELETE land first while the store debounce
+    // is still pending, which is exactly why this rule exists (the deleting gate depends on this rule).
+    // #181: DELETE only moves it into the trash (the row stays, a stray store still writes) - "discard if the note doesn't exist" is only reachable via permanent deletion,
+    // so within the same debounce window after the move the permanent-deletion transaction body is called directly.
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "owner-store5@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -162,13 +158,13 @@ describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
 
     insertParagraph(client.doc, "doomed by delete");
 
-    // 立刻刪除，趕在 2000ms 的 store debounce 觸發之前。
+    // Delete immediately, before the 2000 ms store debounce fires.
     const delRes = await session.fetch(`/api/notes/${note.id}`, { method: "DELETE" });
     expect(delRes.status).toBe(204);
     const purged = await ctx.db.transaction(tx => purgeTrashedNotesInTx(tx, { ids: [note.id], by: owner.id }));
     expect(purged.done).toEqual([note.id]);
 
-    // 等過 debounce + 保險餘裕，讓 pending store 真的跑一次。
+    // Wait past the debounce plus a safety margin so the pending store really runs once.
     await sleep(3_000);
 
     const rows = await ctx.db.select().from(noteStates).where(eq(noteStates.noteId, note.id));
@@ -180,13 +176,12 @@ describe("onLoadDocument/onStoreDocument + 樂觀鎖 + 分桶備份", () => {
 });
 
 /**
- * issue #44 最小步的行為面：onStoreDocument 掃到「非 http(s) scheme 的 url 屬性」時
- * 記一行 warn——每篇筆記**每個載入週期最多一行**（onStoreDocument 每 2s debounce 就來，
- * 不設閘等於讓被污染的筆記以固定頻率灌日誌，正是 #50 那類形狀）；unload 後重載會再
- * 警告一次（重啟 process 也看得到，訊號不會永久消失）。只記錄、不改寫、不拒收。
+ * issue #44 minimal step, behaviour side: when onStoreDocument finds a "url attribute with a non-http(s) scheme" it logs one warn - at most one line **per note per load cycle**
+ * (onStoreDocument arrives every 2 s of debounce, so without a gate a polluted note would flood the log at a fixed rate, the same shape as #50); reloading after unload
+ * warns once more (visible after a process restart too, so the signal doesn't vanish permanently). It only logs, never rewrites or rejects.
  */
-describe("onStoreDocument 危險 URL 掃描（issue #44）", () => {
-  it("污染文件：首次 store 記一行 warn、同週期再 store 不重複；unload 後再 store 再警告；乾淨文件零 warn", async () => {
+describe("onStoreDocument dangerous URL scan (issue #44)", () => {
+  it("polluted document: the first store logs one warn, a store in the same cycle doesn't repeat; a store after unload warns again; a clean document gets zero warns", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "scan-owner@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);
@@ -204,16 +199,15 @@ describe("onStoreDocument 危險 URL 掃描（issue #44）", () => {
     await store.onStoreDocument(note.id, doc);
     expect(warns).toHaveLength(1);
     expect(warns[0]!.obj).toMatchObject({ noteId: note.id, findings: 1, schemes: ["javascript:"], blocks: ["image"] });
-    // 攻擊者控制的 URL 本體不得進日誌。
+    // The attacker-controlled URL itself must not enter the log.
     expect(JSON.stringify(warns[0])).not.toContain("alert");
 
-    // 同一載入週期第二次 store：不重複警告。
     insertParagraph(doc, "more edits");
     await store.onStoreDocument(note.id, doc);
     expect(warns).toHaveLength(1);
 
-    // unload → 重載 → store：訊號重新出現（同一個 warn sink 也收樂觀鎖衝突那行，
-    // 所以第二行的欄位要真的驗、不能只數行數）。
+    // unload -> reload -> store: the signal reappears (the same warn sink also receives the optimistic-lock conflict line,
+    // so the fields of the second line must really be verified, not just count lines).
     store.afterUnloadDocument(note.id);
     const doc2 = new Y.Doc();
     await store.onLoadDocument(note.id, doc2);
@@ -221,7 +215,6 @@ describe("onStoreDocument 危險 URL 掃描（issue #44）", () => {
     expect(warns).toHaveLength(2);
     expect(warns[1]!.obj).toMatchObject({ noteId: note.id, findings: 1, schemes: ["javascript:"], blocks: ["image"] });
 
-    // 乾淨文件：零 warn。
     const cleanDoc = new Y.Doc();
     await store.onLoadDocument(cleanNote.id, cleanDoc);
     insertParagraph(cleanDoc, "hello");
@@ -229,7 +222,7 @@ describe("onStoreDocument 危險 URL 掃描（issue #44）", () => {
     expect(warns).toHaveLength(2);
   });
 
-  it("log 行的 distinct 清單封頂：11 種相異 block 名 → blocks 只列 10 個、blocksTotal=11（docs 宣稱的行為）", async () => {
+  it("the distinct list in the log line is capped: 11 distinct block names -> blocks lists only 10, blocksTotal=11 (the behaviour the docs claim)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "scan-cap-owner@example.com", password: PASSWORD });
     const note = await ctx.createNote(owner.id);

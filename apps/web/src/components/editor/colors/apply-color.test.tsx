@@ -60,8 +60,8 @@ function remoteEditText(ed: ReturnType<typeof setup>, r: number, c: number, text
   });
 }
 
-describe("applyColor 表格", () => {
-  it("AC1 cell 套背景色碼：只有那一格被改", () => {
+describe("applyColor tables", () => {
+  it("applying a background hex to a cell changes only that cell", () => {
     const ed = setupTable();
     let ok = false;
     act(() => {
@@ -75,7 +75,7 @@ describe("applyColor 表格", () => {
     expect(selectors()).toContain('[data-background-color="#ff6600"]');
   });
 
-  it("AC2 rowcol 欄套文字色碼：兩列的第 2 格都改、第 1 格不變；列也一樣", () => {
+  it("applying a text hex to a rowcol column changes the 2nd cell of both rows and not the 1st; rows likewise", () => {
     const ed = setupTable();
     act(() => {
       applyColor(ed, "text", { kind: "rowcol", blockId: "t1", orientation: "column", index: 1 }, "#0000ff");
@@ -92,7 +92,7 @@ describe("applyColor 表格", () => {
     expect(cellAt(ed, 1, 0).props.backgroundColor).toBe("default");
   });
 
-  it("AC3 cell：套用、遠端改字、再套用——遠端的字留著、兩次套色都在", () => {
+  it("cell: apply, remote edits text, apply again - the remote text stays and both colors are kept", () => {
     const ed = setupTable();
     act(() => {
       applyColor(ed, "background", { kind: "cell", blockId: "t1", rowIndex: 0, colIndex: 1 }, "#ff6600");
@@ -106,7 +106,7 @@ describe("applyColor 表格", () => {
     expect(cellAt(ed, 1, 1).props.backgroundColor).toBe("#ff6600");
   });
 
-  it("AC3 rowcol：套欄 0、遠端改 (1,1) 的字、再套欄 1——遠端的字留著、兩欄都有色", () => {
+  it("rowcol: color column 0, remote edits the text of (1,1), color column 1 - the remote text stays and both columns are colored", () => {
     const ed = setupTable();
     act(() => {
       applyColor(ed, "background", { kind: "rowcol", blockId: "t1", orientation: "column", index: 0 }, "#ff6600");
@@ -119,7 +119,7 @@ describe("applyColor 表格", () => {
     for (const [r, c] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) expect(cellAt(ed, r, c).props.backgroundColor).toBe("#ff6600");
   });
 
-  it("AC4 索引超出或 block 已刪回 false、文件不變、不登記規則", () => {
+  it("an out-of-range index or an already deleted block returns false, the document is unchanged and no rule is registered", () => {
     const ed = setupTable();
     const before = JSON.stringify(ed.document);
     expect(applyColor(ed, "background", { kind: "cell", blockId: "t1", rowIndex: 5, colIndex: 0 }, "#ff6600")).toBe(false);
@@ -136,7 +136,7 @@ describe("applyColor 表格", () => {
     expect(selectors()).toEqual([]);
   });
 
-  it("AC5 不是 table 的 block 回 false；色盤名不登記規則", () => {
+  it("a non-table block returns false; palette names register no rule", () => {
     const ed = setupTable();
     expect(applyColor(ed, "background", { kind: "cell", blockId: "p1", rowIndex: 0, colIndex: 0 }, "#ff6600")).toBe(false);
     act(() => {
@@ -148,7 +148,7 @@ describe("applyColor 表格", () => {
 });
 
 describe("applyColor", () => {
-  it("AP1 行內套色碼：styles 寫成正規形、只登記行內規則；default 移除", () => {
+  it("inline hex: styles are written in canonical form and only an inline rule is registered; default removes it", () => {
     const ed = setup();
     selectInBlock(ed, "p1", 0, 5);
     let ok = false;
@@ -170,7 +170,7 @@ describe("applyColor", () => {
     expect(after.styles.textColor).toBeUndefined();
   });
 
-  it("AP2 block 套底色碼：props 寫成正規形、登記 block 規則", () => {
+  it("block background hex: props are written in canonical form and a block rule is registered", () => {
     const ed = setup();
     let ok = false;
     act(() => {
@@ -181,7 +181,7 @@ describe("applyColor", () => {
     expect(selectors()).toContain('[data-background-color="#00ff00"]');
   });
 
-  it("AP3 不是顏色的值回 false、文件不變", () => {
+  it("a value that is not a color returns false and the document is unchanged", () => {
     const ed = setup();
     selectInBlock(ed, "p1", 0, 5);
     const before = JSON.stringify(ed.document);
@@ -190,7 +190,7 @@ describe("applyColor", () => {
     expect(JSON.stringify(ed.document)).toBe(before);
   });
 
-  it("AP4 block 已不存在回 false、不丟例外、不登記規則", () => {
+  it("a block that no longer exists returns false without throwing and registers no rule", () => {
     const ed = setup();
     act(() => {
       ed.removeBlocks(["p1"]);
@@ -203,7 +203,7 @@ describe("applyColor", () => {
     expect(selectors()).toEqual([]);
   });
 
-  it("AP5 block 種類沒有該 prop（codeBlock 沒有 backgroundColor）回 false、不登記規則", () => {
+  it("a block kind without the prop (codeBlock has no backgroundColor) returns false and registers no rule", () => {
     const ed = setup();
     expect(ed.getBlock("c1")!.props).not.toHaveProperty("backgroundColor");
     const before = JSON.stringify(ed.document);
@@ -212,7 +212,7 @@ describe("applyColor", () => {
     expect(selectors()).toEqual([]);
   });
 
-  it("AP6 色盤名原樣寫入、不登記任何規則（行內與 block）", () => {
+  it("palette names are written as is and register no rule (inline and block)", () => {
     const ed = setup();
     selectInBlock(ed, "p1", 0, 5);
     let ok = false;

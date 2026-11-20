@@ -10,37 +10,37 @@ function uuidAt(n: number): string {
 }
 
 describe("normalizeLinkTargets", () => {
-  it("去重：同一 target 重複出現多次只算一個", () => {
+  it("dedup: the same target repeated many times counts once", () => {
     const t1 = uuidAt(1);
     const result = normalizeLinkTargets(SOURCE, [t1, t1, t1]);
     expect(result).toEqual({ ok: true, targets: [t1] });
   });
 
-  it("濾除 self-link：target === source 直接剔除", () => {
+  it("filters self-links: target === source is dropped", () => {
     const t1 = uuidAt(1);
     const result = normalizeLinkTargets(SOURCE, [SOURCE, t1, SOURCE]);
     expect(result).toEqual({ ok: true, targets: [t1] });
   });
 
-  it("空陣列 → ok:true，targets 為空（語意＝清空所有連結）", () => {
+  it("empty array -> ok:true, targets empty (meaning: clear all links)", () => {
     expect(normalizeLinkTargets(SOURCE, [])).toEqual({ ok: true, targets: [] });
   });
 
-  it("正規化後（去重＋濾 self-link 之後）剛好等於 MAX_LINK_TARGETS → ok:true", () => {
+  it("after normalization (dedup + self-link filter) exactly MAX_LINK_TARGETS -> ok:true", () => {
     const targets = Array.from({ length: MAX_LINK_TARGETS }, (_, i) => uuidAt(i + 1));
     const result = normalizeLinkTargets(SOURCE, targets);
     expect(result.ok).toBe(true);
     expect(result.ok && result.targets).toHaveLength(MAX_LINK_TARGETS);
   });
 
-  it("正規化後超過 MAX_LINK_TARGETS 一個 → ok:false", () => {
+  it("one more than MAX_LINK_TARGETS after normalization -> ok:false", () => {
     const targets = Array.from({ length: MAX_LINK_TARGETS + 1 }, (_, i) => uuidAt(i + 1));
     expect(normalizeLinkTargets(SOURCE, targets)).toEqual({ ok: false });
   });
 
-  it("上限判定在正規化之後：raw 陣列遠超上限，但去重＋濾 self-link 後在上限內 → ok:true", () => {
-    // 刻意用「大量重複 + 大量 self-link」讓 raw.length 遠超 MAX_LINK_TARGETS，驗證上限判定
-    // 確實是對「正規化後的集合」而非「原始輸入長度」——若誤判會回 ok:false。
+  it("the limit is judged after normalization: the raw array is far over the limit but within it after dedup + self-link filtering -> ok:true", () => {
+    // Deliberately many duplicates + many self-links so raw.length far exceeds MAX_LINK_TARGETS, verifying the limit is applied to the
+    // normalized set rather than the raw input length: a misjudgement would return ok:false.
     const t1 = uuidAt(1);
     const t2 = uuidAt(2);
     const raw = [
@@ -53,28 +53,28 @@ describe("normalizeLinkTargets", () => {
   });
 });
 
-describe("#240 normalizeLinkTargets：大小寫", () => {
+describe("#240 normalizeLinkTargets: letter case", () => {
   const SRC = "0f8fad5b-d9cb-469f-a165-70867728950e";
   const SRC_MIXED = "0F8fAd5B-d9Cb-469F-a165-70867728950E";
   const T = "6ecc5cdd-7666-45a4-8740-3ccff326fa97";
   const T_MIXED = "6ECc5cDd-7666-45A4-8740-3cCff326Fa97";
 
-  it("大寫／混雜大小寫的自身 id 被排除", () => {
+  it("an own id in uppercase/mixed case is excluded", () => {
     expect(normalizeLinkTargets(SRC, [SRC.toUpperCase(), SRC_MIXED, T])).toEqual({ ok: true, targets: [T] });
   });
 
-  it("大小寫變體去重成一個小寫；輸出全小寫", () => {
+  it("case variants are deduped into one lowercase id; output is all lowercase", () => {
     expect(normalizeLinkTargets(SRC, [T.toUpperCase(), T, T_MIXED])).toEqual({ ok: true, targets: [T] });
   });
 
-  it("MAX_LINK_TARGETS 個不同目標＋其中一個的大寫變體 → ok（不再因大小寫重複超限）", () => {
+  it("MAX_LINK_TARGETS distinct targets plus an uppercase variant of one -> ok (no longer over the limit because of case duplicates)", () => {
     const ids = Array.from({ length: MAX_LINK_TARGETS }, () => randomUUID());
     const r = normalizeLinkTargets(SRC, [...ids, ids[0]!.toUpperCase()]);
     expect(r.ok).toBe(true);
     expect(r.ok && r.targets.length).toBe(MAX_LINK_TARGETS);
   });
 
-  it("sourceNoteId 以大寫傳入時，小寫的自身 id 也被排除", () => {
+  it("when sourceNoteId is passed in uppercase, the lowercase own id is excluded too", () => {
     expect(normalizeLinkTargets(SRC.toUpperCase(), [SRC, T])).toEqual({ ok: true, targets: [T] });
   });
 });

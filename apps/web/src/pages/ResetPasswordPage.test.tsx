@@ -15,7 +15,7 @@ function fakeResponse(status: number, body?: unknown): Response {
 }
 const fail = (status: number, code: string) => fakeResponse(status, { error: { code, message: "x" } });
 
-/** 實心鈕的 class（比照 `RegisterPage.test.tsx` 的 `SOLID_BG`）。 */
+/** Same solid-button class as `SOLID_BG` in `RegisterPage.test.tsx`. */
 const SOLID_BG = /(^|\s)bg-(primary|destructive|brand|brand-deep)(\s|$)/;
 const KEY = "knotebook:reset-token";
 const TOKEN = "knbp_X";
@@ -31,7 +31,6 @@ const LOGIN_OFF_TEXT = "Password sign-in is turned off on this site right now, s
 const SIGNED_IN_TEXT = "You're signed in as me@example.com. Sign out to use this link.";
 const TOO_MANY_TEXT = "Too many requests. Please slow down.";
 
-/** 一直渲染在 `Routes` 旁邊：印 router 的 pathname＋search＋hash。 */
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{`${location.pathname}${location.search}${location.hash}`}</div>;
@@ -103,7 +102,7 @@ async function submit(password: string, confirm: string) {
   fireEvent.click(screen.getByRole("button", { name: "Set password" }));
 }
 
-describe("ResetPasswordPage（#286）", () => {
+describe("ResetPasswordPage (#286)", () => {
   beforeEach(async () => {
     sessionStorage.clear();
     navigateFn = null;
@@ -114,7 +113,7 @@ describe("ResetPasswordPage（#286）", () => {
     sessionStorage.clear();
   });
 
-  it("P1 fragment 帶 token：router 的 hash 清掉、鍵寫入、inspect 帶 token、顯示帳號與到期、notice、兩個密碼欄", async () => {
+  it("fragment with token: router hash cleared, key stored, inspect uses the token, shows account and expiry, notice, two password fields", async () => {
     const { calls } = setup(`/reset-password#token=${TOKEN}`);
     expect(await screen.findByText(`For a@example.com. This link works once and expires ${WHEN}.`)).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/);
@@ -127,7 +126,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(screen.getByLabelText("Confirm new password")).toHaveAttribute("type", "password");
   });
 
-  it("卡片頁例外：Set password 鈕 lg（h-11），兩個密碼欄也 h-11（整欄等高）", async () => {
+  it("card-page exception: Set password button is lg (h-11) and both password fields are also h-11 (equal height per column)", async () => {
     setup(`/reset-password#token=${TOKEN}`);
     await screen.findByLabelText("New password");
     const targets = [
@@ -141,14 +140,14 @@ describe("ResetPasswordPage（#286）", () => {
     }
   });
 
-  it("P2 重新整理（沒有 fragment、鍵還在）→ inspect 帶存的 token、出現表單", async () => {
+  it("reload (no fragment, key still stored) -> inspect uses the stored token, form appears", async () => {
     sessionStorage.setItem(KEY, TOKEN);
     const { calls } = setup("/reset-password");
     expect(await screen.findByLabelText("New password")).toBeInTheDocument();
     expect(inspectCalls(calls)[0]!.body).toEqual({ token: TOKEN });
   });
 
-  it("P3 沒有 fragment 也沒有鍵 → invalid 全文＋回登入連結，不打 inspect", async () => {
+  it("no fragment and no key -> full invalid text plus back-to-login link, no inspect call", async () => {
     const { calls } = setup("/reset-password");
     expect(await screen.findByText(INVALID_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
@@ -157,7 +156,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(inspectCalls(calls)).toHaveLength(0);
   });
 
-  it("P3b `#token=` 空值 → 一樣清掉 fragment、invalid 全文、不打 inspect", async () => {
+  it("empty `#token=` -> fragment still cleared, full invalid text, no inspect call", async () => {
     const { calls } = setup("/reset-password#token=");
     expect(await screen.findByText(INVALID_TEXT)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/));
@@ -165,21 +164,21 @@ describe("ResetPasswordPage（#286）", () => {
     expect(inspectCalls(calls)).toHaveLength(0);
   });
 
-  it("P4 inspect 410 → invalid 全文，鍵被刪", async () => {
+  it("inspect 410 -> full invalid text, key removed", async () => {
     setup(`/reset-password#token=${TOKEN}`, { inspect: () => fail(410, "reset_link_invalid") });
     expect(await screen.findByText(INVALID_TEXT)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("P5 inspect 403 password_login_disabled → passwordLoginOff 全文、沒有表單、鍵仍在", async () => {
+  it("inspect 403 password_login_disabled -> full passwordLoginOff text, no form, key kept", async () => {
     setup(`/reset-password#token=${TOKEN}`, { inspect: () => fail(403, "password_login_disabled") });
     expect(await screen.findByText(LOGIN_OFF_TEXT)).toBeInTheDocument();
     expect(screen.queryByLabelText("New password")).toBeNull();
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("P6 已登入：只顯示 signedIn＋Sign out、不打 inspect、不寫鍵、hash 已清；登出後出現表單、鍵寫入", async () => {
+  it("signed in: shows only signedIn plus Sign out, no inspect, no key written, hash cleared; after sign-out the form appears and the key is written", async () => {
     let me = () => fakeResponse(200, ME);
     const { calls } = setup(`/reset-password#token=${TOKEN}`, { me: () => me() });
     expect(await screen.findByText(SIGNED_IN_TEXT)).toBeInTheDocument();
@@ -201,7 +200,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/);
   });
 
-  it("P7 太短 → errors.password_too_short、不送；兩次不一致 → register.mismatch、不送", async () => {
+  it("too short -> errors.password_too_short, not sent; mismatch -> register.mismatch, not sent", async () => {
     const { calls } = setup(`/reset-password#token=${TOKEN}`);
     await submit("short", "short");
     expect(await screen.findByRole("alert")).toHaveTextContent("Password is too short.");
@@ -211,11 +210,10 @@ describe("ResetPasswordPage（#286）", () => {
     expect(completeCalls(calls)).toHaveLength(0);
   });
 
-  it("P8 成功：完成請求 body 正確 → 導 /、session 快取寫入回應；寫入快取之前鍵已刪", async () => {
+  it("success: complete request body is correct -> navigates to /, session cache gets the response; key is already removed before the cache write", async () => {
     const { calls, queryClient } = setup(`/reset-password#token=${TOKEN}`);
-    // 鍵最後一定會被刪（已登入的 effect、卸載 cleanup 都會刪），所以看「寫入 session 快取的當下」鍵還在不在：
-    // 成功路徑自己沒刪的話，那一刻鍵還在。這案釘的是「刪鍵 → setQueryData」順序；
-    // 沒有規定先後，照列舉順序重排時這案會紅，是預期的。
+    // The key is always deleted eventually (signed-in effect, unmount cleanup), so check whether it is still there at the moment of the session-cache write:
+    // if the success path doesn't delete it itself, it still is. This pins the order "delete key, then setQueryData"; the order is not a requirement: reordering the two turns this red and the test should follow.
     const keyAtSessionWrite: Array<string | null> = [];
     const setQueryData = queryClient.setQueryData.bind(queryClient);
     vi.spyOn(queryClient, "setQueryData").mockImplementation(((key: unknown, data: unknown) => {
@@ -230,7 +228,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("P9 完成回 429 → 表單上方 alert、鍵仍在；再送回 410 → invalid 全文、鍵被刪", async () => {
+  it("complete returns 429 -> alert above the form, key kept; resubmit returning 410 -> full invalid text, key removed", async () => {
     let complete = () => fail(429, "too_many_requests");
     setup(`/reset-password#token=${TOKEN}`, { complete: () => complete() });
     await submit(NEW_PASSWORD, NEW_PASSWORD);
@@ -245,7 +243,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("P10 表單出現後 SPA 導覽離開本頁 → 鍵被刪", async () => {
+  it("SPA navigation away after the form appears -> key removed", async () => {
     setup(`/reset-password#token=${TOKEN}`);
     expect(await screen.findByLabelText("New password")).toBeInTheDocument();
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
@@ -254,7 +252,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("P11 路由位置：AppRoutes 下未登入直接開 → 出現重設頁標題，沒有被導去 /login", async () => {
+  it("route placement: opening unauthenticated under AppRoutes -> reset page title appears, no redirect to /login", async () => {
     stubFetch({});
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -268,20 +266,20 @@ describe("ResetPasswordPage（#286）", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
-    // 標題在每個狀態都有：再等到表單，確定走完 inspect、沒有被導去 /login。
+    // The title shows in every state: also wait for the form, to be sure inspect finished and there was no redirect to /login.
     expect(await screen.findByLabelText("New password")).toBeInTheDocument();
-    // 清 fragment 的 navigate(replace) effect 在表單渲染之後才生效（CI 慢機器可見），故等待而非立即斷言。
+    // The effect that clears the fragment (navigate replace) only takes effect after the form renders (visible on slow CI), so wait instead of asserting immediately.
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/));
   });
 
-  it("P12 表單畫面恰一顆實心鈕（Set password）", async () => {
+  it("form screen has exactly one solid button (Set password)", async () => {
     setup(`/reset-password#token=${TOKEN}`);
     expect(await screen.findByLabelText("New password")).toBeInTheDocument();
     const solid = [...screen.getAllByRole("button"), ...screen.queryAllByRole("link")].filter((el) => SOLID_BG.test(el.className));
     expect(solid.map((el) => el.textContent)).toEqual(["Set password"]);
   });
 
-  it("P13 /me 回 500 → sessionError＋Try again、不打 inspect；重試後 401 → 出現表單", async () => {
+  it("/me returns 500 -> sessionError plus Try again, no inspect; retry returning 401 -> form appears", async () => {
     let me = () => fail(500, "internal");
     const { calls } = setup(`/reset-password#token=${TOKEN}`, { me: () => me() });
     expect(await screen.findByText("Couldn't load your session.")).toBeInTheDocument();
@@ -294,7 +292,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(inspectCalls(calls)).toHaveLength(1);
   });
 
-  it("P14 inspect 429 → too_many_requests 全文、沒有表單、鍵仍在", async () => {
+  it("inspect 429 -> full too_many_requests text, no form, key kept", async () => {
     setup(`/reset-password#token=${TOKEN}`, { inspect: () => fail(429, "too_many_requests") });
     expect(await screen.findByText(TOO_MANY_TEXT)).toBeInTheDocument();
     expect(screen.queryByLabelText("New password")).toBeNull();
@@ -302,7 +300,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(sessionStorage.getItem(KEY)).toBe(TOKEN);
   });
 
-  it("P15 同一頁換新 token（A 回 410 → 貼 #token=B）：B 被 inspect、出現表單、鍵為 B、hash 清掉", async () => {
+  it("same page switches to a new token (A returns 410, then #token=B is pasted): B is inspected, form appears, key is B, hash cleared", async () => {
     let n = 0;
     const { calls } = setup(`/reset-password#token=${TOKEN}`, {
       inspect: () => (++n === 1 ? fail(410, "reset_link_invalid") : fakeResponse(200, { email: RESET_USER.email, expiresAt: EXPIRES_AT })),
@@ -317,7 +315,7 @@ describe("ResetPasswordPage（#286）", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/reset-password$/));
   });
 
-  it("P16 A 的表單有錯誤與輸入 → 同頁換成 B：沒有舊錯誤、欄位清空", async () => {
+  it("A's form has an error and input -> same page switches to B: no old error, fields cleared", async () => {
     setup(`/reset-password#token=${TOKEN}`);
     await submit("short", "short");
     expect(await screen.findByRole("alert")).toHaveTextContent("Password is too short.");
@@ -327,7 +325,7 @@ describe("ResetPasswordPage（#286）", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("P17 A 送出中 → 換成 B → A 晚回 410：B 的表單仍在、不卡在 checking、鍵仍是 B", async () => {
+  it("A submitting -> switch to B -> A's late 410: B's form remains, not stuck on checking, key is still B", async () => {
     let resolveComplete: (r: Response) => void = () => {};
     setup(`/reset-password#token=${TOKEN}`, { complete: () => new Promise<Response>((resolve) => (resolveComplete = resolve)) });
     await submit(NEW_PASSWORD, NEW_PASSWORD);

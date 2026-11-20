@@ -13,14 +13,14 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { seedSampleNote } from "./sample-note";
 import { START_TIMEOUT_MS, TourProvider } from "./TourProvider";
 
-// 寫入示範內容換成替身：這裡驗的是開始流程何時呼叫它、它的結果怎麼決定筆記去留；寫入本身在 sample-note.test.ts。
+// The sample-content write is replaced with a stand-in: this file checks when the start flow calls it and how its result decides whether the note stays; the write itself is covered in sample-note.test.ts.
 vi.mock("./sample-note", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./sample-note")>();
   return { ...actual, seedSampleNote: vi.fn(() => true) };
 });
 const seed = vi.mocked(seedSampleNote);
 
-// 數提示：包住真的 `toast`，畫面照常出現。
+// Counts toasts: wraps the real `toast`, so they still appear on screen.
 vi.mock("@/components/ui/toast", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui/toast")>();
   return { ...actual, toast: vi.fn(actual.toast) };
@@ -58,20 +58,17 @@ const ELSEWHERE_PATH = canonicalNotePath(ELSEWHERE);
 const START_FAILED = "The feature tour couldn't start. Try again.";
 const SAMPLE_FAILED = "Couldn't create the sample note. Try again.";
 
-// ── 假 server ────────────────────────────────────────────────────────────────
 
 interface Call {
   method: string;
   url: string;
-  /** 發出請求當下的位置。 */
-  at: string;
+  at: string; // location when the request was sent
 }
 
 let calls: Call[] = [];
 let postStatus = 200;
 let postGate: Promise<void> | null = null;
 let aiGate: Promise<void> | null = null;
-/** 依序記下開始流程的幾個步驟。 */
 let steps: string[] = [];
 
 function json(body: unknown, status = 200): Response {
@@ -109,14 +106,13 @@ function gate(): { promise: Promise<void>; release: () => void } {
   return { promise, release };
 }
 
-// ── 宿主：首頁、筆記頁（登記一份假的編輯器、放第 1 站的目標）、側欄抽屜 ─────────────
 
 let currentPath = "";
 let routerNavigate: NavigateFunction | null = null;
 let tour: TourApi | null = null;
-/** 筆記頁的假編輯器掛上時是否可編輯；false＝一直不可編輯（共編連不上）。 */
+/** Whether the note page's fake editor is editable when mounted; false = never editable (collab cannot connect). */
 let editable = true;
-/** 第 1 站（側欄 tab 列）的目標是否有尺寸；false＝第 1 站一直等不到。 */
+/** Whether the target of stop 1 (the sidebar tab list) has a size; false = stop 1 never becomes ready. */
 let targetVisible = true;
 
 function Probe() {
@@ -187,7 +183,7 @@ function renderHost(initial = OTHER_PATH, { drawer = false } = {}) {
   );
 }
 
-/** 結束後的焦點落在回到的那頁的 `<main>`（查不到就要等滿一秒才退）。 */
+/** After the tour ends, focus lands on the `<main>` of the page returned to (if it is not found the wait runs a full second before giving up). */
 function start(returnTo = currentPath) {
   act(() => tour!.start({ returnTo, returnFocus: () => document.querySelector("main") }));
 }
@@ -197,7 +193,6 @@ const posts = () => calls.filter((c) => c.method === "POST" && c.url === "/api/n
 const deletes = () => calls.filter((c) => c.method === "DELETE");
 const aiReads = () => calls.filter((c) => c.url === "/api/ai/actions");
 const toastCount = (text: string) => screen.queryAllByText(text).length;
-/** 這一案跳過的所有提示的標題（含不是導覽發的）。 */
 const toastTitles = () => toastSpy.mock.calls.map(([item]) => item.title);
 
 function useFakeClock() {
@@ -233,8 +228,8 @@ afterEach(() => {
   routerNavigate = null;
 });
 
-describe("不會自己出現", () => {
-  it("掛著 TourProvider、沒有人呼叫 start：不建筆記、不讀 AI 動作、沒有遮罩", async () => {
+describe("does not appear on its own", () => {
+  it("TourProvider mounted and nobody calls start: no note created, no AI actions read, no overlay", async () => {
     renderHost();
     await new Promise((r) => setTimeout(r, 300));
     expect(tour).not.toBeNull();
@@ -244,8 +239,8 @@ describe("不會自己出現", () => {
   });
 });
 
-describe("開始", () => {
-  it("先關抽屜、等它消失，再建示範筆記，再導過去；第 1 站出現在示範筆記上", async () => {
+describe("start", () => {
+  it("closes the drawer and waits for it to disappear, then creates the sample note and navigates to it; stop 1 appears on the sample note", async () => {
     renderHost(OTHER_PATH, { drawer: true });
     steps = [];
     start();
@@ -254,12 +249,12 @@ describe("開始", () => {
     expect(currentPath).toBe(SAMPLE_PATH);
     expect(seed).toHaveBeenCalledTimes(1);
     expect(seed.mock.calls[0]![1]).toEqual(SAMPLE);
-    // 站台沒有 AI 動作：寫入時不放 AI 那句。
+    // no AI actions on the site, so the sample omits the AI sentence
     expect(seed.mock.calls[0]![3]).toBe(false);
     expect(aiReads()).toHaveLength(1);
   });
 
-  it("建示範筆記失敗 → 一則建立失敗的提示、沒有遮罩、不另跳開始失敗；之後可以再開", async () => {
+  it("sample-note creation fails -> one creation-failure toast, no overlay, no extra start-failure toast; it can be started again afterwards", async () => {
     postStatus = 500;
     renderHost();
     start();
@@ -276,7 +271,7 @@ describe("開始", () => {
     expect(posts()).toHaveLength(2);
   });
 
-  it("進行中再呼叫 start → 不動作（不再建一篇）", async () => {
+  it("calling start while running does nothing (no second note)", async () => {
     postGate = gate().promise;
     renderHost();
     start();
@@ -287,7 +282,7 @@ describe("開始", () => {
     expect(posts()).toHaveLength(1);
   });
 
-  it("導覽正常結束後可以再開，每次都建新的一篇", async () => {
+  it("can be started again after a normal finish, each time creating a new note", async () => {
     renderHost();
     start();
     await screen.findByRole("dialog", { name: "Sidebar sections" });
@@ -302,8 +297,8 @@ describe("開始", () => {
   });
 });
 
-describe("開始流程的中止", () => {
-  it("等可編輯期間位置離開示範筆記 → 一則提示、空白的示範筆記移到垃圾桶；之後再開正常建新的一篇", async () => {
+describe("aborting the start flow", () => {
+  it("location leaves the sample note while waiting for editability -> one toast, the empty sample note goes to the trash; starting again creates a fresh note", async () => {
     editable = false;
     renderHost();
     start();
@@ -324,22 +319,21 @@ describe("開始流程的中止", () => {
     expect(toastCount(START_FAILED)).toBe(1);
   });
 
-  it("編輯器一直不可編輯 → 15 秒逾時：只有一則提示、先導回原頁再移到垃圾桶、「進行中」清掉可以再開", async () => {
+  it("editor never becomes editable -> 15 s timeout: one toast only, navigates back before trashing, the in-progress flag is cleared so it can start again", async () => {
     useFakeClock();
     editable = false;
     renderHost();
     start(OTHER_PATH);
     await waitFor(() => expect(currentPath).toBe(SAMPLE_PATH));
-    // 推進計時器不包 `act()`：讓 React 像在瀏覽器裡那樣，先 commit 一般更新（收掉導覽），導頁的 transition 晚一點才 commit。
-    // 包了 `act()`，兩者會在 act 結束時一起 flush，「還在示範筆記上就送出移到垃圾桶」的順序錯誤就看不出來。
-    // 計時器也跟著真實時間走（`shouldAdvanceTime`）：留 2 秒餘裕，冷載入導覽 chunk 的那段真實時間不會讓它提早到期。
+    // Advance the timers without `act()`: React then commits normal updates first (closing the tour) as in a browser, and the navigation transition commits later.
+    // With `act()` both flush together at the end, and the wrong order ("trash request sent while still on the sample note") would go unnoticed.
+    // Timers also follow real time (`shouldAdvanceTime`): the 2 s margin keeps the real time spent cold-loading the tour chunk from expiring the timeout early.
     vi.advanceTimersByTime(START_TIMEOUT_MS - 2_000);
     await new Promise((r) => setTimeout(r, 50));
     expect(toastCount(START_FAILED)).toBe(0);
     vi.advanceTimersByTime(2_100);
     await screen.findByText(START_FAILED);
     await waitFor(() => expect(deletes()).toHaveLength(1));
-    // 刪的時候已經不在示範筆記上（導回是取代歷史）。
     expect(deletes()[0]!.at).toBe(OTHER_PATH);
     expect(currentPath).toBe(OTHER_PATH);
     expect(toastTitles()).toEqual([START_FAILED]);
@@ -352,7 +346,7 @@ describe("開始流程的中止", () => {
     expect(posts()).toHaveLength(2);
   });
 
-  it("寫入示範內容時拋錯 → 一則提示、導回原頁、筆記移到垃圾桶、焦點回到 returnFocus 找到的元素", async () => {
+  it("writing sample content throws -> one toast, back to the original page, note trashed, focus returns to the element found by returnFocus", async () => {
     seed.mockImplementation(() => {
       throw new TypeError("bad block");
     });
@@ -368,7 +362,7 @@ describe("開始流程的中止", () => {
     await waitFor(() => expect(document.activeElement).toBe(document.querySelector("main")));
   });
 
-  it("讀 AI 動作期間逾時 → 之後那次讀取回來也不寫入、筆記移到垃圾桶", async () => {
+  it("timeout while reading AI actions -> the read returning later does not write either, note trashed", async () => {
     useFakeClock();
     const ai = gate();
     aiGate = ai.promise;
@@ -386,7 +380,7 @@ describe("開始流程的中止", () => {
     expect(overlay()).toBeNull();
   });
 
-  it("建示範筆記的請求還沒回來就逾時 → 回來後不導過去、那篇直接移到垃圾桶", async () => {
+  it("timeout before the create-note request returns -> after it returns there is no navigation and the note goes straight to the trash", async () => {
     useFakeClock();
     const post = gate();
     postGate = post.promise;
@@ -403,7 +397,7 @@ describe("開始流程的中止", () => {
     expect(seed).not.toHaveBeenCalled();
   });
 
-  it("寫入回 false（已有別人的內容）之後才逾時 → 一則提示、筆記留著、不導頁", async () => {
+  it("timeout after the write returned false (someone else's content is already there) -> one toast, note kept, no navigation", async () => {
     useFakeClock();
     seed.mockImplementation(() => false);
     targetVisible = false;
@@ -418,7 +412,7 @@ describe("開始流程的中止", () => {
     expect(overlay()).toBeNull();
   });
 
-  it("第 1 站出現之後就不再逾時：過了 15 秒導覽照常開著", async () => {
+  it("no timeout once stop 1 has appeared: after 15 s the tour is still open", async () => {
     useFakeClock();
     renderHost();
     start(OTHER_PATH);

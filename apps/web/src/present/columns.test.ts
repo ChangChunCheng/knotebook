@@ -20,8 +20,8 @@ function body(html: string): HTMLDivElement {
 
 const stacked = (root: ParentNode) => root.querySelector("[data-kb-columns]")!.hasAttribute("data-stacked");
 
-describe("present/columns：markStackedColumnRows", () => {
-  it("PC1：兩文字欄，寬 423 → data-stacked；再以 424 標 → 拿掉", () => {
+describe("present/columns: markStackedColumnRows", () => {
+  it("two text columns, width 423 -> data-stacked; re-marking at 424 removes it", () => {
     const root = body(TEXT_ROW);
     markStackedColumnRows(root, 423);
     expect(stacked(root)).toBe(true);
@@ -29,13 +29,13 @@ describe("present/columns：markStackedColumnRows", () => {
     expect(stacked(root)).toBe(false);
   });
 
-  it("PC2：兩欄都只有 <figure><img>，寬 300 → 不堆疊（圖片欄 96px）", () => {
+  it("two columns that only hold <figure><img>, width 300 -> not stacked (image columns are 96px)", () => {
     const root = body(IMAGE_ROW);
     markStackedColumnRows(root, 300);
     expect(stacked(root)).toBe(false);
   });
 
-  it("PC3：寬 0（量不到）→ 不動：沒標的不標、已標的不拿掉", () => {
+  it("width 0 (unmeasurable) -> untouched: unmarked stays unmarked, marked stays marked", () => {
     const root = body(TEXT_ROW);
     markStackedColumnRows(root, 0);
     expect(stacked(root)).toBe(false);
@@ -45,7 +45,7 @@ describe("present/columns：markStackedColumnRows", () => {
   });
 });
 
-describe("present/columns：真匯出的投影片 HTML", () => {
+describe("present/columns: real exported slide HTML", () => {
   const exported = (blocks: PartialBlockLike[]) => {
     const editor = createExportEditor();
     const doc = blocksToYDoc(editor, blocks as never, YDOC_FRAGMENT);
@@ -55,7 +55,7 @@ describe("present/columns：真匯出的投影片 HTML", () => {
     return root;
   };
 
-  it("PC5：圖片欄（image block 匯出成 figure／img）寬 300 不堆疊；同寬的文字列堆疊", () => {
+  it("image columns (image block exported as figure/img) at width 300 don't stack; a text row of the same width does", () => {
     const images = exported([row([[IMG("i1")], [IMG("i2")]], "row")]);
     markStackedColumnRows(images, 300);
     expect(images.querySelectorAll("[data-kb-column] img")).toHaveLength(2);
@@ -66,12 +66,12 @@ describe("present/columns：真匯出的投影片 HTML", () => {
   });
 });
 
-describe("present/columns：restackSlideBody", () => {
+describe("present/columns: restackSlideBody", () => {
   afterEach(() => {
     document.body.replaceChildren();
   });
 
-  it("PC4：body 沒掛上文件（isConnected false）→ 不動，即使 clientWidth 是 300", () => {
+  it("body not attached to the document (isConnected false) -> untouched even when clientWidth is 300", () => {
     const root = body(TEXT_ROW);
     Object.defineProperty(root, "clientWidth", { value: 300, configurable: true });
     restackSlideBody(root);

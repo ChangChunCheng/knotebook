@@ -1,9 +1,5 @@
 /**
- * #138：AI 修改紀錄 dialog。
- *
- * 沿 `ShareDialog.test.tsx` 的慣例：不 mock hook，而是 stub 全域 `fetch` 讓真的
- * react-query 打到假回應。`stubFetch` 的 handler 對未預期的 URL 直接 throw——那是
- * 「元件多打了一發沒人知道的 API」的守衛。
+ * Stubs global fetch (no hook mocks) so real react-query runs; stubFetch throws on unexpected URLs, so an extra API call from the component fails the test.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -42,8 +38,7 @@ const E2 = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 const E3 = "cccccccc-3333-4333-8333-cccccccccccc";
 const E4 = "dddddddd-4444-4444-8444-dddddddddddd";
 
-/** `byHandle` 用 `NOTE.ownerHandle`——這篇筆記的編輯者就是它的 owner，不另外寫死別的名字。
- * （#175 起 `ownerHandle` 型別是 `string | null`——群組筆記為 null；這篇是個人筆記，`?? ""` 只是收窄型別。） */
+/** `ownerHandle` is `string | null` (null for group notes); `?? ""` only narrows the type for this personal note. */
 function edit(patch: Partial<NoteEditDto> & { id: string }): NoteEditDto {
   return {
     op: "replace_section",
@@ -106,7 +101,7 @@ describe("AiEditsDialog", () => {
     vi.unstubAllGlobals();
   });
 
-  it("四態（#272）：可撤回列有撤回鈕；已撤回列標 reverted；撤回紀錄本身標 revertRecord；其餘不可撤回列寫出原因；清單下方一行保留筆數", async () => {
+  it("four states (#272): revertable row has a revert button; reverted row is marked reverted; revert record is marked revertRecord; other rows show why they cannot be reverted; one line under the list keeps the retained count", async () => {
     const edits = [
       edit({ id: E1, revertable: true }),
       edit({ id: E2, revertable: false, revertedAt: "2026-02-04T00:00:00.000Z", agentLabel: null }),
@@ -136,7 +131,6 @@ describe("AiEditsDialog", () => {
 
     const first = screen.getByTestId(`ai-edit-${E1}`);
     expect(within(first).getByRole("button", { name: i18n.t("aiEdits.revert") })).toBeInTheDocument();
-    // AI 形：handle (label)。這一列的 agentLabel 是 "claude"。
     expect(within(first).getByTestId("ai-edit-who").textContent).toBe(`${NOTE.ownerHandle} (claude)`);
     expect(within(first).queryByText(i18n.t("aiEdits.reverted"))).toBeNull();
 
@@ -144,11 +138,11 @@ describe("AiEditsDialog", () => {
     expect(within(second).getByText(i18n.t("aiEdits.reverted"))).toBeInTheDocument();
     expect(within(second).queryByText(i18n.t("aiEdits.revertRecord"))).toBeNull();
     expect(within(second).queryByRole("button", { name: i18n.t("aiEdits.revert") })).toBeNull();
-    // agentLabel 為 null＝那次是真人經 cookie 寫的，只顯示 handle。
+    // agentLabel null = written by a human via cookie, so only the handle is shown.
     expect(within(second).getByTestId("ai-edit-who").textContent).toBe(NOTE.ownerHandle);
   });
 
-  it("每列有寫入者頭貼（agent 列也是本人頭貼、不是 AI 圖示）；頭貼不在 ai-edit-who 內；avatar 欄缺 → 首字", async () => {
+  it("every row has the writer's avatar (agent rows show the owner's avatar, not an AI icon); avatar is not inside ai-edit-who; missing avatar field -> first letter", async () => {
     const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
     const legacy = edit({ id: E3, agentLabel: null });
     delete (legacy as { avatar?: unknown }).avatar;
@@ -174,7 +168,7 @@ describe("AiEditsDialog", () => {
     }
   });
 
-  it("#272：清單是空的 → 只顯示「尚無」那一句，沒有保留筆數那行", async () => {
+  it("#272: empty list -> only the 'none yet' line, no retained-count line", async () => {
     stubFetch((url) => {
       if (url === EDITS_URL) return listBody([]);
       throw new Error(`unexpected fetch: ${url}`);
@@ -184,7 +178,7 @@ describe("AiEditsDialog", () => {
     expect(screen.queryByText(/most recent AI edits/)).toBeNull();
   });
 
-  it("撤回：409 stale → errors.stale toast 且列表不重抓；成功 → 列表重抓、三把 note query 失效、revertOk toast", async () => {
+  it("revert: 409 stale -> errors.stale toast and no list refetch; success -> list refetch, three note queries invalidated, revertOk toast", async () => {
     const edits = [edit({ id: E1, revertable: true }), edit({ id: E2, revertable: true })];
     const calls = stubFetch((url, init) => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -199,20 +193,17 @@ describe("AiEditsDialog", () => {
     });
 
     const { queryClient } = renderWithQuery(<AiEditsDialog note={NOTE} open onOpenChange={vi.fn()} />);
-    // 這三把 key 就是 `invalidateNoteQueries` 的目標；先種進 cache，`isInvalidated`
-    // 才觀測得到（invalidateQueries 對不存在的 key 什麼都不會留下）。
+    // Seed these keys first (the targets of `invalidateNoteQueries`): `isInvalidated` can only observe keys already in the cache.
     queryClient.setQueryData(["note", NOTE.id], NOTE);
     queryClient.setQueryData(["note-by-path", NOTE.ownerHandle, NOTE.slug], NOTE);
 
     const first = await screen.findByTestId(`ai-edit-${E1}`);
-    // 清單真的住在 `NOTE_EDITS_QUERY_KEY(noteId)` 這把 key 底下（介面與碼一致；
-    // hook 若換了 key，這裡就是 undefined）。
+    // The list lives under `NOTE_EDITS_QUERY_KEY(noteId)`; if the hook changed keys this would be undefined.
     expect(queryClient.getQueryState(NOTE_EDITS_QUERY_KEY(NOTE.id))?.data).toHaveLength(2);
     fireEvent.click(within(first).getByRole("button", { name: i18n.t("aiEdits.revert") }));
 
     await screen.findByText(i18n.t("errors.stale"));
     expect(screen.queryByText(i18n.t("aiEdits.revertOk"))).toBeNull();
-    // 失敗不該讓列表重抓——只有開啟時那一發 GET。
     expect(calls.filter((c) => c.url === EDITS_URL && c.method === "GET")).toHaveLength(1);
     expect(queryClient.getQueryState(["note-by-path", NOTE.ownerHandle, NOTE.slug])?.isInvalidated).toBe(false);
 
@@ -229,14 +220,14 @@ describe("AiEditsDialog", () => {
     });
   });
 
-  it("對話框關著時一發請求都不打；開啟才打恰好一發 GET /edits", async () => {
+  it("no request while the dialog is closed; opening makes exactly one GET /edits", async () => {
     const calls = stubFetch((url) => {
       if (url === EDITS_URL) return listBody([]);
       throw new Error(`unexpected fetch: ${url}`);
     });
 
     const { rerender } = renderWithQuery(<AiEditsDialog note={NOTE} open={false} onOpenChange={vi.fn()} />);
-    // 讓出一個 macrotask，react-query 真的有機會排程那一發 fetch——同步斷言是假守衛。
+    // Yield a macrotask so react-query can schedule the fetch; a synchronous assertion would pass vacuously.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toHaveLength(0);
 

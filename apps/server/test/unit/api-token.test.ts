@@ -1,11 +1,9 @@
 /**
- * #130：API token 的明文格式（`auth/api-token.ts`）與 `WWW-Authenticate`
- * 的組字（`auth/challenge.ts`）。兩者都是純函式，無 DB、無 fastify。
+ * #130: plaintext API token format (`auth/api-token.ts`) and `WWW-Authenticate` construction (`auth/challenge.ts`).
  *
- * 這一族的守衛重點有兩個：①`knbr_` 不是 `knb_` 的延長，所以把 refresh token 當
- * Bearer 送會落在「前綴不合」的 401 而不進 DB 查表——那是靠字元恰好不同成立的；
- * ②`Authorization` 的三態解析，因為 RFC 6750 對「非 Bearer scheme」與「Bearer 但
- * token 壞掉」要求不同的 challenge 形狀。
+ * `knbr_` is not an extension of `knb_`, so a refresh token sent as a Bearer fails the prefix check with a 401 and never reaches the DB
+ * lookup; that holds only because the characters differ. The Authorization header is parsed into three states because RFC 6750 wants
+ * different challenge shapes for a non-Bearer scheme and for a Bearer with a bad token.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -19,8 +17,8 @@ import {
 } from "../../src/auth/api-token.js";
 import { buildBearerChallenge } from "../../src/auth/challenge.js";
 
-describe("token 明文格式", () => {
-  it("access 是 knb_ + 43 字元 base64url（共 47），每次都不同", () => {
+describe("token plaintext format", () => {
+  it("access token is knb_ + 43 base64url chars (47 total), different every time", () => {
     const a = generateAccessToken();
     const b = generateAccessToken();
     expect(a).toMatch(/^knb_[A-Za-z0-9_-]{43}$/);
@@ -28,54 +26,53 @@ describe("token 明文格式", () => {
     expect(a).not.toBe(b);
   });
 
-  it("refresh 是 knbr_ + 43 字元（共 48）", () => {
+  it("refresh token is knbr_ + 43 chars (48 total)", () => {
     expect(generateRefreshToken()).toMatch(/^knbr_[A-Za-z0-9_-]{43}$/);
     expect(generateRefreshToken()).toHaveLength(48);
   });
 
-  it("refresh token 不是合法的 access token 形狀（第 4 字元 r vs _）", () => {
-    // 這條守衛靠「兩個前綴恰好不互為前綴」成立——改前綴前先看這裡。把 refresh
-    // token 當 Bearer 送必須落在「前綴不合」那條 401，而不是進 DB 查表。
+  it("refresh token is not a valid access-token shape (4th char r vs _)", () => {
+    // This relies on neither prefix being a prefix of the other; check here before changing a prefix. A refresh token sent as a
+    // Bearer must get the prefix-mismatch 401 rather than reach the DB lookup.
     expect(REFRESH_TOKEN_PREFIX.startsWith(ACCESS_TOKEN_PREFIX)).toBe(false);
     expect(isAccessTokenShape(generateRefreshToken())).toBe(false);
     expect(isAccessTokenShape(generateAccessToken())).toBe(true);
   });
 
-  it("前綴要在開頭，不是「含有」——Xknb_… 不算 access token 形狀", () => {
-    // 上一條只餵 generateRefreshToken()，而 knbr_ 後面碰巧出現 "knb_" 的機率約
-    // 2×10⁻⁶＝那條守衛對 startsWith→includes 這個改法永遠不會紅。前綴閘的整個
-    // 價值在於「不合就直接 401、不查 DB」，放寬成 includes 會讓垃圾輸入每發都做
-    // 一次 access_token_hash 的索引查找。
+  it("prefix must be at the start, not merely contained: Xknb_... is not an access-token shape", () => {
+    // The previous test only feeds generateRefreshToken(), and "knb_" appearing after knbr_ is roughly a 2x10^-6 chance, so it would
+    // stay green if startsWith became includes. The prefix gate exists so garbage gets a 401 without a DB lookup; loosening it to
+    // includes would make every garbage input do an access_token_hash index lookup.
     expect(isAccessTokenShape("Xknb_abc")).toBe(false);
   });
 
-  it("hashToken 是 sha256 hex、決定性、不同輸入不同輸出", () => {
+  it("hashToken is sha256 hex, deterministic, and different inputs give different outputs", () => {
     expect(hashToken("knb_x")).toMatch(/^[0-9a-f]{64}$/);
     expect(hashToken("knb_x")).toBe(hashToken("knb_x"));
     expect(hashToken("knb_x")).not.toBe(hashToken("knb_y"));
   });
 
-  it("hashToken 是真的 sha256，不是自製的雜湊", () => {
-    // 對照 Node 的已知值：實作若換成別的摘要（或加了鹽），這裡會紅。
+  it("hashToken is real sha256, not a home-grown hash", () => {
+    // Compare against a known Node value: fails if the implementation switches digest or adds a salt.
     expect(hashToken("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   });
 });
 
 describe("parseAuthorizationHeader", () => {
-  it("沒有 header → none（呼叫端回退 cookie session）", () => {
+  it("no header -> none (caller falls back to the cookie session)", () => {
     expect(parseAuthorizationHeader(undefined)).toEqual({ kind: "none" });
   });
 
-  it("Bearer（scheme 大小寫不敏感）→ 取出 token", () => {
+  it("Bearer (scheme is case-insensitive) -> token extracted", () => {
     expect(parseAuthorizationHeader("Bearer knb_abc")).toEqual({ kind: "bearer", token: "knb_abc" });
     expect(parseAuthorizationHeader("bearer knb_abc")).toEqual({ kind: "bearer", token: "knb_abc" });
     expect(parseAuthorizationHeader("BEARER knb_abc")).toEqual({ kind: "bearer", token: "knb_abc" });
     expect(parseAuthorizationHeader("  Bearer   knb_abc  ")).toEqual({ kind: "bearer", token: "knb_abc" });
   });
 
-  it("非 Bearer scheme／空值／只有 scheme → other-scheme（challenge 不帶 error）", () => {
-    // RFC 6750 §3：unsupported authentication method 時 SHOULD NOT 帶 error code，
-    // 與「Bearer 但 token 壞掉」（要 invalid_token）是不同的形狀，故三態分開。
+  it("non-Bearer scheme / empty value / scheme only -> other-scheme (challenge carries no error)", () => {
+    // RFC 6750 section 3: for an unsupported authentication method the challenge SHOULD NOT carry an error code, unlike a
+    // Bearer with a bad token (invalid_token), hence three separate states.
     expect(parseAuthorizationHeader("Basic dXNlcjpwdw==")).toEqual({ kind: "other-scheme" });
     expect(parseAuthorizationHeader("")).toEqual({ kind: "other-scheme" });
     expect(parseAuthorizationHeader("   ")).toEqual({ kind: "other-scheme" });
@@ -83,20 +80,19 @@ describe("parseAuthorizationHeader", () => {
     expect(parseAuthorizationHeader("Bearer   ")).toEqual({ kind: "other-scheme" });
   });
 
-  it("token 內不得含空白——`Bearer a b` 是畸形，不是「token 是 a b」", () => {
+  it("no whitespace inside the token: `Bearer a b` is malformed, not the token 'a b'", () => {
     expect(parseAuthorizationHeader("Bearer knb_a knb_b")).toEqual({ kind: "other-scheme" });
   });
 
-  it("scheme 與 token 之間只能是 SP／HTAB，不吃 NBSP", () => {
-    // RFC 7235 的 credentials 規則只允許 SP/HTAB。分隔符若寫成 `\s+`，JS 的 `\s`
-    // 含 U+00A0——而 Node 以 latin1 解 header value，0xA0 這個位元組真的會變成
-    // U+00A0——於是畸形 header 會被當成合法 Bearer。守的是分隔符那半（`\S+`
-    // 那半由上一條守）。
+  it("only SP/HTAB may separate scheme and token, not NBSP", () => {
+    // RFC 7235 credentials allow only SP/HTAB. With a `\s+` separator, JS `\s` includes U+00A0, and Node decodes header values as
+    // latin1 so byte 0xA0 really becomes U+00A0, which would turn a malformed header into a valid Bearer. This covers the separator
+    // half (the `\S+` half is covered by the previous test).
     expect(parseAuthorizationHeader("Bearer\u00a0knb_abc")).toEqual({ kind: "other-scheme" });
     expect(parseAuthorizationHeader("Bearer\tknb_abc")).toEqual({ kind: "bearer", token: "knb_abc" });
   });
 
-  it("不是 Bearer 的相似前綴不得誤判（BearerToken／Bearerx）", () => {
+  it("similar prefixes that are not Bearer must not match (BearerToken/Bearerx)", () => {
     expect(parseAuthorizationHeader("BearerToken knb_abc")).toEqual({ kind: "other-scheme" });
     expect(parseAuthorizationHeader("Bearerknb_abc")).toEqual({ kind: "other-scheme" });
   });
@@ -106,7 +102,7 @@ describe("buildBearerChallenge", () => {
   const issuer = "http://192.168.1.50:3000";
   const prm = `resource_metadata="${issuer}/.well-known/oauth-protected-resource/api/mcp"`;
 
-  it("無憑證形：帶 scope 與 resource_metadata、不帶 error", () => {
+  it("no-credential form: carries scope and resource_metadata, no error", () => {
     const value = buildBearerChallenge({ issuer, scope: "notes:read" });
     expect(value.startsWith("Bearer ")).toBe(true);
     expect(value).toContain(`scope="notes:read"`);
@@ -114,34 +110,34 @@ describe("buildBearerChallenge", () => {
     expect(value).not.toContain("error=");
   });
 
-  it("token 壞掉形：帶 error=invalid_token", () => {
+  it("bad-token form: carries error=invalid_token", () => {
     const value = buildBearerChallenge({ issuer, scope: "notes:read notes:write", error: "invalid_token" });
     expect(value).toContain(`error="invalid_token"`);
     expect(value).toContain(`scope="notes:read notes:write"`);
     expect(value).toContain(prm);
   });
 
-  it("scope 不足形：帶 error=insufficient_scope", () => {
+  it("insufficient-scope form: carries error=insufficient_scope", () => {
     expect(buildBearerChallenge({ issuer, scope: "notes:write", error: "insufficient_scope" })).toContain(
       `error="insufficient_scope"`
     );
   });
 
-  it("resource_metadata 一律指向 /api/mcp，與請求的路由無關", () => {
-    // 對 RFC 9728 §3.3 第二段的**刻意偏離**（見 challenge.ts 的 JSDoc）。不要改成
-    // 「只有 /api/mcp 才帶」——那會讓 #106 之後的新端點 401 沒有任何發現資訊。
+  it("resource_metadata points to /api/mcp regardless of the requested route", () => {
+    // Deliberate deviation from RFC 9728 section 3.3, second paragraph (see the JSDoc in challenge.ts). Don't change it to "only for
+    // /api/mcp": endpoints added after #106 would return a 401 with no discovery information.
     expect(buildBearerChallenge({ issuer, scope: "notes:read" })).toContain("/api/mcp");
   });
 
-  it("issuer 原樣帶入，不自己補尾斜線（否則會組出 …//.well-known/…）", () => {
+  it("issuer is used as given, no trailing slash added (otherwise ...//.well-known/... results)", () => {
     expect(buildBearerChallenge({ issuer: "https://notes.example.com", scope: "notes:read" })).toContain(
       `resource_metadata="https://notes.example.com/.well-known/oauth-protected-resource/api/mcp"`
     );
   });
 
-  it("auth-param 以逗號分隔（RFC 7235 的 #rule），且每個值都有引號", () => {
+  it("auth-params are comma-separated (RFC 7235 #rule) and every value is quoted", () => {
     const value = buildBearerChallenge({ issuer, scope: "notes:read", error: "invalid_token" });
-    // 這條擋的是「把三個參數用空白串起來」那種組法——語法上不合，client 解析會壞。
+    // This catches joining the three parameters with spaces: invalid syntax that breaks client parsing.
     expect(value.split(", ")).toHaveLength(3);
     for (const param of value.replace(/^Bearer /, "").split(", ")) expect(param).toMatch(/^[a-z_]+="[^"]*"$/);
   });

@@ -1,8 +1,3 @@
-/**
- * bulk transfer單元測試共用：「寫回一篇」的記憶體夾具（不碰 DB）。
- * `realBoundaryCheck`（scratch session 內真 parser 的 `CheckBoundary`）、`makeBaseInMemory`（匯出器＋基底雜湊）、
- * `regionsOf`（agent 本文 → 行雜湊 → diff → 區）。另有規劃夾具。
- */
 import * as Y from "yjs";
 import type { VisibleNoteTarget } from "../../../src/notes/editing/candidates.js";
 import { parseMarkdownForNote } from "../../../src/notes/editing/markdown.js";
@@ -25,7 +20,7 @@ export const TEST_SITE = "http://localhost";
 export const TEST_KEY = deriveTransferKey("transfer-sync-fixture-secret");
 export const TEST_SALT = Buffer.alloc(16, 7);
 
-/** block JSON → Y.Doc（server 端 EditorSession，lease 一定還）。 */
+/** block JSON -> Y.Doc (via the server-side EditorSession; the lease is always released). */
 export async function docWith(rt: EditingRuntime, blocks: unknown[]): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(rt, doc);
@@ -37,7 +32,7 @@ export async function docWith(rt: EditingRuntime, blocks: unknown[]): Promise<Y.
   return doc;
 }
 
-/** 每次呼叫開一個 scratch session（空 Y.Doc）做 parse；失敗回 null。 */
+/** Opens a scratch session (empty Y.Doc) per call to parse; returns null on failure. */
 export function realBoundaryCheck(rt: EditingRuntime, candidates: readonly VisibleNoteTarget[] = []): CheckBoundary {
   return makeBoundaryCheck(async md => {
     const s = await EditorSession.open(rt, new Y.Doc());
@@ -68,13 +63,13 @@ export interface InMemoryBase {
   };
 }
 
-/** `exportNoteForTransfer`＋`baseHashes`（固定測試金鑰與鹽）。 */
+/** `exportNoteForTransfer` + `baseHashes` (fixed test key and salt). */
 export async function makeBaseInMemory(
   rt: EditingRuntime,
   doc: Y.Doc,
   titles: ReadonlyMap<string, string> = new Map(),
   title = "T",
-  /** 逐行改寫匯出結果再算基底：模擬舊版匯出器下載的檔（例：#386 之前文字裡的 ``` 不跳脫）。 */
+  /** Rewrites the export line by line before computing the base: simulates a file downloaded by an older exporter (e.g. before #386, ``` inside text wasn't escaped). */
   mapLine?: (line: string) => string,
 ): Promise<InMemoryBase> {
   const raw = await exportNoteForTransfer(rt, doc, titles, { linkHash: (id, text) => linkTextHash(TEST_KEY, TEST_SALT, id, text) });
@@ -91,7 +86,7 @@ export async function makeBaseInMemory(
   };
 }
 
-/** agent 本文 → `bodyLines(normalizeBody(…))` → 行雜湊（基底的鹽）→ diff。 */
+/** agent body -> `bodyLines(normalizeBody(...))` -> line hashes (the base's salt) -> diff. */
 export async function diffAgainst(b: InMemoryBase, agentBody: string, opts: { maxD?: number } = {}): Promise<{ agentLines: string[]; diff: LineDiff }> {
   const agentLines = bodyLines(normalizeBody(agentBody));
   const agent = await hashAgentLines(TEST_KEY, b.base.salt, agentLines);
@@ -100,7 +95,7 @@ export async function diffAgainst(b: InMemoryBase, agentBody: string, opts: { ma
   return { agentLines, diff };
 }
 
-/** H6 的 `planInMemory`——基底＋agent 本文＋現況 doc（未 mount 的 fork）→ `planSync`。`maxD` 原樣傳給 `diffLines`。 */
+/** `planInMemory`: base + agent body + current doc (an unmounted fork) -> `planSync`. `maxD` is passed to `diffLines` as-is. */
 export async function planInMemory(
   rt: EditingRuntime,
   b: InMemoryBase,
@@ -130,8 +125,8 @@ export async function planInMemory(
 }
 
 /**
- * H6 的 `applyInMemory`——`writeBack` 的模擬：從 `live` fork 一份（不 mount）→ 規劃 → mount fork 一次套用 →
- * `Y.applyUpdate(live, diff)`（記憶體合併）。回規劃、套用結果與合併後的 `live`。
+ * `applyInMemory` simulates `writeBack`: fork from `live` (not mounted) -> plan -> mount the fork once and apply ->
+ * `Y.applyUpdate(live, diff)` (in-memory merge). Returns the plan, the apply result and the merged `live`.
  */
 export async function applyInMemory(
   rt: EditingRuntime,
@@ -153,7 +148,7 @@ export async function applyInMemory(
   return { plan: planned.plan, cur: planned.cur, applied, live };
 }
 
-/** 合併後的頂層：每顆的 id 與型別＋純文字（比對結果用）。 */
+/** Merged top level: each block's id, type and plain text (for comparing results). */
 export function topOf(doc: Y.Doc): Array<{ id: string; text: string; type: string }> {
   const snap = topLevelSnapshot(doc.getXmlFragment(YDOC_FRAGMENT));
   return topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map((c, i) => ({ id: snap.ids[i]!, type: snap.types[i]!, text: textOf(c) }));
@@ -163,14 +158,14 @@ function textOf(n: Y.XmlElement | Y.XmlText): string {
   return n.toArray().map(c => (c instanceof Y.XmlElement || c instanceof Y.XmlText ? textOf(c) : "")).join("");
 }
 
-/** fork：同一份 Y 狀態的獨立副本（現況＝基底下載時那份，之後「人」在上面改）。 */
+/** fork: an independent copy of the same Y state (current = what was there at base download; a "human" edits it afterwards). */
 export function forkOf(doc: Y.Doc): Y.Doc {
   const f = new Y.Doc();
   Y.applyUpdate(f, Y.encodeStateAsUpdate(doc));
   return f;
 }
 
-/** 在 doc 上開一次 session 做事（人的修改、匯出）。 */
+/** Opens a session on doc to do something (human edits, export). */
 export async function withEditor<T>(rt: EditingRuntime, doc: Y.Doc, f: (ed: EditorSession["editor"]) => T): Promise<T> {
   const s = await EditorSession.open(rt, doc);
   try {

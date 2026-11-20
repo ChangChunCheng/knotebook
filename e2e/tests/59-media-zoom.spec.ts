@@ -3,21 +3,16 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, createUserViaInvite, editorLocator, loginAs, randomEmail, solidPng } from "./helpers.js";
 
 /**
- * #462 圖片與 mermaid 圖的放大檢視。
+ * #462: zoomed view of images and mermaid diagrams.
  *
- * 59-1 桌機圖片（1280×800）：滑到圖上才出現放大鈕；點了開全螢幕檢視（名稱是圖的 alt），一開始放得進視窗，
- *      滾輪放大；Esc 關掉、焦點回放大鈕。編輯模式點圖本身是選取，不開放大。
- * 59-2 桌機 mermaid：滑到圖上控制組現身，放大鈕在「Edit」右邊；放大內容是同一張圖的 `<svg>`（不是點陣圖、根 id 另換），
- *      坐在卡面底色上（淺色主題的線與字才看得見）；滾輪放大；Esc 焦點回放大鈕。點圖本身照舊進原始碼編輯。
- * 59-3 公開頁（唯讀、免登入）：點圖直接開放大，Esc 焦點回到圖；mermaid 圖聚焦後按 Enter 開放大。
- * 59-4 手機可編輯（觸控、390×844）：點圖（選取）前沒有放大鈕，點了才出現；放大畫面佔滿視窗，關閉鈕整顆在視窗內，按它關掉。
- * 59-5 手機 mermaid：觸控裝置沒有 hover，右上控制組常駐淡色（看得到才點得到）。
+ * 59-2: the zoomed content is the same diagram's `<svg>` (not a bitmap, with a different root id) on the card background, so the light theme's lines and text are visible.
+ * 59-5: touch devices have no hover, so the control group at the top right stays visible in a faint color (it must be visible to be tappable).
  *
- * 帳號與資料：用邀請建一個帳號（alice），每個案例自己以 API 建一篇有圖片與 mermaid 圖的筆記。
- * 雙指縮放與 PWA 的 safe area 量不到，要在實機上看。
+ * Account and data: one account (alice) is created through an invite and each case creates its own note with an image and a mermaid diagram via the API.
+ * Pinch zoom and the PWA safe area can't be measured and need a real device.
  */
 
-// Playwright 的動作預設沒有逾時：點不到就一直等到整個案例逾時，看不出卡在哪一步
+// Playwright actions have no timeout by default: if something can't be clicked it waits until the whole case times out, and it isn't visible which step is stuck.
 test.use({ actionTimeout: 15_000 });
 
 const RUN = Date.now();
@@ -48,7 +43,7 @@ interface NoteRef {
   path: string;
 }
 
-/** 建一篇筆記：先上傳一張 1600×1000 的圖，再整篇寫入（一段字、那張圖顯示成寬 400、一張 mermaid 圖）。 */
+/** Creates a note: first uploads a 1600x1000 image, then writes the whole note (a paragraph, that image shown at width 400, and a mermaid diagram). */
 async function createZoomNote(page: Page, label: string): Promise<NoteRef> {
   const title = `E2E media zoom ${label} ${RUN}`;
   const res = await page.request.post("/api/notes", { headers: { Origin: ORIGIN }, data: { title } });
@@ -82,7 +77,6 @@ async function createZoomNote(page: Page, label: string): Promise<NoteRef> {
   return { id: note.id, title, path: `/n/${note.ownerHandle}/${note.slug}` };
 }
 
-/** 登入 alice、建筆記並打開；等標題框、可編輯的編輯器與載好的圖。 */
 async function openZoomNote(
   browser: Browser,
   label: string,
@@ -110,12 +104,10 @@ function mermaidBlock(page: Page): Locator {
   return editorLocator(page).locator('[data-content-type="mermaid"]').first();
 }
 
-/** 圖片的放大鈕在編輯欄上的浮動層裡（不在 block 內）。 */
 function imageZoomButton(page: Page): Locator {
   return page.locator("[data-kb-zoom-layer]").getByRole("button", { name: "Zoom in", exact: true });
 }
 
-/** naturalWidth > 0 ＝瀏覽器真的抓到並解碼了圖（破圖時是 0）。 */
 async function expectLoaded(img: Locator): Promise<void> {
   await expect(img).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => img.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 }).toBeGreaterThan(0);
@@ -127,7 +119,6 @@ async function widthOf(target: Locator): Promise<number> {
   return box!.width;
 }
 
-/** 在放大畫面中央往上捲一次滾輪，內容要變寬。 */
 async function expectWheelZoomsIn(page: Page, viewport: { width: number; height: number }, content: Locator): Promise<void> {
   const before = await widthOf(content);
   await page.mouse.move(viewport.width / 2, viewport.height / 2);
@@ -135,7 +126,7 @@ async function expectWheelZoomsIn(page: Page, viewport: { width: number; height:
   await expect.poll(async () => widthOf(content)).toBeGreaterThan(before + 1);
 }
 
-test("59-1 桌機圖片：hover 才出現放大鈕，點了開放大、滾輪放大、Esc 焦點回鈕；點圖本身是選取", async ({ browser }) => {
+test("59-1 desktop image: the zoom button appears on hover, clicking opens the zoom, the wheel zooms, Esc returns focus to the button; clicking the image itself selects it", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openZoomNote(browser, "desktop image", { viewport: DESKTOP });
   try {
@@ -150,11 +141,10 @@ test("59-1 桌機圖片：hover 才出現放大鈕，點了開放大、滾輪放
     await expect(dialog).toBeVisible();
     const zoomed = dialog.locator("img");
     await expect(zoomed).toBeVisible();
-    // 一開始放得進視窗（1600 寬的圖在 1280 寬的視窗裡縮小）
     expect(await widthOf(zoomed)).toBeLessThanOrEqual(DESKTOP.width + 0.5);
     await expectWheelZoomsIn(page, DESKTOP, zoomed);
 
-    // 按 Esc 時指標停在 mermaid 圖的位置：關掉後指標底下是別的區塊、不是圖，焦點仍要回放大鈕
+    // When Esc is pressed the pointer is at the mermaid diagram's position: after closing, what is under the pointer is another block and not the image, and focus must still return to the zoom button.
     const other = (await mermaidBlock(page).boundingBox())!;
     expect(other.y + other.height / 2, "前提：mermaid 圖在視窗內").toBeLessThan(DESKTOP.height);
     await page.mouse.move(other.x + other.width / 2, other.y + other.height / 2);
@@ -162,7 +152,6 @@ test("59-1 桌機圖片：hover 才出現放大鈕，點了開放大、滾輪放
     await expect(dialog).toHaveCount(0);
     await expect(button).toBeFocused();
 
-    // 編輯模式點圖片本身：選取（出現圖片的浮動工具列），不開放大
     await img.click();
     await expect(page.locator(".bn-formatting-toolbar")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -171,7 +160,7 @@ test("59-1 桌機圖片：hover 才出現放大鈕，點了開放大、滾輪放
   }
 });
 
-test("59-2 桌機 mermaid：放大鈕在 Edit 右邊，放大的是同一張圖的 svg、坐在卡面上，Esc 焦點回鈕；點圖本身進原始碼", async ({ browser }) => {
+test("59-2 desktop mermaid: the zoom button is right of Edit, the zoomed content is the same diagram's svg on the card background, Esc returns focus to the button; clicking the diagram enters the source", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openZoomNote(browser, "desktop mermaid", { viewport: DESKTOP });
   try {
@@ -180,7 +169,6 @@ test("59-2 桌機 mermaid：放大鈕在 Edit 右邊，放大的是同一張圖�
     await expect(pageSvg).toBeVisible({ timeout: 20_000 });
     await expect(pageSvg).toContainText("ZoomStart");
 
-    // 控制組平常透明，滑到圖上才現身
     const group = block.locator(".block-control-group");
     await expect(group).toHaveCSS("opacity", "0");
     await block.hover();
@@ -201,7 +189,7 @@ test("59-2 桌機 mermaid：放大鈕在 Edit 右邊，放大的是同一張圖�
     const [pageId, zoomedId] = [await pageSvg.getAttribute("id"), await zoomedSvg.getAttribute("id")];
     expect(zoomedId, "放大的那份換了根 id").not.toBe(pageId);
 
-    // 內容坐在卡面底色上：淺色主題的 mermaid 用深灰畫線與字、svg 本身沒有底色，直接放在深色背板上會看不見
+    // The content sits on the card background: the light theme's mermaid draws lines and text in dark gray and the svg has no background, so on the dark backdrop it would be invisible.
     const colors = await zoomedSvg.evaluate((svg) => {
       const probe = document.createElement("div");
       probe.className = "bg-card";
@@ -219,7 +207,6 @@ test("59-2 桌機 mermaid：放大鈕在 Edit 右邊，放大的是同一張圖�
     await expect(dialog).toHaveCount(0);
     await expect(zoom).toBeFocused();
 
-    // 點圖本身：照舊進原始碼編輯，不開放大
     await pageSvg.click();
     await expect(page.getByRole("textbox", { name: "Mermaid source" })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -228,7 +215,7 @@ test("59-2 桌機 mermaid：放大鈕在 Edit 右邊，放大的是同一張圖�
   }
 });
 
-test("59-3 公開頁：點圖直接放大、Esc 焦點回圖；mermaid 圖聚焦後 Enter 放大", async ({ browser }) => {
+test("59-3 public page: clicking an image zooms directly and Esc returns focus to the image; a focused mermaid diagram zooms with Enter", async ({ browser }) => {
   test.setTimeout(120_000);
   let note: NoteRef;
   let token: string;
@@ -241,7 +228,7 @@ test("59-3 公開頁：點圖直接放大、Esc 焦點回圖；mermaid 圖聚焦
     const res = await page.request.put(`/api/notes/${note.id}/public-link`, { headers: { Origin: ORIGIN } });
     expect(res.status(), await res.text()).toBe(200);
     token = ((await res.json()) as { token: string }).token;
-    // 公開端點讀的是存下來的內容：等它含上傳網址（＝圖已經寫進去）再開
+    // The public endpoint reads the saved content: wait until it contains the upload URL (the image has been written) before opening.
     await expect(async () => {
       const pub = await page.request.get(`/api/public/notes/${token}`);
       expect(pub.status()).toBe(200);
@@ -268,7 +255,7 @@ test("59-3 公開頁：點圖直接放大、Esc 焦點回圖；mermaid 圖聚焦
     await expect(imageDialog).toHaveCount(0);
     await expect(img).toBeFocused();
 
-    // 唯讀時整張 mermaid 圖是一顆「Zoom in on diagram」按鈕（右上那顆放大鈕對輔助技術隱藏）
+    // When read-only the whole mermaid diagram is one "Zoom in on diagram" button (the zoom button at the top right is hidden from assistive technology).
     await expect(page.locator("svg[aria-roledescription]")).toContainText("ZoomStart", { timeout: 20_000 });
     const diagram = page.getByRole("button", { name: "Zoom in on diagram", exact: true });
     await expect(diagram).toHaveCount(1);
@@ -285,7 +272,7 @@ test("59-3 公開頁：點圖直接放大、Esc 焦點回圖；mermaid 圖聚焦
   }
 });
 
-test("59-4 手機可編輯：點圖選取後才出現放大鈕，放大畫面佔滿視窗、關閉鈕在視窗內", async ({ browser }) => {
+test("59-4 editable on a phone: the zoom button only appears after tapping to select the image; the zoom view fills the viewport and the close button is inside it", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openZoomNote(browser, "phone image", { viewport: PHONE, touch: true });
   try {
@@ -319,7 +306,7 @@ test("59-4 手機可編輯：點圖選取後才出現放大鈕，放大畫面佔
   }
 });
 
-test("59-5 手機 mermaid：沒有 hover 也看得到右上控制組（常駐淡色）", async ({ browser }) => {
+test("59-5 phone mermaid: without hover the control group at the top right is still visible (a faint persistent color)", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openZoomNote(browser, "phone mermaid", { viewport: PHONE, touch: true });
   try {

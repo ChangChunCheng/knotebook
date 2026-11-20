@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- 測試直接摸 PM 的 view／selection（型別在 apps/web 拿不到） */
+/* eslint-disable @typescript-eslint/no-explicit-any -- the test touches PM's view/selection directly (types unavailable in apps/web) */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -21,7 +21,7 @@ function stubFetch() {
   );
 }
 
-describe("NoteEditor 點空白處的選取處理", () => {
+describe("NoteEditor selection handling when clicking blank space", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -47,14 +47,14 @@ describe("NoteEditor 點空白處的選取處理", () => {
     return { view, column: screen.getByTestId("article-column"), doc };
   }
 
-  it("沒按 Shift：點文章欄空白 → 換成游標", async () => {
+  it("without Shift: clicking blank space in the article column -> replaced by a caret", async () => {
     const { view, column, doc } = await mountWithNodeSelection();
     fireEvent.mouseDown(column, { button: 0 });
     expect(view.state.selection.node).toBeUndefined();
     doc.destroy();
   });
 
-  it("按著 Shift：不處理（讓 Shift＋點擊與空白處拖曳框選照常延伸選取）", async () => {
+  it("with Shift: not handled (lets Shift+click and drag-select over blank space extend the selection as usual)", async () => {
     const { view, column, doc } = await mountWithNodeSelection();
     fireEvent.mouseDown(column, { button: 0, shiftKey: true });
     expect(view.state.selection.node).toBeDefined();

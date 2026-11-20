@@ -6,7 +6,7 @@ import { useComponentsContext } from "@blocknote/react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { installCustomColors } from "@/lib/custom-colors";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; any per repo convention
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
 function HostMenu({ children }: { children?: ReactNode }) {
@@ -24,8 +24,8 @@ function HostMenu({ children }: { children?: ReactNode }) {
 }
 
 /**
- * 色碼選單相關測試共用的 host：BlockNoteView 內放一個根選單，dropdown 內容由 children 決定。
- * `installColors` 為真時在掛載前先裝自訂色碼的 observer（與 production 同序）。
+ * Shared host for the colour menu tests: a root menu inside BlockNoteView, with the dropdown content decided by children.
+ * When `installColors` is true the custom colour observer is installed before mounting (same order as production).
  */
 export function renderColorMenuHost(editor: AnyEditor, children?: ReactNode, opts: { installColors?: boolean } = {}) {
   if (opts.installColors) installCustomColors(document.body);
@@ -36,17 +36,17 @@ export function renderColorMenuHost(editor: AnyEditor, children?: ReactNode, opt
   );
 }
 
-// jsdom 沒有版面，floating-ui 的 hide 中介層會把 dropdown 標成 display:none，所以一律用 hidden: true 查節點是否還掛著。
+// jsdom has no layout, so floating-ui's hide middleware marks the dropdown display:none; always query with hidden: true to see whether a node is still mounted.
 export const menuNode = () => screen.queryByRole("menu", { hidden: true });
 
-/** 讓 transition 與 Mantine 的初始聚焦計時器跑完。 */
+/** Lets the transition and Mantine's initial-focus timer run out. */
 export const settle = (ms = 400) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
 
 /**
- * 給 trigger 與視窗一個非零的版面，讓 floating-ui 的 hide 中介層判定 trigger 可見、dropdown 不再被標成 display:none。
- * Mantine focus trap 的 Tab 繞回（`scopeTab`）只認沒有 display:none 祖先的元素，要測 Tab 繞回就得先呼叫這支；
- * 須在開選單之前呼叫。`trigger` 是選單錨定的元素（例如工具列的顏色鈕、拖曳把手），省略時用 host 的 trigger。
- * 回傳還原函式。
+ * Gives the trigger and the window a non-zero layout so floating-ui's hide middleware judges the trigger visible and the dropdown stops being marked display:none.
+ * Mantine focus trap's Tab wrap-around (`scopeTab`) only recognises elements with no display:none ancestor, so to test Tab wrap-around call this first;
+ * it must be called before opening the menu. `trigger` is the element the menu is anchored to (e.g. the toolbar colour button, the drag handle); defaults to the host's trigger when omitted.
+ * Returns a restore function.
  */
 export function layoutHostTrigger(trigger: HTMLElement = screen.getByTestId("host-trigger")): () => void {
   const html = document.documentElement;
@@ -62,26 +62,25 @@ export function layoutHostTrigger(trigger: HTMLElement = screen.getByTestId("hos
 }
 
 /**
- * 等 dropdown 不再被 floating-ui 標成 display:none（搭配 `layoutHostTrigger`）。`menu` 回傳要等的那個 dropdown，
- * 畫面上有不只一個選單時要傳；省略時取唯一的 `role="menu"`。
+ * Waits until the dropdown is no longer marked display:none by floating-ui (use with `layoutHostTrigger`). `menu` returns the dropdown to wait for,
+ * pass it when more than one menu is on screen; when omitted it takes the sole `role="menu"`.
  */
 export async function waitForMenuShown(menu: () => HTMLElement = () => screen.getByRole("menu", { hidden: true })) {
   await waitFor(() => expect(menu().style.display).not.toBe("none"));
 }
 
-/** 點 host 的 trigger 開選單，等 dropdown 掛上並讓初始聚焦跑完。 */
 export async function openHostMenu() {
   fireEvent.click(screen.getByTestId("host-trigger"));
   await screen.findByRole("menu", { hidden: true });
   await act(() => new Promise<void>((r) => setTimeout(r, 0)));
 }
 
-// Tailwind 4 預設 `--spacing: 0.25rem`，`p-1` 是 4px
+// Tailwind 4's default `--spacing: 0.25rem`, so `p-1` is 4px
 const SPACING_PX = 4;
 
 /**
- * jsdom 沒有版面：從 class 上宣告的 `w-[Npx]` 與左右內距（`p-N`／`px-N`／`pl-N`／`pr-N`）算出內容寬度
- * （Tailwind preflight 是 border-box，寬度含內距）。遇到這幾種以外、會影響寬度的 class 直接丟錯，免得算錯還綠。
+ * jsdom has no layout: computes the content width from the `w-[Npx]` declared on the class and the horizontal padding (`p-N` / `px-N` / `pl-N` / `pr-N`)
+ * (Tailwind preflight is border-box, so the width includes padding). Throws on any other class that affects width, so a wrong computation can't stay green.
  */
 export function declaredContentWidth(el: Element): number {
   let width: number | null = null;

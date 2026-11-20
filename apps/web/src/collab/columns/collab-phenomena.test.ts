@@ -13,13 +13,12 @@ import { findNodeById } from "./position";
 import { writeColumnWidths } from "./width-preview";
 import { dividerResize, ratiosFromPixels } from "./widths";
 
-// 媒體阻擋會呼叫 toast；完整選項的編輯器（`buildNoteEditorOptions`）才有，換成 spy 免得碰到真的 UI。
+// Media blocking calls toast, which only the full-options editor (`buildNoteEditorOptions`) has; replaced by a spy to avoid touching real UI.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
 
-// 雙用戶端（記錄現象）。被測的是 y-prosemirror 與 core 的合併行為，不是並排功能本身的碼——
-// 「已知限制」的案把實測值寫死；其餘（標為「安全」的）紅了就是回歸。手法同 probe-collab/collab.mjs。
+// Two clients (recording phenomena). What's tested is the merge behaviour of y-prosemirror and core, not the columns feature's own code: cases for "known limitations" hard-code the observed values; the rest (marked "safe") going red is a regression.
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -31,8 +30,7 @@ afterEach(() => {
 const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 /**
- * 兩顆共編編輯器，各自一份 Y.Doc，經 `Y.applyUpdate` 互傳。預設兩顆都只掛欄首／欄尾鍵位（`createColumnEdgeKeymapExtension`）；`full` 列出的那顆改用
- * `buildNoteEditorOptions` 的完整選項（`handleDrop` 串接、拖曳來源記錄器、DropCursor hook 都在），拖放才走產品的接手路徑。
+ * Two collab editors, each with its own Y.Doc, synced through `Y.applyUpdate`. By default both mount only the column edge keymaps (`createColumnEdgeKeymapExtension`); the one listed in `full` uses the full `buildNoteEditorOptions` options (`handleDrop` chain, drag-source recorder, DropCursor hook), so drag-drop goes through the product's takeover path.
  */
 async function collabPair(initial: PartialBlockLike[], opts: { full?: readonly ("a" | "b")[] } = {}) {
   const d1 = new Y.Doc();
@@ -60,9 +58,9 @@ async function collabPair(initial: PartialBlockLike[], opts: { full?: readonly (
               user: { id: `u${n}`, name: `User ${n}`, color: "hsl(0 65% 45%)" },
             },
             _tiptapOptions: { extensions: [createColumnEdgeKeymapExtension({ editorRef })] },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration's option type requires the full schema triple
           } as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
     ) as any as AnyEditor;
     editorRef.current = editor;
     const el = document.createElement("div");
@@ -109,7 +107,7 @@ const typeAtEnd = (editor: AnyEditor, id: string, text: string) => {
   typeText(editor, text);
 };
 
-/** 第 `index` 個表格格子的文字結尾打字（文件順序；2×2 表格 0＝左上、3＝右下）。 */
+/** Types at the end of the `index`-th table cell's text (document order; in a 2x2 table 0 = top-left, 3 = bottom-right). */
 const typeInCell = (editor: AnyEditor, index: number, text: string) => {
   const view = editor.prosemirrorView!;
   const cells: number[] = [];
@@ -117,7 +115,7 @@ const typeInCell = (editor: AnyEditor, index: number, text: string) => {
     if (n.type.name === "tableCell" || n.type.name === "tableHeader") cells.push(pos);
   });
   const pos = cells[index]!;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Selection 類別從現行選取的 constructor 取
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Selection class is taken from the constructor of the current selection
   const Sel = view.state.selection.constructor as any;
   const end = Sel.near(view.state.doc.resolve(pos + view.state.doc.nodeAt(pos)!.nodeSize - 1), -1);
   view.dispatch(view.state.tr.setSelection(end).insertText(text));
@@ -126,8 +124,8 @@ const typeInCell = (editor: AnyEditor, index: number, text: string) => {
 const CLEAN = { dupIds: 0, nullIds: 0, nestedRows: 0, valid: true };
 const AB = () => [P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z9")];
 
-describe("雙用戶端（記錄現象）", () => {
-  it("CO1（安全）：A 在第 1 欄打字、B 在第 2 欄結尾 Enter 再打字 → 兩邊都保有兩人的字、列仍是合法兩欄", async () => {
+describe("two clients (recording phenomena)", () => {
+  it("safe: A types in column 1, B presses Enter at the end of column 2 and types -> both sides keep both people's text, the row is still a valid two-column row", async () => {
     const { a, b, sync } = await collabPair(AB());
     typeAtEnd(a, "a1", "AAA");
     b.setTextCursorPosition("b1", "end");
@@ -143,7 +141,7 @@ describe("雙用戶端（記錄現象）", () => {
     expect(shape(b)).toBe(shape(a));
   });
 
-  it("CO2（已知限制）：A 在第 1 欄打字、B 同時在 b 開頭 Backspace（攤平）→ A 的字消失", async () => {
+  it("known limitation: A types in column 1 while B presses Backspace at the start of b (flatten) -> A's text disappears", async () => {
     const { a, b, sync } = await collabPair(AB());
     typeAtEnd(a, "a1", "AAA");
     b.setTextCursorPosition("b1", "start");
@@ -158,7 +156,7 @@ describe("雙用戶端（記錄現象）", () => {
     expect(shape(b)).toBe(shape(a));
   });
 
-  it("CO3（已知限制）：同一欄兩個 block 被兩人分別刪掉 → 整列被 y-prosemirror 刪掉", async () => {
+  it("known limitation: two blocks in the same column are deleted by two people separately -> y-prosemirror deletes the whole row", async () => {
     const { a, b, sync } = await collabPair([P("x", "x0"), row([[P("a", "a1"), P("q", "q1")], [P("b", "b1")]], "r"), P("z", "z9")]);
     removeBlocksKeepColumns(a, ["a1"]);
     removeBlocksKeepColumns(b, ["q1"]);
@@ -171,7 +169,7 @@ describe("雙用戶端（記錄現象）", () => {
     }
   });
 
-  it("CO4（安全）：欄內 2×2 表格，A 在左上格、B 在右下格各打字 → 兩格都有各自的字、列與表格合法", async () => {
+  it("safe: 2x2 table in a column, A types in the top-left cell and B in the bottom-right -> both cells keep their own text, row and table valid", async () => {
     const table: PartialBlockLike = {
       id: "t1",
       type: "table",
@@ -188,7 +186,7 @@ describe("雙用戶端（記錄現象）", () => {
     }
   });
 
-  it("CO5（安全）：A 在第 1 欄打字、B 同時加第 3 欄並在列下方加一段 → 字還在、列有 3 欄、下方段落在", async () => {
+  it("safe: A types in column 1 while B adds a column 3 and a paragraph below the row -> the text survives, the row has 3 columns, the paragraph below exists", async () => {
     const { a, b, sync } = await collabPair(AB());
     typeAtEnd(a, "a1", "AAA");
     b.transact((tr) => {
@@ -206,19 +204,13 @@ describe("雙用戶端（記錄現象）", () => {
   });
 });
 
-// ─── ⋮⋮ 拖放與對方同時打字 ─────────────────────────────────────────────────────────────
-
 type Box = readonly [left: number, top: number, right: number, bottom: number];
 
-/** 在任何 spy 掛上之前取：同一案裡會換落點編輯器、重掛 mock，fallback 不能取到 spy 自己。 */
+/** Taken before any spy is attached: a case swaps the drop-target editor and re-mounts mocks, so the fallback must not pick up a spy itself. */
 const ORIGINAL_RECT = Element.prototype.getBoundingClientRect;
 
 /**
- * jsdom 的 rect 全是 0。只對落點那顆編輯器（`target`）裡的元素以 `<data-node-type>:<data-id>` 查表回值：兩顆編輯器的 id 相同，
- * 不限範圍的話另一顆也會吃到同一張表。各編輯器根層的 `.bn-block-group`：落點那顆回包住所有測試座標的框，另一顆放在 x 5000 之後
- * （遠超過 core SideMenu 的 250px 範圍）。core 在 root 的 capture drop 以這個框找最近的編輯器：最近的不是落點那顆時，它會把落點那顆
- * 當成「拖到別的編輯器」處理；座標在框外 250px 內時，會先發一筆座標夾進框內的合成事件。掛在 prototype、依身分回值：
- * 文件一變 PM 就換掉元素，掛在單一元素上的 mock 會失效。
+ * jsdom rects are all 0. Only elements inside the drop-target editor (`target`) are looked up by `<data-node-type>:<data-id>`: both editors have the same ids, so an unscoped lookup would give the other editor the same table. The editors' root `.bn-block-group`: the drop-target's returns a box enclosing all test coordinates, the other's sits beyond x 5000 (well outside core SideMenu's 250px range). Core's capture drop on root uses this box to find the nearest editor: when the nearest isn't the drop target it treats the drop as a drag to another editor; for coordinates within 250px outside the box it first dispatches a synthetic event with the coordinates clamped into the box. Mounted on the prototype and returning by identity: PM replaces elements whenever the document changes, so a mock on a single element would go stale.
  */
 function mockRects(target: AnyEditor, boxes: Record<string, Box>): void {
   const dom = target.prosemirrorView!.dom;
@@ -233,7 +225,7 @@ function mockRects(target: AnyEditor, boxes: Record<string, Box>): void {
   });
 }
 
-/** 列 `id`（欄 id `${id}c${i}`）佔 x 0–600、y 100–300，n 欄等寬、欄間 24px 溝。 */
+/** Row `id` (column ids `${id}c${i}`) spans x 0-600, y 100-300; n equal-width columns with 24px gutters. */
 function rowBoxes(id: string, n: number): Record<string, Box> {
   const width = (600 - 24 * (n - 1)) / n;
   const out: Record<string, Box> = { [`columnList:${id}`]: [0, 100, 600, 300] };
@@ -244,17 +236,14 @@ function rowBoxes(id: string, n: number): Record<string, Box> {
 const topBox = (id: string, top: number): Record<string, Box> => ({ [`blockOuter:${id}`]: [0, top, 600, top + 30] });
 
 interface Gesture {
-  /** 被拖 block 的 id。 */
   drag: string;
-  /** 落點所在 block 的 id（`posAtCoords` 回它的文字開頭）。 */
   target: string;
   at: readonly [number, number];
   boxes: Record<string, Box>;
 }
 
 /**
- * `editor` 上一次 ⋮⋮ 拖放：真 dragstart（core `blockDragStart`，冒泡到 document 讓拖曳來源記錄器記下 X）→ 對 `view.dom` dispatch drop
- * → 照瀏覽器在拖曳來源上補 dragend。`posAtCoords` 固定回 `target` 的文字開頭（jsdom 沒有版面）。
+ * One drag-handle drag-drop on `editor`: real dragstart (core `blockDragStart`, bubbling to document so the drag-source recorder records X) -> dispatch drop on `view.dom` -> add dragend on the drag source like a browser. `posAtCoords` always returns the start of `target`'s text (jsdom has no layout).
  */
 function dragDrop(editor: AnyEditor, g: Gesture): DragEvent {
   mockRects(editor, g.boxes);
@@ -276,8 +265,7 @@ function dragDrop(editor: AnyEditor, g: Gesture): DragEvent {
 type Handler = "edgeDrop" | "emptyColumnDrop";
 
 /**
- * `dropper` 以產品的 `handleDrop` 接手一次拖放、`typist` 同時在 `typeIn` 結尾打 `text`（兩邊都還沒收到對方的更新），再互相同步。
- * 斷言：`dropper` 的 `handleDrop` 是完整選項那一支、`handler` 恰被呼叫一次且收到的不是合成事件、它接手了；`typist` 的選取不受拖放影響。
+ * `dropper` takes over one drag-drop through the product's `handleDrop` while `typist` types `text` at the end of `typeIn` (neither side has received the other's update), then they sync. Asserts: `dropper`'s `handleDrop` is the full-options one, `handler` is called once with a non-synthetic event, and it took over; `typist`'s selection is unaffected by the drop.
  */
 async function dropWhileTyping(
   pair: { sync: () => Promise<void> },
@@ -303,14 +291,12 @@ async function dropWhileTyping(
   await pair.sync();
 }
 
-/** 兩邊文件相同、id 不重複不缺、沒有巢狀列、`doc.check()` 過。 */
 function expectSameAndClean(a: AnyEditor, b: AnyEditor): void {
   expect(shape(b)).toBe(shape(a));
   expect(allText(b)).toBe(allText(a));
   for (const e of [a, b]) expect(integrity(e)).toEqual(CLEAN);
 }
 
-/** 文字含 `text` 的 block 的 id（記錄對方的字落在哪裡；找不到 → "gone"）。 */
 function blockHolding(editor: AnyEditor, text: string): string {
   let id = "gone";
   editor.prosemirrorView!.state.doc.descendants((node) => {
@@ -323,26 +309,26 @@ type RowBlock = { id: string; children: Array<{ props: { width: number }; childr
 const rowBlock = (editor: AnyEditor, rowId: string): RowBlock => editor.document.find((block) => block.id === rowId) as unknown as RowBlock;
 const widthsOf = (editor: AnyEditor, rowId: string): number[] => rowBlock(editor, rowId).children.map((col) => col.props.width);
 
-describe("雙用戶端：⋮⋮ 拖放時對方同時打字（B 以完整選項掛、走真 dragstart＋drop）", () => {
-  // 記錄：Y 被換成新列，A 在 Y 裡打的字跟著舊的 Y 消失（holder "gone"，合併後 `ROW[y｜x] z`）。
-  it("CO6（記錄）：B 把 x 拖到 y 右緣建列 [y｜x]，A 同時在 y 打字 → 列合法、兩邊相同，記下 A 的字落在哪個 block", async () => {
+describe("two clients: other side types during a drag-drop (B mounted with full options, real dragstart + drop)", () => {
+  // Recorded: Y is replaced by a new row, so A's text typed in Y disappears with the old Y (holder "gone", merged `ROW[y|x] z`).
+  it("recorded: B drags x onto y's right edge creating a row [y|x] while A types in y -> row valid, both sides equal, records which block A's text landed in", async () => {
     const pair = await collabPair([P("y", "y1"), P("x", "x1"), P("z", "z1")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }, a, "y1", "AAA");
     expectSameAndClean(a, b);
-    console.log("CO6 middle", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("new row, not last block", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
-  // 記錄：A 的字不在 y，出現在列後補的那個空段落（合併後 `ROW[y｜x]  paragraph:AAA`）。
-  it("CO6（記錄）：新列是文件最後一個 block（列後補空段落），A 同時在 y 打字 → 列合法、兩邊相同，記下 A 的字落在哪個 block", async () => {
+  // Recorded: A's text isn't in y; it appears in the empty paragraph added after the row (merged `ROW[y|x]  paragraph:AAA`).
+  it("recorded: new row is the document's last block (empty paragraph added after it), A types in y -> row valid, both sides equal, records which block A's text landed in", async () => {
     const pair = await collabPair([P("x", "x1"), P("y", "y1")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }, a, "y1", "AAA");
     expectSameAndClean(a, b);
-    console.log("CO6 last", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("new row, last block", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
-  it("CO6b（安全）：頂層 [y, m, x]，B 把 x 拖到 y 右緣建列，A 同時在 m 打字 → m 保有 A 的字", async () => {
+  it("safe: top-level [y, m, x], B drags x onto y's right edge creating a row, A types in m -> m keeps A's text", async () => {
     const pair = await collabPair([P("y", "y1"), P("m", "m1"), P("x", "x1")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "x1", target: "y1", at: [590, 115], boxes: topBox("y1", 100) }, a, "m1", "MM");
@@ -353,7 +339,7 @@ describe("雙用戶端：⋮⋮ 拖放時對方同時打字（B 以完整選項�
     }
   });
 
-  it("CO7（安全）：[a｜b] 外的 z 由 B 拖到 b 右緣加欄，A 同時在 a 打字 → 字在、三欄", async () => {
+  it("safe: z outside [a|b] dragged by B to b's right edge adding a column, A types in a -> text kept, three columns", async () => {
     const pair = await collabPair([row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z1")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "z1", target: "b1", at: [590, 200], boxes: rowBoxes("r", 2) }, a, "a1", "AAA");
@@ -362,10 +348,10 @@ describe("雙用戶端：⋮⋮ 拖放時對方同時打字（B 以完整選項�
   });
 
   it.each([
-    ["既有欄寬不變", [1, 1], [1, 1, 1]],
-    // 既有兩欄 0.4：1.2，新欄＝平均 0.8；整列正規化成總和 3 → [1, 0.5, 1.5]，既有兩欄的比例不變、值都改了。
-    ["既有欄寬改變（不相等、總和不等於欄數，加欄後整列正規化）", [0.4, 1.2], [1, 0.5, 1.5]],
-  ] as const)("CO7b（安全）：[X,a｜b]，B 把 X 拖成最左的新欄（%s），A 同時在 a 打字 → 字在", async (_label, widths, expected) => {
+    ["existing column widths unchanged", [1, 1], [1, 1, 1]],
+    // Two existing columns 0.4:1.2, the new column = average 0.8; the row is normalized to a sum of 3 -> [1, 0.5, 1.5]: the existing two keep their ratio but all values change.
+    ["existing column widths change (unequal, sum differs from column count, row normalized after adding a column)", [0.4, 1.2], [1, 0.5, 1.5]],
+  ] as const)("safe: [X,a|b], B drags X into a new leftmost column (%s), A types in a -> text kept", async (_label, widths, expected) => {
     const pair = await collabPair([row([[P("X", "X1"), P("a", "a1")], [P("b", "b1")]], "r", [...widths])], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "X1", target: "a1", at: [5, 200], boxes: rowBoxes("r", 2) }, a, "a1", "AAA");
@@ -376,9 +362,8 @@ describe("雙用戶端：⋮⋮ 拖放時對方同時打字（B 以完整選項�
     }
   });
 
-  // 記錄：兩邊各自插入的新欄都留下，合併後 5 欄、欄寬全是 1，`doc.check()` 照過；超過單人拖曳的 4 欄上限
-  // （單人拖到 4 欄的列只出橫線）。
-  it("CO10（記錄）：兩人同時對 3 欄列的不同欄直線加欄 → 列合法、兩邊相同，記下欄數", async () => {
+  // Recorded: the new columns each side inserted both stay, 5 columns after merge, all widths 1, `doc.check()` still passes; exceeds the 4-column cap of a single-user drag (a single-user drag into a 4-column row only gives a horizontal line).
+  it("recorded: two people add a column by vertical line at different columns of a 3-column row at once -> row valid, both sides equal, records the column count", async () => {
     const pair = await collabPair([P("p", "p1"), P("q", "q1"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r")], { full: ["a", "b"] });
     const { a, b } = pair;
     const spy = vi.spyOn(edgeDropModule, "edgeDrop");
@@ -393,36 +378,31 @@ describe("雙用戶端：⋮⋮ 拖放時對方同時打字（B 以完整選項�
     await pair.sync();
     expectSameAndClean(a, b);
     const count = (a.document.find((block) => block.id === "r") as { children: unknown[] }).children.length;
-    console.log("CO10", JSON.stringify({ shape: shape(a), columns: count, widths: widthsOf(a, "r") }));
+    console.log("two columns added at once", JSON.stringify({ shape: shape(a), columns: count, widths: widthsOf(a, "r") }));
   });
 
-  // 記錄：A 在空段落 E 打的字出現在取代它的 z 裡。字在 z 的前或後取決於兩邊 Y.Doc 的 clientID 大小
-  // （`AAAz` 或 `zAAA`），每次跑都可能不同，所以只記錄、不斷言順序。
-  it("CO11（記錄）：B 把 z 橫線放進空欄 E，A 同時在 E 打字 → 列合法、兩邊相同，記下 A 的字落在哪個 block", async () => {
+  // Recorded: A's text typed in the empty paragraph E appears inside the z that replaces it. Whether it comes before or after z depends on the two Y.Docs' clientID order (`AAAz` or `zAAA`) and may differ every run, so it's only recorded, order isn't asserted.
+  it("recorded: B drops z by horizontal line into empty column E while A types in E -> row valid, both sides equal, records which block A's text landed in", async () => {
     const pair = await collabPair([row([[P("a", "a1")], [P("", "e1")]], "r"), P("z", "z1")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "z1", target: "e1", at: [456, 200], boxes: rowBoxes("r", 2) }, a, "e1", "AAA", "emptyColumnDrop");
     expectSameAndClean(a, b);
-    console.log("CO11 empty", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
+    console.log("drop into empty column", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA") }));
   });
 
-  // 記錄：A 的字不在搬走的 X，出現在來源欄留下的空段落（合併後原列 `[a｜AAA]`，新列的 X 沒有 A 的字）。
-  it("CO11（記錄）：B 把來源欄唯一的 X 直線拖走，A 同時在 X 打字 → 列合法、兩邊相同，記下 A 的字是否在來源欄留下的空段落", async () => {
+  // Recorded: A's text isn't in the moved X; it appears in the empty paragraph left in the source column (merged original row `[a|AAA]`, the new row's X has no A text).
+  it("recorded: B drags the source column's only X away by vertical line while A types in X -> row valid, both sides equal, records whether A's text is in the empty paragraph left in the source column", async () => {
     const pair = await collabPair([P("w", "w1"), row([[P("a", "a1")], [P("X", "X1")]], "r")], { full: ["b"] });
     const { a, b } = pair;
     await dropWhileTyping(pair, b, { drag: "X1", target: "w1", at: [590, 15], boxes: topBox("w1", 0) }, a, "X1", "AAA");
     expectSameAndClean(a, b);
     const sourceColumnText = rowBlock(a, "r").children[1]!.children.map((block) => (block.content ?? []).map((c) => c.text).join("")).join("|");
-    console.log("CO11 source", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA"), sourceColumnText }));
+    console.log("source column drag-out", JSON.stringify({ shape: shape(a), holder: blockHolding(a, "AAA"), sourceColumnText }));
   });
 });
 
-// ─── 分隔線放開與對方同時編輯 ───────────────────────────────────────────────────────────
-
 /**
- * 放開第 `index` 條分隔線：照分隔線元件放開時的算法（`dividerResize` 夾最小寬度 → `ratiosFromPixels` 只讓被拖的兩欄吸收捨入差
- * → `writeColumnWidths` 只寫有變的欄、自成一個撤銷步；被拖的兩欄以外，按下後被別人改過的欄不寫）。`px` 是按下時量到的各欄像素寬，
- * `base` 是按下時文件裡的欄寬（省略＝現在就是按下的時候），最小寬度都是文字欄的 200px。回傳算出的整列比例。
+ * Releases the `index`-th divider following the divider component's algorithm on release (`dividerResize` clamps to the minimum width -> `ratiosFromPixels` makes only the two dragged columns absorb the rounding difference -> `writeColumnWidths` writes only changed columns, as its own undo step; columns other than the two dragged that someone else changed after press aren't written). `px` is each column's pixel width measured on press, `base` is the column widths in the document on press (omitted = as of now), the minimum width is 200px for text columns throughout. Returns the computed whole-row ratios.
  */
 function releaseDivider(
   editor: AnyEditor,
@@ -441,8 +421,8 @@ function releaseDivider(
   return ratios;
 }
 
-describe("雙用戶端：分隔線放開時對方同時編輯", () => {
-  it("CO8（安全）：B 放開分隔線寫欄寬，A 同時在兩欄打字 → 兩人的字都在、欄寬是 B 寫的值", async () => {
+describe("two clients: other side edits while a divider is released", () => {
+  it("safe: B releases a divider writing column widths while A types in both columns -> both people's text present, widths are the ones B wrote", async () => {
     const { a, b, sync } = await collabPair(AB());
     typeAtEnd(a, "a1", "AAA");
     typeAtEnd(a, "b1", "BBB");
@@ -458,9 +438,8 @@ describe("雙用戶端：分隔線放開時對方同時編輯", () => {
     }
   });
 
-  // 記錄：兩人都寫到中間那欄，合併後中間那欄取其中一人的值（Y 的屬性衝突以 clientID 決定），另外兩欄各自保留
-  // 寫它的人的值，所以總和可能不等於欄數。每欄仍在合法範圍內，讀出寫回 markdown 不會被拒。
-  it("CO9（記錄）：A、B 同時調同一列不同對的分隔線 → 兩邊相同、每欄在 [0.1, 10]，記下合併後的欄寬與總和", async () => {
+  // Recorded: both write the middle column; after merge the middle column takes one person's value (Y attribute conflicts are decided by clientID), and the other two columns keep the value of whoever wrote them, so the sum may differ from the column count. Each column is still in the valid range and reading out and writing back markdown isn't rejected.
+  it("recorded: A and B adjust different divider pairs of the same row at once -> both sides equal, every column in [0.1, 10], records merged widths and sum", async () => {
     const pair = await collabPair([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z9")]);
     const { a, b } = pair;
     const fromA = releaseDivider(a, "r", [300, 300, 300], 0, 60);
@@ -477,13 +456,12 @@ describe("雙用戶端：分隔線放開時對方同時編輯", () => {
       expect(w).toBeLessThanOrEqual(10);
     }
     const sum = Math.round(merged.reduce((s, w) => s + w, 0) * 100) / 100;
-    console.log("CO9", JSON.stringify({ fromA, fromB, merged, sum }));
+    console.log("divider pairs adjusted at once", JSON.stringify({ fromA, fromB, merged, sum }));
   });
 
-  it("CO9b（安全）：B 按下第 2 條分隔線後，A 調了第 1 條並同步過來；B 放開 → 第 1 欄保留 A 的值，只有第 2、3 欄照 B 寫", async () => {
+  it("safe: B presses divider 2, A adjusts divider 1 and syncs over; B releases -> column 1 keeps A's value, only columns 2 and 3 follow B's write", async () => {
     const pair = await collabPair([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z9")]);
     const { a, b } = pair;
-    // B 按下：量到 [300,300,300]、文件 [1,1,1]。
     const pressedPx = [300, 300, 300];
     const pressedBase = widthsOf(b, "r");
     expect(pressedBase).toEqual([1, 1, 1]);

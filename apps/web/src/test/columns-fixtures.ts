@@ -8,13 +8,13 @@ import { findNodeById } from "@/collab/columns/position";
 import { createFakeDataTransfer, type FakeDataTransfer } from "./drag-fixtures";
 
 /**
- * 並排排版的 web 測試共用工具。`shape`／`cursorOf`／`integrity`
- * 的格式固定，期望值可以直接從 `shape()` 等函式的輸出抄。
+ * Shared utilities for the columns-layout web tests. The formats of `shape` / `cursorOf` / `integrity`
+ * are fixed, so expected values can be copied straight from the output of `shape()` and friends.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組（repo 慣例）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 export type AnyEditor = BlockNoteEditor<any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
 export type PartialBlockLike = PartialBlock<any, any, any>;
 
 const inline = (text: string) => (text ? [{ type: "text" as const, text, styles: {} }] : []);
@@ -30,7 +30,6 @@ export const IMG = (id: string, previewWidth?: number): PartialBlockLike => ({
 export const CB = (id: string, text?: string): PartialBlockLike => ({ id, type: "codeBlock", content: inline(text ?? "") });
 export const withChildren = (b: PartialBlockLike, children: PartialBlockLike[]): PartialBlockLike => ({ ...b, children });
 
-/** 一列；給 `id` 時欄 id＝`${id}c${i}`，不給則列與欄都不帶 id（交給 UniqueID）。`widths` 缺項為 1。 */
 export const row = (cols: PartialBlockLike[][], id?: string, widths?: number[]): PartialBlockLike => ({
   ...withId(id),
   type: COLUMN_LIST_TYPE,
@@ -51,12 +50,10 @@ function shapeOf(b: BlockLike): string {
   return `${b.type}${text}${kids}`;
 }
 
-/** `paragraph:x  ROW[COL(paragraph:a) | COL(paragraph)]  paragraph:z`。 */
 export function shape(editor: AnyEditor): string {
   return (editor.document as BlockLike[]).map(shapeOf).join("  ");
 }
 
-/** `${游標所在 block 的文字 || 型別}@${parentOffset}`。 */
 export function cursorOf(editor: AnyEditor): string {
   const $from = editor.prosemirrorView!.state.selection.$from;
   const block = editor.getTextCursorPosition().block as BlockLike;
@@ -64,7 +61,6 @@ export function cursorOf(editor: AnyEditor): string {
   return `${text || block.type}@${$from.parentOffset}`;
 }
 
-/** 真 keydown（不用 `commands.keyboardShortcut()`）；回傳是否有 handler 接手。 */
 export function pressKey(
   editor: AnyEditor,
   key: string,
@@ -75,7 +71,6 @@ export function pressKey(
   return !!view.someProp("handleKeyDown", (f) => f(view, event));
 }
 
-/** 文字節點恰為 `word` 的那段（最後一個符合者）內第 `offset` 字的位置。 */
 export function textPos(editor: AnyEditor, word: string, offset: number): number {
   let pos: number | undefined;
   editor.prosemirrorView!.state.doc.descendants((node, p) => {
@@ -87,7 +82,6 @@ export function textPos(editor: AnyEditor, word: string, offset: number): number
 
 const BN_BLOCK_NODES = new Set(["blockContainer", COLUMN_TYPE, COLUMN_LIST_TYPE]);
 
-/** `doc.check()`、bnBlock id 重複／缺、深度 > 1 的 columnList。 */
 export function integrity(editor: AnyEditor): { dupIds: number; nullIds: number; nestedRows: number; valid: boolean } {
   const doc = editor.prosemirrorView!.state.doc;
   const seen = new Set<string>();
@@ -113,9 +107,9 @@ export function integrity(editor: AnyEditor): { dupIds: number; nullIds: number;
 }
 
 /**
- * 以 `noteSchema` 建編輯器並掛到 `document.body` 下的容器。`extensions` 給函式時會拿到 `editorRef`，
- * 編輯器建好、mount 之前 `editorRef.current` 就已設好。`collab: true`：自己的 Y.Doc、awareness undefined
- * （同 `collab/undo.test.tsx`），內容先寫進 fragment 再 mount，所以初始內容不在撤銷堆疊裡。
+ * Builds an editor from `noteSchema` and mounts it in a container under `document.body`. When `extensions` is a function it receives `editorRef`,
+ * and `editorRef.current` is already set after the editor is built and before mount. `collab: true`: its own Y.Doc, awareness undefined
+ * (same as `collab/undo.test.tsx`); the content is written into the fragment before mounting, so the initial content isn't on the undo stack.
  */
 export function mountEditor(
   content: PartialBlockLike[],
@@ -140,12 +134,12 @@ export function mountEditor(
           user: { id: "u1", name: "User 1", color: "hsl(0 65% 45%)" },
         },
         ...tiptap,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- withCollaboration 的選項型別要求完整的 schema 三元組
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the option type of withCollaboration requires the full schema triple
       } as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
     ) as any as AnyEditor;
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `_tiptapOptions.extensions` 的元素型別是 tiptap 的 Extension
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the element type of `_tiptapOptions.extensions` is tiptap's Extension
     editor = BlockNoteEditor.create({ schema: noteSchema, initialContent: content, ...(tiptap as any) }) as AnyEditor;
   }
   editorRef.current = editor;
@@ -164,7 +158,6 @@ export function mountEditor(
   };
 }
 
-/** `id` 那個 bnBlock 之前的位置。 */
 export function blockPos(editor: AnyEditor, id: string): number {
   const hit = findNodeById(editor.prosemirrorView!.state.doc as never, id);
   if (!hit) throw new Error(`blockPos: 找不到 block ${id}`);
@@ -172,8 +165,8 @@ export function blockPos(editor: AnyEditor, id: string): number {
 }
 
 /**
- * 文字選取 `[anchor, head]`。apps/web 拿不到 prosemirror-state 的 `TextSelection`：從當下選取的原型鏈找到基底 `Selection`，
- * 以 `fromJSON({ type: "text" })` 建（當下選取是 NodeSelection 時，它的 constructor 不是 TextSelection）。
+ * Text selection `[anchor, head]`. apps/web can't get prosemirror-state's `TextSelection`: find the base `Selection` from the prototype chain of the current selection
+ * and build with `fromJSON({ type: "text" })` (when the current selection is a NodeSelection its constructor isn't TextSelection).
  */
 export function textSelection(editor: AnyEditor, anchor: number, head: number = anchor): unknown {
   const view = editor.prosemirrorView!;
@@ -183,9 +176,9 @@ export function textSelection(editor: AnyEditor, anchor: number, head: number = 
 }
 
 /**
- * core ⋮⋮ 的真路徑：⋮⋮ 替身掛在 `editor.domElement.parentElement` 下，它的 dragstart 呼叫 SideMenu 的 `blockDragStart`，
- * 冒泡到 root 讓 SideMenu 設 `view.dragging`。`range` 給兩個 block id 時先把文字選取從前者拉到後者（core 會轉成多選）。
- * `prevent`：替身在 core 之後對 dragstart 呼叫 `preventDefault`。回傳 dispatch 的事件與它的 `dataTransfer`（drop 時沿用）。
+ * The real path of the core drag handle: the handle stand-in is mounted under `editor.domElement.parentElement`, its dragstart calls SideMenu's `blockDragStart`,
+ * and bubbles to the root so SideMenu sets `view.dragging`. When `range` gives two block ids, the text selection is first dragged from the former to the latter (core turns it into a multi-selection).
+ * `prevent`: the stand-in calls `preventDefault` on dragstart after core. Returns the dispatched event and its `dataTransfer` (reused on drop).
  */
 export function startBlockDrag(
   editor: AnyEditor,

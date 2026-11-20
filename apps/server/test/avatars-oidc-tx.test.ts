@@ -1,7 +1,4 @@
-/**
- * OIDC 頭貼的交易與背景工作：`replaceOidcAvatarInTx`、OIDC 形的 `insertAvatarInTx`、`runOidcAvatarJob`。
- * 圖片伺服器是本機 `node:http`，下載政策注入「放行 loopback 與任意埠」；網址與位元組都是測試自己造的。
- */
+/** The image server is a local `node:http` and the download policy is injected to allow loopback and any port; URLs and bytes are made by the test itself. */
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
@@ -24,7 +21,7 @@ import { giveUserQuota, pngOf } from "./storage-helpers.js";
 const ISSUER = "https://idp.example";
 const OPEN_POLICY: AvatarFetchPolicy = { portAllowed: () => true, addressBlocked: () => false };
 
-/** 內容由 `fill` 決定的 PNG（signature 相同、位元組不同 → sha256 不同）。 */
+/** A PNG whose content is determined by `fill` (same signature, different bytes -> different sha256). */
 function pngFilled(size: number, fill: number): Buffer {
   const b = pngOf(size);
   b.fill(fill, 8);
@@ -34,14 +31,14 @@ function pngFilled(size: number, fill: number): Buffer {
 interface ImageRoute {
   status?: number;
   body?: Buffer;
-  /** 收到請求後等這個 Promise 才回應。 */
+  /** After the request arrives, the response waits for this Promise. */
   hold?: Promise<void>;
 }
 
 interface ImageServer {
   base: string;
   requests: () => number;
-  /** 第 n 個（從 1 數）請求抵達。 */
+  /** Resolves when the n-th request (counting from 1) arrives. */
   arrived: (n: number) => Promise<void>;
   setRoute: (p: string, r: ImageRoute) => void;
   close: () => Promise<void>;
@@ -126,7 +123,7 @@ const rowsOf = (db: Db, userId: string) => db.select().from(userAvatars).where(e
 const identityOf = async (db: Db, id: string) => (await db.select().from(userIdentities).where(eq(userIdentities.id, id)))[0]!;
 const filesOf = async (dir: string) => (await readdir(dir)).sort();
 
-/** 給候選填上顯示圖與裁切（模擬瀏覽器已補產、或使用者裁過）。 */
+/** Fills a candidate with display image and crop (simulates the browser having generated it, or the user having cropped). */
 async function giveDisplay(db: Db, id: string): Promise<void> {
   await db
     .update(userAvatars)
@@ -134,8 +131,8 @@ async function giveDisplay(db: Db, id: string): Promise<void> {
     .where(eq(userAvatars.id, id));
 }
 
-describe("runOidcAvatarJob：建立與自動選用", () => {
-  it("沒有候選、avatar_auto＝true、沒有目前頭貼 → 建 OIDC 候選並選用；avatar_auto 仍 true；顯示圖 NULL；last_picture_url 已寫", async () => {
+describe("runOidcAvatarJob: creation and auto-select", () => {
+  it("no candidate, avatar_auto = true, no current avatar -> creates an OIDC candidate and selects it; avatar_auto stays true; display image NULL; last_picture_url written", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -155,7 +152,7 @@ describe("runOidcAvatarJob：建立與自動選用", () => {
     expect(h.invalidated).toEqual([alice.id]);
   });
 
-  it("已有目前頭貼（上傳的）→ OIDC 候選建立但不是目前頭貼", async () => {
+  it("already has a current avatar (uploaded) -> the OIDC candidate is created but is not the current avatar", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -171,7 +168,7 @@ describe("runOidcAvatarJob：建立與自動選用", () => {
     expect(rows.find(r => r.id === up!.id)!.isCurrent).toBe(true);
   });
 
-  it("avatar_auto＝false 且沒有目前頭貼 → 不自動選用", async () => {
+  it("avatar_auto = false and no current avatar -> not auto-selected", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -186,8 +183,8 @@ describe("runOidcAvatarJob：建立與自動選用", () => {
   });
 });
 
-describe("runOidcAvatarJob：同網址、換網址", () => {
-  it("同網址 → 不下載（請求數不增加）", async () => {
+describe("runOidcAvatarJob: same URL, changed URL", () => {
+  it("same URL -> no download (request count doesn't grow)", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -201,7 +198,7 @@ describe("runOidcAvatarJob：同網址、換網址", () => {
     expect(await rowsOf(h.db, alice.id)).toHaveLength(1);
   });
 
-  it("換網址、位元組不同 → 原地替換：同 id、version+1、裁切與顯示圖清空、舊檔刪、新檔在、is_current 不變、用量差額正確；bob 不受影響", async () => {
+  it("changed URL, different bytes -> replaced in place: same id, version+1, crop and display image cleared, old file deleted, new file present, is_current unchanged, usage delta correct; bob unaffected", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) }, "/b.png": { body: pngFilled(700, 2) } });
     const alice = await seedUser(h.db);
@@ -228,12 +225,11 @@ describe("runOidcAvatarJob：同網址、換網址", () => {
     expect(existsSync(path.join(h.uploadsDir, after.originalFile))).toBe(true);
     expect((await readSpaceUsage(h.db, { kind: "user", id: alice.id }))!.usedBytes).toBe(700);
     expect(h.settled.at(-1)).toMatchObject({ outcome: "replaced" });
-    // 旁觀者：bob 的列與檔原樣
     expect((await rowsOf(h.db, bob.id))[0]).toEqual(bobSnapshot);
     expect(existsSync(path.join(h.uploadsDir, bobSnapshot.originalFile))).toBe(true);
   });
 
-  it("換網址、位元組相同 → 只改 oidc_picture_url；裁切與顯示圖保留、version 不變、沒有多出檔案；bob 不受影響", async () => {
+  it("changed URL, same bytes -> only oidc_picture_url changes; crop and display image kept, version unchanged, no extra files; bob unaffected", async () => {
     const h = await harness();
     const same = pngFilled(500, 1);
     const img = await imageServer({ "/a.png": { body: same }, "/copy.png": { body: Buffer.from(same) } });
@@ -259,8 +255,8 @@ describe("runOidcAvatarJob：同網址、換網址", () => {
   });
 });
 
-describe("runOidcAvatarJob：失敗與已移除", () => {
-  it("圖片伺服器 500 → 沒有候選、沒有檔、last_picture_url 仍寫；伺服器恢復後同網址再跑 → 建立", async () => {
+describe("runOidcAvatarJob: failure and removed", () => {
+  it("image server 500 -> no candidate, no file, last_picture_url still written; after the server recovers, running again with the same URL -> created", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { status: 500 } });
     const alice = await seedUser(h.db);
@@ -278,7 +274,7 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
     expect(await rowsOf(h.db, alice.id)).toHaveLength(1);
   });
 
-  it("picture 等於 picture_dismissed_url → 不下載；換新網址 → 下載並建立；bob 同形資料不受影響", async () => {
+  it("picture equals picture_dismissed_url -> no download; a new URL -> downloaded and created; bob's same-shaped data unaffected", async () => {
     const h = await harness();
     const img = await imageServer({ "/old.png": { body: pngFilled(500, 1) }, "/new.png": { body: pngFilled(600, 2) } });
     const alice = await seedUser(h.db);
@@ -294,13 +290,12 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
     await runOidcAvatarJob(h.deps, { userId: alice.id, issuer: ISSUER, sub: aIdn.sub, picture: `${img.base}/new.png` });
     expect(await rowsOf(h.db, alice.id)).toHaveLength(1);
     expect(img.requests()).toBe(1);
-    // bob 沒有被觸發：他的身分列沒被動
     expect((await identityOf(h.db, bIdn.id)).lastPictureUrl).toBeNull();
     expect((await identityOf(h.db, bIdn.id)).pictureDismissedUrl).toBe(oldUrl);
     expect(await rowsOf(h.db, bob.id)).toHaveLength(0);
   });
 
-  it("下載期間使用者刪掉了同一個網址（picture_dismissed_url 被設）→ 不插入、新檔被清掉、reason 是 dismissed", async () => {
+  it("the user dismissed the same URL during download (picture_dismissed_url set) -> not inserted, the new file cleaned up, reason is dismissed", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -318,7 +313,7 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
     expect(h.invalidated).toEqual([]);
   });
 
-  it("沒有 picture → 不下載，last_picture_url 清成 NULL", async () => {
+  it("no picture -> no download, last_picture_url cleared to NULL", async () => {
     const h = await harness();
     const alice = await seedUser(h.db);
     const idn = await seedIdentity(h.db, alice.id);
@@ -328,7 +323,7 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
     expect(h.settled.at(-1)).toMatchObject({ outcome: "skipped", reason: "no_picture" });
   });
 
-  it("身分列不存在（或不屬於這個人）→ 結束，不下載", async () => {
+  it("identity row doesn't exist (or doesn't belong to this person) -> ends, no download", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
@@ -339,7 +334,7 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
     expect(h.settled.at(-1)).toMatchObject({ outcome: "skipped", reason: "no_identity" });
   });
 
-  it("下載期間解除連結 → 沒有候選、沒有留檔、reason 是 unlinked", async () => {
+  it("unlinked during download -> no candidate, no leftover file, reason is unlinked", async () => {
     const h = await harness();
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
@@ -357,8 +352,8 @@ describe("runOidcAvatarJob：失敗與已移除", () => {
   });
 });
 
-describe("runOidcAvatarJob：配額", () => {
-  it("剩餘不足 → 不建候選、不留檔、reason＝quota", async () => {
+describe("runOidcAvatarJob: quota", () => {
+  it("not enough remaining -> no candidate, no file, reason = quota", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(2000, 1) } });
     const alice = await seedUser(h.db);
@@ -372,7 +367,7 @@ describe("runOidcAvatarJob：配額", () => {
     expect(h.logs.at(-1)!.obj).toMatchObject({ reason: "quota" });
   });
 
-  it("已滿 → 不下載（請求數 0）、reason＝quota", async () => {
+  it("full -> no download (request count 0), reason = quota", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(200, 1) } });
     const alice = await seedUser(h.db);
@@ -387,8 +382,8 @@ describe("runOidcAvatarJob：配額", () => {
   });
 });
 
-describe("runOidcAvatarJob：去重與記錄", () => {
-  it("同一使用者同一身分連排兩次、伺服器 hold → 只有一個請求；後來的略過", async () => {
+describe("runOidcAvatarJob: dedup and logging", () => {
+  it("same user and same identity queued twice with the server holding -> only one request; the later one is skipped", async () => {
     const h = await harness();
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
@@ -404,12 +399,12 @@ describe("runOidcAvatarJob：去重與記錄", () => {
     expect(await first).toMatchObject({ outcome: "inserted" });
     expect(img.requests()).toBe(1);
     expect(await rowsOf(h.db, alice.id)).toHaveLength(1);
-    // 結束後鍵被釋放：換網址可以再跑
+    // The key is released after it finishes: a different URL can run again
     img.setRoute("/b.png", { body: pngFilled(600, 2) });
     expect(await runOidcAvatarJob(h.deps, { ...args, picture: `${img.base}/b.png` })).toMatchObject({ outcome: "replaced" });
   });
 
-  it("進行中又來一次（換了網址）→ 後來的被略過，但 last_picture_url 是後來那個值", async () => {
+  it("another one arriving while one is in progress (with a changed URL) -> the later one is skipped, but last_picture_url is the later value", async () => {
     const h = await harness();
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
@@ -425,7 +420,7 @@ describe("runOidcAvatarJob：去重與記錄", () => {
     expect((await identityOf(h.db, idn.id)).lastPictureUrl).toBe(second);
   });
 
-  it("失敗時 info 一行含 userId、identityId、reason；不含網址字串（帶 token 的 query 不出現）", async () => {
+  it("on failure one info line with userId, identityId, reason; no URL string (a query carrying a token doesn't appear)", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { status: 500 } });
     const alice = await seedUser(h.db);
@@ -439,12 +434,12 @@ describe("runOidcAvatarJob：去重與記錄", () => {
     expect(text).not.toContain("127.0.0.1");
   });
 
-  it("資料庫錯誤只記 name 與 code，不帶原始錯誤", async () => {
+  it("a database error logs only name and code, not the original error", async () => {
     const h = await harness();
     const img = await imageServer({ "/a.png": { body: pngFilled(500, 1) } });
     const alice = await seedUser(h.db);
     const idn = await seedIdentity(h.db, alice.id);
-    // 用交易的測試縫丟一個帶 params 的錯誤（模擬 drizzle 把 SQL 參數串進 message）。
+    // Use the transaction's test hook to throw an error carrying params (simulates drizzle putting SQL params in the message).
     const boom = Object.assign(new Error(`insert into "user_avatars" params: secretvalue`), { code: "XX000" });
     const deps: OidcAvatarJobDeps = { ...h.deps, avatarTestHooks: { afterUserLock: () => Promise.reject(boom) } };
     await runOidcAvatarJob(deps, { userId: alice.id, issuer: ISSUER, sub: idn.sub, picture: `${img.base}/a.png` });
@@ -456,7 +451,7 @@ describe("runOidcAvatarJob：去重與記錄", () => {
 });
 
 describe("scheduleOidcAvatarJob", () => {
-  it("同步回傳（不等下載）；背景跑完後 onSettled 被呼叫", async () => {
+  it("returns synchronously (doesn't wait for the download); onSettled is called after the background run finishes", async () => {
     const h = await harness();
     let release!: () => void;
     const hold = new Promise<void>(r => (release = r));
@@ -474,7 +469,7 @@ describe("scheduleOidcAvatarJob", () => {
     expect(await done).toMatchObject({ outcome: "inserted" });
   });
 
-  it("run 丟錯不外洩成未處理的 rejection", async () => {
+  it("an error thrown by run doesn't leak as an unhandled rejection", async () => {
     const h = await harness();
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);
@@ -510,7 +505,7 @@ describe("replaceOidcAvatarInTx", () => {
     lockTimeoutMs,
   });
 
-  it("找不到候選 → inserted（自動選用條件同插入）", async () => {
+  it("no candidate found -> inserted (auto-select condition same as insertion)", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const idn = await seedIdentity(db, alice.id);
@@ -521,7 +516,7 @@ describe("replaceOidcAvatarInTx", () => {
     expect(rows[0]).toMatchObject({ isCurrent: true, identityId: idn.id });
   });
 
-  it("身分列不是這個人的 → AvatarIdentityGone，不留列", async () => {
+  it("identity row isn't this person's -> AvatarIdentityGone, no row left", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -531,7 +526,7 @@ describe("replaceOidcAvatarInTx", () => {
     expect(await rowsOf(db, bob.id)).toHaveLength(0);
   });
 
-  it("位元組不同：回傳舊檔名；原圖變大而空間不夠 → StorageQuotaExceeded 且列不變", async () => {
+  it("different bytes: returns the old file name; original grows and space isn't enough -> StorageQuotaExceeded and row unchanged", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const idn = await seedIdentity(db, alice.id);
@@ -547,7 +542,7 @@ describe("replaceOidcAvatarInTx", () => {
     expect((await rowsOf(db, alice.id))[0]).toMatchObject({ originalFile: smaller.originalFile, originalSize: 300, version: 2 });
   });
 
-  it("替換的配額差額含舊顯示圖：舊原圖 400＋舊顯示圖 120、新原圖 500、額度 600 → 可以（差額 −20）；額度 500 且新原圖 700 → 拒絕", async () => {
+  it("the replacement quota delta includes the old display image: old original 400 + old display 120, new original 500, quota 600 -> allowed (delta -20); then with usage 500 (quota 600), new original 700 -> rejected", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const idn = await seedIdentity(db, alice.id);
@@ -557,11 +552,11 @@ describe("replaceOidcAvatarInTx", () => {
     const ok = await db.transaction(tx => replaceOidcAvatarInTx(tx, input(alice.id, idn.id, 500, 2)));
     expect(ok.outcome).toBe("replaced");
     expect((await readSpaceUsage(db, { kind: "user", id: alice.id }))!.usedBytes).toBe(500);
-    // 用量 500、額度 600：新原圖 700 → 差額 +200，500+200 > 600
+    // usage 500, quota 600: new original 700 -> delta +200, 500+200 > 600
     await expect(db.transaction(tx => replaceOidcAvatarInTx(tx, input(alice.id, idn.id, 700, 3)))).rejects.toBeInstanceOf(StorageQuotaExceeded);
   });
 
-  it("每句 UPDATE 都限定 user_id／identity_id：bob 有同形候選時不受影響", async () => {
+  it("every UPDATE statement is scoped to user_id/identity_id: unaffected when bob has a same-shaped candidate", async () => {
     const { db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);

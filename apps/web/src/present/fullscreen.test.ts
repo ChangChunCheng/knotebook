@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// 每案一份假 document＋重新 import 模組：模組在載入時對 `document` 掛一次 fullscreenchange，
-// 共用真 document 的話，前一案的模組實例會繼續收到事件（殘留狀態會多呼叫 exitFullscreen）。
+// One fake document per case plus re-importing the module: the module attaches fullscreenchange to `document` once at load,
+// and sharing the real document would let earlier cases' module instances keep receiving events (leftover state calls exitFullscreen extra times).
 async function flush(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 }
@@ -28,9 +28,8 @@ function makeFakeDocument() {
   const fire = () => listeners.forEach((fn) => fn());
   return {
     doc,
-    /** 規範順序：先送 fullscreenchange、後 resolve。 */
+    // Spec order: fullscreenchange, then resolve.
     async grantEventFirst() { doc.fullscreenElement = documentElement; fire(); request?.resolve(); request = null; await flush(); },
-    /** 另一種順序：先 resolve、後送事件。 */
     async grantResolveFirst() { doc.fullscreenElement = documentElement; request?.resolve(); request = null; await flush(); fire(); await flush(); },
     async deny() { request?.reject(new TypeError("denied")); request = null; await flush(); },
     async completeExit() { doc.fullscreenElement = null; fire(); exits.shift()?.resolve(); await flush(); },
@@ -51,7 +50,7 @@ afterEach(() => {
 });
 
 describe("present/fullscreen", () => {
-  it("在使用者事件內同步呼叫 requestFullscreen；成功後 isOwnedFullscreen 為真", async () => {
+  it("requestFullscreen is called synchronously within the user event; after success isOwnedFullscreen is true", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
@@ -60,7 +59,7 @@ describe("present/fullscreen", () => {
     expect(fs.isOwnedFullscreen()).toBe(true);
   });
 
-  it("fullscreenEnabled 為 false、或已在全螢幕、或已有請求 pending → 不請求", async () => {
+  it("no request when fullscreenEnabled is false, already fullscreen, or a request is pending", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fake.doc.fullscreenEnabled = false;
@@ -74,28 +73,28 @@ describe("present/fullscreen", () => {
     expect(fake.doc.documentElement.requestFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("請求被拒：owned 與 exitWanted 都歸 false（之後別的元素進全螢幕不退）", async () => {
+  it("request rejected: owned and exitWanted both reset to false (elements entering fullscreen later aren't exited)", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
-    fs.exitOwnedFullscreen(); // pending 中要退 → exitWanted
+    fs.exitOwnedFullscreen(); // Exit requested while pending -> exitWanted
     await fake.deny();
     expect(fs.isOwnedFullscreen()).toBe(false);
     await fake.otherEnters(fake.doc.documentElement);
     expect(fake.doc.exitFullscreen).not.toHaveBeenCalled();
   });
 
-  it("pending 中退出、請求被拒之前影片先進全螢幕 → 不退那支影片（只處理我們要的整份文件）", async () => {
+  it("exit during pending, and a video enters fullscreen before the request is rejected -> that video isn't exited (only the whole document we asked for is handled)", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
-    fs.exitOwnedFullscreen(); // pending 中 → exitWanted
+    fs.exitOwnedFullscreen(); // Exit requested while pending -> exitWanted
     await fake.otherEnters({ tagName: "VIDEO" });
     await fake.deny();
     expect(fake.doc.exitFullscreen).not.toHaveBeenCalled();
   });
 
-  it("不退非本模組要求的全螢幕（影片自己全螢幕）", async () => {
+  it("doesn't exit a fullscreen this module didn't request (a video's own fullscreen)", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     await fake.otherEnters({ tagName: "VIDEO" });
@@ -104,7 +103,7 @@ describe("present/fullscreen", () => {
     expect(fs.isOwnedFullscreen()).toBe(false);
   });
 
-  it("別人把整份文件全螢幕（非本模組要求）→ owned 為 false、exitOwnedFullscreen 不退", async () => {
+  it("someone else fullscreens the whole document (not requested by this module) -> owned is false, exitOwnedFullscreen doesn't exit", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     await fake.otherEnters(fake.doc.documentElement);
@@ -113,17 +112,17 @@ describe("present/fullscreen", () => {
     expect(fake.doc.exitFullscreen).not.toHaveBeenCalled();
   });
 
-  it.each(["grantEventFirst", "grantResolveFirst"] as const)("pending 中退出、%s → exitFullscreen 恰一次", async (order) => {
+  it.each(["grantEventFirst", "grantResolveFirst"] as const)("exit during pending, %s -> exitFullscreen exactly once", async (order) => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
     fs.exitOwnedFullscreen();
-    expect(fake.doc.exitFullscreen).not.toHaveBeenCalled(); // pending 中不能退（會 reject、請求照樣生效）
+    expect(fake.doc.exitFullscreen).not.toHaveBeenCalled(); // Can't exit while pending (it would reject, and the request takes effect anyway)
     await fake[order]();
     expect(fake.doc.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("pending 中退出兩次 → 仍只退一次", async () => {
+  it("exit during pending twice -> still exits only once", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
@@ -133,7 +132,7 @@ describe("present/fullscreen", () => {
     expect(fake.doc.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("exitFullscreen reject 不留 unhandled rejection", async () => {
+  it("exitFullscreen rejecting leaves no unhandled rejection", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     const unhandled = vi.fn();
@@ -150,7 +149,7 @@ describe("present/fullscreen", () => {
     }
   });
 
-  it("完成一次 pending 退出之後，再有別的元素進入全螢幕 → 不呼叫退出（殘留 exitWanted 的回歸，gate H 案）", async () => {
+  it("after a pending exit completes, another element entering fullscreen -> no exit call (regression for a leftover exitWanted)", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     fs.enterPresentationFullscreen();
@@ -162,7 +161,7 @@ describe("present/fullscreen", () => {
     expect(fake.doc.exitFullscreen).toHaveBeenCalledTimes(1);
   });
 
-  it("msSinceFullscreenExit：從未離開過回 Infinity；離開事件之後是有限的小數字", async () => {
+  it("msSinceFullscreenExit: Infinity if it never exited; a small finite number after an exit event", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     expect(fs.msSinceFullscreenExit()).toBe(Infinity);
@@ -172,7 +171,7 @@ describe("present/fullscreen", () => {
     expect(fs.msSinceFullscreenExit()).toBeLessThan(1000);
   });
 
-  it("subscribeFullscreen：狀態更新之後才通知；取消訂閱後不再通知", async () => {
+  it("subscribeFullscreen: notifies after the state is updated; no notification after unsubscribing", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     const seen: boolean[] = [];
@@ -185,14 +184,14 @@ describe("present/fullscreen", () => {
     expect(seen).toEqual([true, false]);
   });
 
-  it("subscribeFullscreen：離開事件的通知發出時，msSinceFullscreenExit 已是有限值（補案：上一案測不出，因為 fake 先改 fullscreenElement）", async () => {
+  it("subscribeFullscreen: when the exit event notifies, msSinceFullscreenExit is already finite (the fake changes fullscreenElement first)", async () => {
     const fake = makeFakeDocument();
     const fs = await load(fake);
     const seen: number[] = [];
     fs.subscribeFullscreen(() => seen.push(fs.msSinceFullscreenExit()));
     fs.enterPresentationFullscreen();
     await fake.grantEventFirst();
-    expect(seen).toEqual([Infinity]); // 進入事件：尚未離開過
+    expect(seen).toEqual([Infinity]); // Enter event: hasn't exited yet
     await fake.userExit();
     expect(seen).toHaveLength(2);
     expect(Number.isFinite(seen[1])).toBe(true);

@@ -33,7 +33,7 @@ function stub(routes: Record<string, unknown>) {
   return calls;
 }
 
-/** 清單已載入的探針：觸發鈕在清單到之前就有標籤（退回選取時記下的名稱），不能拿它判斷清單到了沒。同一個 query key，與 picker 共用快取。 */
+/** Probe for the list having loaded: the trigger already has a label before the list arrives (it falls back to the name remembered at selection), so it cannot tell whether the list arrived. Same query key, so it shares the cache with the picker. */
 function ListProbe() {
   const { kindFilter } = useVersions();
   const list = useVersionList(NOTE, true, kindFilter);
@@ -43,7 +43,7 @@ async function listLoaded() {
   await waitFor(() => expect(screen.getByTestId("rows")).toHaveTextContent("loaded"));
 }
 
-/** controller 狀態探針：左＝preview、右＝compareRight。`startPreview` 包一層計數（重選同一版不呼叫）。 */
+/** Controller state probe: left = preview, right = compareRight. `startPreview` is wrapped to count calls (re-selecting the same version does not call it). */
 const startCalls: unknown[] = [];
 function Host({ start }: { start: VersionTarget }) {
   const inner = useVersionsController({ noteId: NOTE, enabled: true });
@@ -101,13 +101,13 @@ describe("ComparePicker", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("C1（#272 改）：觸發鈕顯示「名稱 (短 id)」（清單那一列的名稱）、右預設「Current state」；下拉項同一個標籤；aria-label 左側／右側", async () => {
+  it("the trigger shows 'name (short id)' (the name from the list row) with the right side defaulting to 'Current state'; dropdown items use the same label; aria-labels Left side / Right side", async () => {
     stub({ [FIRST]: list([ver(2, "定稿"), ver(1)]) });
     renderPicker();
     await listLoaded();
     const left = screen.getByRole("button", { name: "Left side" });
     expect(left.textContent).toBe("定稿 (0002aaa)");
-    // 長名稱截斷、不把橫幅撐出單排（原 C1 的顧慮）；完整標籤放 title。
+    // A long name is truncated so it does not stretch the banner past one row; the full label goes in title.
     expect(within(left).getByText("定稿 (0002aaa)")).toHaveClass("max-w-48", "truncate");
     expect(within(left).getByText("定稿 (0002aaa)")).toHaveAttribute("title", "定稿 (0002aaa)");
     expect(screen.getByRole("button", { name: "Right side" }).textContent).toBe("Current state");
@@ -115,17 +115,17 @@ describe("ComparePicker", () => {
     expect(within(menu).getByRole("menuitemradio", { name: vlabel(2, "定稿") })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("左下拉重選已勾的同一版 → 不呼叫 startPreview（不重新取樣目前狀態、不重建預覽）", async () => {
+  it("re-selecting the already-ticked version in the left dropdown does not call startPreview (no re-sampling of the current state, no rebuilding of the preview)", async () => {
     stub({ [FIRST]: list([ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
-    expect(startCalls).toHaveLength(1); // 「go」那一次
+    expect(startCalls).toHaveLength(1); // the call from 'go'
     fireEvent.click(within(await openPicker("Left side")).getByRole("menuitemradio", { name: vlabel(2) }));
     expect(startCalls).toHaveLength(1);
     expect(screen.getByTestId("right")).toHaveTextContent('"current"');
   });
 
-  it("載下一頁進行中 → 載入項 disabled，再點不會多打一次", async () => {
+  it("while the next page is loading the load item is disabled and clicking again does not send another request", async () => {
     const page2 = `/api/notes/${NOTE}/versions?before=2&limit=50`;
     const calls: string[] = [];
     let release!: () => void;
@@ -153,7 +153,7 @@ describe("ComparePicker", () => {
     expect(calls.filter((u) => u === page2)).toHaveLength(1);
   });
 
-  it("左邊的選項＝清單所有版本（沒有「Current state」），aria-checked 在目前值上", async () => {
+  it("the left options are all versions in the list (no 'Current state') with aria-checked on the current value", async () => {
     stub({ [FIRST]: list([ver(3), ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -164,7 +164,7 @@ describe("ComparePicker", () => {
     expect(within(menu).getByRole("menuitemradio", { name: vlabel(3) })).toHaveAttribute("aria-checked", "false");
   });
 
-  it("右邊的選項＝「Current state」在最前＋所有版本；預設勾在「Current state」", async () => {
+  it("the right options are 'Current state' first plus all versions; the default tick is on 'Current state'", async () => {
     stub({ [FIRST]: list([ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -174,7 +174,7 @@ describe("ComparePicker", () => {
     expect(items[0]).toHaveAttribute("aria-checked", "true");
   });
 
-  it("選左 → startPreview（左換、右不動）", async () => {
+  it("choosing left -> startPreview (left changes, right stays)", async () => {
     stub({ [FIRST]: list([ver(3), ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -185,7 +185,7 @@ describe("ComparePicker", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Left side" })).toHaveTextContent(vlabel(1)));
   });
 
-  it("#272：選有名稱的那一版 → 選取對象帶著名稱（清單之後被篩掉時觸發鈕靠它顯示）", async () => {
+  it("#272: choosing a named version -> the selection target carries the name (the trigger shows it when the list later filters it out)", async () => {
     stub({ [FIRST]: list([ver(3, "里程碑"), ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -193,7 +193,7 @@ describe("ComparePicker", () => {
     expect(screen.getByTestId("left")).toHaveTextContent(JSON.stringify(vtarget(3, "里程碑")));
   });
 
-  it("選右 → setCompareRight（某版／再選回 Current state）；左不動", async () => {
+  it("choosing right -> setCompareRight (a version / back to Current state); left stays", async () => {
     stub({ [FIRST]: list([ver(3), ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -205,7 +205,7 @@ describe("ComparePicker", () => {
     expect(screen.getByTestId("right")).toHaveTextContent('"current"');
   });
 
-  it("有下一頁 → 選單底部「Load older versions」；點了 fetchNextPage、選單不關、新版本出現在選項裡", async () => {
+  it("with a next page -> 'Load older versions' at the bottom of the menu; clicking calls fetchNextPage, the menu stays open and the new versions appear among the options", async () => {
     const calls = stub({
       [FIRST]: list([ver(2)], 2),
       [`/api/notes/${NOTE}/versions?before=2&limit=50`]: list([ver(1)]),
@@ -217,11 +217,10 @@ describe("ComparePicker", () => {
     await waitFor(() => expect(calls).toContain(`/api/notes/${NOTE}/versions?before=2&limit=50`));
     expect(screen.getByRole("menu")).toBeInTheDocument();
     await waitFor(() => expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: vlabel(1) })).toBeInTheDocument());
-    // 到底了：載入項消失
     expect(within(screen.getByRole("menu")).queryByRole("menuitem", { name: "Load older versions" })).not.toBeInTheDocument();
   });
 
-  it("載下一頁失敗 → 不自動重抓（只打一次）；項目留著可再手動按", async () => {
+  it("loading the next page fails -> no automatic retry (one request); the item stays and can be pressed again", async () => {
     const page2 = `/api/notes/${NOTE}/versions?before=2&limit=50`;
     const calls: string[] = [];
     vi.stubGlobal(
@@ -244,7 +243,7 @@ describe("ComparePicker", () => {
     await waitFor(() => expect(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Load older versions" })).not.toHaveAttribute("data-disabled"));
   });
 
-  it("沒有下一頁 → 沒有「Load older versions」", async () => {
+  it("no next page -> no 'Load older versions'", async () => {
     stub({ [FIRST]: list([ver(2), ver(1)]) });
     renderPicker();
     await listLoaded();
@@ -252,10 +251,10 @@ describe("ComparePicker", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Load older versions" })).not.toBeInTheDocument();
   });
 
-  describe("跟著清單篩選（#258）", () => {
+  describe("follows the list filter (#258)", () => {
     const AUTO = (seq: number) => ver(seq, null, "auto");
 
-    it("僅手動：左右下拉都只列手動版本（右邊「Current state」永遠在）；預覽的那一版被篩掉，觸發鈕仍顯示它的名稱（清單沒有時用選取時記下的名稱，#272）", async () => {
+    it("manual only: both dropdowns list only manual versions ('Current state' on the right stays); a previewed version filtered out still shows its name on the trigger (using the name remembered at selection when the list lacks it, #272)", async () => {
       window.localStorage.setItem(KIND_FILTER_STORAGE_KEY, "manual");
       stub({ [FIRST_MANUAL]: list([ver(3), ver(1)]) });
       renderPicker(vtarget(2, "草稿"));
@@ -269,7 +268,7 @@ describe("ComparePicker", () => {
       expect(right.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual(["Current state", vlabel(3), vlabel(1)]);
     });
 
-    it("右邊已選的版本被篩掉：觸發鈕仍顯示它的標籤；切換篩選不動 preview／compareRight", async () => {
+    it("a version selected on the right is filtered out: the trigger still shows its label; changing the filter does not touch preview / compareRight", async () => {
       stub({ [FIRST]: list([ver(3), AUTO(2), ver(1)]), [FIRST_MANUAL]: list([ver(3), ver(1)]) });
       renderPicker(vtarget(3));
       await listLoaded();
@@ -286,7 +285,7 @@ describe("ComparePicker", () => {
       expect(right.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual(["Current state", vlabel(3), vlabel(1)]);
     });
 
-    it("即時共用：面板切到「僅手動」時，已掛載的下拉選項馬上跟著變", async () => {
+    it("live sharing: when the panel switches to manual only, already-mounted dropdown options change at once", async () => {
       stub({ [FIRST]: list([ver(3), AUTO(2), ver(1)]), [FIRST_MANUAL]: list([ver(3), ver(1)]) });
       renderPicker(vtarget(3));
       await listLoaded();
@@ -297,7 +296,7 @@ describe("ComparePicker", () => {
       expect(within(await openPicker("Left side")).getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual([vlabel(3), vlabel(1)]);
     });
 
-    it("「載入更早的版本」帶 kind=manual 與游標", async () => {
+    it("\"Load older versions\" sends kind=manual and the cursor", async () => {
       window.localStorage.setItem(KIND_FILTER_STORAGE_KEY, "manual");
       const calls = stub({
         [FIRST_MANUAL]: list([ver(5)], 5),

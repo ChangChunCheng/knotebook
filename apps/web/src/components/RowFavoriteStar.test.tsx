@@ -58,8 +58,8 @@ function stubServer(init: Partial<Omit<FavServer, "calls">> = {}): FavServer {
 const count = (server: FavServer, call: string) => server.calls.filter((c) => c === call).length;
 
 /**
- * 列清單的最小替身：行為與 `NoteList` 相同——一次 `useFavoriteLookup`，未就緒不渲染星星；
- * `onlyFavorites` 時只列最愛（最愛 tab：移出後那一列卸載）。
+ * Minimal stand-in for the row list: same behaviour as `NoteList` - one `useFavoriteLookup`, no stars until ready;
+ * with `onlyFavorites` it lists only favorites (Favorites tab: the row unmounts after removal).
  */
 function Rows({ notes, onlyFavorites = false }: { notes: NoteDto[]; onlyFavorites?: boolean }) {
   const lookup = useFavoriteLookup();
@@ -95,7 +95,6 @@ function setup(notes: NoteDto[] = [A], opts: { onlyFavorites?: boolean } = {}) {
 const rowOf = (note: NoteDto) => document.querySelector(`[data-node-id="${note.id}"]`) as HTMLElement;
 const starOf = (note: NoteDto) => within(rowOf(note)).getByRole("button", { name: "Favorite" });
 const star = () => starOf(A);
-/** 清單到了（星星才會渲染）。 */
 const ready = () => waitFor(() => expect(star()).toBeInTheDocument());
 
 describe("RowFavoriteStar", () => {
@@ -108,14 +107,14 @@ describe("RowFavoriteStar", () => {
     vi.unstubAllGlobals();
   });
 
-  it("在最愛：名稱固定 Favorite、aria-pressed=true、title 是移出、實心星、沒有浮出 class", async () => {
+  it("in favorites: name fixed as Favorite, aria-pressed=true, title is remove, filled star, no float-in class", async () => {
     stubServer({ favorites: [A.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
     expect(star()).toHaveAttribute("title", "Remove from favorites");
     expect(star().querySelector("svg")).toHaveAttribute("fill", "currentColor");
     expect(star().className).not.toContain("opacity-0");
-    // 滑鼠：一直顯示；觸控與沒有 hover 的裝置：這顆鈕整顆隱藏，換成同一格的不可點標記。
+    // Mouse: always shown; touch and devices without hover: this button is hidden entirely, replaced by a non-clickable marker in the same slot.
     expect(star().className).toContain("[@media(hover:none)]:hidden");
     expect(star().className).toContain("[@media(pointer:coarse)]:hidden");
     expect(star().className).toContain("text-brand");
@@ -123,7 +122,7 @@ describe("RowFavoriteStar", () => {
 
 
 
-  it("不在最愛：名稱仍是 Favorite、aria-pressed=false、title 是加入、空心星、帶浮出 class（觸控隱藏）", async () => {
+  it("not in favorites: name is still Favorite, aria-pressed=false, title is add, hollow star, carries the float-in class (hidden on touch)", async () => {
     stubServer();
     setup();
     await ready();
@@ -137,7 +136,7 @@ describe("RowFavoriteStar", () => {
     expect(classes).toContain("group-hover/noterow:opacity-100");
   });
 
-  it("24px 圖示鈕、不加 aria-describedby、原生 button", async () => {
+  it("24px icon button, no aria-describedby, native button", async () => {
     stubServer();
     setup();
     await ready();
@@ -149,7 +148,7 @@ describe("RowFavoriteStar", () => {
     expect(star()).not.toHaveAttribute("aria-describedby");
   });
 
-  it("清單還沒到或讀取失敗 → 不渲染星星", async () => {
+  it("list not arrived or load failed -> no star rendered", async () => {
     stubServer({ get: "pending" });
     setup();
     expect(screen.queryByRole("button", { name: "Favorite" })).toBeNull();
@@ -161,7 +160,7 @@ describe("RowFavoriteStar", () => {
     expect(screen.queryByRole("button", { name: "Favorite" })).toBeNull();
   });
 
-  it("未加入時點下：樂觀變成 pressed、PUT 一次、不開框、不出 toast", async () => {
+  it("click when not added: optimistically pressed, one PUT, no dialog, no toast", async () => {
     const server = stubServer();
     setup();
     await ready();
@@ -173,7 +172,7 @@ describe("RowFavoriteStar", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("PUT 失敗 → 出錯誤 toast、回到 not pressed", async () => {
+  it("PUT fails -> error toast, back to not pressed", async () => {
     stubServer({ put: 404 });
     setup();
     await ready();
@@ -182,7 +181,7 @@ describe("RowFavoriteStar", () => {
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "false"));
   });
 
-  it("已加入時點下：開確認框、尚無 DELETE；Cancel 與 Esc 都沒送、焦點回星星", async () => {
+  it("click when added: opens the confirm dialog, no DELETE yet; neither Cancel nor Esc sends anything, focus returns to the star", async () => {
     const server = stubServer({ favorites: [A.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -203,7 +202,7 @@ describe("RowFavoriteStar", () => {
     expect(star()).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("確認移出（星星還在的 tab）→ DELETE 一次、not pressed、沒有 toast、焦點回星星", async () => {
+  it("confirm removal (tab where the star stays) -> one DELETE, not pressed, no toast, focus returns to the star", async () => {
     const server = stubServer({ favorites: [A.id] });
     setup();
     await waitFor(() => expect(star()).toHaveAttribute("aria-pressed", "true"));
@@ -217,7 +216,7 @@ describe("RowFavoriteStar", () => {
     await waitFor(() => expect(star()).toHaveFocus());
   });
 
-  it("最愛 tab：列卸載後焦點落到下一列的連結；沒有下一列 → 上一列；只剩一列 → tabpanel", async () => {
+  it("Favorites tab: after the row unmounts focus lands on the next row's link; no next row -> previous row; only one row left -> tabpanel", async () => {
     stubServer({ favorites: [A.id, B.id, C.id] });
     setup([A, B, C], { onlyFavorites: true });
     await waitFor(() => expect(starOf(B)).toBeInTheDocument());
@@ -238,7 +237,7 @@ describe("RowFavoriteStar", () => {
     await waitFor(() => expect(screen.getByRole("tabpanel")).toHaveFocus());
   });
 
-  it("送出中：aria-disabled=true、沒有 disabled 屬性、焦點仍在星星、連點只送一次", async () => {
+  it("while sending: aria-disabled=true, no disabled attribute, focus stays on the star, repeated clicks send only once", async () => {
     const server = stubServer({ put: "pending" });
     setup();
     await ready();
@@ -254,7 +253,7 @@ describe("RowFavoriteStar", () => {
     expect(server.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
   });
 
-  it("同一份清單裡只有送出中的那一篇是 aria-disabled", async () => {
+  it("in the same list only the note being sent is aria-disabled", async () => {
     stubServer({ put: "pending" });
     setup([A, B]);
     await waitFor(() => expect(starOf(A)).toBeInTheDocument());

@@ -10,7 +10,7 @@ import { AppRoutes } from "@/App";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import { chooseOption, selectedValue } from "@/test/ui-select";
 
-// /admin/storage。走真的 AppRoutes（站台管理 modal＋AdminSections lazy chunk）。
+// /admin/storage. Runs through the real AppRoutes (site admin modal + the AdminSections lazy chunk).
 
 function res(status: number, body?: unknown): Response {
   return { ok: status < 400, status, json: () => (body === undefined ? Promise.reject(new Error("no body")) : Promise.resolve(body)) } as unknown as Response;
@@ -23,8 +23,8 @@ const plan = (p: Partial<StoragePlanDto> & Pick<StoragePlanDto, "id" | "name">):
 const BASIC = plan({ id: "11111111-1111-4111-8111-111111111111", name: "Basic", quotaBytes: 2147483648, userCount: 3, groupCount: 1, isDefaultForUsers: true });
 const BIG = plan({ id: "22222222-2222-4222-8222-222222222222", name: "Big", quotaBytes: null, userCount: 1 });
 const SPARE = plan({ id: "33333333-3333-4333-8333-333333333333", name: "Spare", quotaBytes: 1048576 });
-const TIGHT = plan({ id: "44444444-4444-4444-8444-444444444444", name: "Tight", quotaBytes: 1004, userCount: 2, overQuotaCount: 1 }); // 1004 → 「0.000957 MB」→ 1003：換算回不來
-/** 只因「是預設」而不能刪（沒人在用）——刪除鈕的第二個條件要有自己的案。 */
+const TIGHT = plan({ id: "44444444-4444-4444-8444-444444444444", name: "Tight", quotaBytes: 1004, userCount: 2, overQuotaCount: 1 }); // 1004 -> "0.000957 MB" -> 1003: the conversion doesn't round-trip
+/** Undeletable only because it is the default (nobody uses it) - the delete button's second condition needs its own case. */
 const STARTER = plan({ id: "66666666-6666-4666-8666-666666666666", name: "Starter", quotaBytes: 1048576, isDefaultForGroups: true });
 const LIST: StoragePlansResponse = { plans: [BASIC, BIG, SPARE, STARTER, TIGHT], defaults: { userPlanId: BASIC.id, groupPlanId: STARTER.id } };
 
@@ -59,10 +59,9 @@ function renderStorage(extra: Handler = () => null, client = new QueryClient({ d
 const callsTo = (m: ReturnType<typeof vi.fn>, method: string, url: string) =>
   m.mock.calls.filter(([u, i]) => String(u) === url && ((i as RequestInit | undefined)?.method ?? "GET").toUpperCase() === method).map(([, i]) => i as RequestInit);
 const bodyOf = (init: RequestInit | undefined) => JSON.parse(String(init?.body));
-/** 方案表的列名＝方案名（列以 aria-labelledby 指向名稱）。 */
 const row = (name: string) => screen.getByRole("row", { name });
 
-describe("/admin/storage（儲存方案頁）", () => {
+describe("/admin/storage (storage plans page)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -71,7 +70,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("SS-T1（#181）垃圾桶設定接在版本保留之後；兩個 region 內各恰一顆 Save", async () => {
+  it("trash settings come after version retention; each of the two regions has exactly one Save", async () => {
     renderStorage();
     await screen.findByRole("switch", { name: "Delete automatically" });
     const trash = screen.getByRole("region", { name: "Trash" });
@@ -82,7 +81,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(within(trash).getByRole("switch", { name: "Delete automatically" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("方案表：上限（formatBytes／No limit）、使用者數、群組數、超過上限數、預設標記；刪除鈕依兩條件 disabled＋看得見的說明", async () => {
+  it("plan table: limit (formatBytes / No limit), user count, group count, over-limit count, default marker; delete buttons are disabled by two conditions plus visible reasons", async () => {
     renderStorage();
     expect(await screen.findByRole("heading", { level: 1, name: "Storage plans" })).toBeInTheDocument();
     await waitFor(() => expect(row("Basic")).toBeInTheDocument());
@@ -92,12 +91,11 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(within(row("Starter")).getByText("1 MB")).toBeInTheDocument();
     expect(within(row("Big")).getByText("No limit")).toBeInTheDocument();
     expect(within(row("Tight")).getByText("1004 B")).toBeInTheDocument();
-    // 使用者 2、群組 0、超過上限 1：依格名稱查（欄序由下方欄名陣列守）。
     for (const text of ["2", "0", "1"]) expect(within(row("Tight")).getByRole("cell", { name: text })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete Basic" })).toHaveAttribute("aria-disabled", "true"); // 預設（也在用）
-    expect(screen.getByRole("button", { name: "Delete Tight" })).toHaveAttribute("aria-disabled", "true"); // 只因在用
-    expect(screen.getByRole("button", { name: "Delete Big" })).toHaveAttribute("aria-disabled", "true"); // 只因在用（1 位使用者）
-    expect(screen.getByRole("button", { name: "Delete Starter" })).toHaveAttribute("aria-disabled", "true"); // 只因是預設（沒人在用）
+    expect(screen.getByRole("button", { name: "Delete Basic" })).toHaveAttribute("aria-disabled", "true"); // default (also in use)
+    expect(screen.getByRole("button", { name: "Delete Tight" })).toHaveAttribute("aria-disabled", "true"); // only because in use
+    expect(screen.getByRole("button", { name: "Delete Big" })).toHaveAttribute("aria-disabled", "true"); // only because in use (1 user)
+    expect(screen.getByRole("button", { name: "Delete Starter" })).toHaveAttribute("aria-disabled", "true"); // only because it's the default (nobody uses it)
     expect(screen.getByRole("button", { name: "Delete Spare" })).not.toHaveAttribute("aria-disabled");
     expect(screen.getByText("A plan that is a default, or that any user or group is on, can't be deleted.")).toBeInTheDocument();
     expect(within(screen.getByRole("table", { name: "Storage plans" })).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
@@ -108,12 +106,12 @@ describe("/admin/storage（儲存方案頁）", () => {
       "Spaces over limit",
       "Actions",
     ]);
-    // 超過上限的空間數 > 0 用 danger 語氣（#7「保留紅色」）；0 不紅（Basic 列的 "0" 唯一：使用者 3、群組 1）
+    // An over-limit space count > 0 uses the danger tone (#7 keeps red); 0 isn't red (the Basic row's "0" can be found unambiguously: users 3, groups 1)
     expect(within(row("Tight")).getByText("1")).toHaveClass("text-destructive");
     expect(within(row("Basic")).getByText("0")).not.toHaveClass("text-destructive");
   });
 
-  it("方案列的 Edit／Delete 是 icon 鈕（無可見文字、帶 title）；不可刪的 title 是原因；「New plan」不是實心鈕", async () => {
+  it("plan row Edit / Delete are icon buttons (no visible text, with title); the title of an undeletable one is the reason; \"New plan\" isn't a solid button", async () => {
     renderStorage();
     const edit = await screen.findByRole("button", { name: "Edit Basic" });
     const del = screen.getByRole("button", { name: "Delete Basic" });
@@ -124,7 +122,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(screen.getByRole("button", { name: "New plan" }).className).not.toMatch(/(^|\s)bg-(primary|brand|brand-deep)(\s|$)/);
   });
 
-  it("新增：名稱 trim、1.5 GB → POST {name, quotaBytes: 1610612736}；成功關窗並重抓清單", async () => {
+  it("add: name trimmed, 1.5 GB -> POST {name, quotaBytes: 1610612736}; on success the dialog closes and the list is refetched", async () => {
     const fetchMock = renderStorage((url, method) => (url === "/api/admin/storage-plans" && method === "POST" ? res(201, plan({ id: "55555555-5555-4555-8555-555555555555", name: "Team" })) : null));
     fireEvent.click(await screen.findByRole("button", { name: "New plan" }));
     const dialog = await screen.findByRole("dialog", { name: "New storage plan" });
@@ -138,7 +136,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     await waitFor(() => expect(callsTo(fetchMock, "GET", "/api/admin/storage-plans").length).toBeGreaterThanOrEqual(2));
   });
 
-  it("新增「無上限」：數字欄停用，POST quotaBytes: null", async () => {
+  it("add \"no limit\": the number field is disabled, POST quotaBytes: null", async () => {
     const fetchMock = renderStorage((url, method) => (url === "/api/admin/storage-plans" && method === "POST" ? res(201, plan({ id: "55555555-5555-4555-8555-555555555555", name: "Free" })) : null));
     fireEvent.click(await screen.findByRole("button", { name: "New plan" }));
     const dialog = await screen.findByRole("dialog", { name: "New storage plan" });
@@ -150,7 +148,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(bodyOf(callsTo(fetchMock, "POST", "/api/admin/storage-plans")[0])).toEqual({ name: "Free", quotaBytes: null });
   });
 
-  it("前端預檢：41 字名稱、或上限 1e3 → 行內錯誤、不發請求", async () => {
+  it("front-end pre-check: a 41-char name or a limit of 1e3 -> inline error, no request", async () => {
     const fetchMock = renderStorage();
     fireEvent.click(await screen.findByRole("button", { name: "New plan" }));
     const dialog = await screen.findByRole("dialog", { name: "New storage plan" });
@@ -165,7 +163,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(callsTo(fetchMock, "POST", "/api/admin/storage-plans")).toHaveLength(0);
   });
 
-  it("409 storage_plan_name_taken → 行內「A plan with this name already exists」；server 的 invalid_name → 方案版文案（不是群組的 1–80）", async () => {
+  it("409 storage_plan_name_taken -> inline \"A plan with this name already exists\"; the server's invalid_name -> the plan-specific text (not the group one, 1-80)", async () => {
     let n = 0;
     renderStorage((url, method) => {
       if (url !== "/api/admin/storage-plans" || method !== "POST") return null;
@@ -184,7 +182,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Plan names must be 1–40 characters."));
   });
 
-  it("編輯 Basic：初值 2 GB；調成 1 GB → 出現調低說明；PATCH 只送 quotaBytes", async () => {
+  it("edit Basic: initial 2 GB; lowering to 1 GB -> the lowering note appears; PATCH sends only quotaBytes", async () => {
     const fetchMock = renderStorage((url, method) => (url === `/api/admin/storage-plans/${BASIC.id}` && method === "PATCH" ? res(200, BASIC) : null));
     fireEvent.click(await screen.findByRole("button", { name: "Edit Basic" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
@@ -193,7 +191,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(selectedValue(within(dialog).getByLabelText("Unit"))).toBe("GB");
     expect(within(dialog).queryByText(/Lowering the limit doesn't delete any files/)).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("Limit", { exact: true }), { target: { value: "3" } });
-    expect(within(dialog).queryByText(/Lowering the limit doesn't delete any files/)).not.toBeInTheDocument(); // 調高不顯示
+    expect(within(dialog).queryByText(/Lowering the limit doesn't delete any files/)).not.toBeInTheDocument(); // raising doesn't show it
     fireEvent.change(within(dialog).getByLabelText("Limit", { exact: true }), { target: { value: "1" } });
     expect(within(dialog).getByText(/Lowering the limit doesn't delete any files/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -201,7 +199,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(bodyOf(callsTo(fetchMock, "PATCH", `/api/admin/storage-plans/${BASIC.id}`)[0])).toEqual({ quotaBytes: 1073741824 });
   });
 
-  it("編輯無上限的 Big 改成有限（5 GB）→ 出現調低說明", async () => {
+  it("editing the unlimited Big to a finite value (5 GB) -> the lowering note appears", async () => {
     renderStorage();
     fireEvent.click(await screen.findByRole("button", { name: "Edit Big" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
@@ -211,7 +209,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(within(dialog).getByText(/Lowering the limit doesn't delete any files/)).toBeInTheDocument();
   });
 
-  it("編輯 Tight 什麼都沒改就按 Save → 不發請求、直接關", async () => {
+  it("editing Tight and pressing Save with nothing changed -> no request, closes directly", async () => {
     const fetchMock = renderStorage((url, method) => (url === `/api/admin/storage-plans/${TIGHT.id}` && method === "PATCH" ? res(200, TIGHT) : null));
     fireEvent.click(await screen.findByRole("button", { name: "Edit Tight" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
@@ -220,7 +218,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(callsTo(fetchMock, "PATCH", `/api/admin/storage-plans/${TIGHT.id}`)).toHaveLength(0);
   });
 
-  it("編輯 Tight（1004 bytes）只改名 → PATCH 只送 name，不送換算回來的 quotaBytes", async () => {
+  it("editing Tight (1004 bytes) changing only the name -> PATCH sends only name, not the converted-back quotaBytes", async () => {
     const fetchMock = renderStorage((url, method) => (url === `/api/admin/storage-plans/${TIGHT.id}` && method === "PATCH" ? res(200, TIGHT) : null));
     fireEvent.click(await screen.findByRole("button", { name: "Edit Tight" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit storage plan" });
@@ -230,7 +228,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(bodyOf(callsTo(fetchMock, "PATCH", `/api/admin/storage-plans/${TIGHT.id}`)[0])).toEqual({ name: "Tight 2" });
   });
 
-  it("刪除 Spare：確認框 → DELETE；並發中被別人指派 → 409 storage_plan_in_use 以 toast 顯示", async () => {
+  it("delete Spare: confirm dialog -> DELETE; assigned by someone else concurrently -> 409 storage_plan_in_use shown as a toast", async () => {
     const fetchMock = renderStorage((url, method) =>
       url === `/api/admin/storage-plans/${SPARE.id}` && method === "DELETE" ? res(409, { error: { code: "storage_plan_in_use", message: "x" } }) : null);
     fireEvent.click(await screen.findByRole("button", { name: "Delete Spare" }));
@@ -240,7 +238,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     expect(await screen.findByText("This plan is assigned to users or groups. Move them to another plan first.")).toBeInTheDocument();
   });
 
-  it("刪除成功（204）：四把 key 都被失效（方案、使用者、群組、自己的用量），清單重抓", async () => {
+  it("delete success (204): all four keys are invalidated (plans, users, groups, own usage), the list is refetched", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const spy = vi.spyOn(client, "invalidateQueries");
     const fetchMock = renderStorage((url, method) => (url === `/api/admin/storage-plans/${SPARE.id}` && method === "DELETE" ? res(204) : null), client);
@@ -253,7 +251,7 @@ describe("/admin/storage（儲存方案頁）", () => {
     for (const k of [["admin", "storage-plans"], ["admin", "users"], ["admin", "groups"], ["storage"]]) expect(keys).toContain(JSON.stringify(k));
   });
 
-  it("刪除失敗（409 in_use）：清單仍重抓（畫面上的清單已過時）", async () => {
+  it("delete failure (409 in_use): the list is still refetched (the list on screen is stale)", async () => {
     const fetchMock = renderStorage((url, method) =>
       url === `/api/admin/storage-plans/${SPARE.id}` && method === "DELETE" ? res(409, { error: { code: "storage_plan_in_use", message: "x" } }) : null);
     fireEvent.click(await screen.findByRole("button", { name: "Delete Spare" }));
@@ -263,12 +261,12 @@ describe("/admin/storage（儲存方案頁）", () => {
     await waitFor(() => expect(callsTo(fetchMock, "GET", "/api/admin/storage-plans").length).toBeGreaterThanOrEqual(2));
   });
 
-  it("兩個預設：改「New users」為 Big → 儲存只送 userPlanId；成功 toast", async () => {
+  it("two defaults: changing \"New users\" to Big -> save sends only userPlanId; success toast", async () => {
     const fetchMock = renderStorage((url, method) =>
       url === "/api/admin/storage-plans/defaults" && method === "PATCH" ? res(200, { userPlanId: BIG.id, groupPlanId: STARTER.id }) : null);
     const userSelect = await screen.findByLabelText("New users");
     expect(selectedValue(userSelect)).toBe(BASIC.id);
-    expect(screen.getByRole("button", { name: "Save defaults" })).toBeDisabled(); // 沒改過
+    expect(screen.getByRole("button", { name: "Save defaults" })).toBeDisabled(); // not changed yet
     await chooseOption(userSelect, "Big");
     fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", "/api/admin/storage-plans/defaults")).toHaveLength(1));

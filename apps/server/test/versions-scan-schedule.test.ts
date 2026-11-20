@@ -1,4 +1,3 @@
-// #272：app.ts 的自動切版掃描排程——startVersionJobs 開著才排；每個間隔一輪；onClose 清計時器並等進行中那一輪。
 import { describe, expect, it } from "vitest";
 import { markPending } from "../src/collab/versions.js";
 import type { Db } from "../src/db/index.js";
@@ -7,7 +6,7 @@ import { seedNote, seedUser } from "./group-helpers.js";
 import { buildTestApp } from "./helpers.js";
 import { paraDoc, versionsOf } from "./version-helpers.js";
 
-/** 一篇有內容、待切時刻在 6 分鐘前（站台設定 X＝5 分鐘 → 已到期）的筆記。 */
+/** A note with content whose pending time is 6 minutes ago (site setting X = 5 minutes -> already due). */
 async function duePending(db: Db, ownerId: string, text: string): Promise<string> {
   const n = await seedNote(db, { ownerId });
   await seedDoc(db, n.id, paraDoc([text]));
@@ -15,8 +14,8 @@ async function duePending(db: Db, ownerId: string, text: string): Promise<string
   return n.id;
 }
 
-describe("自動切版掃描排程", () => {
-  it("startVersionJobs＋versionAutoScanIntervalMs → 定時掃描切到期的筆記；app.close() 之後不再掃", async () => {
+describe("auto-cut scan schedule", () => {
+  it("startVersionJobs + versionAutoScanIntervalMs -> periodic scan cuts due notes; no more scans after app.close()", async () => {
     const { app, db } = await buildTestApp({ startVersionJobs: true, versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "排程切的");
@@ -27,7 +26,7 @@ describe("自動切版掃描排程", () => {
     expect(await versionsOf(db, b)).toEqual([]);
   });
 
-  it("沒有 startVersionJobs（測試 app 的預設）→ 不排程", async () => {
+  it("without startVersionJobs (the test app default) -> nothing scheduled", async () => {
     const { app, db } = await buildTestApp({ versionAutoScanIntervalMs: 50 });
     const u = await seedUser(db);
     const a = await duePending(db, u.id, "沒有排程");

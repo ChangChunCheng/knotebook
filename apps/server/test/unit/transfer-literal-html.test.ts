@@ -1,7 +1,7 @@
 /**
- * #379：批次讀寫（檔案）路徑上，筆記文字裡的字面 HTML 標籤讀出時加反斜線、寫回時還原成字面文字。
- * agent 只改 EDITME 一個字：寫回後整篇匯出要等於 agent 的檔、字面 `<` 原樣留著、沒動的段落保留 id。
- * 另有兩案：修正之前下載的副本（`<` 沒有反斜線）寫回時，沒碰的那一段不會被改成真的 HTML；改到的那一段照檔裡的寫法當成 HTML。
+ * #379: on the batch read/write (file) path, literal HTML tags in note text get a backslash on read and are restored to literal text on write-back.
+ * The agent changes only the one word EDITME: after write-back the whole-note export must equal the agent's file, the literal `<` stays as is, and untouched paragraphs keep their ids.
+ * Two more cases: in a copy downloaded before the fix (`<` without a backslash), the untouched paragraph must not turn into real HTML on write-back; the paragraph that was changed is treated as HTML as written in the file.
  */
 import { describe, expect, it } from "vitest";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -17,7 +17,7 @@ const P = (text: string) => ({ type: "paragraph", content: [T(text)] });
 const trimR = (s: string) => s.replace(/[ \t]+$/, "");
 const linesTrim = (s: string) => bodyLines(normalizeBody(s)).map(trimR).join("\n");
 
-/** 頂層每顆的完整文字（`topOf` 的文字會把 `<…>` 當標籤濾掉，這裡要比的正好是 `<…>`）。 */
+/** The full text of every top-level block (the text of `topOf` filters `<...>` out as tags; here `<...>` is exactly what is compared). */
 async function fullTexts(doc: Parameters<typeof withEditor>[1]): Promise<string[]> {
   type Blk = { content?: unknown; children?: Blk[] };
   type Inl = { text?: string; content?: Inl[] };
@@ -51,7 +51,7 @@ const variants: [string, (L: string) => unknown[]][] = [
   ]],
 ];
 
-describe("#379 批次寫回：字面 `<` 讀出加反斜線、改一個字寫回後原樣", () => {
+describe("#379 batch write-back: literal `<` gets a backslash on read, and write-back after changing one word leaves it as is", () => {
   for (const [ctx, make] of variants) {
     describe(ctx, () => {
       for (const L of S) {
@@ -81,15 +81,15 @@ describe("#379 批次寫回：字面 `<` 讀出加反斜線、改一個字寫回
     });
   }
 
-  it("匯出的檔裡 `\\<b>` 帶著反斜線", async () => {
+  it("the exported file has a backslash before `<b>`", async () => {
     const doc = await docWith(rt, [P("<b>bold</b> EDITME"), P("other")]);
     const b = await makeBaseInMemory(rt, doc);
     expect(b.body).toContain("\\<b>bold\\</b> EDITME");
   });
 });
 
-describe("#379 修正之前下載的副本（`<` 沒有反斜線）", () => {
-  it("沒碰的 `<b>bold</b> keep` 段落保留 id 與原文，只有 EDITME 那段改成 EDITED", async () => {
+describe("#379 copy downloaded before the fix (`<` without a backslash)", () => {
+  it("an untouched `<b>bold</b> keep` paragraph keeps its id and text; only the EDITME paragraph becomes EDITED", async () => {
     const doc = await docWith(rt, [P("<b>bold</b> keep"), P("other EDITME")]);
     const b = await makeBaseInMemory(rt, doc, new Map(), "T", line => line.replaceAll("\\<", "<"));
     expect(b.body).toContain("<b>bold</b> keep");
@@ -103,11 +103,11 @@ describe("#379 修正之前下載的副本（`<` 沒有反斜線）", () => {
     expect(top[0]!.id).toBe(b.ids[0]);
     const texts = await fullTexts(live);
     expect(texts).toEqual(["<b>bold</b> keep", "other EDITED"]);
-    // 第一段仍是純文字，不是粗體：整篇匯出再讀一次，反斜線版照舊。
+    // the first paragraph is still plain text, not bold: exporting the whole note and reading it again keeps the backslash form as before.
     expect(linesTrim((await exportNoteForTransfer(rt, live, new Map())).body)).toBe("\\<b>bold\\</b> keep\n\nother EDITED");
   });
 
-  it("改到的那段 `<b>bold</b> keep` → `<b>bold</b> kept`：沒有反斜線的 `<b>` 當成 HTML，變成真的粗體", async () => {
+  it("the changed paragraph `<b>bold</b> keep` -> `<b>bold</b> kept`: a `<b>` without a backslash is treated as HTML and becomes real bold", async () => {
     const doc = await docWith(rt, [P("<b>bold</b> keep"), P("other")]);
     const b = await makeBaseInMemory(rt, doc, new Map(), "T", line => line.replaceAll("\\<", "<"));
     expect(b.body).toContain("<b>bold</b> keep");

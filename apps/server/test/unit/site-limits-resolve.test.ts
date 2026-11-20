@@ -7,7 +7,7 @@ import type { MachineInfo } from "../../src/site-limits/types.js";
 const machine: MachineInfo = { cpus: 8, cpuSource: "os", memoryBytes: 16 * 2 ** 30, memorySource: "os" };
 const GIB2: MachineInfo = { ...machine, memoryBytes: 2 * 2 ** 30 };
 
-describe("resolveSnapshot 優先序", () => {
+describe("resolveSnapshot precedence", () => {
   it("env > admin > default", () => {
     const a = resolveSnapshot(new Map([["rateEdit", 10]]), {}, machine);
     expect(a.values.rateEdit).toBe(10);
@@ -19,7 +19,7 @@ describe("resolveSnapshot 優先序", () => {
     expect(b.source.noteMaxBytes).toBe("env");
   });
 
-  it("env 超出管理頁範圍或沒對齊照用", () => {
+  it("env outside the admin page range or not aligned to the step is used as is", () => {
     for (const v of [104857600, 5242881, 3145729]) {
       const s = resolveSnapshot(new Map(), { noteMaxBytes: v }, machine);
       expect(s.values.noteMaxBytes).toBe(v);
@@ -28,7 +28,7 @@ describe("resolveSnapshot 優先序", () => {
     }
   });
 
-  it("越界／沒對齊／未知 key 的列被忽略", () => {
+  it("rows that are out of range, not aligned, or have an unknown key are ignored", () => {
     const s = resolveSnapshot(new Map([["noteMaxBytes", 6291456], ["parseTimeoutMs", 4500], ["bogusKey", 1]]), {}, machine);
     expect(s.values.noteMaxBytes).toBe(5242880);
     expect(s.source.noteMaxBytes).toBe("default");
@@ -43,8 +43,8 @@ describe("resolveSnapshot 優先序", () => {
   });
 });
 
-describe("resolveSnapshot 自動項", () => {
-  it("parseWorkers 自動隨記憶體上限", () => {
+describe("resolveSnapshot auto items", () => {
+  it("parseWorkers auto follows the memory cap", () => {
     expect(memoryParseWorkers(GIB2.memoryBytes, 512)).toBe(2);
     expect(defaultParseWorkers(8)).toBe(4);
     const a = resolveSnapshot(new Map([["parseWorkerMemoryMb", 512]]), {}, GIB2);
@@ -60,7 +60,7 @@ describe("resolveSnapshot 自動項", () => {
     expect(c.autoSource).toBe("cpu");
   });
 
-  it("parseWorkers 有 env 或 admin 值時不是自動，但 autoValue 仍算", () => {
+  it("with an env or admin value parseWorkers is not auto, but autoValue is still computed", () => {
     const a = resolveSnapshot(new Map([["parseWorkers", 2]]), {}, machine);
     expect(a.values.parseWorkers).toBe(2);
     expect(a.source.parseWorkers).toBe("admin");
@@ -70,7 +70,7 @@ describe("resolveSnapshot 自動項", () => {
     expect(b.source.parseWorkers).toBe("env");
   });
 
-  it("parseQueueWaitMs 自動隨時限", () => {
+  it("parseQueueWaitMs auto follows the timeout", () => {
     const a = resolveSnapshot(new Map([["parseTimeoutMs", 5000]]), {}, machine);
     expect(a.values.parseQueueWaitMs).toBe(25000);
     expect(a.source.parseQueueWaitMs).toBe("auto");
@@ -83,34 +83,34 @@ describe("resolveSnapshot 自動項", () => {
     expect(c.autoValue.parseQueueWaitMs).toBe(45000);
   });
 
-  it("被忽略的 parseQueueWaitMs 列退回自動", () => {
+  it("an ignored parseQueueWaitMs row falls back to auto", () => {
     const s = resolveSnapshot(new Map([["parseQueueWaitMs", 4500]]), {}, machine);
     expect(s.values.parseQueueWaitMs).toBe(45000);
     expect(s.source.parseQueueWaitMs).toBe("auto");
     expect(s.ignored).toEqual([{ key: "parseQueueWaitMs", value: 4500 }]);
   });
 
-  it("所有生效值都是整數", () => {
+  it("all effective values are integers", () => {
     const s = resolveSnapshot(new Map(), {}, machine);
     for (const k of SITE_LIMIT_KEYS) expect(Number.isInteger(s.values[k])).toBe(true);
   });
 });
 
 describe("auto.ts", () => {
-  it("autoParseWorkers：記憶體嚴格較小才是 memory", () => {
+  it("autoParseWorkers: memory wins only when strictly smaller", () => {
     expect(autoParseWorkers(GIB2, 512)).toEqual({ value: 2, source: "memory" });
     expect(autoParseWorkers(machine, 1024)).toEqual({ value: 4, source: "cpu" });
-    // 兩邊相等 → cpu
+    // equal on both sides -> cpu
     expect(autoParseWorkers({ ...machine, cpus: 3, memoryBytes: 2 * 2 ** 30 }, 512)).toEqual({ value: 2, source: "cpu" });
   });
-  it("autoQueueWaitMs 上限 2^31-1", () => {
+  it("autoQueueWaitMs is capped at 2^31-1", () => {
     expect(autoQueueWaitMs(10000)).toBe(45000);
     expect(autoQueueWaitMs(2 ** 31)).toBe(2 ** 31 - 1);
   });
 });
 
 describe("checkStorable", () => {
-  it("先範圍後刻度", () => {
+  it("range first, then step", () => {
     expect(checkStorable("noteMaxBytes", 1048575)).toBe("range");
     expect(checkStorable("noteMaxBytes", 1048577)).toBe("step");
     expect(checkStorable("noteMaxBytes", 1048576)).toBe("ok");

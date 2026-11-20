@@ -9,7 +9,7 @@ import { dismissAllToasts, Toaster } from "@/components/ui/toast";
 import { useTour, type TourApi } from "@/lib/tour-context";
 import { TourProvider } from "./TourProvider";
 
-// 導覽元件 render 時拋錯，直到測試把開關關掉；之後的一輪正常 render：看出錯那一輪是否只收掉導覽、不拖垮整個 app。
+// The tour component throws while rendering until the test switches it off; the next round renders normally. Checks that the failed round only tears down the tour and does not take down the whole app.
 const lazy = vi.hoisted(() => ({ crash: true }));
 vi.mock("./TourLazy", () => ({
   TourLazy: () => {
@@ -35,8 +35,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("導覽元件 render 拋錯", () => {
-  it("app 其他部分仍在、不進兜底畫面；這一輪結束並跳一則提示，下一次開始照常", async () => {
+describe("tour component throws while rendering", () => {
+  it("the rest of the app stays up and the fallback screen is not shown; the round ends with one toast and the next start works normally", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MemoryRouter initialEntries={["/"]}>
@@ -59,7 +59,6 @@ describe("導覽元件 render 拋錯", () => {
     expect(screen.queryByTestId("tour-ok")).toBeNull();
 
     lazy.crash = false;
-    // 這一輪已經結束：能再開始，而且是全新的一輪。
     start();
     await waitFor(() => expect(screen.getByTestId("tour-ok")).toBeTruthy());
     expect(screen.getByText("app content")).toBeTruthy();

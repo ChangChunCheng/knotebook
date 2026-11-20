@@ -1,13 +1,13 @@
 import { vi } from "vitest";
 
 /**
- * #229 元件測試用的瀏覽器形全螢幕假實作，裝在 jsdom 真 document 上（jsdom 沒有 Fullscreen API）。
- * - requestFullscreen／exitFullscreen 回**未決**的 Promise，由測試決定何時、以何種順序完成；
- * - fullscreenElement 由這裡控制、晚於呼叫才變；fullscreenchange 由這裡派送。
- * - performance.now 換成可控時鐘（每次安裝往前跳 100 萬毫秒），測試用 advance() 推進。
- * 用完一定要 `await fake.uninstall()`（afterEach）：把未決請求 reject，並**在時鐘 0 派一次「離開」**——
- *   present/fullscreen.ts 的 owned／exitWanted 歸 false、lastExitAt 歸 0（＝從未離開，msSinceFullscreenExit() 回 Infinity）。
- *   不歸 0 的話，模組會留著百萬級的假時間，下一案若**沒裝**假全螢幕，真時鐘減它是負數 < 300，Esc 全被防連退吃掉。
+ * A browser-shaped fake Fullscreen implementation for component tests, installed on jsdom's real document (jsdom has no Fullscreen API).
+ * - requestFullscreen / exitFullscreen return **pending** Promises; the test decides when and in what order they complete;
+ * - fullscreenElement is controlled here and changes after the call; fullscreenchange is dispatched from here.
+ * - performance.now is replaced by a controllable clock (jumps forward 1,000,000 ms on every install); tests advance it with advance().
+ * Always `await fake.uninstall()` when done (afterEach): it rejects pending requests and **dispatches one "exit" at clock 0** -
+ *   owned / exitWanted in present/fullscreen.ts go false and lastExitAt goes to 0 (= never exited, msSinceFullscreenExit() returns Infinity).
+ *   Without resetting to 0 the module would keep a fake time in the millions, and if the next case **doesn't install** the fake fullscreen, the real clock minus it is negative (< 300) and the exit debounce swallows every Esc.
  */
 export async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -21,14 +21,12 @@ interface Deferred {
 export interface FakeFullscreen {
   readonly requestFullscreen: ReturnType<typeof vi.fn>;
   readonly exitFullscreen: ReturnType<typeof vi.fn>;
-  /** 規範順序：先 fullscreenchange、後 resolve。 */
+  /** Spec order: fullscreenchange, then resolve. */
   grantEventFirst(): Promise<void>;
-  /** 先 resolve、後 fullscreenchange。 */
   grantResolveFirst(): Promise<void>;
   deny(): Promise<void>;
-  /** 完成最早一個 exitFullscreen：清 element、派事件、resolve。 */
+  /** Completes the earliest pending exitFullscreen. */
   completeExit(): Promise<void>;
-  /** 瀏覽器自己退出（例如 Esc 被瀏覽器吃掉）：清 element、派事件。 */
   userExit(): Promise<void>;
   advance(ms: number): void;
   uninstall(): Promise<void>;
@@ -94,7 +92,7 @@ export function installFakeFullscreen({ enabled = true }: { enabled?: boolean } 
       request = null;
       await flushMicrotasks();
       element = null;
-      now = 0; // 讓模組記下的 lastExitAt 為 0（見檔頭）
+      now = 0; // makes the module's recorded lastExitAt 0 (see the file header)
       fire();
       while (exits.length > 0) exits.shift()?.resolve();
       await flushMicrotasks();

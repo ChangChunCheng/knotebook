@@ -6,14 +6,9 @@ import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { AppRoutes } from "./App";
 
-// 把 PublicNotePage 換成「等測試放行才 resolve 的 stub」，讓 Suspense fallback 有
-// 可斷言的窗口；同時 stub 本身零 fetch——於是「整條 /p/ 路由（含 fallback 期）完全
-// 不打任何 API」就能用『fetch 從未被呼叫』一刀斷言。
-// 不用 App.test.tsx 的固定延遲手法（把正確性綁在 wall-clock 上，CI 慢機
-// 有 flake 窗口）——手控 gate 是確定性的：第一案全程不放行（fallback 期恆成立）、
-// 第二案自己放行。⚠ 三案共用同一個 module-level gate 與 React.lazy 的 import 快取，
-// 順序承重、別重排：「不放行的案子在前」，且第三案（#122 別名形）倚賴第二案已
-// 放行 gate 才能直接渲染。
+// PublicNotePage is replaced by a stub that resolves only when the test releases it, giving the Suspense fallback an assertable window; the stub itself does no fetch, so "the whole /p/ route (fallback period included) calls no API" is a single assertion that fetch was never called.
+// A fixed delay (as in App.test.tsx) would tie correctness to wall-clock time and leave a flake window on slow CI; a manual gate is deterministic: the first case never releases it (the fallback period holds throughout), the second releases it itself.
+// ⚠ The three cases share one module-level gate and React.lazy's import cache, so order matters, don't reorder: the never-release case goes first, and the third (#122 alias form) relies on the second having released the gate so it can render directly.
 const chunkGate = vi.hoisted(() => {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -29,8 +24,7 @@ vi.mock("./pages/PublicNotePage", async () => {
 const TOKEN = "abcDEF123_-".repeat(4).slice(0, 43);
 
 function renderApp(entry = `/p/${TOKEN}`) {
-  // 任何 fetch 都是違規：/p/ 兩形都在 RequireAuth 外，匿名訪客不該打到 /api/auth/me
-  // （包 RequireAuth 的迴歸會在這裡現形——session query 一跑 fetchSpy 就有呼叫紀錄）。
+  // Any fetch is a violation: both /p/ forms are outside RequireAuth, so an anonymous visitor must not hit /api/auth/me (a regression wrapping them in RequireAuth shows up here: the session query makes fetchSpy record a call).
   const fetchSpy = vi.fn(() => Promise.reject(new Error("public route must not fetch")));
   vi.stubGlobal("fetch", fetchSpy);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -54,31 +48,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("App route tree — /p/ 兩形都在 RequireAuth 外（#72、#122）", () => {
-  it("chunk 載入中：公開頁專屬 fallback（極簡 loading，無 AppShell 側欄）；全程零 fetch", async () => {
+describe("App route tree - both /p/ forms sit outside RequireAuth (#72, #122)", () => {
+  it("while the chunk loads: public-page-specific fallback (minimal loading, no AppShell sidebar); zero fetches throughout", async () => {
     const fetchSpy = renderApp();
 
-    // gate 未放行、chunk 永遠 pending——fallback 期恆成立：loading 在場、AppShell 招牌
-    // （New note）不得在場——重用 NotePageFallback 會把側欄（連同 session/notes query）
-    // 露給匿名者。
+    // Gate not released, so the chunk stays pending and the fallback period holds: loading is present and the AppShell landmark (New note) must not be; reusing NotePageFallback would expose the sidebar (and the session/notes queries) to anonymous visitors.
     await waitFor(() => expect(screen.getByText("Loading…")).toBeInTheDocument());
     expect(screen.queryByText("New note")).not.toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("chunk 落地：頁面渲染、未被導去 /login、全程零 fetch（未登入不重導）", async () => {
+  it("chunk resolved: page renders, no redirect to /login, zero fetches (signed-out users are not redirected)", async () => {
     const fetchSpy = renderApp();
 
     chunkGate.release();
     await waitFor(() => expect(screen.getByText("public-note-page-stub")).toBeInTheDocument());
-    // 沒被 RequireAuth 踢去登入頁
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("別名兩段形 /p/<handle>/<slug>（#122）：同樣在 RequireAuth 外承接、零 fetch", async () => {
-    // gate 已由上一案放行（module-level 快取）——本案直接渲染。零 fetch 守衛擴到新形：
-    // 兩段形若誤掛進 RequireAuth，session query 會讓 fetchSpy 有呼叫紀錄。
+  it("alias two-segment form /p/<handle>/<slug> (#122): also outside RequireAuth, zero fetches", async () => {
+    // The gate was released by the previous case (module-level cache), so this renders directly. Extends the zero-fetch guard to the new form: if the two-segment form were mounted inside RequireAuth, the session query would make fetchSpy record a call.
     const fetchSpy = renderApp("/p/alice/my-doc");
     await waitFor(() => expect(screen.getByText("public-note-page-stub")).toBeInTheDocument());
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();

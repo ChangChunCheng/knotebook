@@ -19,8 +19,8 @@ const MEMBER_PERMISSIONS = {
   read: true, create: true, edit: true, delete: false, managePublicLink: false, manageMembers: false, manageGroup: false,
 } as const;
 
-describe("#103／#175 POST／GET /api/groups", () => {
-  it("POST：201 GroupDto（myRole＝內建管理員物件、兩個 canManage* 為真、名稱 trim）；同交易建兩個內建角色、建立者掛 admin；created_by=我；未登入 401", async () => {
+describe("#103/#175 POST/GET /api/groups", () => {
+  it("POST: 201 GroupDto (myRole = built-in admin object, both canManage* true, name trimmed); both built-in roles created in the same transaction, creator holds admin; created_by = me; not signed in 401", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db);
     const res = await app.inject({ method: "POST", url: "/api/groups", cookies: await cookieOf(me.id), payload: { name: "  Design  " } });
@@ -53,7 +53,7 @@ describe("#103／#175 POST／GET /api/groups", () => {
     expect((await app.inject({ method: "GET", url: "/api/groups" })).statusCode).toBe(401);
   });
 
-  it("名稱邊界——NUL／落單代理／全空白／81 字元 → 400 invalid_name（不是 500）；80 個 emoji 接受；型別錯／多欄 → 400 invalid_body", async () => {
+  it("name boundaries - NUL / lone surrogate / all whitespace / 81 characters -> 400 invalid_name (not 500); 80 emoji accepted; wrong type / extra fields -> 400 invalid_body", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db);
     const cookies = await cookieOf(me.id);
@@ -73,7 +73,7 @@ describe("#103／#175 POST／GET /api/groups", () => {
     }
   });
 
-  it("GET /api/groups：只列我所屬的、先依我的角色（內建管理員 → 一般成員）再依 name、id；myRole 物件形（memberCount＝掛該角色的人數）；站台 admin 的 canManage* 恆真、也看不到非所屬群組", async () => {
+  it("GET /api/groups: lists only those I belong to, ordered by my role (built-in admin -> regular member) then name, id; myRole object shape (memberCount = number of people holding that role); a site admin's canManage* is always true and sees no groups they don't belong to", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db, { isAdmin: true });
     const other = await seedUser(db);
@@ -86,28 +86,28 @@ describe("#103／#175 POST／GET /api/groups", () => {
     const res = await app.inject({ method: "GET", url: "/api/groups", cookies: await cookieOf(me.id) });
     expect(res.statusCode).toBe(200);
     const list = res.json() as GroupDto[];
-    // 我在 Alpha、same2 是管理員，在 same1 是一般成員：管理員的兩個在前（依 name），一般成員的在後。
+    // I'm admin in Alpha and same2 and a regular member in same1: the two admin ones come first (by name), the regular member one after.
     expect(list.map(g => g.id)).toEqual([alpha.id, same2.id, same1.id]);
     const s1 = list.find(g => g.id === same1.id)!;
     expect(s1.myRole).toEqual({ id: same1.memberRoleId, builtin: "member", name: null, memberCount: 2, permissions: MEMBER_PERMISSIONS });
-    // 站台 admin：角色是一般成員，兩個 canManage* 仍為真。
+    // Site admin: the role is regular member, both canManage* are still true.
     expect(s1).toMatchObject({ canManageMembers: true, canManageGroup: true });
     expect(list.find(g => g.id === same2.id)!.myRole).toMatchObject({ id: same2.adminRoleId, builtin: "admin", memberCount: 1 });
 
-    // 一般使用者：一般成員角色 → 兩個 canManage* 為假。
+    // Regular user: regular member role -> both canManage* false.
     const plainList = (await app.inject({ method: "GET", url: "/api/groups", cookies: await cookieOf(plain.id) })).json() as GroupDto[];
     expect(plainList).toHaveLength(1);
     expect(plainList[0]).toMatchObject({ id: same1.id, canManageMembers: false, canManageGroup: false });
     expect(plainList[0]!.myRole!.permissions.manageGroup).toBe(false);
   });
 
-  it("GET /api/groups 排序：內建管理員的群組在前、再內建一般成員、再自訂角色；同一類依 name 再依 id（一般成員的 Delta 在字母上排在自訂角色的 Beta／Gamma 之後；兩個同名 Beta 靠 id 定序；側欄群組 tab 的順序）", async () => {
+  it("GET /api/groups ordering: groups with built-in admin first, then built-in regular member, then custom roles; within a class by name then id (the regular member Delta sorts alphabetically after the custom-role Beta/Gamma; two groups both named Beta are ordered by id; the order of the sidebar groups tab)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const me = await seedUser(db);
     const other = await seedUser(db);
-    // 刻意讓「建立順序」與「id 順序」相反：先用較大的 id 建 beta、後用較小的 id 建 beta2（固定 id，不靠隨機重試）；
-    // 沒有 asc(groups.id) 時結果會照建立（heap）順序給 beta、beta2，斷言必紅。
-    // 小寫 uuid 字串的字典序與 Postgres uuid（16 bytes 由高到低比較）的順序一致。
+    // Deliberately make creation order the reverse of id order: beta is created with the larger id first, beta2 with the smaller id after (fixed ids, no random retry);
+    // without asc(groups.id) the result would follow creation (heap) order, beta then beta2, and the assertion necessarily goes red.
+    // The lexicographic order of lowercase uuid strings matches Postgres uuid order (16 bytes compared from the most significant).
     const [lo, hi] = [randomUUID(), randomUUID()].sort();
     const beta = await seedGroup(db, "Beta", [{ userId: other.id, role: "admin" }, { userId: me.id, role: "member" }], { id: hi });
     await setMemberRole(db, beta.id, me.id, await seedRole(db, beta.id, "Reader", { canRead: true }));
@@ -128,8 +128,8 @@ describe("#103／#175 POST／GET /api/groups", () => {
   });
 });
 
-describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
-  it("PATCH 改名的授權矩陣（含站台 admin、非 UUID、不存在；三種 404 逐位元組相同）", async () => {
+describe("#103/#175 PATCH /api/groups/:id and GET .../members", () => {
+  it("PATCH rename authorization matrix (including site admin, non-UUID, nonexistent; the three 404s byte-for-byte identical)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "PATCH",
@@ -139,7 +139,7 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
     });
   });
 
-  it("PATCH：trim 後寫入、回 GroupDto；一般成員即使 body 壞也先拿 403（新訊息）；admin 送壞名稱 → 400 invalid_name、送 {} → 400 invalid_body；非成員站台 admin 的回應 myRole=null、兩個 canManage* 為真", async () => {
+  it("PATCH: written after trim, returns GroupDto; a regular member gets 403 first even with a bad body (new message); admin sending a bad name -> 400 invalid_name, {} -> 400 invalid_body; a non-member site admin's response has myRole=null and both canManage* true", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const member = await seedUser(db);
@@ -162,7 +162,7 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
     expect(bySite.json()).toMatchObject({ name: "Site", myRole: null, canManageMembers: true, canManageGroup: true });
   });
 
-  it("身為一般成員的站台 admin 可改名與加人（角色旗標 OR 站台 admin，不只看是否成員）", async () => {
+  it("a site admin who is a regular member can rename and add people (role flag OR site admin, not only membership)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const site = await seedUser(db, { isAdmin: true });
@@ -177,7 +177,7 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
     expect(add.json()).toMatchObject({ userId: newcomer.id, builtin: "member", roleId: g.memberRoleId });
   });
 
-  it("GET …/members 的授權矩陣（成員即可讀）", async () => {
+  it("GET .../members authorization matrix (members can read)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "GET",
@@ -186,7 +186,7 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
     });
   });
 
-  it("GET …/members：內建管理員在前、再依 displayName、再依 userId；每列 { userId, email, displayName, roleId, builtin }", async () => {
+  it("GET .../members: built-in admins first, then displayName, then userId; each row { userId, email, displayName, roleId, builtin }", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const zed = await seedUser(db, { displayName: "Zed" });
     const amy1 = await seedUser(db, { displayName: "Amy" });
@@ -208,7 +208,7 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
     expect(Object.keys(rows[3]!).sort()).toEqual(["avatar", "builtin", "displayName", "email", "roleId", "userId"]);
   });
 
-  it("索引：GET /api/groups 走 group_members_user_idx；「群組內所有筆記」走 notes_group_slug_idx", async () => {
+  it("indexes: GET /api/groups uses group_members_user_idx; 'all notes in the group' uses notes_group_slug_idx", async () => {
     const { db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const { userId } = await seedPlannerData(db.$client);
     expect(await planOf(db.$client, listMyGroupsQuery(db, userId).toSQL())).toContain("group_members_user_idx");
@@ -216,8 +216,8 @@ describe("#103／#175 PATCH /api/groups/:id 與 GET …/members", () => {
   });
 });
 
-describe("#175 GET /api/groups/:id/roles（唯讀）", () => {
-  it("授權矩陣：成員即可讀、非成員站台 admin 也可讀；非成員／非 UUID／不存在 404 逐位元組相同", async () => {
+describe("#175 GET /api/groups/:id/roles (read-only)", () => {
+  it("authorization matrix: members can read, a non-member site admin can too; non-member/non-UUID/nonexistent 404 byte-for-byte identical", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "GET",
@@ -226,7 +226,7 @@ describe("#175 GET /api/groups/:id/roles（唯讀）", () => {
     });
   });
 
-  it("排序：內建管理員、內建一般成員、其餘依名稱（不分大小寫）；memberCount 正確；GroupRoleDto 形", async () => {
+  it("order: built-in admin, built-in regular member, the rest by name (case-insensitive); memberCount correct; GroupRoleDto shape", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const m1 = await seedUser(db);

@@ -8,8 +8,7 @@ function Probe() {
   return <div data-testid="probe">{activeNoteId ?? "none"}</div>;
 }
 
-/** 復刻 NotePage 的接線形（set-after-load＋卸載條件清除）——這裡釘的是 context 的
- * 清除語意本身，NotePage 端的實際 set 行為在 NotePage.test。 */
+/** Mirrors NotePage's wiring (set after load + conditional clear on unmount). This pins the context's clear semantics itself; NotePage's actual set behaviour is in NotePage.test. */
 function Page({ id }: { id: string }) {
   const { setActiveNoteId, clearActiveNoteId } = useActiveNote();
   useEffect(() => {
@@ -20,7 +19,7 @@ function Page({ id }: { id: string }) {
 }
 
 describe("ActiveNoteContext", () => {
-  it("換頁：舊頁 cleanup 先跑（同 key 換 id）→ 新 id 接手，關頁（整個卸載）→ 清空", () => {
+  it("page switch: the old page's cleanup runs first (same key, new id) -> the new id takes over; closing the page (full unmount) -> cleared", () => {
     const view = render(
       <ActiveNoteProvider>
         <Probe />
@@ -45,9 +44,9 @@ describe("ActiveNoteContext", () => {
     expect(screen.getByTestId("probe")).toHaveTextContent("none");
   });
 
-  it("條件清除防換頁競態：新頁 set 之後才卸載的舊頁**不得**把高亮滅掉", () => {
-    // 先 A 後 B 並存（B 的 set 較晚跑 → active=B），再移除 A——A 的 cleanup 此時
-    // current 已是 B，無條件清除會把剛亮起來的 B 滅掉（clearActiveNoteId 的存在理由）。
+  it("conditional clear prevents a page-switch race: an old page unmounting after the new page's set must not turn off the highlight", () => {
+    // A then B coexist (B's set runs later -> active=B), then A is removed: at A's cleanup `current` is already B, and an
+    // unconditional clear would turn off the just-lit B (the reason clearActiveNoteId exists).
     const view = render(
       <ActiveNoteProvider>
         <Probe />
@@ -66,7 +65,7 @@ describe("ActiveNoteContext", () => {
     expect(screen.getByTestId("probe")).toHaveTextContent("bbb");
   });
 
-  it("provider 外使用 → fail-loud（接線錯誤不得靜默退化成永遠沒高亮）", () => {
+  it("used outside the provider -> fails loudly (a wiring error must not silently degrade into a highlight that never shows)", () => {
     expect(() => render(<Probe />)).toThrow(/ActiveNoteProvider/);
   });
 });

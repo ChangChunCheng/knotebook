@@ -6,8 +6,8 @@ import { deleteNotesInTx } from "../src/notes/tx/delete-notes.js";
 import { buildTestApp } from "./helpers.js";
 import { seedNote, seedRedirect, seedShare, seedUser } from "./group-helpers.js";
 
-describe("#175 deleteNotesInTx（刪群組・全刪共用）", () => {
-  it("多篇：notes 與其 states／backups／shares／兩方向 links／uploads／轉址／AI 紀錄都消失（CASCADE），回被刪的 upload id；名單外的列不動", async () => {
+describe("#175 deleteNotesInTx (shared by group deletion and delete-all)", () => {
+  it("several notes: notes and their states/backups/shares/links in both directions/uploads/redirects/AI records are all gone (CASCADE), returns the deleted upload ids; rows outside the list untouched", async () => {
     const { db } = await buildTestApp();
     const [u, v] = await Promise.all([seedUser(db), seedUser(db)]);
     const [a, b, keep] = await Promise.all([seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id })]);
@@ -37,7 +37,7 @@ describe("#175 deleteNotesInTx（刪群組・全刪共用）", () => {
     expect((await db.select().from(uploads).where(eq(uploads.id, uk!.id))).length).toBe(1);
   });
 
-  it("空名單：no-op、回 []（drizzle 0.44 的 `inArray(col, [])` 渲染成 `false`）", async () => {
+  it("empty list: no-op, returns [] (drizzle 0.44 renders `inArray(col, [])` as `false`)", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id });

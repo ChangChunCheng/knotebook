@@ -10,7 +10,7 @@ import {
   DEFAULT_PROPS_BY_TYPE, PARAGRAPH_DEFAULT_PROPS, VACUUM_VERSION_FINGERPRINT, buildDefaultPropsByType, versionFingerprint,
 } from "../../src/notes/version-fingerprint.js";
 
-// 同 editing-session.test.ts：重建門檻調到不可能觸發，避免中途換掉全域 window。
+// same as editing-session.test.ts: set the rebuild threshold so high it cannot trigger, so the global window is not swapped midway.
 const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 1_000_000, heapGrowthLimit: Number.MAX_SAFE_INTEGER });
 rt.installGlobals();
 const F = (d: Y.Doc) => d.getXmlFragment(YDOC_FRAGMENT);
@@ -26,7 +26,7 @@ async function make(blocks: unknown[]): Promise<Y.Doc> {
   }
   return doc;
 }
-/** 第 i 顆頂層區塊的內容節點底下的 XmlText；沒有就建一顆（新建空段落沒有 XmlText）。 */
+/** The XmlText under the content node of the i-th top-level block; created if missing (a freshly created empty paragraph has no XmlText). */
 function textOfBlock(doc: Y.Doc, i: number): Y.XmlText {
   const content = topLevelBlocks(F(doc))[i]!.get(0) as Y.XmlElement;
   const t = content.get(0);
@@ -35,7 +35,7 @@ function textOfBlock(doc: Y.Doc, i: number): Y.XmlText {
   doc.transact(() => content.insert(0, [created]));
   return created;
 }
-/** 手造的段落文件（不經 BlockNote）：病態結構（缺 id、怪屬性）只能這樣造。id 為 null＝不設 id。 */
+/** Hand-built paragraph document (not via BlockNote): pathological structures (missing id, odd attributes) can only be built this way. An id of null = no id set. */
 function rawDoc(paras: Array<{ id: string | null; text: string; attrs?: Record<string, unknown> }>): Y.Doc {
   const doc = new Y.Doc();
   const g = new Y.XmlElement("blockGroup");
@@ -55,7 +55,7 @@ function rawDoc(paras: Array<{ id: string | null; text: string; attrs?: Record<s
   for (const [t, s] of texts) if (s) t.insert(0, s);
   return doc;
 }
-/** 手造單一區塊：blockGroup > blockContainer(id) > <type>(attrs) > [XmlText(text)、inline 元素…]。值照原型別寫進 Yjs（number／boolean 不轉字串）。 */
+/** Hand-builds a single block: blockGroup > blockContainer(id) > <type>(attrs) > [XmlText(text), inline elements...]. Values are written to Yjs in their original types (numbers/booleans are not stringified). */
 function blockDoc(type: string, attrs: Record<string, unknown>, text = "x", inline: Array<{ type: string; attrs: Record<string, unknown> }> = []): Y.Doc {
   const doc = new Y.Doc();
   const g = new Y.XmlElement("blockGroup");
@@ -92,17 +92,17 @@ function deepDoc(depth: number): Y.Doc {
   return doc;
 }
 
-describe("真空", () => {
-  it("對照向量：舊指紋把真空與一顆空段落分成兩個值，版本指紋視為同一個", async () => {
+describe("truly empty", () => {
+  it("reference vector: the old fingerprint gives a truly empty document and one empty paragraph two values, the version fingerprint treats them as the same", async () => {
     const vacuum = new Y.Doc();
     const one = await make([{ type: "paragraph" }]);
-    expect(outlineOf(F(vacuum)).whole).toBe("8e2d0c61b0acc423"); // 實測值（對照組：舊指紋不變）
+    expect(outlineOf(F(vacuum)).whole).toBe("8e2d0c61b0acc423"); // reference value (control: the old fingerprint is unchanged)
     expect(outlineOf(F(one)).whole).toBe("7bcfba7c4d4cd39c");
     expect(vfp(vacuum)).toBe(VACUUM_VERSION_FINGERPRINT);
     expect(vfp(one)).toBe(VACUUM_VERSION_FINGERPRINT);
   });
 
-  it("打一字再刪光（T[]）、多顆預設空段落、屬性缺席的空段落 → 真空", async () => {
+  it("typed then fully deleted (T[]), several default empty paragraphs, an empty paragraph with attributes absent -> truly empty", async () => {
     const typed = await make([{ type: "paragraph" }]);
     const t = textOfBlock(typed, 0);
     typed.transact(() => t.insert(0, "x"));
@@ -114,31 +114,31 @@ describe("真空", () => {
     ]))).toBe(VACUUM_VERSION_FINGERPRINT);
   });
 
-  it("置中的空段落、空 heading、只有一個空白的段落、多一個不認得的屬性 → 不是真空", async () => {
+  it("a centred empty paragraph, an empty heading, a paragraph with a single space, an extra unknown attribute -> not truly empty", async () => {
     expect(vfp(await make([{ type: "paragraph", props: { textAlignment: "center" } }]))).not.toBe(VACUUM_VERSION_FINGERPRINT);
     expect(vfp(await make([{ type: "heading", props: { level: 1 } }]))).not.toBe(VACUUM_VERSION_FINGERPRINT);
     expect(vfp(rawDoc([{ id: "a", text: " " }]))).not.toBe(VACUUM_VERSION_FINGERPRINT);
     expect(vfp(rawDoc([{ id: "a", text: "", attrs: { weird: "1" } }]))).not.toBe(VACUUM_VERSION_FINGERPRINT);
   });
 
-  it("PARAGRAPH_DEFAULT_PROPS 與 BlockNote 0.52 的 defaultProps 一致（升版會紅）", () => {
+  it("PARAGRAPH_DEFAULT_PROPS matches BlockNote 0.52's defaultProps (goes red on upgrade)", () => {
     expect(PARAGRAPH_DEFAULT_PROPS).toEqual(
       Object.fromEntries(Object.entries(defaultProps).map(([k, v]) => [k, (v as { default: unknown }).default])),
     );
   });
 });
 
-describe("空 XmlText 視同不存在", () => {
-  it("對照 A：非真空文件裡，打字後刪光的段落與新建空段落同值（舊指紋不同值）", async () => {
+describe("an empty XmlText counts as absent", () => {
+  it("control A: in a non-empty document, a paragraph typed into and fully deleted has the same value as a freshly created empty paragraph (the old fingerprint differs)", async () => {
     const typed = await make([{ type: "paragraph", content: "x" }, { type: "paragraph", content: "a" }]);
     const t = textOfBlock(typed, 1);
     typed.transact(() => t.delete(0, t.length));
     const fresh = await make([{ type: "paragraph", content: "x" }, { type: "paragraph" }]);
     expect(vfp(typed)).toBe(vfp(fresh));
-    expect(outlineOf(F(typed)).whole).not.toBe(outlineOf(F(fresh)).whole); // 對照：承重
+    expect(outlineOf(F(typed)).whole).not.toBe(outlineOf(F(fresh)).whole); // contrast: load-bearing
   });
 
-  it("套用往返相等：快照 blocks 以 replace_all 寫進別的活文件後版本指紋相同（舊指紋不同）", async () => {
+  it("round trip on apply: after the snapshot's blocks are written into another live document with replace_all the version fingerprints are equal (the old fingerprint differs)", async () => {
     const snap = await make([
       { type: "heading", props: { level: 2 }, content: "標題" },
       { type: "paragraph", content: [{ type: "text", text: "粗", styles: { bold: true } }, { type: "text", text: "普通", styles: {} }] },
@@ -148,7 +148,7 @@ describe("空 XmlText 視同不存在", () => {
     ]);
     const z = textOfBlock(snap, 3);
     snap.transact(() => z.insert(0, "z"));
-    snap.transact(() => z.delete(0, 1)); // 快照裡留一顆 T[] 段落
+    snap.transact(() => z.delete(0, 1)); // leave one T[] paragraph in the snapshot
     const live = await make([{ type: "paragraph", content: "活文件" }]);
     const blocks = yXmlFragmentToBlocks(BlockNoteEditor.create({ schema: createHeadlessNoteSchema("http://localhost/") }), F(snap));
     const { fork, sv } = forkFrom(live);
@@ -162,12 +162,12 @@ describe("空 XmlText 視同不存在", () => {
     }
     Y.applyUpdate(live, diff!);
     expect(vfp(live)).toBe(vfp(snap));
-    expect(outlineOf(F(live)).whole).not.toBe(outlineOf(F(snap)).whole); // 舊指紋會判成「有改」
+    expect(outlineOf(F(live)).whole).not.toBe(outlineOf(F(snap)).whole); // the old fingerprint would judge it as changed
   });
 });
 
-describe("內容與歷史（對照向量）", () => {
-  it("內容相同歷史不同 → 相等（粗體再取消、刪了重打）；區塊 id 不計", async () => {
+describe("content and history (reference vectors)", () => {
+  it("same content, different history -> equal (bold then un-bold, delete and retype); block ids do not count", async () => {
     const plain = await make([{ type: "paragraph", content: "abc" }]);
     const bold = await make([{ type: "paragraph", content: "abc" }]);
     const tb = textOfBlock(bold, 0);
@@ -181,7 +181,7 @@ describe("內容與歷史（對照向量）", () => {
     expect(vfp(retyped)).toBe(vfp(plain));
   });
 
-  it("對照：fork、note_states 往返重載與原文件相等；改字、新區塊、只改屬性、只改 mark 都不等；打一字再刪相等", () => {
+  it("contrast: a fork and a note_states round-trip reload equal the original document; changed text, a new block, only attributes changed, only marks changed are all unequal; typing a character then deleting it is equal", () => {
     const live = rawDoc([{ id: "a", text: "Title", attrs: { textColor: "default" } }, { id: "b", text: "hello world", attrs: { textAlignment: "left" } }]);
     const w0 = vfp(live);
     const reload = new Y.Doc();
@@ -211,29 +211,29 @@ describe("內容與歷史（對照向量）", () => {
   });
 });
 
-describe("不丟例外", () => {
-  it("5000 層巢狀：舊指紋 RangeError（對照），版本指紋算得出 16 hex", () => {
+describe("does not throw", () => {
+  it("5000 levels of nesting: the old fingerprint throws RangeError (contrast), the version fingerprint computes 16 hex", () => {
     const deep = deepDoc(5000);
     expect(() => outlineOf(F(deep))).toThrow(RangeError);
     expect(versionFingerprint(F(deep))).toMatch(/^[0-9a-f]{16}$/);
-    // 建 5000 層文件本身是平方成本（實測空閒約 2 s、機器忙時逾 5 s）；舊指紋丟 RangeError 的層數門檻隨堆疊與執行情境而變，5000 層是留餘裕的取值，所以放寬 timeout 而不降層數。
+    // Building a 5000-level document is itself quadratic (about 2 s when idle, over 5 s when the machine is busy); the depth at which the old fingerprint throws RangeError varies with stack and execution context, and 5000 levels leaves headroom, so the timeout is relaxed instead of lowering the depth.
   }, 60_000);
 
-  it("缺 id 的兩顆不撞鍵：[A,B] ≠ [B,B]（舊指紋直接丟例外）", () => {
+  it("two blocks missing ids do not collide: [A,B] != [B,B] (the old fingerprint threw)", () => {
     const ab = rawDoc([{ id: null, text: "AAA" }, { id: null, text: "BBB" }]);
     const bb = rawDoc([{ id: null, text: "BBB" }, { id: null, text: "BBB" }]);
     expect(() => outlineOf(F(ab))).toThrow();
     expect(vfp(ab)).not.toBe(vfp(bb));
   });
 
-  it("名稱含分隔字元不撞串：單一屬性名含 =、; 的文件 ≠ 兩個普通屬性的文件", () => {
+  it("names containing separator characters do not collide as strings: a document with a single attribute name containing = and ; != a document with two ordinary attributes", () => {
     const one = rawDoc([{ id: "a", text: "x", attrs: { 'a="v";b': "1" } }]);
     const two = rawDoc([{ id: "a", text: "x", attrs: { a: "v", b: "1" } }]);
     expect(vfp(one)).toMatch(/^[0-9a-f]{16}$/);
     expect(vfp(one)).not.toBe(vfp(two));
   });
 
-  it("非字串屬性（數字、100 層巢狀物件、本地 bigint）照樣算得出值", () => {
+  it("non-string attributes (numbers, 100 levels of nested objects, a local bigint) still compute", () => {
     let nested: Record<string, unknown> = { leaf: true };
     for (let i = 0; i < 100; i += 1) nested = { n: nested };
     const doc = rawDoc([{ id: "a", text: "x", attrs: { level: 2, weird: nested, big: BigInt(7) } }]);
@@ -242,8 +242,8 @@ describe("不丟例外", () => {
   });
 });
 
-describe("並排欄寬", () => {
-  /** 手造一列：columnList > column(width?) > blockContainer > paragraph。width 為 undefined＝屬性不存在。 */
+describe("column widths in columns", () => {
+  /** Hand-builds a row: columnList > column(width?) > blockContainer > paragraph. width undefined = the attribute is absent. */
   function rowDoc(width: number | undefined): Y.Doc {
     const doc = new Y.Doc();
     const g = new Y.XmlElement("blockGroup");
@@ -269,69 +269,69 @@ describe("並排欄寬", () => {
     return doc;
   }
 
-  it("column 的 width 屬性不存在 ≡ width:1（預設）；width:2 不同", () => {
+  it("a column without a width attribute == width:1 (the default); width:2 differs", () => {
     expect(vfp(rowDoc(undefined))).toBe(vfp(rowDoc(1)));
     expect(vfp(rowDoc(2))).not.toBe(vfp(rowDoc(1)));
   });
 });
 
-describe("屬性值等於 schema 預設視同缺席（方案二，V2）", () => {
+describe("attribute values equal to the schema default count as absent", () => {
   const HEADING_FULL = { level: 2, isToggleable: false, backgroundColor: "default", textColor: "default", textAlignment: "left" };
   const PARA_FULL = { backgroundColor: "default", textAlignment: "left", textColor: "default" };
 
-  it("heading{level:2} 與補齊四個預設屬性的 heading 相等（舊 schema 的筆記被 y-prosemirror 回寫預設值）", () => {
+  it("heading{level:2} equals a heading with the four default attributes filled in (notes from an old schema had defaults written back by y-prosemirror)", () => {
     expect(bfp("heading", { level: 2 })).toBe(bfp("heading", HEADING_FULL));
     expect(bfp("heading", { level: 2 })).toMatch(/^[0-9a-f]{16}$/);
   });
 
-  it("paragraph{} 與補齊三個預設屬性的 paragraph 相等；textAlignment:center 不等", () => {
+  it("paragraph{} equals a paragraph with the three default attributes filled in; textAlignment:center differs", () => {
     expect(bfp("paragraph", {})).toBe(bfp("paragraph", PARA_FULL));
     expect(bfp("paragraph", { textAlignment: "center" })).not.toBe(bfp("paragraph", {}));
     expect(bfp("paragraph", { ...PARA_FULL, textAlignment: "center" })).toBe(bfp("paragraph", { textAlignment: "center" }));
   });
 
-  it("非預設值仍參與：level 2≠3、checked true≠缺席；level:1（預設）＝缺席", () => {
+  it("non-default values still count: level 2 != 3, checked true != absent; level:1 (the default) = absent", () => {
     expect(bfp("heading", { level: 2 })).not.toBe(bfp("heading", { level: 3 }));
     expect(bfp("checkListItem", { checked: true })).not.toBe(bfp("checkListItem", {}));
     expect(bfp("checkListItem", { checked: false })).toBe(bfp("checkListItem", {}));
     expect(bfp("heading", { level: 1 })).toBe(bfp("heading", {}));
   });
 
-  it("值為 undefined 一律視同缺席（numberedListItem.start 的預設就是 undefined，不在表裡）；start:3 不等", () => {
+  it("an undefined value counts as absent (numberedListItem.start defaults to undefined and is not in the table); start:3 differs", () => {
     expect(DEFAULT_PROPS_BY_TYPE.numberedListItem).not.toHaveProperty("start");
     const withUndef = blockDoc("numberedListItem", { start: undefined });
     const li = topLevelBlocks(F(withUndef))[0]!.get(0) as Y.XmlElement;
-    expect(Object.hasOwn(li.getAttributes(), "start")).toBe(true); // 真的寫進了 Yjs（不是被 setAttribute 丟掉）
+    expect(Object.hasOwn(li.getAttributes(), "start")).toBe(true); // really written into Yjs (not dropped by setAttribute)
     expect(vfp(withUndef)).toBe(bfp("numberedListItem", {}));
     expect(bfp("numberedListItem", { start: 3 })).not.toBe(bfp("numberedListItem", {}));
   });
 
-  it("值比對用嚴格相等：型別不同視為不等（level:\"1\" ≠ 缺席，雖然 \"1\" == 1）", () => {
+  it("values compare with strict equality: a different type is unequal (level:\"1\" != absent although \"1\" == 1)", () => {
     expect(bfp("heading", { level: "1" })).not.toBe(bfp("heading", {}));
     expect(bfp("heading", { level: "1" })).not.toBe(bfp("heading", { level: 1 }));
   });
 
-  it("未知 block type、未知屬性、blockContainer 的非 id 屬性：照舊參與（查不到預設不得丟掉）", () => {
+  it("unknown block types, unknown attributes, non-id attributes of blockContainer: still counted as before (when the default cannot be looked up it must not be dropped)", () => {
     expect(bfp("fancyBlock", { backgroundColor: "default" })).not.toBe(bfp("fancyBlock", {}));
     expect(bfp("paragraph", { weird: "default" })).not.toBe(bfp("paragraph", {}));
     expect(bfp("paragraph", { constructor: "default" })).not.toBe(bfp("paragraph", {}));
     expect(bfp("constructor", { level: 1 })).not.toBe(bfp("constructor", {}));
   });
 
-  it("inline 元素（wikilink）同規則：預設值缺席等價、非預設值參與", () => {
+  it("inline elements (wikilink) follow the same rule: default values equal absent, non-default values count", () => {
     const wl = (attrs: Record<string, unknown>) => bfp("paragraph", {}, "x", [{ type: "wikilink", attrs }]);
     expect(wl({ targetNoteId: "n1", snapshotTitle: "" })).toBe(wl({ targetNoteId: "n1" }));
     expect(wl({ targetNoteId: "n1" })).not.toBe(wl({ targetNoteId: "n2" }));
   });
 
-  it("前綴是 V2:：真空常數與一顆段落的完整序列化釘住（屬性全預設的段落與無屬性同一串）", () => {
+  it("the prefix is V2:: the truly-empty constant and the full serialisation of one paragraph are pinned (a paragraph with all-default attributes and one with none give the same string)", () => {
     expect(VACUUM_VERSION_FINGERPRINT).toBe(fingerprintOf("V2:vacuum"));
     const pinned = fingerprintOf('V2:F[E"blockGroup"()[E"blockContainer"()[E"paragraph"()[T[{"attributes":{},"insert":"x"}]]]]]');
     expect(bfp("paragraph", {})).toBe(pinned);
     expect(bfp("paragraph", PARA_FULL)).toBe(pinned);
   });
 
-  it("預設值表從 shared schema 推出（不是手寫）：類型集合、heading／paragraph／codeBlock／mermaid／wikilink 的值；style 不入表", () => {
+  it("the default-value table is derived from the shared schema (not hand-written): the set of types, the values of heading/paragraph/codeBlock/mermaid/wikilink; style is not in the table", () => {
     expect(Object.keys(DEFAULT_PROPS_BY_TYPE).sort()).toEqual([
       "audio", "bulletListItem", "checkListItem", "codeBlock", "column", "file", "heading", "image", "mermaid", "numberedListItem", "paragraph",
       "quote", "table", "toggleListItem", "video", "wikilink",
@@ -345,7 +345,7 @@ describe("屬性值等於 schema 預設視同缺席（方案二，V2）", () => 
     expect(DEFAULT_PROPS_BY_TYPE.wikilink).toEqual({ targetNoteId: "", snapshotTitle: "", label: "", anchorBlockId: "" });
   });
 
-  it("schema 載入失敗：退回空表、warn(obj, msg) 恰一次，不丟例外", () => {
+  it("schema load failure: falls back to an empty table, warn(obj, msg) exactly once, no throw", () => {
     const warns: Array<[object, string]> = [];
     const table = buildDefaultPropsByType(() => {
       throw new Error("boom");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { __resetCollapseForTests, isCollapsed, setCollapsed, useCollapsed, useCollapseVersion, type SidebarSectionKey } from "./collapse";
 
-// 覆蓋層與訂閱者是模組層，跨案殘留（亂序跑時尤其）。
+// The overlay and subscribers are module-level, so state leaks across tests (especially when run out of order).
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
@@ -23,13 +23,13 @@ function throwQuota(): never {
 }
 
 describe("collapse store", () => {
-  it("CO1 沒存過：isCollapsed 為 false、useCollapsed 回展開", () => {
+  it("nothing stored: isCollapsed is false and useCollapsed reports expanded", () => {
     render(<Probe id="a" />);
     expect(isCollapsed("group:g1")).toBe(false);
     expect(screen.getByTestId("a")).toHaveTextContent("expanded");
   });
 
-  it("CO2 toggle 寫 \"1\"、再 toggle 刪鍵", () => {
+  it("toggle writes \"1\"; toggling again removes the key", () => {
     render(<Probe id="a" />);
     fireEvent.click(screen.getByTestId("a"));
     expect(localStorage.getItem("sidebar.collapsed.group:g1")).toBe("1");
@@ -39,7 +39,7 @@ describe("collapse store", () => {
     expect(screen.getByTestId("a")).toHaveTextContent("expanded");
   });
 
-  it("CO3 同一把鍵的兩個元件：第一個 toggle，第二個同一次 act 內跟著變", () => {
+  it("two components on the same key: toggling the first updates the second within the same act", () => {
     render(
       <>
         <Probe id="a" />
@@ -53,7 +53,7 @@ describe("collapse store", () => {
     expect(screen.getByTestId("b")).toHaveTextContent("collapsed");
   });
 
-  it("CO4 getItem、setItem、removeItem 都丟例外：toggle 不丟錯、之後讀到收合；再 toggle 回展開", () => {
+  it("getItem, setItem and removeItem all throw: toggle does not throw, a later read sees collapsed; toggling again expands", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(throwQuota);
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwQuota);
     vi.spyOn(Storage.prototype, "removeItem").mockImplementation(throwQuota);
@@ -61,12 +61,12 @@ describe("collapse store", () => {
     expect(() => fireEvent.click(screen.getByTestId("a"))).not.toThrow();
     expect(isCollapsed("group:g1")).toBe(true);
     expect(screen.getByTestId("a")).toHaveTextContent("collapsed");
-    fireEvent.click(screen.getByTestId("a")); // removeItem 也丟例外 → 覆蓋層記「展開」
+    fireEvent.click(screen.getByTestId("a")); // removeItem also throws, so the overlay records expanded
     expect(isCollapsed("group:g1")).toBe(false);
     expect(screen.getByTestId("a")).toHaveTextContent("expanded");
   });
 
-  it("CO4b 只有 setItem 丟例外（getItem 正常、沒有該鍵）：toggle 後收合，再 toggle 回展開", () => {
+  it("only setItem throws (getItem works, key absent): toggle collapses, toggling again expands", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwQuota);
     render(<Probe id="a" />);
     fireEvent.click(screen.getByTestId("a"));
@@ -78,20 +78,20 @@ describe("collapse store", () => {
     expect(screen.getByTestId("a")).toHaveTextContent("expanded");
   });
 
-  it("CO4c setItem 失敗記進覆蓋層後恢復正常：再 toggle 寫進 localStorage、覆蓋層該鍵刪掉（外部改動讀得到）", () => {
+  it("setItem failure recorded in the overlay then recovers: next toggle writes to localStorage and drops the overlay key (external changes are readable)", () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(throwQuota);
     render(<Probe id="a" />);
-    fireEvent.click(screen.getByTestId("a")); // 覆蓋層：收合
-    fireEvent.click(screen.getByTestId("a")); // removeItem 成功 → 覆蓋層刪鍵、展開
+    fireEvent.click(screen.getByTestId("a")); // overlay: collapsed
+    fireEvent.click(screen.getByTestId("a")); // removeItem succeeds: overlay key dropped, expanded
     setItem.mockRestore();
-    fireEvent.click(screen.getByTestId("a")); // setItem 成功 → 寫入、覆蓋層刪鍵
+    fireEvent.click(screen.getByTestId("a")); // setItem succeeds: written, overlay key dropped
     expect(localStorage.getItem("sidebar.collapsed.group:g1")).toBe("1");
     expect(isCollapsed("group:g1")).toBe(true);
     localStorage.removeItem("sidebar.collapsed.group:g1");
     expect(isCollapsed("group:g1")).toBe(false);
   });
 
-  it("CO-F1 資料夾鍵：setCollapsed(\"folder:a\", true) 寫 sidebar.collapsed.folder:a=\"1\"；與 group:a 互不影響", () => {
+  it("folder key: setCollapsed(\"folder:a\", true) writes sidebar.collapsed.folder:a=\"1\" and does not affect group:a", () => {
     setCollapsed("folder:a", true);
     expect(localStorage.getItem("sidebar.collapsed.folder:a")).toBe("1");
     expect(isCollapsed("folder:a")).toBe(true);
@@ -103,7 +103,7 @@ describe("collapse store", () => {
     expect(isCollapsed("group:a")).toBe(true);
   });
 
-  it("CO5 useCollapseVersion：任一鍵 toggle 後重繪，別的鍵的元件不受影響", () => {
+  it("useCollapseVersion: toggling any key re-renders, components on other keys are unaffected", () => {
     let versionRenders = 0;
     let otherRenders = 0;
     function VersionProbe() {

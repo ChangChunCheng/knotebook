@@ -10,8 +10,7 @@ import { useTour } from "@/lib/tour-context";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 import App from "./App";
 
-// 包住真的 TourProvider：照常提供導覽，另在它底下放一個探針，確認它掛在 App 裡、位置在 router 與側欄搜尋字的 provider 裡面。
-// 沒有側欄搜尋字的 provider 時 useSidebarQuery() 退回自己的空字串，所以要在側欄打字、看探針讀到同一個字才分得出來。
+// Wraps the real TourProvider, with a probe beneath it, to confirm it's mounted inside App, inside the router and the sidebar-search provider. Without the sidebar-search provider useSidebarQuery() falls back to its own empty string, so the check types in the sidebar and sees whether the probe reads the same text.
 const probe = vi.hoisted(() => ({ mounted: 0, hasTour: false, path: "", query: null as string | null }));
 vi.mock("@/components/tour/TourProvider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/tour/TourProvider")>();
@@ -79,8 +78,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("App 掛著功能導覽，但它不會自己出現", () => {
-  it("登入後停在首頁：不建示範筆記、不讀 AI 動作、沒有遮罩；導覽的 context 在 router 與側欄搜尋字的 provider 裡面", async () => {
+describe("App mounts the feature tour, but it doesn't appear by itself", () => {
+  it("signed in on home: no sample notes created, no AI actions read, no overlay; the tour's context sits inside the router and the sidebar-search provider", async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <App />

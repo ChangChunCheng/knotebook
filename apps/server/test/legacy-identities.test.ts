@@ -6,19 +6,18 @@ import { buildTestApp } from "./helpers.js";
 import { userIdentities, users } from "../src/db/schema.js";
 import { backfillLegacyOidcIdentities } from "../src/auth/legacy-identities.js";
 
-/** 收集 pino 輸出（NDJSON），供斷言 warn 的 msg。 */
 function captureLogger(): { logger: pino.Logger; lines: () => Array<{ level: number; msg: string }> } {
   const chunks: string[] = [];
   const stream = new Writable({ write(chunk, _enc, cb) { chunks.push(String(chunk)); cb(); } });
   return { logger: pino({ level: "info" }, stream), lines: () => chunks.join("").split("\n").filter(Boolean).map(l => JSON.parse(l)) };
 }
 
-describe("backfillLegacyOidcIdentities（#187）", () => {
-  it("舊碼（回滾期）寫的 users.oidc_* → 補成 identity；冪等；不 warn", async () => {
+describe("backfillLegacyOidcIdentities (#187)", () => {
+  it("users.oidc_* written by old code (rollback period) -> backfilled into an identity; idempotent; no warning", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a] = await db.insert(users).values({ email: "a@x", displayName: "A" }).returning();
-    // raw SQL 模擬舊碼：users.oidc_* 只有舊碼會寫（新碼一律走 user_identities）。
+    // Raw SQL simulates the old code: only old code writes users.oidc_* (new code always goes through user_identities).
     await pool.query(`update users set oidc_issuer = 'https://idp.example', oidc_sub = 'sa' where id = $1`, [a!.id]);
     const { logger, lines } = captureLogger();
     expect(await backfillLegacyOidcIdentities(db, logger)).toEqual({ inserted: 1, conflicts: 0 });
@@ -28,7 +27,7 @@ describe("backfillLegacyOidcIdentities（#187）", () => {
     expect(lines().filter(l => l.level === 40)).toHaveLength(0);
   });
 
-  it("舊欄指向的身分已屬別人 → 跳過不改資料、warn 一行（users_oidc_idx 唯一，所以「別人」只可能出現在 user_identities 那一側）", async () => {
+  it("legacy column pointing at an identity already owned by someone else -> skipped without changing data, one warning line (users_oidc_idx is unique, so \"someone else\" can only be on the user_identities side)", async () => {
     const { db } = await buildTestApp();
     const [a] = await db.insert(users).values({ email: "a@x", displayName: "A" }).returning();
     const [b] = await db.insert(users).values({ email: "b@x", displayName: "B" }).returning();

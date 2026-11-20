@@ -7,7 +7,7 @@ import { toast } from "@/components/ui/toast";
 import { useTour, type TourApi } from "@/lib/tour-context";
 import { TourProvider } from "./TourProvider";
 
-// 導覽 chunk 第一次下載失敗、第二次成功（部署換版或網路斷一下之後重試）。chunk 載到之後的流程在 TourProvider.test.tsx。
+// The tour chunk fails to download the first time and succeeds the second (a retry after a redeploy or a brief network drop). The flow after the chunk loads is in TourProvider.test.tsx.
 const chunk = vi.hoisted(() => ({ attempts: 0 }));
 vi.mock("./TourLazy", async (importOriginal) => {
   chunk.attempts += 1;
@@ -38,7 +38,7 @@ beforeEach(async () => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/notes" && (init?.method ?? "GET").toUpperCase() === "POST") posts += 1;
-      // 建示範筆記一律失敗：這裡只要看到 chunk 載到之後開始流程真的跑了，不必走完。
+      // Creating the sample note always fails: it is enough to see that the flow really started after the chunk loaded; it need not run to the end.
       return new Response(JSON.stringify({ error: { code: "internal", message: "x" } }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
@@ -53,8 +53,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("導覽 chunk 下載失敗", () => {
-  it("一則載入失敗的提示、不建示範筆記；下一次開始重新下載，載到之後照常開始", async () => {
+describe("tour chunk download failure", () => {
+  it("one load-failure toast and no sample note; the next start downloads again and proceeds normally once loaded", async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={["/"]}>
@@ -76,7 +76,7 @@ describe("導覽 chunk 下載失敗", () => {
     await waitFor(() => expect(posts).toBe(1));
     expect(chunk.attempts).toBe(2);
     await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(2));
-    // 第二則是 chunk 裡的流程自己跳的（建示範筆記失敗），不是又一則載入失敗。
+    // The second toast comes from the flow inside the chunk (sample-note creation failed), not from another load failure.
     expect(toastTitles()).toEqual([i18n.t("app.chunkLoadError"), "Couldn't create the sample note. Try again."]);
   });
 });

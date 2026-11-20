@@ -11,7 +11,7 @@ import { attachTestElementRenderer } from "@/test/element-renderer";
 import { takeDropPoint } from "@/collab/columns/paste-rule";
 import { stubLayoutTier } from "@/test/layout-tier";
 
-// toast 換成 spy：這裡要斷言的是「有沒有提示使用者」，不必把 Radix 整套渲染起來。
+// toast is a spy: what is asserted is whether the user is notified, no need to render all of Radix.
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast", () => ({ toast: toastMock }));
 
@@ -19,23 +19,18 @@ const { buildNoteEditorOptions, collabUserColor, createMediaBlockingDOMEvents, i
   await import("./NoteEditor");
 
 /**
- * `defaultBlockSpecs.image` 只取這次要用的那一層——BlockNote 的 block spec 泛型三元組
- * 在測試裡沒有意義，走 repo 慣例用最小結構描述（同檔其他測試對編輯器泛型的處理）。
+ * Only the `defaultBlockSpecs.image` layer is taken: BlockNote's block spec generic triple is meaningless in tests, so the minimal structure is used (as other tests in this file handle editor generics).
  */
 interface ImageSpecLike {
   implementation: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 見上
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
     render: (block: any, editor: any) => { dom: HTMLElement };
   };
 }
 
 /**
- * jsdom 沒有可建構的 DataTransfer，做一個最小替身。
- *
- * `types` 獨立於 `html`/`text` 之外由呼叫端明講（`classifyMediaTransfer` 規則②只看
- * `dataTransfer.types` 有沒有列出格式名字，跟 `getData` 撈不撈得到內容是兩回事）；
- * `files` 用真的 `File` 形狀（`new File([bytes], name, { type })`）——規則③④要讀
- * `File.type`，舊版只帶 `{ length }` 的假替身撐不住。
+ * jsdom has no constructible DataTransfer: a minimal stand-in. `types` is given explicitly by the caller, independent of `html`/`text` (`classifyMediaTransfer` rule 2 only looks at which format names `dataTransfer.types` lists, separate from whether `getData` returns content);
+ * `files` uses a real `File` shape (rules 3 and 4 read `File.type`, a fake with only `{ length }` can't carry that).
  */
 function transfer(options: { files?: File[]; types?: string[]; html?: string; text?: string }): DataTransfer {
   const map: Record<string, string> = {};
@@ -49,7 +44,6 @@ function transfer(options: { files?: File[]; types?: string[]; html?: string; te
   } as unknown as DataTransfer;
 }
 
-/** 測試用真 `File`——`classifyMediaTransfer` 只讀 `.type`。 */
 function file(name: string, type: string): File {
   return new File([new Uint8Array([1])], name, { type });
 }
@@ -66,18 +60,18 @@ function dragEvent(data: DataTransfer): DragEvent {
 
 const translate = (key: string) => `t:${key}`;
 
-describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
+describe("createMediaBlockingDOMEvents (paste/drop interception)", () => {
   beforeEach(() => {
     toastMock.mockClear();
   });
 
-  it("同時提供 paste 與 drop 兩個 handler", () => {
+  it("provides both paste and drop handlers", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     expect(typeof handlers.paste).toBe("function");
     expect(typeof handlers.drop).toBe("function");
   });
 
-  it("貼上純 image 檔案 → 回傳 false、不 preventDefault、不 toast（規則③放行，交給 uploadFile 管線）", () => {
+  it("pasting only image files -> returns false, no preventDefault, no toast (rule 3 lets it through to the uploadFile pipeline)", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = clipboardEvent(transfer({ files: [file("a.png", "image/png")], types: ["Files"] }));
 
@@ -86,7 +80,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("拖放混合／非 image 檔案 → 回傳 true、preventDefault、對應 toast（規則④）", () => {
+  it("dropping mixed or non-image files -> returns true, preventDefault, matching toast (rule 4)", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = dragEvent(
       transfer({ files: [file("a.png", "image/png"), file("b.pdf", "application/pdf")], types: ["Files"] }),
@@ -97,7 +91,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
   });
 
-  it("貼上 text/html 裡的 data URL 圖片（從網頁複製圖片的常見形狀）→ 擋下", () => {
+  it("pasting a data URL image inside text/html (the common shape when copying an image from a web page) -> blocked", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = clipboardEvent(transfer({ html: '<img src="data:image/png;base64,iVBORw0KGgo=">', text: "" }));
 
@@ -106,7 +100,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
-  it("貼上 text/plain 裡的 data URL 圖片 → 擋下", () => {
+  it("pasting a data URL image inside text/plain -> blocked", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = clipboardEvent(transfer({ text: "data:image/gif;base64,R0lGOD" }));
 
@@ -114,7 +108,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
-  it("拖放 text/html 裡的 data URL 圖片 → 擋下", () => {
+  it("dropping a data URL image inside text/html -> blocked", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = dragEvent(transfer({ html: '<img src="data:image/png;base64,AAA">' }));
 
@@ -122,7 +116,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
-  it("一般文字貼上 → 回傳 false、不 preventDefault、不 toast（照常落回 BlockNote）", () => {
+  it("ordinary text paste -> returns false, no preventDefault, no toast (falls back to BlockNote as usual)", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = clipboardEvent(transfer({ text: "hello world", html: "<p>hello world</p>" }));
 
@@ -131,7 +125,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("編輯器內部拖曳既有 block（沒有檔案也沒有 data URL）→ 回傳 false", () => {
+  it("dragging an existing block inside the editor (no files, no data URL) -> returns false", () => {
     const handlers = createMediaBlockingDOMEvents(translate);
     const event = dragEvent(transfer({ html: "<p>moved block</p>" }));
 
@@ -139,7 +133,7 @@ describe("createMediaBlockingDOMEvents（貼上／拖放攔截）", () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("每次 toast 的文案都是當下的翻譯（語言切換後不會沿用舊字串）", () => {
+  it("each toast text is the current translation (not an old string after a language switch)", () => {
     let lang = "en";
     const handlers = createMediaBlockingDOMEvents((key) => `${lang}:${key}`);
     const dataUrlEvent = () => clipboardEvent(transfer({ text: "data:image/png;base64,AAA" }));
@@ -175,34 +169,32 @@ describe("buildNoteEditorOptions", () => {
       siteLinks: { current: null },
     });
 
-  it("共編 fragment 用 shared 的 YDOC_FRAGMENT（與 server 的 collab/store 同名）", () => {
+  it("collab fragment uses shared's YDOC_FRAGMENT (same name as the server's collab/store)", () => {
     const options = build();
     expect(options.collaboration.fragment).toBe(doc.getXmlFragment(YDOC_FRAGMENT));
-    // 寫死成別的名字會變成兩份互不相干的文件——這條斷言就是防那個。
+    // Hard-coding another name would split into two unrelated documents.
     expect(options.collaboration.fragment).not.toBe(doc.getXmlFragment("default"));
   });
 
-  it("schema 含 image block", () => {
+  it("schema contains the image block", () => {
     expect(Object.keys(build().schema.blockSpecs)).toContain("image");
   });
 
-  it("schema 就是 noteSchema 本尊（issue #43 的接線釘）", () => {
-    // #43 的 toExternalHTML 守衛包在 noteSchema 的四個檔案類 spec 上；若這裡改成
-    // 自己從 defaultBlockSpecs 另組一份 schema，schema.test.ts 那組全綠、洞卻悄悄
-    // 回來——同 #12 那條「只釘接線的測試依然全綠」教訓的反向：這條專釘接線。
+  it("schema is noteSchema itself (wiring pin for issue #43)", () => {
+    // The #43 toExternalHTML guard wraps noteSchema's four file-type specs; assembling a separate schema from defaultBlockSpecs here would keep schema.test.ts green
+    // while the hole silently returns - this pins the wiring.
     expect(build().schema).toBe(noteSchema);
   });
 
-  it("uploadFile 選項有掛上去（接 createUploadFile）", () => {
+  it("uploadFile option is attached (createUploadFile)", () => {
     expect(typeof build().uploadFile).toBe("function");
   });
 
   /**
-   * `pasteHandler` 是 markdown 貼上修法（#27／#28）唯一通到使用者的那條線——沒有這條
-   * 斷言的話，把 `buildNoteEditorOptions` 裡那一行刪掉，整套測試仍然全綠而修法靜默
-   * 失效。這裡連行為一起釘：CRLF 的 markdown 要被接手。
+   * `pasteHandler` is the line that carries the markdown paste fix (#27/#28) to users: deleting it in `buildNoteEditorOptions` would leave the whole suite green with the fix silently dead,
+   * so behaviour is pinned too: CRLF markdown must be taken over.
    */
-  it("pasteHandler 有掛上去，且真的會接手 markdown 貼上（#27／#28）", () => {
+  it("pasteHandler is attached and really takes over markdown paste (#27/#28)", () => {
     const CRLF_MARKDOWN = "# 標題\r\n\r\n- 一\r\n- 二\r\n";
     const LF_MARKDOWN = "# 標題\n\n- 一\n- 二\n";
     const pasteHandler = build().pasteHandler;
@@ -231,15 +223,11 @@ describe("buildNoteEditorOptions", () => {
   });
 
   /**
-   * issue #12 的守衛整條線：**我們塞的回呼**＋**BlockNote 真的會呼叫它**。
-   *
-   * ⚠ 只斷言前者是不夠的——`@blocknote/core` 0.52.1 的 render 寫成
-   * `editor.resolveFileUrl ? resolveFileUrl(url).then(el.src = …) : el.src = url`，是**條件
-   * 分支**：升級後只要這個選項改名或改走別的解析器，我們的回呼就變成沒人呼叫的死程式碼，
-   * 而只釘接線的測試依然全綠、issue #12 的洞悄悄回來。所以這裡直接拿 `defaultBlockSpecs`
-   * 的 image block 去跑真正的 render，斷言落到 DOM 上的 `src`。
+   * The whole guard line for issue #12: **our callback** + **BlockNote really calls it**. Asserting only the first is not enough: in `@blocknote/core` 0.52.1 render is
+   * `editor.resolveFileUrl ? resolveFileUrl(url).then(el.src = ...) : el.src = url`, a **conditional branch**; after an upgrade renames the option or routes to another resolver our callback becomes dead code
+   * while a wiring-only test stays green. So this runs the real render of `defaultBlockSpecs`' image block and asserts the `src` that lands on the DOM.
    */
-  it("危險 scheme 到不了 <img src>：直接跑 BlockNote 的 image render（issue #12）", async () => {
+  it("dangerous schemes never reach <img src>: runs BlockNote's image render directly (issue #12)", async () => {
     const imageSpec = (defaultBlockSpecs as unknown as Record<string, ImageSpecLike>).image;
     const resolveFileUrl = build().resolveFileUrl;
     expect(typeof resolveFileUrl).toBe("function");
@@ -252,7 +240,7 @@ describe("buildNoteEditorOptions", () => {
         content: undefined,
         children: [],
       };
-      // render 只用到編輯器的這兩個成員（`onUploadStart` 是 url 為空時的上傳中提示用）。
+      // render only touches these two editor members (`onUploadStart` drives the uploading hint when url is empty).
       return imageSpec.implementation.render(block, { resolveFileUrl, onUploadStart: () => () => {} }).dom;
     };
 
@@ -263,63 +251,59 @@ describe("buildNoteEditorOptions", () => {
     await vi.waitFor(() => expect(uploaded.querySelector("img")?.getAttribute("src")).toBe("/api/uploads/u1"));
   });
 
-  it("resolveFileUrl 的判斷本身：危險 scheme → about:blank，自家上傳的相對網址原樣放行（issue #12）", async () => {
+  it("resolveFileUrl logic itself: dangerous schemes -> about:blank, own upload relative URLs pass as is (issue #12)", async () => {
     const resolveFileUrl = build().resolveFileUrl;
 
     await expect(resolveFileUrl!("javascript:alert(1)")).resolves.toBe("about:blank");
     await expect(resolveFileUrl!("data:text/html;base64,PHNjcmlwdD4=")).resolves.toBe("about:blank");
-    // 自家上傳的圖片是相對網址（`/api/uploads/<id>`）——擋掉它就等於擋掉所有上傳的圖。
+    // Own uploaded images are relative URLs (`/api/uploads/<id>`): blocking them would block every uploaded image.
     await expect(resolveFileUrl!("/api/uploads/u1")).resolves.toBe("/api/uploads/u1");
     await expect(resolveFileUrl!("https://example.com/a.png")).resolves.toBe("https://example.com/a.png");
   });
 
   /**
-   * issue #99 的接線釘：`_tiptapOptions.extensions` 是**唯一**通到使用者的那條線——
-   * 沒有這條斷言的話，把 `buildNoteEditorOptions` 裡那一行 `extensions: […]` 刪掉，
-   * 整套測試（含 `markdown-link.rule.test.tsx`，它掛的是自己另外建的編輯器，不是
-   * `buildNoteEditorOptions` 的產物）依然全綠，功能在真實 app 裡卻是死的（曾經發生
-   * 的缺口）。這裡直接釘住 extension 真的在陣列裡（用 `Extension.create` 賦的
-   * `name` 識別，不靠陣列 identity 或長度）。
+   * Wiring pin for issue #99: `_tiptapOptions.extensions` is the line that reaches users - deleting the `extensions: [...]` line in `buildNoteEditorOptions` would keep the whole suite green
+   * (including `markdown-link.rule.test.tsx`, which mounts its own editor, not the product of `buildNoteEditorOptions`) while the feature is dead in the real app.
+   * This pins that the extension is really in the array (identified by the `name` given via `Extension.create`, not array identity or length).
    */
-  it("_tiptapOptions.extensions 掛了 markdown 連結 extension（issue #99）", () => {
+  it("_tiptapOptions.extensions has the markdown link extension (issue #99)", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(Array.isArray(extensions)).toBe(true);
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookMarkdownLink");
   });
 
-  // 同一個接線釘的理由：`code-block-caret.test.ts` 掛的是自己建的編輯器，拔掉這裡那一行它照樣綠，
-  // 真實 app 裡觸控卻叫不出語言下拉。
-  it("_tiptapOptions.extensions 掛了 code block 的 caret 訊號 extension（觸控叫出語言下拉）", () => {
+  // Same wiring-pin reason: `code-block-caret.test.ts` mounts its own editor, so removing the line here would stay green while touch can't open the language dropdown in the real app.
+  it("_tiptapOptions.extensions has the code block caret signal extension (touch opens the language dropdown)", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookCodeBlockCaret");
   });
 
-  // 同上：`edge-keymap.test.ts` 掛的是自己建的編輯器（欄首 Backspace／欄尾 Delete）。
-  it("_tiptapOptions.extensions 掛了並排的欄首／欄尾鍵 extension", () => {
+  // Same: `edge-keymap.test.ts` mounts its own editor (column-start Backspace / column-end Delete).
+  it("_tiptapOptions.extensions has the side-by-side column-start/column-end key extension", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookColumnEdgeKeys");
   });
 
-  // 同上：`paste-rule.test.ts` 掛的是自己建的編輯器（貼上的列）。
-  it("_tiptapOptions.extensions 掛了並排的貼上規則 extension", () => {
+  // Same: `paste-rule.test.ts` mounts its own editor (pasted row).
+  it("_tiptapOptions.extensions has the side-by-side paste rule extension", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(extensions.map((ext: { name: string }) => ext.name)).toContain("knotebookColumnsPaste");
   });
 
-  // 同上：`tour-transaction-filter.test.ts` 掛的是自己建的編輯器。建編輯器時就要掛上、只掛一支：演示中不能再註冊外掛。
-  it("_tiptapOptions.extensions 掛了一支導覽交易過濾 extension", () => {
+  // Same: `tour-transaction-filter.test.ts` mounts its own editor. It must be attached at editor creation and exactly once: plugins can't be registered again during the tour.
+  it("_tiptapOptions.extensions has exactly one tour transaction filter extension", () => {
     const extensions = build()._tiptapOptions.extensions;
     expect(extensions.filter((ext: { name: string }) => ext.name === "knotebookTourTransactionFilter")).toHaveLength(1);
   });
 
-  // 既有的 drop 阻擋案直接呼叫 createMediaBlockingDOMEvents 的 handler、不經 build()——守不到「記落點」那層組合。
-  it("組合後的 drop 仍接到媒體阻擋（經 build()）", () => {
+  // The existing drop cases call createMediaBlockingDOMEvents' handler directly, not through build(), so they don't cover the composition that records the drop position.
+  it("the composed drop still reaches the media blocking (through build())", () => {
     const event = dragEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] }));
     expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(null, event)).toBe(true);
     expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
   });
 
-  it("組合後的 drop 先記下落點給貼上規則（經 build()）", () => {
+  it("the composed drop first records the drop position for the paste rule (through build())", () => {
     const view = { posAtCoords: vi.fn(() => ({ pos: 9, inside: -1 })) };
     const event = Object.assign(dragEvent(transfer({ html: "<p>moved block</p>" })), { clientX: 3, clientY: 4 });
     expect(build()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(false);
@@ -327,7 +311,7 @@ describe("buildNoteEditorOptions", () => {
     expect(takeDropPoint()).toBe(9);
   });
 
-  it("組合後的 drop：posAtCoords 丟例外 → 媒體阻擋照樣生效、落點為 null", () => {
+  it("composed drop: posAtCoords throws -> media blocking still works, drop position is null", () => {
     const view = {
       posAtCoords: vi.fn(() => {
         throw new Error("posAtCoords failed");
@@ -341,8 +325,8 @@ describe("buildNoteEditorOptions", () => {
     expect(takeDropPoint()).toBeNull();
   });
 
-  // #352：最外層的 `withSiteLinkDrop` 啟用時（可編輯、env 在、沒有 dragging）仍回傳內層結果；它的判斷拋錯也不擋內層。
-  // 上面三案的 env 是 null、view 是 null 或只有 posAtCoords，hook 不啟用——這裡另組一個 env 非 null 的 builder。
+  // #352: when the outermost `withSiteLinkDrop` is active (editable, env present, not dragging) it still returns the inner result, and an error thrown by its own check doesn't block the inner one.
+  // The three cases above have env null and a view that is null or only has posAtCoords, so the hook isn't active - this builds a separate builder with a non-null env.
   const buildWithSiteLinks = () =>
     buildNoteEditorOptions({
       doc,
@@ -358,7 +342,7 @@ describe("buildNoteEditorOptions", () => {
     for (let i = 0; i < 6; i++) await Promise.resolve();
   };
 
-  it("DL10a：站內連結 drop hook 啟用時，媒體阻擋仍回 true、落點照記（#352）", async () => {
+  it("site-link drop hook active: media blocking still returns true, the drop position is still recorded (#352)", async () => {
     const view = { editable: true, dragging: null, posAtCoords: vi.fn(() => ({ pos: 9, inside: -1 })) };
     const event = Object.assign(dragEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] })), { clientX: 3, clientY: 4 });
     expect(buildWithSiteLinks()._tiptapOptions.editorProps.handleDOMEvents.drop(view as never, event)).toBe(true);
@@ -367,7 +351,7 @@ describe("buildNoteEditorOptions", () => {
     await flushMicrotasks();
   });
 
-  it("DL10b：drop hook 的判斷拋錯（editable getter 拋錯）→ 不拋出、內層照跑（#352）", async () => {
+  it("drop hook check throws (editable getter throws) -> doesn't throw, inner runs as usual (#352)", async () => {
     const view = { dragging: null, posAtCoords: vi.fn(() => ({ pos: 9, inside: -1 })) };
     Object.defineProperty(view, "editable", {
       get() {
@@ -384,43 +368,40 @@ describe("buildNoteEditorOptions", () => {
     await flushMicrotasks();
   });
 
-  it("媒體攔截掛在 editorProps.handleDOMEvents，**不是** handlePaste/handleDrop", () => {
+  it("media interception is attached to editorProps.handleDOMEvents, **not** handlePaste/handleDrop", () => {
     const editorProps = build()._tiptapOptions.editorProps;
 
-    // 這條是 BlockNote 0.52 實測結論的護欄：BlockNote 自己的 handleDOMEvents.paste 外掛一律先 preventDefault 並接管（之後才經
-    // `view.pasteHTML`／`pasteText` 解析成 slice），只帶檔案的拖放也不會走到 handleDrop——data URL／非圖片檔案的攔截必須在原始
-    // DataTransfer 那層（handleDOMEvents）。handlePaste／handleDrop 只拿來做筆記大小上限的檢查（解析好的 slice；真的接得到，見
-    // `NoteEditor.size-guard.test.tsx`），不能把媒體攔截搬過去。
+    // BlockNote 0.52: its own handleDOMEvents.paste plugin always preventDefaults and takes over first (only afterwards parsing to a slice via `view.pasteHTML`/`pasteText`), and a file-only drop never reaches handleDrop,
+    // so data URL / non-image file interception must sit at the raw DataTransfer layer (handleDOMEvents). handlePaste/handleDrop are only for the note size limit check
+    // (the parsed slice; reachable, see `NoteEditor.size-guard.test.tsx`), so media interception can't be moved there.
     expect(typeof editorProps.handleDOMEvents.paste).toBe("function");
     expect(typeof editorProps.handleDOMEvents.drop).toBe("function");
     const blocked = clipboardEvent(transfer({ html: '<img src="data:image/png;base64,AAAA">', types: ["text/html"] }));
     expect(editorProps.handleDOMEvents.paste(null, blocked)).toBe(true);
   });
 
-  // 假綠高危案例：早前這裡只驗過「有檔案就一律擋」，跟現行語意（純
-  // image 檔要放行）完全脫節，紅了也測不出來。改成兩條，涵蓋放行與攔截各一個真實
-  // File 形狀，確保掛在 `_tiptapOptions.editorProps.handleDOMEvents` 上的**同一個函式
-  // 參照**真的接到了 `classifyMediaTransfer` 的規則。
-  it("掛上去的 handler 真的會放行純 image 檔案貼上（端到端接線，不只是型別對）", () => {
+  // One real File shape each for pass-through and block: ensures the same function reference on `_tiptapOptions.editorProps.handleDOMEvents`
+  // is really wired to `classifyMediaTransfer`'s rules.
+  it("the attached handler really lets a pure image file paste through (end-to-end wiring, not just types)", () => {
     const event = clipboardEvent(transfer({ files: [file("a.png", "image/png")], types: ["Files"] }));
     expect(build()._tiptapOptions.editorProps.handleDOMEvents.paste(null, event)).toBe(false);
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("掛上去的 handler 真的會擋非 image 檔案貼上（端到端接線，不只是型別對）", () => {
+  it("the attached handler really blocks a non-image file paste (end-to-end wiring, not just types)", () => {
     const event = clipboardEvent(transfer({ files: [file("a.pdf", "application/pdf")], types: ["Files"] }));
     expect(build()._tiptapOptions.editorProps.handleDOMEvents.paste(null, event)).toBe(true);
     expect(toastMock).toHaveBeenCalledWith({ title: "t:note.transferNonImage" });
   });
 
-  it("語言以 zh 開頭 → 掛繁中字典；其餘 → undefined（BlockNote 預設即英文）", () => {
+  it("language starting with zh -> Traditional Chinese dictionary attached; otherwise undefined (BlockNote defaults to English)", () => {
     expect(build("zh-TW").dictionary).toBe(blocknoteZhTW);
     expect(build("zh").dictionary).toBe(blocknoteZhTW);
     expect(build("en").dictionary).toBeUndefined();
     expect(build("en-US").dictionary).toBeUndefined();
   });
 
-  it("使用者資訊帶進共編游標，顏色由 id 穩定決定", () => {
+  it("user info goes into the collab cursor, color is determined stably by id", () => {
     const options = build();
     expect(options.collaboration.user).toEqual({ id: "user-1", name: "Ann", color: collabUserColor("user-1") });
     expect(collabUserColor("user-1")).toBe(collabUserColor("user-1"));
@@ -428,26 +409,18 @@ describe("buildNoteEditorOptions", () => {
   });
 });
 
-// ── `[[` 觸發偵測（handleTextInput）─────────────────────────
-//
-// **mount harness**：`BlockNoteEditor.create` 後必須 `editor.mount(掛在
-// document.body 的元素)`，headless 下 `openSuggestionMenu` 會直接 early-return
-// （`SuggestionMenu.ts`：`if (editor.headless) return;`），不 mount 這裡的斷言全部
-// 都會是假綠。`test/setup.ts` 已墊好 `getBoundingClientRect` 的 shim，
-// `SuggestionMenuView.update()` 算 decoration 位置時才不會炸。
-//
-// `handleTextInput` 直接從 `buildNoteEditorOptions` 回傳的 options 物件取出來呼叫
-// ——不透過 `BlockNoteEditor.create` 之後的 `_tiptapEditor.options` 繞一手，因為那支
-// 就是我們自己傳進去、真正會被 ProseMirror 呼叫的同一個函式參照，直接呼叫等價於
-// 讓 ProseMirror 呼叫它，又不必依賴 tiptap 內部怎麼合併多個 editorProps 來源。
-describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () => {
+// `[[` trigger detection (handleTextInput). Mount harness: after `BlockNoteEditor.create` the editor must be `editor.mount(element attached to document.body)`:
+// headless `openSuggestionMenu` returns early (`SuggestionMenu.ts`: `if (editor.headless) return;`), so without mounting every assertion here would be a false green.
+// `test/setup.ts` shims `getBoundingClientRect` so `SuggestionMenuView.update()` doesn't blow up computing decoration positions.
+// `handleTextInput` is taken straight from the options object returned by `buildNoteEditorOptions`: it is the same function reference ProseMirror calls,
+// so calling it directly is equivalent, without depending on how tiptap merges several editorProps sources.
+describe("buildNoteEditorOptions [[ trigger detection (handleTextInput)", () => {
   let doc: Y.Doc;
   let editorRef: EditorRef;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試用編輯器，走 repo 慣例的 BlockNoteEditor<any,any,any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test editor; repo convention BlockNoteEditor<any,any,any>
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
-  // `view` 型別刻意寫 `unknown`（同 `createMediaBlockingDOMEvents` 的 house style）：
-  // 測試只把真 view 原樣轉交、不讀它的欄位。
+  // `view` is deliberately typed `unknown` (as in createMediaBlockingDOMEvents): the test hands the real view over as is and reads none of its fields.
   let handleTextInput: (view: unknown, from: number, to: number, text: string) => boolean | void;
 
   beforeEach(() => {
@@ -479,14 +452,14 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     doc.destroy();
   });
 
-  /** 模擬「使用者剛按下第二個 `[`」：`from`/`to` 是目前游標位置，PM 尚未真的插入這個字元。 */
+  /** Simulates "the user just pressed the second `[`": `from`/`to` is the current cursor, PM hasn't inserted the character yet. */
   function typeSecondBracket(): boolean | void {
     const view = editor._tiptapEditor.view;
     const from = editor.transact((tr) => tr.selection.from);
     return handleTextInput(view, from, from, "[");
   }
 
-  it("[[ 句中觸發：句子中間打出第二個 [ → 吞掉輸入、開啟選單、文件維持『Hello [[』", () => {
+  it("[[ mid-sentence: typing the second [ in the middle of a sentence -> swallows the input, opens the menu, document stays 'Hello [['", () => {
     editor.insertInlineContent(["Hello ["]);
 
     const handled = typeSecondBracket();
@@ -499,7 +472,7 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("Hello [[");
   });
 
-  it("block 開頭觸發：空白 block 只打了一個 [ → 一樣吞掉輸入、開啟選單、文件維持『[[』", () => {
+  it("[[ at block start: an empty block with a single [ typed -> likewise swallows the input, opens the menu, document stays '[['", () => {
     editor.insertInlineContent(["["]);
 
     const handled = typeSecondBracket();
@@ -510,7 +483,7 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("[[");
   });
 
-  it("前一個字元不是 [（same-parent guard 的另一半）：不吞輸入、不開選單", () => {
+  it("previous character isn't [ (the other half of the same-parent guard): input not swallowed, menu not opened", () => {
     editor.insertInlineContent(["Hello"]);
 
     const handled = typeSecondBracket();
@@ -520,26 +493,13 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("Hello");
   });
 
-  // ── issue #98：一次事件送來多個字元（快速連打、IME 組字結束）───────────────────
-  //
-  // 一般打字**不走** `input.ts` 的 keypress 分支（那條外面包著「選取狀態異常」的
-  // 守衛），而是瀏覽器先寫進 DOM、再由 `domchange.ts` 的 `readDOMChange` 回收。它
-  // 呼叫 `handleTextInput(view, chFrom, chTo, text)` 的語意是**「把舊文件的
-  // [chFrom, chTo) 換成 text」**——`text` 可以是任意長度，`chFrom` 可以不等於 `chTo`。
-  // 原本的逐字元比對（`text === "["`）對這兩件事都不成立。
-  //
-  // 這幾條的參數形狀是實測來的（用真的 DOM 變動 + `view.domObserver.flush()` 驅動
-  // `readDOMChange`，觀察 handler 收到什麼）：批次連打 `{from:8,to:8,text:"[["}`、
-  // IME 組字結束 `{from:4,to:4,text:"測試[["}`、選取後輸入 `{from:8,to:14,text:"[["}`。
+  // #98: several characters arrive in one event (fast typing, IME composition end). Ordinary typing doesn't go through the keypress branch of `input.ts` but is written to the DOM by the browser first and picked up by `readDOMChange` in `domchange.ts`,
+  // whose call `handleTextInput(view, chFrom, chTo, text)` means "replace [chFrom, chTo) of the old document with text": `text` can be any length and `chFrom` may differ from `chTo`; a per-character `text === "["` comparison fails both.
+  // Shapes seen via real DOM mutations driven through `view.domObserver.flush()`: batch typing {from:8,to:8,text:"[["}, IME end {from:4,to:4,text:"<CJK>[["}, typing over a selection {from:8,to:14,text:"[["}.
 
   /**
-   * 模擬 ProseMirror 送來一次「把 [from, to) 換成 text」的輸入事件。
-   *
-   * ⚠ **給了 `range` 就必須把 selection 一起設過去。** `readDOMChange` 的 `findDiff`
-   * 以 `state.selection.from` 當 `preferredPos`，所以實際傳進 handler 的範圍一定與
-   * 當下 selection 一致；而 `openSuggestionMenu` 走的是無位置的 `insertText()`
-   * （＝作用在當下 selection）。只傳 `range` 卻不動 selection 會造出 ProseMirror
-   * 根本不會產生的輸入形狀，測到的行為也就不是真的行為。
+   * Simulates ProseMirror sending one input event "replace [from, to) with text". **If `range` is given the selection must be set too**: `readDOMChange`'s `findDiff` uses `state.selection.from` as `preferredPos`, so the range passed to the handler always matches the current selection,
+   * and `openSuggestionMenu` uses position-less `insertText()` (acting on the current selection); passing only `range` without moving the selection builds an input shape ProseMirror never produces, so the behaviour measured wouldn't be real.
    */
   function typeInput(text: string, range?: { from: number; to: number }): boolean | void {
     const view = editor._tiptapEditor.view;
@@ -548,7 +508,7 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     return handleTextInput(view, range?.from ?? at, range?.to ?? at, text);
   }
 
-  it("批次送達 [[（快速連打）：兩個 [ 在同一個事件裡抵達 → 一樣開啟選單", () => {
+  it("batched [[ (fast typing): both [ arrive in one event -> the menu opens as well", () => {
     const handled = typeInput("[[");
 
     expect(handled).toBe(true);
@@ -558,7 +518,7 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("[[");
   });
 
-  it("IME 組字結束整串送達：text 裡 [[ 之前的中文必須留在文件裡，不能被吞掉", () => {
+  it("IME composition end delivered as one string: CJK before [[ in the text must stay in the document, not be swallowed", () => {
     editor.insertInlineContent(["x"]);
 
     const handled = typeInput("測試[[");
@@ -568,9 +528,9 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("x測試[[");
   });
 
-  it("取代範圍（from !== to，選取一段後輸入）：選取的內容被取代掉，且照樣開選單", () => {
+  it("replacing a range (from !== to, typing after selecting): the selected content is replaced and the menu still opens", () => {
     editor.insertInlineContent(["a[ world"]);
-    // 段落內容起點是 3，故 "a[" 之後＝5、整段結尾＝11：等同選取 " world" 後打 "["。
+    // Paragraph content starts at 3, so after "a[" = 5 and the end of the whole = 11: equivalent to selecting " world" and typing "[".
     const handled = typeInput("[", { from: 5, to: 11 });
 
     expect(handled).toBe(true);
@@ -578,10 +538,10 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("a[[");
   });
 
-  it("selection 與參數範圍不一致：交還 ProseMirror（刪除用參數座標算，插入卻走 selection，兩者不同就會改到別的地方）", () => {
+  it("selection disagrees with the argument range: hand back to ProseMirror (deletion uses argument coordinates but insertion goes through the selection; if they differ it would edit somewhere else)", () => {
     editor.insertInlineContent(["a[bcdef"]);
-    // 游標留在行尾，卻宣稱在位置 5 輸入——ProseMirror 不會產生這種形狀，但真的發生時
-    // 必須什麼都不做，而不是把 `[[` 插到游標處、又從位置 5 附近刪字元。
+    // Cursor stays at line end while claiming input at position 5: ProseMirror never produces this, but if it ever happens it must do nothing
+    // rather than insert `[[` at the cursor and delete characters near position 5.
     const view = editor._tiptapEditor.view;
     const handled = handleTextInput(view, 5, 5, "[");
 
@@ -590,7 +550,7 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("a[bcdef");
   });
 
-  it("拿不到 SuggestionMenu extension：交還 ProseMirror，不得吞掉使用者打的字", () => {
+  it("SuggestionMenu extension unavailable: hand back to ProseMirror, never swallow what the user typed", () => {
     editorRef.current = null;
 
     const handled = typeInput("測試[[");
@@ -599,32 +559,20 @@ describe("buildNoteEditorOptions 的 [[ 觸發偵測（handleTextInput）", () =
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("");
   });
 
-  it("from === 0：範圍檢查必須在 resolve(from - 1) 之前（不得 throw）", () => {
+  it("from === 0: the range check must come before resolve(from - 1) (must not throw)", () => {
     expect(() => typeInput("[", { from: 0, to: 0 })).not.toThrow();
   });
 });
 
-// ── uploadFile 真的接上 handleFileInsertion ───────────────────────────
-//
-// `handleFileInsertion` 不是 `@blocknote/core` 的公開匯出，唯一「真的走它」的辦法是
-// mount 編輯器後派發真的 `paste` DOM 事件，讓 BlockNote 自己的 paste 外掛
-// （`pasteExtension.ts`，一律先跑我們的 `createMediaBlockingDOMEvents.paste`——純
-// image 檔放行，回傳 false 落回 BlockNote）接手，呼叫到 `editor.uploadFile`。
-//
-// jsdom 30 沒有可建構的 `ClipboardEvent`/`DataTransfer`：用最小替身（`types`/`items`/
-// `files`）掛在一個普通 `Event` 上派發，`handleFileInsertion` 只讀這三個欄位
-// （`acceptedMIMETypes` 判斷走 `types`，實際取檔案走 `items[i].getAsFile()`），
-// 不需要 `getData`（"Files" 分支不會呼叫它，見 `pasteExtension.ts` defaultPasteHandler）。
-//
-// 上傳失敗（4xx）的清除是 `setTimeout(…, 0)` 排的 macrotask，而
-// `editor.updateBlock(insertedBlockId, …)`（把 url 寫回 block）是 `await
-// editor.uploadFile(...)` resolve 後的**微任務續體**——都在我們自己這邊等待期間，用
-// 一個真的 `setTimeout(resolve, 0)` 就能把兩者一起沖掉（微任務保證先跑完）。清除本身
-// 是**另一個**排在後面的 macrotask，因此驗證「block 被清掉」要多等一輪。
-describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion）", () => {
+// uploadFile really connected to handleFileInsertion. `handleFileInsertion` isn't a public export of `@blocknote/core`; the only way to really go through it is to mount the editor and dispatch a real `paste` DOM event,
+// so BlockNote's own paste plugin (`pasteExtension.ts`, which always runs our `createMediaBlockingDOMEvents.paste` first - pure image files pass, returning false falls back to BlockNote) takes over and calls `editor.uploadFile`.
+// jsdom 30 has no constructible `ClipboardEvent`/`DataTransfer`: a minimal stand-in (`types`/`items`/`files`) is attached to a plain `Event`; `handleFileInsertion` only reads these three (`acceptedMIMETypes` checks go through `types`, files come from `items[i].getAsFile()`), and doesn't need `getData` (the "Files" branch doesn't call it, see defaultPasteHandler in `pasteExtension.ts`).
+// Cleanup after a failed upload (4xx) is a macrotask scheduled by `setTimeout(..., 0)`, while `editor.updateBlock(insertedBlockId, ...)` (writing the url back) is the microtask continuation after `await editor.uploadFile(...)` resolves:
+// a real `setTimeout(resolve, 0)` of our own flushes both (microtasks run first). The cleanup itself is another macrotask queued after, so verifying "block removed" needs one more round.
+describe("buildNoteEditorOptions uploadFile really connected (handleFileInsertion)", () => {
   let doc: Y.Doc;
   let editorRef: EditorRef;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 測試用編輯器，走 repo 慣例的 BlockNoteEditor<any,any,any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test editor; repo convention BlockNoteEditor<any,any,any>
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
@@ -650,10 +598,8 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
     document.body.appendChild(container);
     editor.mount(container);
 
-    // 讓游標所在的 block 已有內容——`handleFileInsertion` 的 `insertOrUpdateBlock` 對
-    // 「空 block」是原地 `updateBlock`（覆蓋掉整個唯一的 block，很難斷言生命週期），
-    // 對「非空 block」則是 `insertBlocks(...,"after")`，會多出一個全新的 block——後者
-    // 才有獨立的插入／移除可以觀察，且不用管它的內部 id。
+    // Give the block under the cursor content: `handleFileInsertion`'s `insertOrUpdateBlock` does an in-place `updateBlock` on an empty block (overwriting the only block, hard to assert a lifecycle on)
+    // but `insertBlocks(..., "after")` on a non-empty one, adding a brand-new block - only that has a separate insert/remove to observe, and its internal id doesn't matter.
     editor.insertInlineContent(["hello"]);
   });
 
@@ -669,10 +615,8 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
   }
 
   function pasteFile(file: File): void {
-    // `getData` 一定要在——`createMediaBlockingDOMEvents` 掛的 handler（規則③放行前）
-    // 先跑一手 `classifyMediaTransfer`，它會呼叫 `data.getData("text/html"/"text/plain")`
-    // 找內嵌 data URL；沒有這個方法會直接炸掉整個事件派發（真實瀏覽器的 DataTransfer
-    // 一律有這個方法，純圖片貼上時回空字串）。
+    // `getData` must exist: the handler from `createMediaBlockingDOMEvents` first runs `classifyMediaTransfer` (before rule 3 lets it through), which calls `data.getData("text/html"/"text/plain")` to look for embedded data URLs;
+    // without it the whole event dispatch blows up (a real browser's DataTransfer always has it, returning an empty string for a pure image paste).
     const clipboardData = {
       types: ["Files"],
       items: [{ type: file.type, getAsFile: () => file }],
@@ -690,7 +634,7 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  it("成功：貼上圖片檔案真的觸發 uploadFile，block 拿到回傳的 url（image 已在 schema，placeholder 真的是 image block）", async () => {
+  it("success: pasting an image file really triggers uploadFile, the block gets the returned url (image is in the schema, the placeholder is a real image block)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u1", url: "/api/uploads/u1" }) }),
     );
@@ -699,21 +643,18 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
 
     pasteFile(imageFile());
 
-    // placeholder block 是 `insertOrUpdateBlock` 同步插入的，不必等待任何非同步結果。
     expect(editor.document.length).toBe(before + 1);
 
     await flushMacrotask();
 
     const placeholder = editor.document[editor.document.length - 1];
-    // `handleFileInsertion` 依 `editor.schema.blockSpecs` 逐一比對 `fileBlockAccept`
-    // 挑 block 型別（見 `@blocknote/core` 原始碼）；image 恢復進 schema 後，image/png
-    // 檔案會落在 image block（不再退回泛用的 file block）。
+    // `handleFileInsertion` picks the block type by checking `schema.blockSpecs` against `fileBlockAccept` one by one (see `@blocknote/core` source); with image in the schema an image/png file lands in an image block, not the generic file block.
     expect(placeholder.type).toBe("image");
     expect((placeholder.props as Record<string, unknown>).url).toBe("/api/uploads/u1");
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it("失敗（4xx）：toast 一則、placeholder block 在下一輪 macrotask 後才被移除（排序：updateBlock 先跑完，才輪到移除）", async () => {
+  it("failure (4xx): one toast, the placeholder block is removed only after the next macrotask (ordering: updateBlock finishes first, then removal)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       fakeResponse({
         ok: false,
@@ -728,9 +669,7 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
     expect(editor.document.length).toBe(before + 1);
 
     await flushMacrotask();
-    // 這一輪：uploadFile 的 promise 已 resolve（sentinel ""）、toast 已觸發、
-    // `handleFileInsertion` 的 `editor.updateBlock(...)` 也已同步跑完——但清除排的是
-    // *另一個*、更晚註冊的 macrotask，這裡還沒到它。
+    // This round: uploadFile's promise has resolved (sentinel ""), the toast fired and `handleFileInsertion`'s `editor.updateBlock(...)` has run synchronously - but cleanup is another, later-registered macrotask that hasn't run yet.
     expect(toastMock).toHaveBeenCalledWith({ title: "t:errors.unsupported_media_type" });
     expect(editor.document.length).toBe(before + 1);
 
@@ -740,14 +679,10 @@ describe("buildNoteEditorOptions 的 uploadFile 真接線（handleFileInsertion�
   });
 });
 
-// ── issue #99：`insertLinkAtSavedSelection` ─────────────
-//
-// 舊版把「還原 selection 再 createLink」直接寫在 `NoteEditor` 元件內的
-// `handleLinkInsert` 閉包裡，整條 `NoteEditor` 接線層零覆蓋——三發突變（刪掉
-// `<LinkDialog>` 掛載、刪掉 selection 還原、把整支 handler 變 no-op）971 條既有測試
-// 全部維持綠。抽成這支可匯出的純函式，才能掛真編輯器直接量結果，不是信「應該有做」。
+// issue #99: `insertLinkAtSavedSelection`. "Restore selection then createLink" used to live inside `NoteEditor`'s `handleLinkInsert` closure, leaving the NoteEditor wiring layer uncovered
+// (deleting the `<LinkDialog>` mount, the selection restore, or making the handler a no-op all stayed green). As an exported pure function it can be measured with a real editor.
 describe("insertLinkAtSavedSelection", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同檔案其他 mount 測試
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as the other mount tests in this file
   let editor: BlockNoteEditor<any, any, any>;
   let container: HTMLElement;
 
@@ -763,20 +698,18 @@ describe("insertLinkAtSavedSelection", () => {
     container.remove();
   });
 
-  it("有還原 selection：連結落在存下的位置，不是段落尾端（真編輯器實測，殺掉「拿掉還原」那發突變）", () => {
+  it("with restore: the link lands at the saved position, not at the paragraph end (real editor)", () => {
     editor.insertInlineContent(["hello "]);
-    // 這就是 `openLinkDialog` 開啟對話框當下存的那個 selection——之後又打了
-    // "world"，selection 因此跑到段落尾端，兩個位置真的不同才分辨得出「有沒有還原」。
+    // This is the selection `openLinkDialog` saved when opening the dialog; "world" is typed afterwards, moving the selection to the paragraph end, so the two positions really differ and "restored or not" is distinguishable.
     const savedSelection = editor.transact((tr) => ({ from: tr.selection.from, to: tr.selection.to }));
     editor.insertInlineContent(["world"]);
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("hello world");
 
     insertLinkAtSavedSelection(editor, savedSelection, { text: "x", href: "https://example.com" });
 
-    // 沒有還原的話（`editor.createLink` 直接打在「當下」selection＝段落尾端）
-    // 這裡會是 "hello worldx"——這正是拿掉還原那一行時實測到的錯誤形狀。
+    // Without the restore (`editor.createLink` straight at the current selection = paragraph end) this would be "hello worldx".
     expect(editor.transact((tr) => tr.doc.textContent)).toBe("hello xworld");
-    // 位置對了還不夠——連 mark 本身也要確認真的落在文件裡、href 是對的。
+    // A correct position isn't enough: also confirm the mark really sits in the document with the right href.
     const hasLink = editor.transact((tr) => {
       let found = false;
       tr.doc.descendants((node) => {
@@ -787,7 +720,7 @@ describe("insertLinkAtSavedSelection", () => {
     expect(hasLink).toBe(true);
   });
 
-  it("savedSelection 為 null（拿不到 selection 時的防呆）：不炸、落在當下 selection", () => {
+  it("savedSelection null (defensive when no selection can be obtained): doesn't blow up, lands at the current selection", () => {
     editor.insertInlineContent(["hello "]);
 
     expect(() => insertLinkAtSavedSelection(editor, null, { text: "x", href: "https://example.com" })).not.toThrow();
@@ -796,42 +729,36 @@ describe("insertLinkAtSavedSelection", () => {
   });
 });
 
-// ── issue #99：`<LinkDialog>` 掛載結構守衛（原始碼 regex）──────────────────────
-//
-// 這兩條只讀原始碼字串比對，不掛真元件、不驗證真的渲染出什麼——接不住「掛載被包進
-// 永遠為假的條件」「`linkDialogOpen` 永遠不為 true」這類形。各自守的東西見 it 名。
-describe("NoteEditor JSX：<LinkDialog> 掛載守衛", () => {
+// issue #99: `<LinkDialog>` mount structure guard (source regex). These two only compare source strings, mount no real component and verify nothing rendered,
+// so they can't catch shapes like "the mount wrapped in an always-false condition" or "`linkDialogOpen` never true".
+describe("NoteEditor JSX: <LinkDialog> mount guard", () => {
   const source = readFileSync(`${process.cwd()}/src/components/NoteEditor.tsx`, "utf8");
 
-  it("掛載且四個 prop 都接對線（editor/open/onOpenChange/onSubmit），預填值也接上", () => {
+  it("mounted with all four props wired (editor/open/onOpenChange/onSubmit), prefill values wired too", () => {
     expect(source).toMatch(
       /<LinkDialog\s+editor=\{editor\}\s+open=\{linkDialogOpen\}\s+onOpenChange=\{setLinkDialogOpen\}\s+onSubmit=\{handleLinkInsert\}\s+initialText=\{linkPrefill\.text\}\s+initialUrl=\{linkPrefill\.url\}\s*\/>/,
     );
   });
 
-  it("handleLinkInsert 本體真的呼叫了 insertLinkAtSavedSelection（不是被拔成 no-op）", () => {
+  it("handleLinkInsert's body really calls insertLinkAtSavedSelection (not reduced to a no-op)", () => {
     expect(source).toMatch(/insertLinkAtSavedSelection\(currentEditor,\s*linkSelectionRef\.current,\s*\{\s*text:\s*keepText \? "" : text,\s*href\s*\}\)/);
   });
 });
 
-// ── issue #99：`useLinkMenuState` 的 `getSlashItems` 身分不變 ─────────────────────
-//
-// 具名要求：「測試要釘的是 dialog 開關前後 getSlashItems
-// 身分不變」。抽成 `useLinkMenuState` 之後用 `renderHook` 直接驗證這個
-// hooks-composition 事實，不必掛 BlockNote。
+// issue #99: `useLinkMenuState`'s `getSlashItems` identity must not change across dialog open/close; after extracting `useLinkMenuState`
+// this hooks-composition fact is verified directly with `renderHook`, no BlockNote mount needed.
 describe("useLinkMenuState", () => {
   const editorRef: EditorRef = { current: null };
   const translate = (key: string) => key;
 
-  it("dialog 開＋關（linkDialogOpen 變動）：getSlashItems 身分不變", () => {
+  it("dialog open + close (linkDialogOpen changes): getSlashItems identity unchanged", () => {
     const { result } = renderHook(() => useLinkMenuState(editorRef, translate));
     const before = result.current.getSlashItems;
 
     act(() => {
       result.current.openLinkDialog();
     });
-    // 先確認真的重 render 了（state 真的變了）——否則下面的身分比對是假陽性
-    // （沒重 render 當然身分不變，跟「重 render 後身分仍不變」是兩件事）。
+    // First confirm it really re-rendered (state really changed); otherwise the identity comparison below is a false positive (no re-render trivially keeps identity).
     expect(result.current.linkDialogOpen).toBe(true);
     expect(result.current.getSlashItems).toBe(before);
 
@@ -842,7 +769,7 @@ describe("useLinkMenuState", () => {
     expect(result.current.getSlashItems).toBe(before);
   });
 
-  it("正對照：換一個真的不同的 translate → getSlashItems 換身分（證明上一條的相等斷言不是恆真、確實在量依賴）", () => {
+  it("positive control: a really different translate -> getSlashItems changes identity (proves the equality assertion above isn't a tautology and does measure the dependency)", () => {
     const { result, rerender } = renderHook(({ translate: t }) => useLinkMenuState(editorRef, t), {
       initialProps: { translate },
     });
@@ -853,11 +780,9 @@ describe("useLinkMenuState", () => {
     expect(result.current.getSlashItems).not.toBe(before);
   });
 
-  // 上面兩條測的是 getSlashItems 的身分；`openLinkDialog` 真的把 selection **存**
-  // 下來這一半，`insertLinkAtSavedSelection` 的單元測試接不住（它拿到的是呼叫端
-  // 先準備好的 savedSelection，不是 `openLinkDialog` 存的那份）——這裡掛真編輯器，
-  // 走 `openLinkDialog` → `handleLinkInsert` 完整一輪，量的是存與還原兩半合起來的結果。
-  it("openLinkDialog 存下的 selection 真的被 handleLinkInsert 還原（不是靠 null fallback 巧合過關）", () => {
+  // The two above test getSlashItems identity; the half where `openLinkDialog` really **saves** the selection isn't caught by `insertLinkAtSavedSelection`'s unit test
+  // (it receives a savedSelection prepared by the caller, not the one `openLinkDialog` saved) - this mounts a real editor and goes through `openLinkDialog` -> `handleLinkInsert`, measuring saving and restoring together.
+  it("the selection saved by openLinkDialog is really restored by handleLinkInsert (not passing by coincidence through the null fallback)", () => {
     const realEditor = BlockNoteEditor.create({ schema: noteSchema });
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -870,16 +795,14 @@ describe("useLinkMenuState", () => {
     act(() => {
       result.current.openLinkDialog();
     });
-    // 開了對話框之後文件繼續變動，「當下」selection 因此跑到段落尾端——跟
-    // `openLinkDialog` 存下的位置不同，才分辨得出「有沒有真的存到」。
+    // After the dialog opens the document keeps changing, moving the current selection to the paragraph end - different from the position `openLinkDialog` saved, so "really saved or not" is distinguishable.
     realEditor.insertInlineContent(["world"]);
 
     act(() => {
       result.current.handleLinkInsert({ text: "x", href: "https://example.com" });
     });
 
-    // 若 openLinkDialog 沒真的存下 selection（例如永遠存 null），handleLinkInsert
-    // 會落回「當下」selection＝段落尾端，結果會是 "hello worldx"。
+    // If openLinkDialog didn't really save the selection (e.g. always saved null), handleLinkInsert would fall back to the current selection = paragraph end, giving "hello worldx".
     expect(realEditor.transact((tr) => tr.doc.textContent)).toBe("hello xworld");
 
     realEditor.unmount();
@@ -887,7 +810,7 @@ describe("useLinkMenuState", () => {
   });
 });
 
-describe("useLinkMenuState 的 getSlashItems 在手機不帶快捷鍵欄", () => {
+describe("useLinkMenuState getSlashItems has no shortcut column on phone", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -905,7 +828,7 @@ describe("useLinkMenuState 的 getSlashItems 在手機不帶快捷鍵欄", () =>
     return items as { title: string; badge?: string }[];
   }
 
-  it("手機：沒有任何一項有 badge，項目集合與 docked 相同", async () => {
+  it("phone: no item has a badge, the item set equals docked", async () => {
     const docked = await slashItems("docked");
     const phone = await slashItems("phone");
     expect(docked.some((item) => item.badge)).toBe(true);
@@ -914,8 +837,8 @@ describe("useLinkMenuState 的 getSlashItems 在手機不帶快捷鍵欄", () =>
   });
 });
 
-describe("lateBoundTranslate（late-bound 包裝必須轉傳插值參數）", () => {
-  it("轉傳 opts，且每次呼叫讀 ref 的當下值", () => {
+describe("lateBoundTranslate (late-bound wrapper must forward interpolation args)", () => {
+  it("forwards opts, and reads the ref's current value on every call", () => {
     const ref: { current: (key: string, opts?: Record<string, unknown>) => string } = {
       current: (key, opts) => `a:${key}:${JSON.stringify(opts ?? null)}`,
     };
@@ -926,8 +849,7 @@ describe("lateBoundTranslate（late-bound 包裝必須轉傳插值參數）", ()
   });
 });
 
-describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions 的編輯器上（拔接線要紅）", () => {
-  /** buildNoteEditorOptions → 真編輯器 → mount（快取裡有 Alpha）；回傳收尾函式。 */
+describe("#269 wiring: the site-link plugin is really attached to the editor built by buildNoteEditorOptions (removing the wiring must go red)", () => {
   function mountBuilt() {
     const doc = new Y.Doc();
     const editorRef: { current: unknown } = { current: null };
@@ -949,13 +871,13 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
         noteId: "n1",
         siteLinks,
       }) as never,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention
     ) as BlockNoteEditor<any, any, any>;
     editorRef.current = editor;
     const container = document.createElement("div");
     document.body.appendChild(container);
     editor.mount(container);
-    attachTestElementRenderer(editor); // 沒有 <BlockNoteView>：wikilink 的 toDOM 要它（見 helper 檔頭）
+    attachTestElementRenderer(editor); // there is no <BlockNoteView>, but wikilink's toDOM needs this (see the helper header)
     const cleanup = () => {
       editor.unmount();
       container.remove();
@@ -964,7 +886,7 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
     return { editor, cleanup };
   }
 
-  it("createLink 一個快取命中的站內網址 → wikilink", () => {
+  it("createLink with a cache-hit site URL -> wikilink", () => {
     const { editor, cleanup } = mountBuilt();
     try {
       editor.setTextCursorPosition(editor.document[0]!.id, "end");
@@ -975,15 +897,15 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
     }
   });
 
-  it("input rule 接線（createMarkdownLinkExtension 收到 siteLinks）：逐字打 `see [x](/n/alice/alpha)` → wikilink", () => {
+  it("input rule wiring (createMarkdownLinkExtension receives siteLinks): typing `see [x](/n/alice/alpha)` char by char -> wikilink", () => {
     const { editor, cleanup } = mountBuilt();
     try {
       const view = editor._tiptapEditor.view;
       editor.setTextCursorPosition(editor.document[0]!.id, "end");
-      // 走 plugin 鏈的 handleTextInput（input rule 掛在那裡；不可用直接呼叫 editorProps 的 typeInput——那條繞過 input rule）。
+      // Go through the plugin chain's handleTextInput (the input rule lives there); the direct editorProps typeInput would bypass the input rule.
       for (const ch of "see [x](/n/alice/alpha)") {
         const { from, to } = view.state.selection;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- callback 只是原樣轉呼 handleTextInput prop，不值得為它拼出 PM 的 prop 型別
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the callback only forwards to the handleTextInput prop; not worth building PM's prop type
         const handled = view.someProp("handleTextInput", (f: any) => f(view, from, to, ch));
         if (!handled) view.dispatch(view.state.tr.insertText(ch, from, to));
       }
@@ -993,7 +915,7 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
     }
   });
 
-  it("貼上接線（pasteHandler 帶 createSiteLinkPasteHook）：段落中貼 HTML <a> → wikilink", () => {
+  it("paste wiring (pasteHandler carries createSiteLinkPasteHook): pasting HTML <a> mid-paragraph -> wikilink", () => {
     const { editor, cleanup } = mountBuilt();
     try {
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "hello " }]);
@@ -1010,14 +932,14 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
 
   const a353 = (t: string) => `<a href="/n/alice/alpha">${t}</a>`;
   it.each([
-    // 游標在 AAA 之後：被切開那段的後半換了新 block id（舊的 diff 範圍蓋到 L）。
-    ["兩段", "AAA", `<p>X ${a353("pa")}</p><p>Y ${a353("pb")}</p>`, ["link:H", "wiki:pa", "wiki:pb", "link:L"]],
-    // 最後一塊是巢狀清單項、游標緊貼 L 前：PM 以 ReplaceAroundStep 把游標後的既有內容搬進那一項（「選取＋尺寸差」會蓋到 L）。
-    ["最後一塊是巢狀清單項", "AAA ", `<p>X ${a353("pa")}</p><ul><li>Y ${a353("pb")}<ul><li>Z ${a353("pc")}</li></ul></li></ul>`, ["link:H", "wiki:pa", "wiki:pb", "wiki:pc", "link:L"]],
-  ] as const)("#353 產品組態：`[H] AAA [L] BBB` 段中貼%s → 貼上的轉成 wikilink，既有的 H、L 仍是一般連結", (_name, after, html, expected) => {
+    // Cursor after AAA: the second half of the split part gets a new block id (the old diff range covered L).
+    ["two paragraphs", "AAA", `<p>X ${a353("pa")}</p><p>Y ${a353("pb")}</p>`, ["link:H", "wiki:pa", "wiki:pb", "link:L"]],
+    // Last block is a nested list item with the cursor right before L: PM moves the existing content after the cursor into that item with a ReplaceAroundStep ("selection + size difference" would cover L).
+    ["last block is a nested list item", "AAA ", `<p>X ${a353("pa")}</p><ul><li>Y ${a353("pb")}<ul><li>Z ${a353("pc")}</li></ul></li></ul>`, ["link:H", "wiki:pa", "wiki:pb", "wiki:pc", "link:L"]],
+  ] as const)("#353 product config: `[H] AAA [L] BBB` pasting into the middle: %s -> the pasted ones become wikilinks, existing H and L stay ordinary links", (_name, after, html, expected) => {
     const { editor, cleanup } = mountBuilt();
     try {
-      const href = "/notes/11111111-1111-4111-8111-111111111111"; // 與貼上的 href 不同：緊貼時 PM 不會併成一個連結
+      const href = "/notes/11111111-1111-4111-8111-111111111111"; // differs from the pasted href: when adjacent, PM doesn't merge them into one link
       editor.replaceBlocks(editor.document, [{ type: "paragraph", content: [{ type: "link", href, content: "H" }, " AAA ", { type: "link", href, content: "L" }, " BBB"] }]);
       const view = editor._tiptapEditor.view;
       let caret = -1;
@@ -1030,12 +952,11 @@ describe("#269 接線：站內連結外掛真的掛在 buildNoteEditorOptions �
       const event = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(event, "clipboardData", { value: { types: Object.keys(data), items: [], files: [], getData: (t: string) => data[t] ?? "" } });
       view.dom.dispatchEvent(event);
-      // 全文（含巢狀子區塊）依序的連結。
       const seq: string[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM Node 型別在 apps/web 值層級拿不到（同本檔其他 descendants 走法）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PM Node types aren't available at value level in apps/web (same as the other descendants walks in this file)
       view.state.doc.descendants((n: any) => {
         if (n.type.name === "wikilink") seq.push(`wiki:${String(n.attrs.snapshotTitle)}`);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
         else if (n.isText && n.marks.some((m: any) => m.type.name === "link")) seq.push(`link:${String(n.text)}`);
         return true;
       });

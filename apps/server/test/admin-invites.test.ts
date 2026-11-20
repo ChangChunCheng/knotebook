@@ -1,7 +1,7 @@
 /**
- * #285 管理員邀請 API：建立（A1–A3、A5、A8–A10）、列表（A6）、撤銷（A7）。
- * 非 admin／未登入的 403／401 併在 `admin-users.test.ts` 的 requireAdmin 清單。
- * 每案各建一個 app（fresh DB）；造列一律 raw SQL，`created_at` 與 `expires_at` 以 SQL 同推（`one_time_links_expiry_chk`）。
+ * Non-admin / not-signed-in 403/401 are covered by the requireAdmin list in `admin-users.test.ts`.
+ * Each case builds its own app (fresh DB), so invite row counts start at zero.
+ * Rows are created with raw SQL; `created_at` and `expires_at` are moved together in SQL (`one_time_links_expiry_chk`).
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ const REDACTED = "產生邀請時發生非預期的資料庫錯誤（錯誤本�
 const PARAMS_LEAK = /params: |"params"\s*:/;
 const DTO_KEYS = ["createdAt", "createdBy", "expiresAt", "id", "label", "revokedAt", "status", "usedAt", "usedBy"];
 
-/** pino 的 `logMethod` hook（結構化欄位）＋ stream（整份輸出字串）兩路一起收（同 password-reset.test.ts）。 */
+/** Collects both the `logMethod` hook (structured fields) and the stream (whole output string), as in password-reset.test.ts. */
 function logged() {
   const lines: Array<{ msg?: string; obj: Record<string, unknown> }> = [];
   const out: string[] = [];
@@ -72,7 +72,7 @@ async function epochOf(db: Db, id: string): Promise<number> {
 
 interface RawInvite {
   createdMinAgo: number;
-  /** 距現在的分鐘數；負數＝已過期。 */
+  /** Minutes from now; negative = already expired. */
   expiresInMin: number;
   label?: string;
   createdBy?: string;
@@ -101,7 +101,7 @@ async function setPasswordLogin(db: Db, enabled: boolean) {
 }
 
 describe("POST /api/admin/invites", () => {
-  it("A1：201 { invite, token }；token 形狀、雜湊落庫、到期推算、invite 欄位（1／3／7 天）", async () => {
+  it("201 { invite, token }; token shape, hash stored, expiry computed, invite fields (1/3/7 days)", async () => {
     const ctx = await setup();
     const res = await issue(ctx, { expiresInDays: 3 });
     expect(res.statusCode, res.body).toBe(201);
@@ -134,12 +134,12 @@ describe("POST /api/admin/invites", () => {
     ["8", { expiresInDays: 8 }],
     ["1.5", { expiresInDays: 1.5 }],
     ['"3"', { expiresInDays: "3" }],
-    ["缺 expiresInDays", {}],
-    ["多餘鍵", { expiresInDays: 3, extra: 1 }],
-    ["label 101 字", { expiresInDays: 3, label: "字".repeat(101) }],
-    ["label 含 NUL", { expiresInDays: 3, label: "a\u0000b" }],
-    ["label 非字串", { expiresInDays: 3, label: 5 }],
-  ])("A2：body 不合（%s）→ 400 invalid_body、不插列", async (_name, payload) => {
+    ["missing expiresInDays", {}],
+    ["extra key", { expiresInDays: 3, extra: 1 }],
+    ["label of 101 characters", { expiresInDays: 3, label: "字".repeat(101) }],
+    ["label contains NUL", { expiresInDays: 3, label: "a\u0000b" }],
+    ["label is not a string", { expiresInDays: 3, label: 5 }],
+  ])("body invalid (%s) -> 400 invalid_body, no row inserted", async (_name, payload) => {
     const ctx = await setup();
     const res = await issue(ctx, payload);
     expect(res.statusCode, res.body).toBe(400);
@@ -147,7 +147,7 @@ describe("POST /api/admin/invites", () => {
     expect(await rows(ctx.db)).toHaveLength(0);
   });
 
-  it("A3：label trim；空字串與全空白存 NULL；100 個 emoji 原樣存", async () => {
+  it("label is trimmed; empty string and all-whitespace are stored as NULL; 100 emoji stored verbatim", async () => {
     const ctx = await setup();
     const labelOf = async (label: string) => {
       const res = await issue(ctx, { expiresInDays: 1, label });
@@ -162,7 +162,7 @@ describe("POST /api/admin/invites", () => {
     expect(await labelOf("😀".repeat(100))).toBe("😀".repeat(100));
   });
 
-  it("A5：帳密關閉 → 403 password_login_disabled、不插列；壞 body 仍 400；env 強制＋DB 關 → 201", async () => {
+  it("password login off -> 403 password_login_disabled, no row; bad body is still 400; env force + DB off -> 201", async () => {
     const ctx = await setup();
     await setPasswordLogin(ctx.db, false);
     const res = await issue(ctx, { expiresInDays: 3 });
@@ -176,7 +176,7 @@ describe("POST /api/admin/invites", () => {
     expect((await issue(forced, { expiresInDays: 3 })).statusCode).toBe(201);
   });
 
-  it("A8：建立 log 的鍵恰為 userId／linkId／expiresAt；整份輸出不含 token、雜湊、備註", async () => {
+  it("create log has exactly the keys userId/linkId/expiresAt; whole output contains no token, hash or note", async () => {
     const ctx = await setup();
     const res = await issue(ctx, { expiresInDays: 2, label: "secret-note-285" });
     expect(res.statusCode, res.body).toBe(201);
@@ -190,7 +190,7 @@ describe("POST /api/admin/invites", () => {
     expect(out).not.toContain("secret-note-285");
   });
 
-  it("A9：建立成功後機會性清理 30 天前結束的舊邀請", async () => {
+  it("after a successful create, old invites that ended more than 30 days ago are cleaned up opportunistically", async () => {
     const ctx = await setup();
     const old = await rawInvite(ctx.db, { createdMinAgo: 32 * 1440, expiresInMin: -31 * 1440 + 60, revokedAtMinAgo: 31 * 1440 });
     expect((await issue(ctx, { expiresInDays: 1 })).statusCode).toBe(201);
@@ -207,7 +207,7 @@ describe("POST /api/admin/invites", () => {
     expect(gone).toBe(true);
   });
 
-  it("A10：INSERT 的非預期 DB 錯誤 → 500，log 遮蔽（無 params、無 64 位十六進位）", async () => {
+  it("unexpected DB error on INSERT -> 500, log redacted (no params, no 64-digit hex)", async () => {
     const ctx = await setup();
     await ctx.db.execute(sql.raw("ALTER TABLE one_time_links ADD CONSTRAINT t285_block CHECK (false) NOT VALID"));
     const res = await issue(ctx, { expiresInDays: 3 });
@@ -220,7 +220,7 @@ describe("POST /api/admin/invites", () => {
 });
 
 describe("GET /api/admin/invites", () => {
-  it("A6：只列邀請、鍵集合與 status、排序、usedBy／createdBy、不含雜湊；建立者被刪後 createdBy 為 null", async () => {
+  it("list: only invites, key set and status, ordering, usedBy/createdBy, no hash; createdBy is null after the creator is deleted", async () => {
     const ctx = await setup();
     const c = await seedUser(ctx.db);
     const redeemer = await seedUser(ctx.db);
@@ -228,7 +228,7 @@ describe("GET /api/admin/invites", () => {
     const pending = await rawInvite(ctx.db, { createdMinAgo: 60, expiresInMin: 1440, label: "P", createdBy: c.id });
     const expired = await rawInvite(ctx.db, { createdMinAgo: 120, expiresInMin: -60, createdBy: c.id });
     const revoked = await rawInvite(ctx.db, { createdMinAgo: 180, expiresInMin: -30, revokedAtMinAgo: 60, createdBy: c.id });
-    // revoked 與 used 的 expires_at 都已過：守 CASE 順序（used、revoked 都優先於 expired）。
+    // Both revoked and used rows have an expired expires_at: guards the CASE order (used and revoked take priority over expired).
     const used = await rawInvite(ctx.db, { createdMinAgo: 240, expiresInMin: -60, usedAtMinAgo: 120, usedBy: redeemer.id, createdBy: c.id });
     const reset = await rawInvite(ctx.db, { kind: "password_reset", target: resetTarget.id, createdMinAgo: 30, expiresInMin: 60, createdBy: c.id });
 
@@ -264,7 +264,7 @@ describe("DELETE /api/admin/invites/:id", () => {
     return body.find(x => x.id === id)?.status;
   }
 
-  it("A7：撤銷 pending → 204＋log；重撤 204 無第二行；used → 409；expired → 204 且維持 expired；不存在／非 uuid／重設列 → 404；大寫 uuid → 204", async () => {
+  it("revoking pending -> 204 + log; revoking again 204 with no second line; used -> 409; expired -> 204 and stays expired; nonexistent/non-uuid/reset row -> 404; uppercase uuid -> 204", async () => {
     const ctx = await setup();
     const other = await seedUser(ctx.db);
     const pending = await rawInvite(ctx.db, { createdMinAgo: 10, expiresInMin: 1440 });
@@ -300,13 +300,13 @@ describe("DELETE /api/admin/invites/:id", () => {
     const [resetRow] = await ctx.db.select().from(oneTimeLinks).where(eq(oneTimeLinks.id, reset.id));
     expect(resetRow!.revokedAt).toBeNull();
 
-    // 回歸：id 先轉小寫再比對。
+    // Regression: the id is lowercased before comparison.
     const upper = await rawInvite(ctx.db, { createdMinAgo: 10, expiresInMin: 1440 });
     expect((await revoke(ctx, upper.id.toUpperCase())).statusCode).toBe(204);
     expect(logsOf().at(-1)!.obj.linkId).toBe(upper.id);
     expect(await statusOf(ctx, upper.id)).toBe("revoked");
 
-    // 撤銷不看帳密開關。
+    // Revoking ignores the password-login switch.
     const open = await rawInvite(ctx.db, { createdMinAgo: 10, expiresInMin: 1440 });
     await setPasswordLogin(ctx.db, false);
     expect((await revoke(ctx, open.id)).statusCode).toBe(204);

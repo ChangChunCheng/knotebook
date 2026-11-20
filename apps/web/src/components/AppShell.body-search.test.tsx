@@ -16,8 +16,8 @@ import { OWNER_PERMS } from "@/test/fixtures";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * #93：窄視窗抽屜裡點內文區的片段 → 抽屜一律關（別篇靠 pathname 也會關；同篇 pathname 不變，要靠點擊時主動關）。
- * 防抖 300 ms 與 lazy chunk 都用真的（全域 asyncUtilTimeout 10 s，test/setup.ts）。
+ * #93: clicking a snippet in the content area inside the narrow-viewport drawer always closes it (another note closes via pathname; the same note keeps its pathname, so the click must close it).
+ * Debounce (300 ms) and lazy chunks are real; global asyncUtilTimeout is 10 s (test/setup.ts).
  */
 const USER = { id: "u1", email: "a@example.com", handle: "tester", displayName: "Ann", isAdmin: false, mustChangePassword: false, hasPassword: true, autoVersions: true, avatar: null } satisfies UserDto;
 const NOTE: NoteDto = {
@@ -68,7 +68,7 @@ async function openDrawerAndSearch() {
 }
 const drawerGone = () => waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument());
 
-describe("W2 窄視窗抽屜：點內文片段 → 抽屜關", () => {
+describe("narrow-viewport drawer: clicking a content snippet closes the drawer", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -77,13 +77,13 @@ describe("W2 窄視窗抽屜：點內文片段 → 抽屜關", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("別篇的片段 → 抽屜關", async () => {
+  it("snippet of another note -> drawer closes", async () => {
     renderShell();
     fireEvent.click(await openDrawerAndSearch());
     await drawerGone();
   });
 
-  it("目前這一篇的片段（pathname 不變）→ 抽屜同樣關、requestAnchor 被叫", async () => {
+  it("snippet of the current note (pathname unchanged) -> drawer also closes, requestAnchor is called", async () => {
     const requestAnchor = vi.fn();
     renderShell((shell) => (
       <BlockAnchorContext.Provider value={{ currentNoteId: NOTE.id, requestAnchor, scrollToTop: vi.fn() }}>{shell}</BlockAnchorContext.Provider>
@@ -93,7 +93,7 @@ describe("W2 窄視窗抽屜：點內文片段 → 抽屜關", () => {
     expect(requestAnchor).toHaveBeenCalledWith("h1", "needle");
   });
 
-  it("目前這一篇（網址帶 #b-）的命中項 → 抽屜同樣關（pathname 不變，只靠點擊時主動關。每處命中一項、整項是一個 link）", async () => {
+  it("hit on the current note (URL has #b-) -> drawer also closes (pathname unchanged, only the click handler closes it; one hit per match, each whole hit is a link)", async () => {
     renderShell((s) => s, `${canonicalNotePath(NOTE)}#b-h1`);
     const match = await openDrawerAndSearch();
     expect(within(match.closest('[data-testid="search-hit"]') as HTMLElement).getAllByRole("link")).toHaveLength(1);
@@ -103,7 +103,7 @@ describe("W2 窄視窗抽屜：點內文片段 → 抽屜關", () => {
   });
 });
 
-describe("W3 搜尋跳轉的常駐標記：只有「關閉搜尋」會清", () => {
+describe("persistent search-jump marker: only closing the search clears it", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -112,7 +112,7 @@ describe("W3 搜尋跳轉的常駐標記：只有「關閉搜尋」會清", () =
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("窄螢幕：點結果自動關抽屜 → 不清標記（query 還在 AppShell）；重開抽屜按搜尋框的清除鈕才清，且只清一次", async () => {
+  it("narrow screen: clicking a result closes the drawer without clearing the marker (query stays in AppShell); reopening and pressing the search box clear button clears it, once", async () => {
     const cleared = vi.fn();
     const off = onSearchMarkClear(cleared);
     try {
@@ -130,7 +130,7 @@ describe("W3 搜尋跳轉的常駐標記：只有「關閉搜尋」會清", () =
     }
   });
 
-  it("手動把搜尋字刪光 → 清；只改字（非空→非空）、一開始就是空 → 不清", async () => {
+  it("manually deleting all search text clears it; editing text (non-empty -> non-empty) or starting empty does not", async () => {
     const cleared = vi.fn();
     const off = onSearchMarkClear(cleared);
     try {

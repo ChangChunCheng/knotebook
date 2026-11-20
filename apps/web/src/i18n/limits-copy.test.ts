@@ -5,8 +5,6 @@ import zhTWRaw from "./zh-TW.json?raw";
 import managementEn from "./management.en.json";
 import managementZhTW from "./management.zh-TW.json";
 
-/** 站台限制頁文案守衛：註冊表每一項、每個分類都有中英文案；`errors.limit_locked_by_env` 逐字。 */
-
 function get(obj: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
@@ -16,8 +14,8 @@ const bundles = [
   ["zh-TW", managementZhTW],
 ] as const;
 
-describe.each(bundles)("站台限制文案（%s）", (_lang, bundle) => {
-  it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s 有 label 與 description", (key) => {
+describe.each(bundles)("site limits copy (%s)", (_lang, bundle) => {
+  it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s has a label and a description", (key) => {
     for (const field of ["label", "description"]) {
       const v = get(bundle, `admin.limits.items.${key}.${field}`);
       expect(typeof v, `${key}.${field}`).toBe("string");
@@ -25,7 +23,7 @@ describe.each(bundles)("站台限制文案（%s）", (_lang, bundle) => {
     }
   });
 
-  it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s 的名稱與說明是該語系的文字（zh-TW 含中文、en 不含）", (key) => {
+  it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s name and description are in that locale's script (zh-TW contains Chinese, en does not)", (key) => {
     const cjk = /[一-鿿]/;
     for (const field of ["label", "description"]) {
       const v = get(bundle, `admin.limits.items.${key}.${field}`) as string;
@@ -34,7 +32,7 @@ describe.each(bundles)("站台限制文案（%s）", (_lang, bundle) => {
     }
   });
 
-  it("每個用到的分類都有名稱", () => {
+  it("every used category has a name", () => {
     const categories = new Set(Object.values(SITE_LIMITS).map((d) => d.category));
     for (const c of categories) {
       const v = get(bundle, `admin.limits.categories.${c}`);
@@ -43,7 +41,7 @@ describe.each(bundles)("站台限制文案（%s）", (_lang, bundle) => {
     }
   });
 
-  it("頁標題、說明、儲存鈕、調低後果與「數值不在可調範圍內」都有", () => {
+  it("page title, description, save button, consequence of lowering, and the 'value out of adjustable range' message are present", () => {
     for (const path of [
       "admin.limits.title",
       "admin.limits.description",
@@ -66,19 +64,18 @@ describe.each(bundles)("站台限制文案（%s）", (_lang, bundle) => {
   });
 });
 
-describe("主檔", () => {
-  it("admin.nav.limits 兩語", () => {
+describe("main file", () => {
+  it("admin.nav.limits in both languages", () => {
     expect(get(JSON.parse(enRaw), "admin.nav.limits")).toBe("Site limits");
     expect(get(JSON.parse(zhTWRaw), "admin.nav.limits")).toBe("站台限制");
   });
 
-  it("errors.limit_locked_by_env 逐字", () => {
+  it("errors.limit_locked_by_env verbatim", () => {
     expect(get(JSON.parse(enRaw), "errors.limit_locked_by_env")).toBe("This setting is set in the server's .env file. Change it there and restart the server.");
     expect(get(JSON.parse(zhTWRaw), "errors.limit_locked_by_env")).toBe("這一項由伺服器的 .env 設定，請改 .env 並重啟伺服器。");
   });
 });
 
-/** 名稱逐字（key → [en, zh-TW]）；兩個項目對調名稱或說明就紅。 */
 const LABELS: Record<string, [string, string]> = {
   uploadMaxBytes: ["Upload size limit", "上傳檔案大小上限"],
   noteMaxBytes: ["Note size limit", "筆記大小上限"],
@@ -99,7 +96,6 @@ const LABELS: Record<string, [string, string]> = {
   apiTokensPerUser: ["Active API tokens per person", "每人有效 API token 上限"],
 };
 
-/** 每項說明裡該項獨有（同分類其他項的說明沒有）的一個詞（key → [en, zh-TW]）。 */
 const DESCRIPTION_MARKERS: Record<string, [string, string]> = {
   uploadMaxBytes: ["upload", "檔案"],
   noteMaxBytes: ["note's", "單篇"],
@@ -120,8 +116,8 @@ const DESCRIPTION_MARKERS: Record<string, [string, string]> = {
   apiTokensPerUser: ["revoke", "撤銷"],
 };
 
-describe("名稱與說明逐項釘住", () => {
-  it("表涵蓋註冊表每一項", () => {
+describe("names and descriptions pinned per entry", () => {
+  it("the table covers every registry entry", () => {
     expect(Object.keys(LABELS).sort()).toEqual([...SITE_LIMIT_KEYS].sort());
     expect(Object.keys(DESCRIPTION_MARKERS).sort()).toEqual([...SITE_LIMIT_KEYS].sort());
   });
@@ -130,11 +126,11 @@ describe("名稱與說明逐項釘住", () => {
     ["en", managementEn, 0],
     ["zh-TW", managementZhTW, 1],
   ] as const)("%s", (_lang, bundle, col) => {
-    it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s 名稱逐字", (key) => {
+    it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s name verbatim", (key) => {
       expect(get(bundle, `admin.limits.items.${key}.label`)).toBe(LABELS[key]![col]);
     });
 
-    it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s 的說明含自己的詞、不含同分類別項的詞", (key) => {
+    it.each(SITE_LIMIT_KEYS.map((k) => [k]))("%s description contains its own term and none from other entries in the category", (key) => {
       const desc = (k: string) => get(bundle, `admin.limits.items.${k}.description`) as string;
       const category = SITE_LIMITS[key].category;
       expect(desc(key), key).toContain(DESCRIPTION_MARKERS[key]![col]);
@@ -145,7 +141,7 @@ describe("名稱與說明逐項釘住", () => {
     });
   });
 
-  it("調低後果（zh-TW）逐字", () => {
+  it("consequence of lowering (zh-TW) verbatim", () => {
     expect(get(managementZhTW, "admin.limits.consequences.parseTimeoutMs")).toBe(
       "調低後，整段密集格式（例如大量換行分隔的字）的寫入可能被拒；讀出與批次下載的時限是這個值的 3 倍，太低時大筆記可能讀不出來。",
     );
@@ -157,7 +153,7 @@ describe("名稱與說明逐項釘住", () => {
     );
   });
 
-  it("範圍小字的分隔是「 · 」", () => {
+  it("the separator in the range hint is ' · '", () => {
     expect(get(managementZhTW, "admin.limits.defaultAndRange")).toBe("預設 {{default}} · 範圍 {{min}}–{{max}}");
     expect(get(managementZhTW, "admin.limits.defaultAndRangeWindow")).toBe("預設 {{default}} · 範圍 {{min}}–{{max}} · 每 {{window}}");
   });

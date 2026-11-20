@@ -12,27 +12,27 @@ describe("collab token jwt", () => {
     vi.useRealTimers();
   });
 
-  it("簽驗往返：noteId/role/tv/sid 正確", async () => {
+  it("sign/verify round trip: noteId/role/tv/sid are correct", async () => {
     const token = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "editor", tv: 3, sid: SID, sv: 0 });
     const result = await verifyCollabToken(secret, token);
     expect(result).toEqual({ noteId: "note-1", userId: "user-1", role: "editor", tv: 3, sid: SID, sv: 0 });
   });
 
-  it("role:'none' 可簽可驗（無權限使用者也拿得到合法 token）", async () => {
+  it("role 'none' can be signed and verified (users without permission also get a valid token)", async () => {
     const token = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "none", tv: 0, sid: SID, sv: 0 });
     const result = await verifyCollabToken(secret, token);
     expect(result).toEqual({ noteId: "note-1", userId: "user-1", role: "none", tv: 0, sid: SID, sv: 0 });
   });
 
-  it("claims 含 tv（JWT payload 層級可驗到）", async () => {
+  it("claims include tv (verifiable at the JWT payload level)", async () => {
     const token = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "viewer", tv: 7, sid: SID, sv: 0 });
     const payload = decodeJwt(token);
     expect(payload.tv).toBe(7);
   });
 
-  it("篡改 token → null", async () => {
-    // 改 payload 首字元（而非簽章末字元——base64url 末字元只有部分位元有效，flip
-    // 有極小機率不改變解碼後的位元組，造成假綠）。
+  it("tampered token -> null", async () => {
+    // Change the first character of the payload (not the last character of the signature: only some bits of the last base64url
+    // character are meaningful, so flipping it could, with tiny probability, leave the decoded bytes unchanged and give a false green).
     const token = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "owner", tv: 1, sid: SID, sv: 0 });
     const [header, payload, signature] = token.split(".");
     const flippedFirstChar = payload[0] === "a" ? "b" : "a";
@@ -40,23 +40,23 @@ describe("collab token jwt", () => {
     expect(await verifyCollabToken(secret, tampered)).toBeNull();
   });
 
-  it("亂字串 → null", async () => {
+  it("garbage string -> null", async () => {
     expect(await verifyCollabToken(secret, "not-a-jwt-at-all")).toBeNull();
     expect(await verifyCollabToken(secret, "")).toBeNull();
   });
 
-  it("過期 token → null", async () => {
+  it("expired token -> null", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const token = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "editor", tv: 1, sid: SID, sv: 0 });
-    // 120s TTL（COLLAB_TOKEN_TTL_SECONDS），推進 121s
+    // 120s TTL (COLLAB_TOKEN_TTL_SECONDS), advance 121s
     vi.setSystemTime(new Date("2026-01-01T00:02:01Z"));
     expect(await verifyCollabToken(secret, token)).toBeNull();
   });
 
-  it(":session 鍵簽的用 :collab 驗必 null（兩把鍵不得互驗，見 auth/session.ts 的 sessionKey）", async () => {
-    // 直接重現 sessionKey 的衍生方式（sha256(secret + ":session")）簽一個 token，
-    // 確認用 collab 這邊的 verifyCollabToken（sha256(secret + ":collab")）驗不過。
+  it("a token signed with the :session key must fail verification with :collab (the two keys must not verify each other, see sessionKey in auth/session.ts)", async () => {
+    // Reproduce sessionKey's derivation (sha256(secret + ":session")) to sign a token, then check that verifyCollabToken here
+    // (sha256(secret + ":collab")) rejects it.
     const sessionKey = createHash("sha256").update(`${secret}:session`).digest();
     const token = await new SignJWT({ noteId: "note-1", role: "editor", tv: 1 })
       .setProtectedHeader({ alg: "HS256" })
@@ -66,7 +66,7 @@ describe("collab token jwt", () => {
       .sign(sessionKey);
     expect(await verifyCollabToken(secret, token)).toBeNull();
   });
-  it("#269：sv claim 往返；舊形 token（沒有 sv）驗成 sv=0、不視為壞 token", async () => {
+  it("#269: sv claim round-trips; an old-shape token (no sv) verifies as sv=0 and is not treated as a bad token", async () => {
     const withSv = await signCollabToken(secret, { noteId: "note-1", userId: "user-1", role: "owner", tv: 1, sid: SID, sv: 7 });
     expect((await verifyCollabToken(secret, withSv))?.sv).toBe(7);
     const key = createHash("sha256").update(`${secret}:collab`).digest();
@@ -74,17 +74,17 @@ describe("collab token jwt", () => {
     expect(await verifyCollabToken(secret, legacy)).toEqual({ userId: "user-1", noteId: "note-1", role: "owner", tv: 1, sid: SID, sv: 0 });
   });
 
-  it("#388：沒有 sid 的 token（升級前簽的）→ null（壞 token）；同一張帶上 sid 就過", async () => {
+  it("#388: a token without sid (signed before the upgrade) -> null (bad token); the same one with a sid passes", async () => {
     const key = createHash("sha256").update(`${secret}:collab`).digest();
     const sign = (claims: Record<string, unknown>) =>
       new SignJWT(claims).setProtectedHeader({ alg: "HS256" }).setSubject("user-1").setIssuedAt().setExpirationTime("120s").sign(key);
     expect(await verifyCollabToken(secret, await sign({ noteId: "note-1", role: "owner", tv: 1, sv: 0 }))).toBeNull();
-    expect(await verifyCollabToken(secret, await sign({ noteId: "note-1", role: "owner", tv: 1, sid: "not-a-uuid", sv: 0 }))).toBeNull(); // 形狀比照 verifySession
+    expect(await verifyCollabToken(secret, await sign({ noteId: "note-1", role: "owner", tv: 1, sid: "not-a-uuid", sv: 0 }))).toBeNull(); // shape follows verifySession
     expect(await verifyCollabToken(secret, await sign({ noteId: "note-1", role: "owner", tv: 1, sid: SID.toUpperCase(), sv: 0 }))).toBeNull();
     expect((await verifyCollabToken(secret, await sign({ noteId: "note-1", role: "owner", tv: 1, sid: SID, sv: 0 })))?.sid).toBe(SID);
   });
 
-  it("#269：schemaVersionFromBody——缺席、非物件、非整數一律 0；整數照收", () => {
+  it("#269: schemaVersionFromBody: absent, non-object, non-integer all give 0; integers are accepted", () => {
     expect(schemaVersionFromBody(undefined)).toBe(0);
     expect(schemaVersionFromBody(null)).toBe(0);
     expect(schemaVersionFromBody("1")).toBe(0);
@@ -100,7 +100,7 @@ describe("FixedWindowLimiter", () => {
     vi.useRealTimers();
   });
 
-  it("60 次放行，第 61 次擋", () => {
+  it("60 calls pass, the 61st is blocked", () => {
     const limiter = new FixedWindowLimiter({ limit: 60, windowMs: 60_000 });
     for (let i = 0; i < 60; i++) {
       expect(limiter.consume("user-1")).toBe(true);
@@ -108,7 +108,7 @@ describe("FixedWindowLimiter", () => {
     expect(limiter.consume("user-1")).toBe(false);
   });
 
-  it("超限後每次呼叫仍計數（非失敗才計）：視窗內持續呼叫仍持續回 false", () => {
+  it("calls after exceeding the limit still count (not only failures count): continued calls within the window keep returning false", () => {
     const limiter = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     expect(limiter.consume("k")).toBe(true);
     expect(limiter.consume("k")).toBe(true);
@@ -116,7 +116,7 @@ describe("FixedWindowLimiter", () => {
     expect(limiter.consume("k")).toBe(false);
   });
 
-  it("視窗滾動：超限後推進超過 windowMs，計數歸零重新放行", () => {
+  it("window rolling: after exceeding, advancing past windowMs resets the count and allows again", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const limiter = new FixedWindowLimiter({ limit: 2, windowMs: 1_000 });
@@ -130,33 +130,33 @@ describe("FixedWindowLimiter", () => {
     expect(limiter.consume("k")).toBe(false);
   });
 
-  it("consumeMany（#175）：額度夠就一次扣 n；不夠回 false 且一個都不扣；n <= 0 恆放行不計數", () => {
+  it("consumeMany (#175): enough quota deducts n at once; not enough returns false and deducts nothing; n <= 0 always passes without counting", () => {
     const limiter = new FixedWindowLimiter({ limit: 5, windowMs: 60_000 });
     expect(limiter.consumeMany("k", 0)).toBe(true);
     expect(limiter.isBlocked("k")).toBe(false);
     expect(limiter.consumeMany("k", 3)).toBe(true);
-    expect(limiter.consumeMany("k", 3)).toBe(false); // 3 + 3 > 5：拒絕、計數仍是 3
-    expect(limiter.consumeMany("k", 2)).toBe(true); // 3 + 2 = 5：放行（上一發沒被記帳的證據）
+    expect(limiter.consumeMany("k", 3)).toBe(false); // 3 + 3 > 5: rejected, count stays 3
+    expect(limiter.consumeMany("k", 2)).toBe(true); // 3 + 2 = 5: allowed (shows the previous call was not charged)
     expect(limiter.consume("k")).toBe(false);
   });
 
-  it("consumeMany n > limit：夾到整窗額度——只在空窗放行並扣滿；同窗再發拒絕且不扣；下一窗再放行", () => {
+  it("consumeMany with n > limit is clamped to the whole window quota: allowed and charged in full only in an empty window; another call in the same window is rejected without charge; the next window allows again", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const limiter = new FixedWindowLimiter({ limit: 5, windowMs: 1_000 });
-    expect(limiter.consumeMany("k", 7)).toBe(true); // 新窗：放行（不夾的話 0 + 7 > 5，任何視窗都拒）
-    expect(limiter.isBlocked("k")).toBe(true); // 扣滿整窗
-    expect(limiter.consumeMany("k", 7)).toBe(false); // 同窗再發：拒絕
-    expect(limiter.consume("k")).toBe(false); // 一般上傳也被擋到窗尾
+    expect(limiter.consumeMany("k", 7)).toBe(true); // new window: allowed (without clamping 0 + 7 > 5 would be rejected in every window)
+    expect(limiter.isBlocked("k")).toBe(true);
+    expect(limiter.consumeMany("k", 7)).toBe(false);
+    expect(limiter.consume("k")).toBe(false); // a regular upload is blocked until the window ends
 
     vi.setSystemTime(1_000);
-    expect(limiter.consumeMany("k", 1)).toBe(true); // 新窗開出
-    expect(limiter.consumeMany("k", 7)).toBe(false); // 非空窗（count 1）：夾後要 5，1 + 5 > 5 → 拒絕、不扣
-    expect(limiter.consumeMany("k", 4)).toBe(true); // 1 + 4 = 5：放行（上一發沒被記帳的證據）
+    expect(limiter.consumeMany("k", 1)).toBe(true);
+    expect(limiter.consumeMany("k", 7)).toBe(false); // non-empty window (count 1): clamped it needs 5, and 1 + 5 > 5 -> rejected, not charged
+    expect(limiter.consumeMany("k", 4)).toBe(true); // 1 + 4 = 5: allowed (shows the previous call was not charged)
     expect(limiter.consume("k")).toBe(false);
   });
 
-  it("不同 key 各自獨立計數", () => {
+  it("different keys are counted independently", () => {
     const limiter = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     expect(limiter.consume("a")).toBe(true);
     expect(limiter.consume("b")).toBe(true);
@@ -164,17 +164,17 @@ describe("FixedWindowLimiter", () => {
     expect(limiter.consume("b")).toBe(false);
   });
 
-  it("maxKeys 淘汰最舊的 key（插入序）", () => {
+  it("maxKeys evicts the oldest key (insertion order)", () => {
     const limiter = new FixedWindowLimiter({ limit: 1, windowMs: 60_000, maxKeys: 2 });
-    expect(limiter.consume("k1")).toBe(true); // 插入 k1 → {k1}
-    expect(limiter.consume("k2")).toBe(true); // 插入 k2 → {k1,k2}（已滿）
-    expect(limiter.consume("k3")).toBe(true); // 淘汰最舊 k1，插入 k3 → {k2,k3}
+    expect(limiter.consume("k1")).toBe(true);
+    expect(limiter.consume("k2")).toBe(true);
+    expect(limiter.consume("k3")).toBe(true); // evicts the oldest, k1 -> {k2,k3}
 
-    // k1 已被淘汰——視為全新 key，重新放行一次（若沒被淘汰，會因已用滿 limit=1 而擋）；
-    // 這次插入又會淘汰目前最舊的 k2 → {k3,k1}。
+    // k1 was evicted, so it is a brand-new key and is allowed once more (had it not been evicted it would be blocked, limit=1 used up);
+    // this insert evicts the current oldest k2 -> {k3,k1}.
     expect(limiter.consume("k1")).toBe(true);
 
-    // k3 從未被淘汰過（自始至終都在 map 內），維持它原本「已達上限」的計數狀態不受影響。
+    // k3 was never evicted (it stayed in the map throughout), so its already-at-limit count is unaffected.
     expect(limiter.consume("k3")).toBe(false);
   });
 });

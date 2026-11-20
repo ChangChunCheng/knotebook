@@ -20,14 +20,14 @@ async function impact(built: Built, id: string) {
   return { status: res.statusCode, body: res.json() };
 }
 
-describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝沒有密碼或帳密開關的 DB 值為關）", () => {
-  it("只給站台管理員", async () => {
+describe("GET /api/admin/auth/providers/:id/impact (#187; 'no password' = no password set, or the DB value of the password-login switch is off)", () => {
+  it("site admins only", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA });
     await expectAdminOnly(built.app, built.db, "GET", `/api/admin/auth/providers/${a.id}/impact`);
   });
 
-  it("linked／lockedOut：有密碼不算 locked、還有別的啟用中服務不算 locked、停用帳號不算、沒連這個 issuer 不算；別的服務停用後轉成 locked", async () => {
+  it("linked/lockedOut: having a password is not locked, another enabled provider left is not locked, disabled accounts and accounts not linked to this issuer don't count; becomes locked once the other provider is disabled", async () => {
     const built = await adminApp();
     const { db } = built;
     const a = await seedAuthProvider(db, { issuerUrl: IA, resolvedIssuer: IA });
@@ -49,7 +49,7 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
     expect((await impact(built, a.id)).body).toEqual({ linkedUsers: 3, lockedOutUsers: 2, issuerResolved: true, actingAdminLockedOut: false });
   });
 
-  it("同一個帳號在這個 issuer 只算一次（補登可能留下同 issuer 兩個 sub）", async () => {
+  it("the same account counts once per issuer (a late backfill can leave two subs for the same issuer)", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA });
     const u = await seedUser(built.db);
@@ -58,7 +58,7 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
     expect((await impact(built, a.id)).body).toEqual({ linkedUsers: 1, lockedOutUsers: 1, issuerResolved: true, actingAdminLockedOut: false });
   });
 
-  it("兩個啟用中的服務指向同一個 issuer：停用其中一個，只連這個 issuer 的純 SSO 帳號仍可用另一個 → 不算 locked", async () => {
+  it("two enabled providers pointing at the same issuer: disabling one leaves SSO-only accounts of this issuer able to use the other -> not locked", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA });
     await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA, clientId: "second-client" });
@@ -68,9 +68,9 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
   });
 
   it.each([
-    ["尾斜線形", "https://gitlab.example/"],
-    ["大寫 host 形", "https://GitLab.Example"],
-  ])("%s：resolved_issuer 為 NULL 時對不上（issuerResolved=false、0 人）；測試連線寫入後對上", async (_name, typed) => {
+    ["trailing slash form", "https://gitlab.example/"],
+    ["uppercase host form", "https://GitLab.Example"],
+  ])("%s: no match while resolved_issuer is NULL (issuerResolved=false, 0 users); matches after the connection test writes it", async (_name, typed) => {
     const idp = createFakeIdp("https://gitlab.example");
     const built = await adminApp({ oidcRegistry: createOidcRuntimeRegistry({ fetch: idp.fetch }) });
     const p = await seedAuthProvider(built.db, { issuerUrl: typed });
@@ -81,7 +81,7 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
     expect((await impact(built, p.id)).body).toEqual({ linkedUsers: 1, lockedOutUsers: 1, issuerResolved: true, actingAdminLockedOut: false });
   });
 
-  it("大寫 uuid 路徑同義；不存在 → 404；非 uuid → 404", async () => {
+  it("uppercase uuid path is equivalent; nonexistent -> 404; non-uuid -> 404", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA });
     expect((await impact(built, a.id.toUpperCase())).status).toBe(200);
@@ -89,7 +89,7 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
     expect((await impact(built, "zzz")).status).toBe(404);
   });
 
-  it("停用帳號不論有沒有密碼都不計（只數未停用的帳號）", async () => {
+  it("disabled accounts never count, with or without a password (only non-disabled accounts are counted)", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA });
     const u = await insertPasswordUser(built.db);
@@ -99,8 +99,8 @@ describe("GET /api/admin/auth/providers/:id/impact（#187；「無密碼」＝�
   });
 });
 
-describe("locked-out 看 DB 值、actingAdminLockedOut（#187）", () => {
-  it("同一組 fixture：有密碼＋只有這個服務的身分——DB 開不計、DB 關計入；env 強制不影響（看 DB 值）", async () => {
+describe("locked-out follows the DB value, plus actingAdminLockedOut (#187)", () => {
+  it("same fixture: password + identity only at this provider - DB switch on does not count, off counts; env force has no effect (the DB value decides)", async () => {
     for (const forced of [false, true]) {
       const built = await adminApp({ config: { ...testConfig, passwordLoginForceEnable: forced } });
       const a = await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA });
@@ -112,7 +112,7 @@ describe("locked-out 看 DB 值、actingAdminLockedOut（#187）", () => {
     }
   });
 
-  it("actingAdminLockedOut：管理員唯一可用身分在這個服務 → true；另有別的啟用中服務的身分（含同 issuer 的另一個服務，以 provider 計）→ false；沒有這個服務的身分 → false", async () => {
+  it("actingAdminLockedOut: the admin's only usable identity is at this provider -> true; another enabled provider's identity (including another provider with the same issuer, counted per provider) -> false; no identity at this provider -> false", async () => {
     const built = await adminApp();
     const a = await seedAuthProvider(built.db, { issuerUrl: IA, resolvedIssuer: IA });
     const b = await seedAuthProvider(built.db, { issuerUrl: IB, resolvedIssuer: IB });

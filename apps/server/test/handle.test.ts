@@ -16,11 +16,8 @@ import { createFakeIdp, type FakeIdp, type FakeIdpClaims } from "./helpers/fake-
 import { legacyOidcApp } from "./helpers/oidc-provider.js";
 
 /**
- * #122：三條建帳路徑的 handle 派生與 registry-first 配置。
- *
- * 配置不變量（每條路徑都斷言）：建帳後 `handles` 有一列 `state='live'`、其
- * `handle`＝`users.handle` 且 `user_id`＝該使用者——這是抓兩個嚴重
- * （admin 繞過 registry、改名後 registry 與 users 不一致）回歸的網子。
+ * Invariant asserted on every path: after account creation `handles` has one `state='live'` row whose `handle` = `users.handle` and `user_id` = that user.
+ * It catches the two serious regressions (admin bypassing the registry, registry and users diverging after a rename).
  */
 
 async function registryOf(db: Db, email: string) {
@@ -38,14 +35,12 @@ async function expectLiveRegistry(db: Db, email: string): Promise<{ handle: stri
   return { handle: user.handle };
 }
 
-/** 已在 registry 的使用者（users＋handles live 列）與其 session cookie。 */
 async function addRegisteredUser(db: Db, email: string, handle: string): Promise<{ id: string; cookies: Record<string, string> }> {
   const [u] = await db.insert(users).values({ email, displayName: handle, handle }).returning({ id: users.id });
   await db.insert(handles).values({ handle, userId: u!.id, state: "live" });
   return { id: u!.id, cookies: await cookieOf(u!.id) };
 }
 
-/** 直接插 n 列改名紀錄（額度 fixture）。 */
 async function spend(db: Db, userId: string, n: number, at = new Date()): Promise<void> {
   await db.insert(handleRenames).values(Array.from({ length: n }, () => ({ userId, renamedAt: at })));
 }
@@ -55,32 +50,31 @@ async function renamesOf(db: Db, userId: string): Promise<number> {
   return row!.n;
 }
 
-describe("deriveHandle（候選序＋探測）", () => {
-  it("候選序：preferred_username 優先於 email local-part", async () => {
+describe("deriveHandle (candidate order + probing)", () => {
+  it("candidate order: preferred_username beats the email local-part", async () => {
     const { db } = await freshDb();
     expect(await deriveHandle(db, ["Cool.Name", "alice.lee@x.example".split("@")[0]], "11111111-aaaa-4bbb-8ccc-000000000001")).toBe(
       "cool-name",
     );
   });
 
-  it("四分支退位：沒給／空字串／全非 ASCII（轉完全空）／uuid 形（截斷前判）→ 退 email local-part", async () => {
+  it("four fallthrough branches: missing / empty string / entirely non-ASCII (empty after conversion) / uuid-shaped (checked before truncation) -> falls back to the email local-part", async () => {
     const { db } = await freshDb();
     const uuid = "22222222-aaaa-4bbb-8ccc-000000000002";
     expect(await deriveHandle(db, [undefined, "alice"], uuid)).toBe("alice");
     expect(await deriveHandle(db, ["", "alice"], uuid)).toBe("alice");
     expect(await deriveHandle(db, ["日本語", "alice"], uuid)).toBe("alice");
     expect(await deriveHandle(db, ["550e8400-e29b-41d4-a716-446655440000", "alice"], uuid)).toBe("alice");
-    // 部分 ASCII 的候選**不**退位——非 ASCII 字元段轉 dash 後的殘餘是合法候選
-    // （管線語意：只有「空/uuid 形」才落到下一候選）
+    // Partly-ASCII candidates do not fall through: what remains after non-ASCII runs become dashes is a valid candidate (only an empty or uuid-shaped one moves to the next candidate).
     expect(await deriveHandle(db, ["Ünsal", "alice"], uuid)).toBe("nsal");
   });
 
-  it("全候選皆敗 → user-<uuid8>", async () => {
+  it("all candidates fail -> user-<uuid8>", async () => {
     const { db } = await freshDb();
     expect(await deriveHandle(db, ["日本語", "!!!"], "33333333-aaaa-4bbb-8ccc-000000000003")).toBe("user-33333333");
   });
 
-  it("撞名探測：live 占用 → -2 遞增", async () => {
+  it("collision probe: live holders of the name and of -2 are skipped -> -3", async () => {
     const { db } = await freshDb();
     const uuid = "44444444-aaaa-4bbb-8ccc-000000000004";
     const uuid2 = "44444444-aaaa-4bbb-8ccc-000000000044";
@@ -92,11 +86,10 @@ describe("deriveHandle（候選序＋探測）", () => {
       { handle: "alice", userId: uuid, state: "live" },
       { handle: "alice-2", userId: uuid2, state: "live" },
     ]);
-    // 兩列 live 都占位——探測必須跳過兩者落到 -3
     expect(await deriveHandle(db, ["alice"], uuid)).toBe("alice-3");
   });
 
-  it("探測上限 20 → 退 user-<uuid8>（寫入放大上界）", async () => {
+  it("probe limit of 20 -> falls back to user-<uuid8> (upper bound on write amplification)", async () => {
     const { db } = await freshDb();
     const uuid = "55555555-aaaa-4bbb-8ccc-000000000005";
     await db.insert(users).values({ id: uuid, email: "seed2@x.example", displayName: "S", handle: "seed2-holder" });
@@ -106,42 +99,42 @@ describe("deriveHandle（候選序＋探測）", () => {
     expect(await deriveHandle(db, ["busy"], uuid)).toBe("user-55555555");
   });
 
-  it("尾碼長度算術：30 字元基底補 -2 時重截、總長 ≤32 且尾不落 dash", async () => {
+  it("suffix length arithmetic: a 30-char base plus -2 fits exactly at the 32-char limit without re-truncation", async () => {
     const { db } = await freshDb();
     const uuid = "66666666-aaaa-4bbb-8ccc-000000000006";
-    const base = `${"a".repeat(28)}-b`; // 30 字元、第 29 字元是 dash
+    const base = `${"a".repeat(28)}-b`; // 30 chars, the 29th is a dash
     await db.insert(users).values({ id: uuid, email: "seed3@x.example", displayName: "S", handle: "seed3-holder" });
     await db.insert(handles).values({ handle: base, userId: uuid, state: "live" });
     const derived = await deriveHandle(db, [base], uuid);
-    // 30 字元基底＋"-2" 尾碼＝32，恰好頂到上限不重截（重截後 trim 的路只有尾碼長 ≥3
-    // 且截點落在 dash 上才會走到——SQL backfill 的同公式由 migrate.test 守）
+    // A 30-char base plus the "-2" suffix is exactly 32, right at the limit, so no re-truncation (the re-truncate-then-trim path is only reached when the
+    // suffix is 3+ chars and the cut lands on a dash; the same formula in the SQL backfill is guarded by migrate.test).
     expect(derived).toBe(`${"a".repeat(28)}-b-2`);
     expect(derived.length).toBeLessThanOrEqual(32);
   });
 });
 
-describe("bootstrap 路徑（registry-first）", () => {
-  it("env bootstrap 建帳：registry live 列＝users.handle；handle 派生自 email local-part", async () => {
+describe("bootstrap path (registry-first)", () => {
+  it("env bootstrap creates the account: registry live row = users.handle; handle derived from the email local-part", async () => {
     const { db } = await freshDb();
     await initializeInstance(db, { email: "Admin.Boss@corp.example", password: "a-very-long-pw" });
     const { handle } = await expectLiveRegistry(db, "admin.boss@corp.example");
     expect(handle).toBe("admin-boss");
   });
 
-  it("雙次 bootstrap（序列）：第二次 no-op、不留孤兒 registry 列", async () => {
+  it("double bootstrap (sequential): the second is a no-op and leaves no orphan registry row", async () => {
     const { db } = await freshDb();
     await initializeInstance(db, { email: "boss@corp.example", password: "a-very-long-pw" });
     await initializeInstance(db, { email: "boss2@corp.example", password: "a-very-long-pw" });
     const allHandles = await db.select().from(handles);
-    expect(allHandles).toHaveLength(1); // 只有第一次的那列；第二次早退不得留 boss2 的孤兒
+    expect(allHandles).toHaveLength(1); // only the first call's row; the second returns early and must not leave an orphan for boss2
     expect(allHandles[0].handle).toBe("boss");
   });
 
-  it("**併發** bootstrap：敗方不得 commit 孤兒 registry 列（INSERT 必須在 setupRow 守衛之後——突變測試：序列版進不了 tx 的守衛分支，只有併發才踩得到）", async () => {
+  it("concurrent bootstrap: the loser must not commit an orphan registry row (the INSERT must come after the setupRow guard; the sequential variant never reaches the guard branch, only concurrency does)", async () => {
     const { db } = await freshDb();
-    // 兩個不同 email 同時搶 instance_setup 單列——敗方走 tx 內 `if (!setupRow) return`
-    //（正常 COMMIT 早退）：registry INSERT 若在守衛之前，敗方會留下指向不存在使用者、
-    // 永久燒掉名字的 live 列。勝負由 instanceSetup PK 裁決，結果集合確定、非 flaky。
+    // Two different emails race for the single instance_setup row; the loser takes the in-transaction `if (!setupRow) return` branch (a normal COMMIT early exit).
+    // If the registry INSERT came before the guard, the loser would leave a live row pointing at a nonexistent user and burn the name forever.
+    // The instanceSetup PK decides the winner, so the result set is deterministic, not flaky.
     await Promise.all([
       initializeInstance(db, { email: "boss@corp.example", password: "a-very-long-pw" }),
       initializeInstance(db, { email: "other@corp.example", password: "a-very-long-pw" }),
@@ -154,17 +147,17 @@ describe("bootstrap 路徑（registry-first）", () => {
     expect(allUsers[0].handle).toBe(allHandles[0]);
   });
 
-  it("派生名被 live 占住 → 探測避讓到 -2（「探測後仍撞 PK 的 fail-closed」是真競態、單執行緒無 mock 造不出——已記錄為缺口）", async () => {
+  it("derived name held live -> probe steps aside to -2 (the fail-closed path where the PK is still hit after probing is a true race that single-threaded code can't produce without a mock - a known gap)", async () => {
     const { db } = await freshDb();
     await db.insert(users).values({ id: "77777777-aaaa-4bbb-8ccc-000000000007", email: "x@x.example", displayName: "X", handle: "x-holder" });
     await db.insert(handles).values({ handle: "boss", userId: "77777777-aaaa-4bbb-8ccc-000000000007", state: "live" });
     await initializeInstance(db, { email: "boss@corp.example", password: "a-very-long-pw" });
     const { handle } = await expectLiveRegistry(db, "boss@corp.example");
-    expect(handle).toBe("boss-2"); // live 占用 → 避讓
+    expect(handle).toBe("boss-2");
   });
 });
 
-describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註冊）", () => {
+describe("invite-accept account path (#285; registry-first and the retry contract)", () => {
   async function inviteApp() {
     const { app, db } = await buildTestApp();
     await db.insert(users).values({
@@ -185,7 +178,6 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
     return { app, db, cookies: { [cookie.name]: cookie.value } };
   }
 
-  /** admin 建邀請 → 不帶 cookie 接受邀請。 */
   async function acceptVia(app: Awaited<ReturnType<typeof inviteApp>>["app"], cookies: Record<string, string>, body: object) {
     const issued = await app.inject({ method: "POST", url: "/api/admin/invites", cookies, payload: { expiresInDays: 1 } });
     expect(issued.statusCode, issued.body).toBe(201);
@@ -194,7 +186,7 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
 
   const ACCEPT = { email: "new.user@x.example", password: "another-long-pw", displayName: "New" };
 
-  it("派生自 email local-part；201 body 帶 handle；registry 一致", async () => {
+  it("derived from the email local-part; 201 body carries the handle; registry consistent", async () => {
     const { app, db, cookies } = await inviteApp();
     const res = await acceptVia(app, cookies, ACCEPT);
     expect(res.statusCode, res.body).toBe(201);
@@ -202,8 +194,8 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
     await expectLiveRegistry(db, "new.user@x.example");
   });
 
-  it("交易內才撞 email（另一連線持有同 email 的未提交列）→ 409 email_taken；失敗的建帳不燒掉 handle（tx 原子性）", async () => {
-    // 交易外的 email 預查會先擋已提交的同 email，所以以未提交的列讓撞名發生在交易內的 users_email_unique。
+  it("email collision only inside the transaction (another connection holds an uncommitted row with the same email) -> 409 email_taken; the failed account creation does not burn a handle (transaction atomicity)", async () => {
+    // The email pre-check outside the transaction rejects an already-committed duplicate, so an uncommitted row makes the collision happen inside the transaction, at users_email_unique.
     const { app, db, cookies } = await inviteApp();
     const before = (await db.select().from(handles)).map((row) => row.handle).sort();
     const holder = await db.$client.connect();
@@ -224,7 +216,7 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
     expect(after).toEqual(before);
   });
 
-  it("派生撞名 → 探測自動避讓（-2），不 409；registry 一致", async () => {
+  it("derived name collision -> probe steps aside (-2), no 409; registry consistent", async () => {
     const { app, db, cookies } = await inviteApp();
     await db.insert(handles).values({ handle: "new-user", userId: "99999999-aaaa-4bbb-8ccc-000000000019", state: "live" });
     const res = await acceptVia(app, cookies, ACCEPT);
@@ -233,9 +225,9 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
     await expectLiveRegistry(db, "new.user@x.example");
   });
 
-  it("派生撞 users_handle_unique（窗期形）→ 重試耗盡 → 第 4 次退 user-<uuid8>", async () => {
+  it("derived name hits users_handle_unique (window-period shape) -> retries exhausted -> 4th attempt falls back to user-<uuid8>", async () => {
     const { app, db, cookies } = await inviteApp();
-    // 'new-user' 只在 users.handle（無 registry 列）：deriveHandle 探測看不見，INSERT users 才撞；重試 1–3 次同樣撞，第 4 次退 uuid8。
+    // 'new-user' exists only in users.handle (no registry row): the deriveHandle probe can't see it, so only the INSERT into users collides; retries 1-3 collide the same way and the 4th falls back to uuid8.
     await db.insert(users).values({
       id: "12121212-aaaa-4bbb-8ccc-000000000112",
       email: "window@x.example",
@@ -247,7 +239,7 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
     expect(res.json().handle).toMatch(/^user-[0-9a-f]{8}$/);
     await expectLiveRegistry(db, "new.user@x.example");
   });
-  it("GET /api/admin/users 清單帶 handle", async () => {
+  it("GET /api/admin/users list carries the handle", async () => {
     const { app, cookies } = await inviteApp();
     const res = await app.inject({ method: "GET", url: "/api/admin/users", cookies });
     expect(res.statusCode).toBe(200);
@@ -255,8 +247,8 @@ describe("接受邀請建帳路徑（#285；registry-first 與重試契約同註
   });
 });
 
-describe("OIDC 建帳路徑（preferred_username）", () => {
-  // 工具形比照 oidc-callback.test.ts 的檔內私有慣例，這裡自帶一份。
+describe("OIDC account creation path (preferred_username)", () => {
+  // File-private helpers, mirroring oidc-callback.test.ts.
   const ISSUER_URL = "https://idp.example.com";
   async function oidcApp() {
     const fakeIdp = createFakeIdp(ISSUER_URL);
@@ -283,22 +275,22 @@ describe("OIDC 建帳路徑（preferred_username）", () => {
     return res;
   }
 
-  it("id_token 帶 preferred_username → handle 用它；registry 一致", async () => {
+  it("id_token with preferred_username -> handle uses it; registry consistent", async () => {
     const { app, db, fakeIdp } = await oidcApp();
     await loginAs(app, fakeIdp, { sub: "u1", email: "sso.user@corp.example", email_verified: true, preferred_username: "Cool.Person" });
     const { handle } = await expectLiveRegistry(db, "sso.user@corp.example");
     expect(handle).toBe("cool-person");
   });
 
-  it("IdP 沒給 preferred_username → 退 email local-part（不多打 userinfo——閘門不放寬）", async () => {
+  it("IdP gives no preferred_username -> falls back to the email local-part (no extra userinfo call - the gate is not loosened)", async () => {
     const { app, db, fakeIdp } = await oidcApp();
     await loginAs(app, fakeIdp, { sub: "u2", email: "plain.user@corp.example", email_verified: true });
     const { handle } = await expectLiveRegistry(db, "plain.user@corp.example");
     expect(handle).toBe("plain-user");
-    expect(fakeIdp.counts.userinfo).toBe(0); // email 齊全→userinfo 本來就不打；不得為 handle 多打
+    expect(fakeIdp.counts.userinfo).toBe(0); // userinfo is not called anyway when the email is complete; it must not be called just for the handle
   });
 
-  it("preferred_username 空字串／全非 ASCII／uuid 形 → 退 email local-part", async () => {
+  it("preferred_username empty string / entirely non-ASCII / uuid-shaped -> falls back to the email local-part", async () => {
     const { app, db, fakeIdp } = await oidcApp();
     const cases: Array<[string, string, string]> = [
       ["", "e1@corp.example", "e1"],
@@ -312,7 +304,7 @@ describe("OIDC 建帳路徑（preferred_username）", () => {
     }
   });
 
-  it("OIDC 建帳撞 users_handle_unique（窗期形）→ 整-tx-重投一次仍同名撞 → oidc_exchange_failed（OIDC 無 uuid8 出口的確定性形，重登可再試；窗期由 boot 補登收斂）", async () => {
+  it("OIDC account creation hits users_handle_unique (window-period shape) -> the whole-transaction retry collides again -> oidc_exchange_failed (OIDC has no uuid8 exit; deterministic shape, a re-login can retry; the boot backfill converges the window)", async () => {
     const { app, db, fakeIdp } = await oidcApp();
     await db.insert(users).values({
       id: "13131313-aaaa-4bbb-8ccc-000000000013",
@@ -333,10 +325,10 @@ describe("OIDC 建帳路徑（preferred_username）", () => {
     expect(res.headers.location).toBe("/login?error=oidc_exchange_failed");
   });
 
-  it("userinfo 本來就要打（id_token 缺 email）時順手讀 preferred_username", async () => {
+  it("when userinfo is called anyway (id_token lacks email), preferred_username is read from it too", async () => {
     const { app, db, fakeIdp } = await oidcApp();
-    // ⚠ preferred_username 也要從 id_token 省略：否則 oidc.ts 已從
-    // id_token 讀到值、userinfo 順手讀那行（唯一消費點）零覆蓋、刪掉照樣綠。
+    // preferred_username must also be omitted from the id_token: otherwise oidc.ts already reads it from the id_token, and the line that reads it from
+    // userinfo (its only consumer) has zero coverage and could be deleted with the test still green.
     fakeIdp.omitFromIdToken(["email", "email_verified", "preferred_username"]);
     await loginAs(app, fakeIdp, { sub: "u3", email: "via.userinfo@corp.example", email_verified: true, preferred_username: "From.Userinfo" });
     const { handle } = await expectLiveRegistry(db, "via.userinfo@corp.example");
@@ -344,11 +336,11 @@ describe("OIDC 建帳路徑（preferred_username）", () => {
     expect(fakeIdp.counts.userinfo).toBe(1);
   });
 
-  describe("#291 派生名取得別人改掉的名字", () => {
+  describe("#291 derived name takes a name someone else renamed away", () => {
     const rename = (app: Awaited<ReturnType<typeof buildTestApp>>["app"], sessionValue: string, handle: string) =>
       app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle }, cookies: { [SESSION_COOKIE]: sessionValue } });
 
-    it("OIDC 首登：shared-name 被改掉後，另一位同 preferred_username 的首登派生到 shared-name", async () => {
+    it("first OIDC login: after shared-name is renamed away, another first login with the same preferred_username derives shared-name", async () => {
       const { app, db, fakeIdp } = await oidcApp();
       const res = await loginAs(app, fakeIdp, { sub: "o1", email: "first@corp.example", email_verified: true, preferred_username: "Shared.Name" });
       expect((await expectLiveRegistry(db, "first@corp.example")).handle).toBe("shared-name");
@@ -361,11 +353,11 @@ describe("OIDC 建帳路徑（preferred_username）", () => {
   });
 });
 
-describe("#291 註冊派生名取得別人改掉的名字（register 路徑）", () => {
+describe("#291 registration derived name takes a name someone else renamed away (register path)", () => {
   const rename = (app: Awaited<ReturnType<typeof buildTestApp>>["app"], sessionValue: string, handle: string) =>
     app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle }, cookies: { [SESSION_COOKIE]: sessionValue } });
 
-    it("註冊：pat 改名成 pat-renamed 後，下一位 pat@y 註冊派生到 pat（不再避讓成 pat-2）", async () => {
+    it("register: after pat renames to pat-renamed, the next pat@y registration derives pat (no longer steps aside to pat-2)", async () => {
       const { app, db } = await buildTestApp();
       const password = "correct-horse-battery-staple";
       const first = await app.inject({ method: "POST", url: "/api/auth/register", payload: { email: "pat@x.example", password, displayName: "Pat" } });
@@ -380,8 +372,8 @@ describe("#291 註冊派生名取得別人改掉的名字（register 路徑）",
     });
 });
 
-describe("boot 補登＋DTO", () => {
-  it("backfillHandleRegistry 冪等；被吞的衝突列會 log warn", async () => {
+describe("boot backfill + DTO", () => {
+  it("backfillHandleRegistry is idempotent; a swallowed conflict row logs a warning", async () => {
     const { db } = await freshDb();
     await db.insert(users).values([
       { id: "aaaaaaaa-aaaa-4bbb-8ccc-00000000000a", email: "a@x.example", displayName: "A", handle: "alice" },
@@ -391,11 +383,11 @@ describe("boot 補登＋DTO", () => {
     const logger = { warn: (...args: unknown[]) => warns.push(args), info: () => {} } as unknown as pino.Logger;
     await backfillHandleRegistry(db, logger);
     expect((await db.select().from(handles))).toHaveLength(2);
-    await backfillHandleRegistry(db, logger); // 冪等
+    await backfillHandleRegistry(db, logger);
     expect((await db.select().from(handles))).toHaveLength(2);
     expect(warns).toHaveLength(0);
 
-    // 衝突形：alice 的名字已被別人的 registry 列占住（窗期碰撞）→ 補登吞掉並 warn
+    // alice's name is held by someone else's registry row (window-period collision); the backfill swallows it and warns.
     await db.insert(users).values({ id: "cccccccc-aaaa-4bbb-8ccc-00000000000c", email: "c@x.example", displayName: "C", handle: "charlie" });
     await db.update(handles).set({ userId: "bbbbbbbb-aaaa-4bbb-8ccc-00000000000b" }).where(eq(handles.handle, "alice"));
     await db.update(users).set({ handle: "charlie" }).where(eq(users.email, "c@x.example"));
@@ -404,7 +396,7 @@ describe("boot 補登＋DTO", () => {
     expect(warns.length).toBeGreaterThan(0);
   });
 
-  it("#291 補登先清 released 列：rollback 窗期的 released 列清光、每人有 live 列、無 warn、info 記清除數；再跑不再 info", async () => {
+  it("#291 backfill clears released rows first: all window-period released rows are removed, every user has a live row, no warning, info logs the cleared count; a rerun logs no info", async () => {
     const { db } = await freshDb();
     const A = "aaaaaaaa-aaaa-4bbb-8ccc-00000000001a";
     const B = "bbbbbbbb-aaaa-4bbb-8ccc-00000000001b";
@@ -417,9 +409,9 @@ describe("boot 補登＋DTO", () => {
     const now = new Date();
     await db.insert(handles).values([
       { handle: "alpha", userId: A, state: "live" },
-      { handle: "alpha-old", userId: A, state: "released", releasedAt: now }, // 一般窗期 released 列
-      { handle: "beta", userId: B, state: "released", releasedAt: now }, // B 現行名只有本人的 released 列
-      { handle: "gamma", userId: A, state: "released", releasedAt: now }, // C 現行名被他人的 released 列占住
+      { handle: "alpha-old", userId: A, state: "released", releasedAt: now }, // ordinary window-period released row
+      { handle: "beta", userId: B, state: "released", releasedAt: now }, // B's current name only has B's own released row
+      { handle: "gamma", userId: A, state: "released", releasedAt: now }, // C's current name is held by someone else's released row
     ]);
     const warns: unknown[][] = [];
     const infos: unknown[][] = [];
@@ -435,13 +427,13 @@ describe("boot 補登＋DTO", () => {
     expect(warns).toHaveLength(0);
   });
 
-  it("結構守衛：index.ts 的補登呼叫在 app.listen 之前（listen 前時序）", () => {
+  it("structure guard: index.ts calls the backfill before app.listen", () => {
     const src = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/index.ts"),
       "utf8",
     );
-    // 錨定**呼叫點**字面（"backfillHandleRegistry(db"），不能只找函式名——那會先命中
-    // 檔頭的 import 敘述、恆早於 listen，呼叫搬走甚至刪掉都照樣綠。
+    // Anchor on the literal call site ("backfillHandleRegistry(db"), not just the function name: that would match the import at the top of the file,
+    // which is always before listen, so moving or deleting the call would stay green.
     const callAt = src.indexOf("backfillHandleRegistry(db");
     const listenAt = src.indexOf(".listen(");
     expect(callAt, "index.ts 必須呼叫 backfillHandleRegistry(db…)").toBeGreaterThan(-1);
@@ -449,7 +441,7 @@ describe("boot 補登＋DTO", () => {
     expect(callAt, "補登必須在 listen 之前（否則與首個改名請求可交錯）").toBeLessThan(listenAt);
   });
 
-  it("/api/auth/me 與 login DTO 都帶 handle（GateUser/GateRow 接線）", async () => {
+  it("/api/auth/me and the login DTO both carry the handle (GateUser/GateRow wiring)", async () => {
     const { app, db } = await buildTestApp();
     
     await db.insert(users).values({
@@ -468,7 +460,7 @@ describe("boot 補登＋DTO", () => {
   });
 });
 
-describe("改名 PATCH /api/auth/profile", () => {
+describe("rename PATCH /api/auth/profile", () => {
   async function userApp(handle = "renamer") {
     const { app, db } = await buildTestApp();
     const [me] = await db
@@ -500,11 +492,11 @@ describe("改名 PATCH /api/auth/profile", () => {
     return app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle }, cookies });
   }
 
-  it("成功改名：users/registry 雙寫、舊名列刪除、記一筆改名紀錄、/me 立即回新值（gate.invalidate）", async () => {
+  it("successful rename: users and registry both written, old-name row deleted, one rename record, /me returns the new value immediately (gate.invalidate)", async () => {
     const { app, db, me, cookies } = await userApp();
     const res = await rename(app, cookies, "New-Name");
     expect(res.statusCode).toBe(200);
-    // 形狀鎖：PATCH 回應＝完整 UserDto，無多無少；版本歷史加 autoVersions
+    // Shape lock: the PATCH response is exactly the full UserDto, nothing more or less (version history adds autoVersions).
     const body = res.json();
     expect(Object.keys(body).sort()).toEqual(
       ["id", "email", "handle", "displayName", "isAdmin", "mustChangePassword", "hasPassword", "autoVersions", "avatar"].sort(),
@@ -516,19 +508,18 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(await db.select().from(handles).where(eq(handles.handle, "renamer"))).toHaveLength(0);
     expect(await renamesOf(db, me.id)).toBe(1);
 
-    // gate.invalidate：60s 快取不等 TTL、/me 立刻反映
+    // gate.invalidate: /me reflects the change immediately instead of waiting for the 60s cache TTL.
     const meRes = await app.inject({ method: "GET", url: "/api/auth/me", cookies });
     expect(meRes.json().handle).toBe("new-name");
   });
 
-  it("非法格式 → 400 invalid_body（先 validate，不落 DB CHECK 500）；未登入 → 401", async () => {
+  it("invalid format -> 400 invalid_body (validated first, never reaches the DB CHECK as a 500); not logged in -> 401", async () => {
     const { app, cookies } = await userApp();
     for (const bad of ["Bad Name!", "", "-abc", "a".repeat(33), "550e8400-e29b-41d4-a716-446655440000"]) {
       const res = await rename(app, cookies, bad);
       expect(res.statusCode, bad).toBe(400);
       expect(res.json().error.code, bad).toBe("invalid_body");
     }
-    // zod 結構分支：缺 handle／非字串
     for (const payload of [{}, { handle: 123 }]) {
       const res = await app.inject({ method: "PATCH", url: "/api/auth/profile", payload, cookies });
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
@@ -538,7 +529,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(anon.statusCode).toBe(401);
   });
 
-  it("改成他人現用名／自己現行名（含大寫）→ 409 handle_taken（自我改名不得走 DELETE 短路）", async () => {
+  it("renaming to someone else's live name or to one's own current name (including uppercase) -> 409 handle_taken (a self-rename must not take the DELETE short-circuit)", async () => {
     const { app, db, cookies } = await userApp();
     await db.insert(handles).values({ handle: "occupied", userId: "14141414-aaaa-4bbb-8ccc-000000000014", state: "live" });
     for (const taken of ["occupied", "renamer", "RENAMER"]) {
@@ -548,7 +539,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     }
   });
 
-  it("窗期形（本人現行名無 registry 列）改成自己現行名 → 409 handle_taken；不記改名紀錄、users.handle 不變", async () => {
+  it("window-period shape (own current name has no registry row) renamed to one's own current name -> 409 handle_taken; no rename record, users.handle unchanged", async () => {
     const { app, db, me, cookies } = await userApp();
     await db.delete(handles).where(eq(handles.handle, "renamer"));
     const res = await rename(app, cookies, "renamer");
@@ -558,7 +549,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect((await userRow(db, me.id)).handle).toBe("renamer");
   });
 
-  it("改回自己的舊名（含大寫）→ 200；舊名列回到本人、live；剛改掉的名字列刪除", async () => {
+  it("renaming back to one's own old name (including uppercase) -> 200; the old-name row returns to the user as live; the row of the just-abandoned name is deleted", async () => {
     const { app, db, me, cookies } = await userApp();
     expect((await rename(app, cookies, "second-name")).statusCode).toBe(200);
     const back = await rename(app, cookies, "renamer");
@@ -574,7 +565,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect((await userRow(db, me.id)).handle).toBe("second-name");
   });
 
-  it("他人取用我的舊名 → 200；名字歸取用者、各自記一筆改名紀錄", async () => {
+  it("someone takes my old name -> 200; the name goes to the taker, each gets one rename record", async () => {
     const { app, db, me, cookies } = await userApp();
     expect((await rename(app, cookies, "renamer-new")).statusCode).toBe(200);
     const y = await addRegisteredUser(db, "y@x.example", "yuser");
@@ -587,7 +578,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(await renamesOf(db, y.id)).toBe(1);
   });
 
-  it("額度不可繞過：A→B 來回五次皆 200、第六次 429", async () => {
+  it("quota can't be bypassed: A->B back and forth five times all 200, the sixth 429", async () => {
     const { app, db, me, cookies } = await userApp();
     for (const target of ["b5", "renamer", "b5", "renamer", "b5"]) {
       expect((await rename(app, cookies, target)).statusCode, target).toBe(200);
@@ -599,7 +590,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(await renamesOf(db, me.id)).toBe(5);
   });
 
-  it("額度同人併發：額度在本人列鎖之後數——排隊的改名讀得到前者已 commit 的紀錄 → 429", async () => {
+  it("same-user concurrency on the quota: it is counted after the user's row lock, so a queued rename sees the earlier committed record -> 429", async () => {
     const { app, db, me, cookies } = await userApp();
     const pool = db.$client;
     const c = await pool.connect();
@@ -626,8 +617,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(await handleRow(db, "racer")).toBeUndefined();
   });
 
-  describe("取名等待他人釋放（確定性交錯）", () => {
-    /** X 的改名停在 commit 前（照真實釋放形），送出我改名成 X 的舊名，回傳交錯結果與請求。 */
+  describe("claiming a name while someone else releases it (deterministic interleave)", () => {
     async function pendingRelease(commit: boolean) {
       const ctx = await userApp();
       const x = await addRegisteredUser(ctx.db, "x@x.example", "taken-x");
@@ -652,7 +642,7 @@ describe("改名 PATCH /api/auth/profile", () => {
       return { ...ctx, x, interleave, res: await req! };
     }
 
-    it("X commit → 我取得該名 200", async () => {
+    it("X commits -> I get the name, 200", async () => {
       const { db, me, interleave, res } = await pendingRelease(true);
       expect(interleave).toBe("blocked");
       expect(res.statusCode).toBe(200);
@@ -662,7 +652,7 @@ describe("改名 PATCH /api/auth/profile", () => {
       expect((await userRow(db, me.id)).handle).toBe("taken-x");
     });
 
-    it("X rollback → 409 handle_taken、我的名字與額度不變", async () => {
+    it("X rolls back -> 409 handle_taken, my name and quota unchanged", async () => {
       const { db, me, x, interleave, res } = await pendingRelease(false);
       expect(interleave).toBe("blocked");
       expect(res.statusCode).toBe(409);
@@ -675,7 +665,7 @@ describe("改名 PATCH /api/auth/profile", () => {
     });
   });
 
-  it("失敗不耗額度、同送欄位一起不寫：409 與 429 後改名紀錄不增、displayName 不變", async () => {
+  it("failures don't spend quota and the fields sent along aren't written either: after 409 and 429 the rename records don't grow and displayName is unchanged", async () => {
     const { app, db, me, cookies } = await userApp();
     await db.insert(handles).values({ handle: "occupied", userId: "14141414-aaaa-4bbb-8ccc-000000000014", state: "live" });
     const taken = await app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle: "occupied", displayName: "Changed" }, cookies });
@@ -690,33 +680,33 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect((await userRow(db, me.id)).displayName).toBe("R");
   });
 
-  it("額度 5/日（改名紀錄計數，非 in-memory）：第 6 次 429", async () => {
+  it("quota of 5 per day (counted from rename records, not in memory): the 6th is 429", async () => {
     const { app, db, me, cookies } = await userApp();
-    // fixture 直接塞 5 筆本人今日改名紀錄（比連改五次快，且驗的是計數來源）
+    // Inserting 5 of the user's own rename records for today is faster than renaming five times and checks the counting source.
     await spend(db, me.id, 5);
     const res = await rename(app, cookies, "one-more");
     expect(res.statusCode).toBe(429);
     expect(res.json().error.code).toBe("too_many_requests");
-    // 429 必須整 tx 回滾：users.handle 不變、新名無 registry 列
+    // A 429 must roll back the whole transaction: users.handle unchanged, no registry row for the new name.
     const [me2] = await db.select().from(users).where(eq(users.email, "renamer@x.example"));
     expect(me2.handle).toBe("renamer");
     const claimed = await db.select().from(handles).where(eq(handles.handle, "one-more"));
     expect(claimed).toHaveLength(0);
   });
 
-  it("計數邊界與 per-user 過濾：本人 4 筆今日＋**他人 5 筆今日** → 仍 200（他人額度不得計到我頭上；>=4 提前一次的突變也在此紅）", async () => {
+  it("count boundary and per-user filter: 4 own records today plus 5 of someone else's today -> still 200 (others' quota must not count against me)", async () => {
     const { app, db, me, cookies } = await userApp();
     const other = "17171717-aaaa-4bbb-8ccc-000000000017";
     await db.insert(users).values({ id: other, email: "their@x.example", displayName: "T", handle: "their" });
     await spend(db, me.id, 4);
     await spend(db, other, 5);
     const res = await rename(app, cookies, "fifth-today");
-    expect(res.statusCode).toBe(200); // 本人第 5 次（計入前 4）——第 6 次才 429
+    expect(res.statusCode).toBe(200); // the user's 5th rename (4 already counted); only the 6th gets 429
   });
 
-  it("本人現行名不在 registry（窗期形）→ 改名 200、不 500", async () => {
+  it("own current name not in the registry (window-period shape) -> rename 200, not 500", async () => {
     const { app, db, me, cookies } = await userApp();
-    // 造窗期形：把本人的 registry 列刪掉（模擬回滾窗期建立的帳號）
+    // Window-period shape: delete the user's own registry row (simulates an account created during the rollback window).
     await db.delete(handles).where(eq(handles.handle, "renamer"));
     const res = await rename(app, cookies, "post-window");
     expect(res.statusCode).toBe(200);
@@ -726,9 +716,9 @@ describe("改名 PATCH /api/auth/profile", () => {
     expect(await renamesOf(db, me.id)).toBe(1);
   });
 
-  it("舊名的 registry 列屬他人 → 改名 200、他人列不被刪", async () => {
+  it("registry row of the old name belongs to someone else -> rename 200, the other row is not deleted", async () => {
     const { app, db, me, cookies } = await userApp();
-    // 異常態 fixture：'renamer' 的 registry 列改掛他人（資料不一致形）——DELETE 帶 user_id，刪 0 列
+    // Inconsistent-state fixture: the registry row for 'renamer' belongs to someone else; the DELETE carries user_id, so it deletes 0 rows.
     await db.update(handles).set({ userId: "15151515-aaaa-4bbb-8ccc-000000000015" }).where(eq(handles.handle, "renamer"));
     const res = await rename(app, cookies, "should-pass");
     expect(res.statusCode).toBe(200);
@@ -739,7 +729,7 @@ describe("改名 PATCH /api/auth/profile", () => {
   });
 });
 
-describe("改名——突變測試補強（F1/F2/F3）", () => {
+describe("rename - additional coverage", () => {
   async function userApp2() {
     const { app, db } = await buildTestApp();
     await db.insert(users).values({
@@ -755,17 +745,17 @@ describe("改名——突變測試補強（F1/F2/F3）", () => {
     return { app, db, cookies: { [cookie.name]: cookie.value } };
   }
 
-  it("F1：改名撞 users_handle_unique（窗期形——目標名只在 users.handle、無 registry 列）→ 409 非 500（判別契約另一半）", async () => {
+  it("rename hits users_handle_unique (window-period shape - the target name exists only in users.handle, no registry row) -> 409 not 500 (the other half of the discrimination contract)", async () => {
     const { app, db, cookies } = await userApp2();
-    // 窗期帳號在 backfill 之後才插入——'wanted' 無 registry 列，INSERT handles 會過、
-    // UPDATE users 才撞 users_handle_unique
+    // The window-period account is inserted after the backfill: 'wanted' has no registry row, so the INSERT into handles passes
+    // and only the UPDATE of users hits users_handle_unique.
     await db.insert(users).values({ id: "16161616-aaaa-4bbb-8ccc-000000000016", email: "w3@x.example", displayName: "W3", handle: "wanted" });
     const res = await app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle: "wanted" }, cookies });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("handle_taken");
   });
 
-  it("F2：額度只計 24h 內——5 筆過期（2 天前）改名紀錄 → 改名 200（時間窗雙向釘）", async () => {
+  it("quota counts only the last 24h: 5 expired (2 days ago) rename records -> rename 200 (window pinned from both sides)", async () => {
     const { app, db, cookies } = await userApp2();
     const [me] = await db.select().from(users).where(eq(users.email, "renamer2@x.example"));
     await spend(db, me!.id, 5, new Date(Date.now() - 2 * 86_400_000));
@@ -773,10 +763,10 @@ describe("改名——突變測試補強（F1/F2/F3）", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it("F3：舊名以 tx 內 SELECT 為準、非 gate 60s 快取（多實例落後形：快取舊名已被他處改掉，用它釋放會把現行名留成 live 孤兒）", async () => {
+  it("old name comes from the SELECT inside the transaction, not the gate's 60s cache (lagging multi-instance shape: the cached old name was already changed elsewhere, and releasing it would leave the current name as a live orphan)", async () => {
     const { app, db, cookies } = await userApp2();
-    await app.inject({ method: "GET", url: "/api/auth/me", cookies }); // 確保 gate 快取已暖（handle='renamer2'）
-    // 模擬另一實例已完成一次改名：直接寫 DB、不經本實例端點、不 invalidate 本實例快取
+    await app.inject({ method: "GET", url: "/api/auth/me", cookies }); // warm the gate cache (handle='renamer2')
+    // Simulates another instance having already renamed: write the DB directly, not through this instance's endpoint, so this instance's cache is not invalidated.
     const [me] = await db.select().from(users).where(eq(users.email, "renamer2@x.example"));
     await db.insert(handles).values({ handle: "external-name", userId: me!.id, state: "live" });
     await db.delete(handles).where(eq(handles.handle, "renamer2"));
@@ -784,7 +774,7 @@ describe("改名——突變測試補強（F1/F2/F3）", () => {
 
     const res = await app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle: "final-name" }, cookies });
     expect(res.statusCode).toBe(200);
-    // 真實碼刪掉 DB 現行名 'external-name'；用快取舊名的突變體會刪 0 列，'external-name' 留成 live 孤兒
+    // The real code deletes the DB's current name 'external-name'; a variant using the cached old name would delete 0 rows and leave 'external-name' as a live orphan.
     expect(await db.select().from(handles).where(eq(handles.handle, "external-name"))).toHaveLength(0);
     const { handle } = await expectLiveRegistry(db, "renamer2@x.example");
     expect(handle).toBe("final-name");

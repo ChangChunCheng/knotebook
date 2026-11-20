@@ -1,7 +1,5 @@
-/**
- * #200：兩支上傳／下載端點加收 transfer token。每一個對抗案都斷言「磁碟與 DB 沒有多出任何東西」。
- * 測資：`issueDirect`（直接跑簽發交易）；經 MCP 工具簽、照 curl 形重現的那一條在 `mcp-transfer-flow.test.ts`（端到端）。
- */
+// Every adversarial case asserts that nothing extra appears on disk or in the DB.
+// Issuing through the MCP tool and reproducing the curl form end to end is in `mcp-transfer-flow.test.ts`.
 import { readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import http from "node:http";
@@ -34,8 +32,8 @@ import { issueBulkDirect } from "./bulk-transfer-helpers.js";
 
 const NOT_AN_IMAGE = Buffer.from("plain text, not an image", "utf-8");
 
-describe("POST /api/notes/:id/uploads × transfer token", () => {
-  it("T1：upload token → 201 {id, url: /api/uploads/<id>}；uploader＝母憑證使用者；token 已消費", async () => {
+describe("POST /api/notes/:id/uploads x transfer token", () => {
+  it("upload token -> 201 {id, url: /api/uploads/<id>}; uploader = the parent credential's user; token consumed", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -49,7 +47,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(1);
   });
 
-  it("T3：重用已消費的 upload token → 401（帶 challenge）；磁碟檔數不變", async () => {
+  it("reusing a consumed upload token -> 401 (with challenge); file count on disk unchanged", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -61,7 +59,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(1);
   });
 
-  it("T4（POST）：子 token 過期 → 401；母憑證過期（子 token 未過期）→ 401；兩者都零寫入", async () => {
+  it("POST: child token expired -> 401; parent credential expired (child not expired) -> 401; both write nothing", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const a = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -74,7 +72,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T5：A 篇的 token 打 B 篇 → 403；B 不存在時同樣 403、body 逐位元組相同；token 未被消費", async () => {
+  it("a token for note A hitting note B -> 403; same 403 with a byte-identical body when B does not exist; token not consumed", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const other = await ownerWithPat(db);
@@ -89,7 +87,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T7（POST 半）：download token 打 POST → 403 forbidden、零寫入", async () => {
+  it("POST half: download token hitting POST -> 403 forbidden, nothing written", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "download");
@@ -99,7 +97,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T9（POST）：簽發後降成 viewer → 403、token 未消費；移除分享 → 404、token 仍未消費", async () => {
+  it("POST: downgraded to viewer after issue -> 403, token not consumed; share removed -> 404, token still not consumed", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await ownerWithPat(db);
     const editor = await seedUser(db);
@@ -117,7 +115,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T10：同一支 upload token 真 socket 並發兩發 → 恰一發 201、另一發 401；磁碟恰多一個檔（20 輪）", async () => {
+  it("the same upload token sent twice concurrently over a real socket -> exactly one 201 and one 401; exactly one more file on disk (20 rounds)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     await app.listen({ port: 0, host: "127.0.0.1" });
     try {
@@ -141,7 +139,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     }
   }, 60_000);
 
-  it("T11：10 MiB＋1 → 413 file_too_large；token 已消費；磁碟無殘留（含暫名檔）", async () => {
+  it("10 MiB + 1 -> 413 file_too_large; token consumed; nothing left on disk (including temp files)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -152,7 +150,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   }, 20_000);
 
-  it("T12：宣稱 image/png 實為文字 → 415；token 已消費", async () => {
+  it("claims image/png but is actually text -> 415; token consumed", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -162,7 +160,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("沒有 file part 的 multipart → 400 invalid_body；token 已消費；磁碟零新檔", async () => {
+  it("multipart without a file part -> 400 invalid_body; token consumed; no new file on disk", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -173,7 +171,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T13：transfer token 打 authenticateTokenOrSession 路由一律 401 且不查 DB；cookie-only 路由不看 header（無 cookie 401）", async () => {
+  it("transfer tokens hitting authenticateTokenOrSession routes are always 401 and do not query the DB; cookie-only routes ignore the header (no cookie -> 401)", async () => {
     const ctx = await buildCollabTestApp();
     const o = await ownerWithPat(ctx.db);
     const t = await issueDirect(ctx.db, o.patId, o.noteId, "download");
@@ -201,7 +199,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(me.statusCode).toBe(401);
   });
 
-  it("T14（POST）：有效的讀寫 PAT 直接打上傳端點 → 401 專屬訊息、帶 invalid_token；吃 bearerMiss", async () => {
+  it("POST: a valid read-write PAT hitting the upload endpoint directly -> 401 dedicated message with invalid_token; charges bearerMiss", async () => {
     const bearerMiss = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ bearerMiss }) });
     const o = await ownerWithPat(db);
@@ -214,7 +212,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T15：有效 session cookie＋無效 transfer token → 401，不回退 cookie", async () => {
+  it("valid session cookie + invalid transfer token -> 401, no cookie fallback", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const res = await upload(app, o.noteId, fileBody(PNG_BYTES), { token: "knbt_bogus", cookies: await cookieOf(o.userId) });
@@ -222,7 +220,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("有效 transfer token＋另一位使用者的 session cookie → 201，uploader 是 token 的使用者", async () => {
+  it("valid transfer token + another user's session cookie -> 201, the uploader is the token's user", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const stranger = await seedUser(db);
@@ -233,7 +231,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(row!.uploaderId).toBe(o.userId);
   });
 
-  it("T16：使用者停權、或需改密碼 → 401；token 未消費", async () => {
+  it("user suspended or must change password -> 401; token not consumed", async () => {
     const { app, db } = await buildTestApp();
     const a = await ownerWithPat(db);
     const ta = await issueDirect(db, a.patId, a.noteId, "upload");
@@ -247,7 +245,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect((await tokenRow(db, tb.id))!.consumedAt).toBeNull();
   });
 
-  it("T17：UPLOAD_LIMIT 用完 → transfer POST 429，token 未被燒", async () => {
+  it("UPLOAD_LIMIT used up -> transfer POST 429, token not burned", async () => {
     const uploadLimiter = new FixedWindowLimiter({ limit: 1, windowMs: 600_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ upload: uploadLimiter }) });
     const o = await ownerWithPat(db);
@@ -258,7 +256,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect((await tokenRow(db, t.id))!.consumedAt).toBeNull();
   });
 
-  it("T18：大 body（數 MiB）＋transfer 早退（401 無效、403 錯筆記）仍收到結構化 error body", async () => {
+  it("large body (several MiB) + early transfer exit (401 invalid, 403 wrong note) still gets a structured error body", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const other = await ownerWithPat(db);
@@ -272,7 +270,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(wrong.json()).toMatchObject({ error: { code: "forbidden" } });
   }, 30_000);
 
-  it("T19：bearerMiss 注入 limit:1 → 第二發無效 transfer token 429、無 WWW-Authenticate", async () => {
+  it("bearerMiss injected with limit:1 -> second invalid transfer token is 429, no WWW-Authenticate", async () => {
     const bearerMiss = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ bearerMiss }) });
     const o = await ownerWithPat(db);
@@ -280,19 +278,19 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     const second = await upload(app, o.noteId, fileBody(PNG_BYTES), { token: "knbt_nope" });
     expect(second.statusCode).toBe(429);
     expect(second.headers["www-authenticate"]).toBeUndefined();
-    // bulk transfer：共用的 reject401 讓 #200 的 bearerMiss 429 也帶 Retry-After（≥ 1 的整數秒）。
+    // Bulk transfer: the shared reject401 makes #200's bearerMiss 429 also carry Retry-After (integer seconds >= 1).
     expect(String(second.headers["retry-after"])).toMatch(/^[1-9]\d*$/);
   });
 
-  it("T19b：bearerMiss 桶滿時取代 401 的 429 也不消費 token——等視窗過、原因排除後同一支 token 照樣 201（upload `next`「A 403 or 429 doesn't use the token up」）", async () => {
+  it("a 429 replacing a 401 when the bearerMiss bucket is full does not consume the token either - after the window passes and the cause is removed the same token is still 201 (upload `next`: 'A 403 or 429 doesn't use the token up')", async () => {
     const bearerMiss = new FixedWindowLimiter({ limit: 1, windowMs: 300 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ bearerMiss }) });
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
-    // 401 的原因選「母憑證過期」：SQL 以 now() 每次重判，改回來立刻生效（UserGate 的停權／需改密碼有快取，不好還原）。
+    // The 401 reason chosen is "parent credential expired": SQL re-evaluates it with now() every time, so restoring takes effect at once (UserGate's suspension/must-change-password is cached and hard to restore).
     await db.update(apiTokens).set({ accessExpiresAt: sql`now() - interval '1 minute'` }).where(eq(apiTokens.id, o.patId));
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { token: "knbt_nope" })).statusCode).toBe(401);
-    // 母憑證過期 → 本來答 401（T4），桶已滿 → 改答 429
+    // Parent expired -> would have been 401; with the bucket full -> 429 instead.
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { token: t.token })).statusCode).toBe(429);
     expect((await tokenRow(db, t.id))!.consumedAt).toBeNull();
     await db.update(apiTokens).set({ accessExpiresAt: sql`now() + interval '1 hour'` }).where(eq(apiTokens.id, o.patId));
@@ -300,21 +298,21 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { token: t.token })).statusCode).toBe(201);
   });
 
-  it("T20：路徑用大寫的同一個 UUID → 201（比對不分大小寫）", async () => {
+  it("path with the same UUID in uppercase -> 201 (comparison is case-insensitive)", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
     expect((await upload(app, o.noteId.toUpperCase(), fileBody(PNG_BYTES), { token: t.token })).statusCode).toBe(201);
   });
 
-  it("T22：transfer 的 401 都不含 resource_metadata；Basic → 不帶 error，且吃 bearerMiss；沒帶 header 的 401 不吃", async () => {
+  it("no transfer 401 contains resource_metadata; Basic -> no error and charges bearerMiss; a 401 without a header does not", async () => {
     const bearerMiss = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ bearerMiss }) });
     const o = await ownerWithPat(db);
     const anon1 = await upload(app, o.noteId, fileBody(PNG_BYTES));
     const anon2 = await upload(app, o.noteId, fileBody(PNG_BYTES));
     expect([anon1.statusCode, anon2.statusCode]).toEqual([401, 401]);
-    // 沒帶 Authorization：回退 app.authenticate，401 不帶任何 challenge（docs/api.md 的那句以此為界）
+    // No Authorization header: falls back to app.authenticate, whose 401 carries no challenge at all (the docs/api.md sentence is bounded by this).
     expect(anon1.headers["www-authenticate"]).toBeUndefined();
     const basic = await upload(app, o.noteId, fileBody(PNG_BYTES), { headers: { authorization: "Basic dXNlcjpwYXNz" } });
     expect(basic.statusCode).toBe(401);
@@ -323,7 +321,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(afterBasic.statusCode).toBe(429);
   });
 
-  it("T22b：帶 header 的每一種 transfer 401（無效形、查無、PAT、已消費、母憑證過期、使用者停權）的 challenge 都是 realm 形、不含 resource_metadata", async () => {
+  it("every kind of transfer 401 with a header (invalid shape, not found, PAT, consumed, parent expired, user suspended) has a realm-shaped challenge without resource_metadata", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const used = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -349,9 +347,10 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     }
   });
 
-  it("消費那一步的 401（原子 UPDATE 0 列）也吃 bearerMiss，且零寫入（bearerMiss 清單的「消費」那一步）", async () => {
-    // 確定性造法：holder 先鎖住 token 列 → 被測請求過了認證查表（plain select 不被擋）、卡在原子 UPDATE 上（blocked）→
-    // holder 把 consumed_at 設上並 commit → UPDATE 重新評估述詞 → 0 列 → 401 從**消費那一步**發出（不是快速路徑）。
+  it("the 401 from the consume step (atomic UPDATE hits 0 rows) also charges bearerMiss and writes nothing", async () => {
+    // Deterministic construction: the holder locks the token row first -> the request under test passes the authentication lookup (a
+    // plain select is not blocked) and stalls on the atomic UPDATE (blocked) -> the holder sets consumed_at and commits -> the UPDATE
+    // re-evaluates its predicate -> 0 rows -> the 401 is emitted from the consume step (not the fast path).
     const bearerMiss = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db, uploadsDir } = await buildTestApp({ limiters: freshLimiters({ bearerMiss }) });
     const pool = db.$client;
@@ -376,9 +375,10 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { token: "knbt_nope" })).statusCode).toBe(429);
   });
 
-  it("消費那一步的到期述詞：通過認證後、卡在原子 UPDATE 期間 token 過期 → 401、token 未消費、零寫入", async () => {
-    // 守 routes/uploads.ts 原子 UPDATE 的 `expires_at > now()`：認證查表時 token 還有效，holder 鎖住列讓 UPDATE 卡住，
-    // 期間把 expires_at 改到過去並 commit → UPDATE 重新評估述詞 → 0 列 → 401。拿掉那個述詞，這裡會變成 201。
+  it("the expiry predicate of the consume step: the token expires after authentication while stalled on the atomic UPDATE -> 401, token not consumed, nothing written", async () => {
+    // Guards `expires_at > now()` in the atomic UPDATE of routes/uploads.ts: the token is still valid at the authentication lookup, the
+    // holder locks the row so the UPDATE stalls, then moves expires_at into the past and commits -> the UPDATE re-evaluates -> 0 rows -> 401.
+    // Without that predicate this would be 201.
     const { app, db, uploadsDir } = await buildTestApp();
     const pool = db.$client;
     const o = await ownerWithPat(db);
@@ -389,7 +389,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
       await holder.query("select id from transfer_tokens where id = $1 for update", [t.id]);
       const req = upload(app, o.noteId, fileBody(PNG_BYTES), { token: t.token });
       expect(await waitForBlockedOrSettled(pool, req)).toBe("blocked");
-      // created_at 一起往前推，否則撞 transfer_tokens_expiry_chk（expires_at > created_at）。
+      // `created_at` is moved back too, otherwise it hits transfer_tokens_expiry_chk (expires_at > created_at).
       await holder.query("update transfer_tokens set created_at = now() - interval '20 minutes', expires_at = now() - interval '1 minute' where id = $1", [
         t.id,
       ]);
@@ -406,9 +406,9 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("T24：上傳途中筆記被刪（真 socket；已過消費、正在送 body）→ 404 not_found；token 列已被 cascade 刪；磁碟零殘留", async () => {
-    // `next`「a 404 means the note is gone」的「消費之後」那個來源、「刪筆記 ∥ 正在上傳」。
-    // 造法：先送 headers＋multipart 前段＋一半檔案 → 輪詢到 consumed_at 非 NULL（preHandler 已過）→ 刪筆記 → 送完剩下 → INSERT 撞 FK。
+  it("note deleted during the upload (real socket; consumption passed, body being sent) -> 404 not_found; the token row is deleted by cascade; nothing left on disk", async () => {
+    // Covers the "after consumption" source of the `next` hint "a 404 means the note is gone": deleting the note while uploading.
+    // Construction: send headers + multipart head + half the file -> poll until consumed_at is non-NULL (preHandler passed) -> delete the note -> send the rest -> the INSERT hits the FK.
     const { app, db, uploadsDir } = await buildTestApp();
     await app.listen({ port: 0, host: "127.0.0.1" });
     try {
@@ -452,11 +452,11 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     }
   }, 30_000);
 
-  it("T23：簽發後筆記被移進群組 → 依使用當下的群組角色：可編輯 201、只能讀 403；扣的是群組空間（個人空間已滿也不擋）", async () => {
+  it("note moved into a group after issue -> judged by the group role at use time: editable 201, read-only 403; the group space is charged (a full personal space does not block)", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const g = await seedGroup(db, `g-${randomUUID().slice(0, 8)}`, [{ userId: o.userId, role: "admin" }]);
-    // 個人空間配額 0（0 ≥ 0＝已滿）、群組無上限：若預檢或交易內判定仍用簽發時（移動前）的個人空間，這發會 409。
+    // Personal space quota 0 (0 >= 0 = full), group unlimited: if the pre-check or the in-transaction decision still used the personal space from issue time (before the move), this request would be 409.
     await giveUserQuota(db, o.userId, 0);
     await giveGroupQuota(db, g.id, null);
     const t1 = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -472,7 +472,7 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect((await tokenRow(db, t2.id))!.consumedAt).toBeNull();
   });
 
-  it("簽發後筆記被刪 → 子 token 已被 cascade 刪 → 401；磁碟零新檔", async () => {
+  it("note deleted after issue -> child token deleted by cascade -> 401; nothing new on disk", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -483,17 +483,16 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
     expect(readdirSync(uploadsDir)).toHaveLength(0);
   });
 
-  it("session 路徑不變：cookie 上傳仍 201", async () => {
+  it("session path unchanged: cookie upload is still 201", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { cookies: await cookieOf(o.userId) })).statusCode).toBe(201);
   });
 
-  it("#239 T1：母憑證降成唯讀後，先前簽的 upload transfer token → 403 insufficient_scope、沒有 uploads 列", async () => {
+  it("#239: after the parent credential is downgraded to read-only, an upload transfer token issued earlier -> 403 insufficient_scope, no uploads row", async () => {
     const { app, db } = await buildTestApp();
     const { patId, noteId, userId } = await ownerWithPat(db, "notes:read notes:write");
     const { token } = await issueDirect(db, patId, noteId, "upload");
-    // 真的走 PATCH /api/auth/tokens/:id 降權（cookie 為母憑證的擁有者）。
     const down = await app.inject({
       method: "PATCH",
       url: `/api/auth/tokens/${patId}`,
@@ -508,14 +507,14 @@ describe("POST /api/notes/:id/uploads × transfer token", () => {
   });
 });
 
-describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 的兩句 409）", () => {
-  /** 兩種 409 的形：數字換成型別標記，其餘逐欄比（#200：同碼同形、不加任何旗標欄）。 */
+describe("POST /api/notes/:id/uploads with transfer token and storage quota (the two 409 statements of #200)", () => {
+  /** Shape of the two 409s: numbers replaced by type markers, the rest compared field by field (#200: same code same shape, no flag field). */
   const shapeOf = (body: { storage: Record<string, unknown> } & Record<string, unknown>) => ({
     ...body,
     storage: Object.fromEntries(Object.keys(body.storage).map(k => [k, "<n>"])),
   });
 
-  it("空間已滿 → 409 storage_quota_exceeded（第 4a 步，incomingBytes null）、磁碟零新檔；token 未消費，騰出空間後同一支 token → 201", async () => {
+  it("space full -> 409 storage_quota_exceeded (pre-check, incomingBytes null), nothing new on disk; token not consumed, after freeing space the same token -> 201", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     await giveUserQuota(db, o.userId, 1000);
@@ -533,7 +532,7 @@ describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 �
     expect((await tokenRow(db, t.id))!.consumedAt).not.toBeNull();
   });
 
-  it("空間已滿、token 屬於被分享的編輯者（看不到用量）→ 409 只帶 incomingBytes null；token 未消費", async () => {
+  it("space full, token belongs to a shared editor (cannot see usage) -> 409 carries only incomingBytes null; token not consumed", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await ownerWithPat(db);
     const editor = await seedUser(db);
@@ -548,7 +547,7 @@ describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 �
     expect((await tokenRow(db, t.id))!.consumedAt).toBeNull();
   });
 
-  it("未滿但放不下 → 交易內 409（incomingBytes＝檔案大小）、檔已 unlink、無新列；token 已燒——騰出空間後同一支 token 401；兩種 409 除數字外同形", async () => {
+  it("not full but does not fit -> 409 inside the transaction (incomingBytes = file size), file unlinked, no new row; token burned - after freeing space the same token is 401; the two 409s have the same shape apart from numbers", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     await giveUserQuota(db, o.userId, 1000);
@@ -562,7 +561,6 @@ describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 �
     expect(readdirSync(uploadsDir)).toHaveLength(0);
     expect(await db.select({ id: uploads.id }).from(uploads).where(eq(uploads.noteId, o.noteId))).toEqual([{ id: filler }]);
 
-    // 同一空間再補滿 → 新 token 吃第 4a 步的 409：與上面那發同碼同形。
     await seedAttachment(db, uploadsDir, o.noteId, o.userId, PNG_BYTES.length, { noFile: true });
     const t2 = await issueDirect(db, o.patId, o.noteId, "upload");
     const pre = await upload(app, o.noteId, fileBody(PNG_BYTES), { token: t2.token });
@@ -576,7 +574,7 @@ describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 �
     expect(reused.json()).toEqual({ error: { code: "unauthorized", message: TRANSFER_INVALID_MESSAGE } });
   });
 
-  it("上傳形（transfer 版）：縫 storage-space-locked 拋 55P03 → 409 server_busy、檔已 unlink；token 已燒——同一支 token 之後 401", async () => {
+  it("transfer upload: test hook storage-space-locked throws 55P03 -> 409 server_busy, file unlinked; token burned - the same token is 401 afterwards", async () => {
     let busy = true;
     const { app, db, uploadsDir } = await buildTestApp({
       groupTestHook: async point => {
@@ -599,15 +597,14 @@ describe("POST /api/notes/:id/uploads × transfer token × 儲存配額（#200 �
   });
 });
 
-describe("GET /api/uploads/:id × transfer token", () => {
-  /** 用 session 上傳一張，回 id。 */
+describe("GET /api/uploads/:id x transfer token", () => {
   async function seedUpload(app: Parameters<typeof upload>[0], noteId: string, cookies: Record<string, string>, bytes: Buffer = PNG_BYTES) {
     const res = await upload(app, noteId, fileBody(bytes), { cookies });
     expect(res.statusCode).toBe(201);
     return (res.json() as { id: string }).id;
   }
 
-  it("T2：download token 在 TTL 內多次使用——同篇兩張各 GET 一次都 200、位元組一致、標頭與 session 路徑相同；HEAD 200", async () => {
+  it("download token used several times within its TTL - two uploads of one note each GET 200 with identical bytes and the same headers as the session path; HEAD 200", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const cookies = await cookieOf(o.userId);
@@ -626,7 +623,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await tokenRow(db, t.id))!.consumedAt).toBeNull();
   });
 
-  it("T4（GET）：download token 過期 → 401", async () => {
+  it("GET: download token expired -> 401", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const id = await seedUpload(app, o.noteId, await cookieOf(o.userId));
@@ -635,7 +632,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, id, { token: t.token })).statusCode).toBe(401);
   });
 
-  it("T6：A 篇的 download token 讀 B 篇的上傳 → 403 forbidden", async () => {
+  it("download token of note A reading an upload of note B -> 403 forbidden", async () => {
     const { app, db } = await buildTestApp();
     const a = await ownerWithPat(db);
     const b = await ownerWithPat(db);
@@ -646,9 +643,9 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect(res.json().error.code).toBe("forbidden");
   });
 
-  it("T6b：同一位使用者的兩篇筆記——A 篇的 download token 讀 B 篇（他自己看得到）的上傳 → 仍 403", async () => {
-    // T6 的兩篇分屬兩位使用者，拿掉「token 的筆記＝上傳所屬筆記」那道比對後 resolveRole 照樣回 none → 403，守不到它；
-    // 這裡 B 篇是同一人的，只有那道比對擋得住。
+  it("two notes of the same user: A's download token reading an upload of B (which they can see) -> still 403", async () => {
+    // Both notes belong to the same person, so only the "token's note = the upload's note" comparison blocks the read; with notes of
+    // different users resolveRole would return none and give 403 even without that comparison.
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const cookies = await cookieOf(o.userId);
@@ -661,7 +658,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, idB, { cookies })).statusCode).toBe(200);
   });
 
-  it("T7（GET 半）：upload token 打 GET → 403；upload token 未被消費", async () => {
+  it("GET half: upload token hitting GET -> 403; the upload token is not consumed", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const id = await seedUpload(app, o.noteId, await cookieOf(o.userId));
@@ -670,7 +667,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await tokenRow(db, t.id))!.consumedAt).toBeNull();
   });
 
-  it("T9（GET）：簽發後移除分享 → GET 403", async () => {
+  it("GET: share removed after issue -> GET 403", async () => {
     const { app, db } = await buildTestApp();
     const owner = await ownerWithPat(db);
     const reader = await seedUser(db);
@@ -683,7 +680,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, id, { token: t.token })).statusCode).toBe(403);
   });
 
-  it("T14（GET）：有效 PAT 直接 GET → 401 專屬訊息", async () => {
+  it("GET: a valid PAT hitting directly -> 401 dedicated message", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const id = await seedUpload(app, o.noteId, await cookieOf(o.userId));
@@ -692,24 +689,24 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect(res.json()).toEqual({ error: { code: "unauthorized", message: TRANSFER_PAT_MESSAGE } });
   });
 
-  it("T21：transfer GET 扣 tokenRead（key token:<userId>）——注入 limit:1：先 403／404 不扣，200 扣掉唯一一點，下一發 429", async () => {
+  it("transfer GET charges tokenRead (key token:<userId>) - injected limit:1: a 403/404 first does not charge, the 200 uses the only point, the next request is 429", async () => {
     const tokenRead = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ tokenRead }) });
     const o = await ownerWithPat(db);
     const id = await seedUpload(app, o.noteId, await cookieOf(o.userId));
     const t = await issueDirect(db, o.patId, o.noteId, "download");
-    // 被存取檢查擋下的 403（別篇的上傳）與 404（查無此上傳）都在扣點之前 return，不啃桶——否則下面那發 200 會變 429
-    // （docs/api.md GET 列「that gets past the access checks」的守衛）。
+    // A 403 (another note's upload) and a 404 (no such upload) blocked by the access checks both return before charging, so they do not eat the bucket
+    // - otherwise the 200 below would become 429 (docs/api.md GET row "that gets past the access checks").
     const otherId = await seedUpload(app, (await seedNote(db, { ownerId: o.userId })).id, await cookieOf(o.userId));
     expect((await download(app, otherId, { token: t.token })).statusCode).toBe(403);
     expect((await download(app, randomUUID(), { token: t.token })).statusCode).toBe(404);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(200);
     expect((await download(app, id, { token: t.token })).statusCode).toBe(429);
-    // 同一本帳：同一使用者的 PAT 打 authenticateTokenOrSession 路由也被擋（key 相同）
+    // Same ledger: the same user's PAT hitting authenticateTokenOrSession routes is blocked too (same key).
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${o.pat}` } })).statusCode).toBe(429);
   });
 
-  it("T21b：download `next` 的 404／429 兩句——非 UUID 與查無此上傳都 404；429 之後等視窗過、同一支 token 再 GET → 200", async () => {
+  it("the 404 and 429 statements of download `next`: non-UUID and unknown upload are both 404; after a 429, once the window passes the same token GETs 200", async () => {
     const tokenRead = new FixedWindowLimiter({ limit: 1, windowMs: 300 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ tokenRead }) });
     const o = await ownerWithPat(db);
@@ -723,7 +720,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, id, { token: t.token })).statusCode).toBe(200);
   });
 
-  it("download token ＋大寫 upload id → 200", async () => {
+  it("download token + uppercase upload id -> 200", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const id = await seedUpload(app, o.noteId, await cookieOf(o.userId));
@@ -731,7 +728,7 @@ describe("GET /api/uploads/:id × transfer token", () => {
     expect((await download(app, id.toUpperCase(), { token: t.token })).statusCode).toBe(200);
   });
 
-  it("session GET 路徑不變（不扣 tokenRead）", async () => {
+  it("session GET path unchanged (does not charge tokenRead)", async () => {
     const tokenRead = new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ tokenRead }) });
     const o = await ownerWithPat(db);
@@ -742,8 +739,8 @@ describe("GET /api/uploads/:id × transfer token", () => {
   });
 });
 
-describe("T8：母憑證消失 → 子 token 一起死", () => {
-  it("(a) DELETE /api/auth/tokens/:id 撤銷 PAT → 子 token 401、transfer_tokens 列已不存在", async () => {
+describe("parent credential gone -> child tokens die with it", () => {
+  it("DELETE /api/auth/tokens/:id revokes the PAT -> child token 401, transfer_tokens rows no longer exist", async () => {
     const { app, db } = await buildTestApp();
     const o = await ownerWithPat(db);
     const t = await issueDirect(db, o.patId, o.noteId, "upload");
@@ -753,7 +750,6 @@ describe("T8：母憑證消失 → 子 token 一起死", () => {
     expect((await upload(app, o.noteId, fileBody(PNG_BYTES), { token: t.token })).statusCode).toBe(401);
   });
 
-  /** 走一輪 OAuth（scope notes:write）並給該使用者建一篇筆記：回 { userId, cookie, c（obtainCode 的回傳）, grantId, refresh, noteId }。 */
   async function oauthGrant(app: Parameters<typeof upload>[0], db: Parameters<typeof ownerWithPat>[0]) {
     const { userId, cookie } = await createUserAndLogin(db);
     const c = await obtainCode(app, cookie, { scope: "notes:write" });
@@ -763,7 +759,7 @@ describe("T8：母憑證消失 → 子 token 一起死", () => {
     return { userId, cookie, c, grantId: grant!.id, refresh: tokens.refresh_token, noteId: note.id };
   }
 
-  it("(b) OAuth 同 client 重新授權（先刪後插）→ 舊子 token 401", async () => {
+  it("OAuth re-authorization with the same client (delete then insert) -> old child token 401", async () => {
     const { app, db } = await buildTestApp();
     const g = await oauthGrant(app, db);
     const t = await issueDirect(db, g.grantId, g.noteId, "upload");
@@ -773,7 +769,7 @@ describe("T8：母憑證消失 → 子 token 一起死", () => {
     expect((await upload(app, g.noteId, fileBody(PNG_BYTES), { token: t.token })).statusCode).toBe(401);
   });
 
-  it("(c) OAuth client 清理的兩層 cascade（oauth_clients → api_tokens → transfer_tokens）→ 子列消失", async () => {
+  it("OAuth client cleanup cascades two levels (oauth_clients -> api_tokens -> transfer_tokens) -> child rows disappear", async () => {
     const { app, db } = await buildTestApp();
     const g = await oauthGrant(app, db);
     const t = await issueDirect(db, g.grantId, g.noteId, "download");
@@ -782,7 +778,7 @@ describe("T8：母憑證消失 → 子 token 一起死", () => {
     expect(await tokenRow(db, t.id)).toBeUndefined();
   });
 
-  it("(d) refresh 輪替（原地 UPDATE、id 不變）後子 token 仍可用", async () => {
+  it("after refresh rotation (in-place UPDATE, id unchanged) the child token still works", async () => {
     const { app, db } = await buildTestApp();
     const g = await oauthGrant(app, db);
     const t = await issueDirect(db, g.grantId, g.noteId, "upload");
@@ -792,8 +788,8 @@ describe("T8：母憑證消失 → 子 token 一起死", () => {
   });
 });
 
-describe("bulk 權杖打 #200 的上傳／下載端點 → 403（`require()` 的用途比對）", () => {
-  it("GET /api/uploads/:id 與 POST /api/notes/:id/uploads 都 403 forbidden、零寫入", async () => {
+describe("bulk tokens hitting #200's upload/download endpoints -> 403 (purpose comparison in `require()`)", () => {
+  it("GET /api/uploads/:id and POST /api/notes/:id/uploads both 403 forbidden, nothing written", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const o = await ownerWithPat(db);
     const bulk = await issueBulkDirect(db, o.patId);

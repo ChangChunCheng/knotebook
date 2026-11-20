@@ -1,6 +1,4 @@
-/**
- * #93：背景回填。直接呼叫 backfillSearchIndex（不經 index.ts）；接線的結構守衛在 unit/search-backfill-wiring。
- */
+// The structural guard for the wiring (that index.ts calls the backfill) is in `unit/search-backfill-wiring.test.ts`.
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -18,8 +16,8 @@ async function bodies(db: Parameters<typeof indexRows>[0], id: string): Promise<
   return (await indexRows(db, id)).map(r => r.body);
 }
 
-describe("S11 回填", () => {
-  it("三篇無狀態列＋一篇 extractor_version 0＋一篇 source_version 落後 → 一次全對；再跑 0 候選", async () => {
+describe("backfill", () => {
+  it("three notes without a state row + one with extractor_version 0 + one with a lagging source_version -> all fixed in one run; a second run has 0 candidates", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const fresh = await Promise.all([0, 1, 2].map(async i => {
@@ -52,14 +50,14 @@ describe("S11 回填", () => {
     expect(again).toMatchObject({ candidates: 0, done: 0, skipped: 0, failed: 0 });
   });
 
-  it("從沒開過的筆記（沒有 note_states）不是候選", async () => {
+  it("a note that was never opened (no note_states) is not a candidate", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     await seedNote(db, { ownerId: u.id });
     expect(await backfillSearchIndex(db, captureLog().log)).toMatchObject({ candidates: 0, done: 0 });
   });
 
-  it("中途 abort → aborted、只做了一部分；再跑只處理剩下的", async () => {
+  it("abort midway -> aborted with only part done; a second run handles only the rest", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     for (let i = 0; i < 6; i += 1) {
@@ -74,7 +72,7 @@ describe("S11 回填", () => {
     expect(second).toMatchObject({ candidates: 3, done: 3, aborted: false });
   });
 
-  it("壞的 ydoc → warn 一行、failed 1，其餘照做", async () => {
+  it("corrupt ydoc -> one warn, failed 1, the rest still done", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const BAD = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
@@ -90,7 +88,7 @@ describe("S11 回填", () => {
     expect(await bodies(db, good.id)).toEqual(["good one"]);
   });
 
-  it("回填途中候選筆記被刪 → skipped、不算失敗、不 warn，其餘照做", async () => {
+  it("candidate note deleted during backfill -> skipped, not a failure, no warn, the rest still done", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const ids: string[] = [];
@@ -99,14 +97,14 @@ describe("S11 回填", () => {
       await seedNoteState(db, n.id, searchDoc(body(`rf4 ${i}`)), 1);
       ids.push(n.id);
     }
-    const last = [...ids].sort().at(-1)!; // keyset 依 note_id 遞增，最後處理的是最大的 id
+    const last = [...ids].sort().at(-1)!; // keyset is ascending by note_id, so the last one processed is the largest id
     let deleted = false;
     const { log, warns } = captureLog();
     const r = await backfillSearchIndex(db, log, {
       afterEachForTest: async () => {
         if (!deleted) {
           deleted = true;
-          await db.delete(notes).where(eq(notes.id, last)); // 候選頁已取回（含 last），逐篇讀時它已不在
+          await db.delete(notes).where(eq(notes.id, last)); // the candidate page was already fetched (includes last); by the time of the per-note read it is gone
         }
       },
     });
@@ -115,9 +113,10 @@ describe("S11 回填", () => {
     expect(warns).toEqual([]);
   });
 
-  it("gone 形：逐篇讀到 note_states 之後才被刪（writeSearchIndex 回 gone）→ 同樣 skipped、不 warn", async () => {
-    // 上一案的刪除在逐篇讀之前就提交，走的是「列已不在」分支、到不了 writeSearchIndex；這案讓刪除交易
-    // 在逐篇讀時還沒提交（讀得到舊列），writeSearchIndex 第 1 步 KEY SHARE 卡在 DELETE 的列鎖上，提交後回 gone。
+  it("gone shape: deleted after the per-note note_states read (writeSearchIndex returns gone) -> likewise skipped, no warn", async () => {
+    // The previous case commits its delete before the per-note read (the "row already gone" branch, which never reaches
+    // writeSearchIndex); here the delete transaction is still uncommitted during the per-note read (the old row is visible), so
+    // writeSearchIndex's first lock (KEY SHARE) blocks on the DELETE's row lock and returns gone once it commits.
     const { db } = await freshDb();
     const u = await seedUser(db);
     const ids: string[] = [];
@@ -138,11 +137,11 @@ describe("S11 回填", () => {
           if (noteId !== first) return;
           await holder.query("begin");
           open = true;
-          await holder.query("delete from notes where id = $1", [last]); // 未提交：持 notes(last) 列鎖
+          await holder.query("delete from notes where id = $1", [last]); // uncommitted: holds the notes(last) row lock
           deletedSignal();
         },
       });
-      // 與 run 賽跑：run 提早丟例外時立刻失敗，不要空等 120 s。
+      // Race against run: fail at once if run throws early, instead of idling for 120 s.
       await Promise.race([deleted, run]);
       expect(await waitForBlockedOrSettled(db.$client, run)).toBe("blocked");
       await holder.query("commit");
@@ -158,7 +157,7 @@ describe("S11 回填", () => {
   });
 });
 
-describe("S16 還原 runbook", () => {
+describe("restore runbook", () => {
   async function restored(variant: { bump: boolean; purge: boolean }) {
     const { db } = await freshDb();
     const u = await seedUser(db);
@@ -177,16 +176,16 @@ describe("S16 還原 runbook", () => {
     await backfillSearchIndex(db, captureLog().log);
     return bodies(db, n.id);
   }
-  it("版本 +1 且刪兩表（主步驟）→ 回填後是還原版", async () => {
+  it("version +1 and delete both tables (main step) -> after backfill it is the restored version", async () => {
     expect(await restored({ bump: true, purge: true })).toEqual(["restored content"]);
   });
-  it("只刪不加版本 → 回填後同樣正確", async () => {
+  it("delete only, no version bump -> still correct after backfill", async () => {
     expect(await restored({ bump: false, purge: true })).toEqual(["restored content"]);
   });
-  it("只加版本不刪 → 回填後同樣正確", async () => {
+  it("version bump only, no delete -> still correct after backfill", async () => {
     expect(await restored({ bump: true, purge: false })).toEqual(["restored content"]);
   });
-  it("兩者都沒做 → 還原前的文字留在索引裡（docs/backup-restore.md 寫出的後果）", async () => {
+  it("neither done -> pre-restore text stays in the index (the consequence documented in docs/backup-restore.md)", async () => {
     expect(await restored({ bump: false, purge: false })).toEqual(["before restore"]);
   });
 });

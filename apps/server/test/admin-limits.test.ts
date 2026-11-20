@@ -1,4 +1,3 @@
-/** #397：`GET／PATCH /api/admin/limits`。 */
 import { describe, expect, it } from "vitest";
 import { desc } from "drizzle-orm";
 import { SITE_LIMIT_KEYS, SITE_LIMITS, siteLimitStep, type SiteLimitKey, type SiteLimitsDto } from "@knotebook/shared";
@@ -17,8 +16,8 @@ const counts = async (b: Built) => ({
 });
 const item = (dto: SiteLimitsDto, key: SiteLimitKey) => dto.items.find(i => i.key === key)!;
 
-describe("權限", () => {
-  it("未登入 401、一般使用者 403、admin 200", async () => {
+describe("permissions", () => {
+  it("not signed in 401, regular user 403, admin 200", async () => {
     const b = await adminApp();
     await expectAdminOnly(b.app, b.db, "GET", URL_);
     await expectAdminOnly(b.app, b.db, "PATCH", URL_, { set: { rateEdit: 10 } });
@@ -26,7 +25,7 @@ describe("權限", () => {
     expect((await patch(b, { set: { rateEdit: 10 } })).statusCode).toBe(200);
   });
 
-  it("一般使用者 403 的 code 是 forbidden", async () => {
+  it("the 403 code for a regular user is forbidden", async () => {
     const b = await adminApp();
     const plain = await seedUser(b.db);
     const res = await b.app.inject({ method: "GET", url: URL_, cookies: await cookieOf(plain.id) });
@@ -38,14 +37,14 @@ describe("權限", () => {
   });
 });
 
-describe("超出範圍", () => {
+describe("out of range", () => {
   const cases: Array<[SiteLimitKey, string]> = [
     ["uploadMaxBytes", "bytes"],
     ["parseTimeoutMs", "ms"],
     ["rateEdit", "count"],
     ["sessionTtlSeconds", "seconds"],
   ];
-  it.each(cases)("%s（%s）：min−step、max+step → 400；min、max → 200", async key => {
+  it.each(cases)("%s (%s): min-step, max+step -> 400; min, max -> 200", async key => {
     const b = await adminApp();
     const { min, max } = SITE_LIMITS[key];
     const step = siteLimitStep(key);
@@ -64,16 +63,16 @@ describe("超出範圍", () => {
   });
 });
 
-describe("形狀", () => {
+describe("shape", () => {
   it.each([
-    ["未知 key", { set: { bogusKey: 1 } }],
+    ["unknown key", { set: { bogusKey: 1 } }],
     ["1.5", { set: { rateEdit: 1.5 } }],
     ['"3"', { set: { rateEdit: "3" } }],
     ["{ set: {} }", { set: {} }],
-    ["外層多一個鍵", { set: { rateEdit: 10 }, extra: 1 }],
-    ["set 不是物件", { set: 5 }],
-    ["缺 set", {}],
-  ])("%s → 400 invalid_body、訊息固定", async (_n, body) => {
+    ["extra outer key", { set: { rateEdit: 10 }, extra: 1 }],
+    ["set is not an object", { set: 5 }],
+    ["missing set", {}],
+  ])("%s -> 400 invalid_body, fixed message", async (_n, body) => {
     const b = await adminApp();
     const res = await patch(b, body);
     expect(res.statusCode, res.body).toBe(400);
@@ -83,12 +82,12 @@ describe("形狀", () => {
   });
 });
 
-describe("沒對齊", () => {
+describe("not aligned to the step", () => {
   it.each([
     [{ noteMaxBytes: 1_048_577 }, "noteMaxBytes must be a multiple of 1048576."],
     [{ parseTimeoutMs: 4_500 }, "parseTimeoutMs must be a multiple of 1000."],
     [{ sessionTtlSeconds: 3_601 }, "sessionTtlSeconds must be a multiple of 3600."],
-  ])("%j → 400 %s", async (set, message) => {
+  ])("%j -> 400 %s", async (set, message) => {
     const b = await adminApp();
     const res = await patch(b, { set });
     expect(res.statusCode, res.body).toBe(400);
@@ -97,8 +96,8 @@ describe("沒對齊", () => {
   });
 });
 
-describe("全有或全無", () => {
-  it("{ rateEdit: 10, rateSearch: 1 } → 400、rateEdit 沒寫", async () => {
+describe("all or nothing", () => {
+  it("{ rateEdit: 10, rateSearch: 1 } -> 400, rateEdit not written", async () => {
     const b = await adminApp();
     const res = await patch(b, { set: { rateEdit: 10, rateSearch: 1 } });
     expect(res.statusCode, res.body).toBe(400);
@@ -110,8 +109,8 @@ describe("全有或全無", () => {
 const LOCK_MSG = "noteMaxBytes is set by the server's environment variable NOTE_MAX_BYTES. Change it there and restart the server.";
 const envConfig = { ...testConfig, limitEnv: { noteMaxBytes: 2_097_152 } };
 
-describe("env 鎖定", () => {
-  it("GET 顯示鎖定；PATCH 設值或 null → 409；同請求其他項也沒寫", async () => {
+describe("env lock", () => {
+  it("GET shows the lock; PATCH setting a value or null -> 409; other items in the same request are not written either", async () => {
     const b = await adminApp({ config: envConfig });
     const it0 = item((await get(b)).json(), "noteMaxBytes");
     expect(it0).toMatchObject({ locked: true, source: "env", value: 2_097_152 });
@@ -125,7 +124,7 @@ describe("env 鎖定", () => {
     expect(await counts(b)).toEqual({ limits: 0, changes: 0 });
   });
 
-  it("env 與存的列並存：GET 回 env 值＋stored；PATCH null → 409；列仍在", async () => {
+  it("env and stored row coexist: GET returns env value + stored; PATCH null -> 409; row remains", async () => {
     const first = await buildTestApp();
     await first.db.insert(siteLimits).values({ key: "noteMaxBytes", value: 1_048_576 });
     const built = await buildTestApp({ config: envConfig, db: first.db });
@@ -139,7 +138,7 @@ describe("env 鎖定", () => {
 });
 
 describe("GET changes", () => {
-  it("PATCH 51 次後 GET 只回 50 筆、倒序、actor 是 admin", async () => {
+  it("after 51 PATCHes GET returns only 50 entries, newest first, actor is the admin", async () => {
     const b = await adminApp();
     for (let i = 0; i < 51; i++) {
       const res = await patch(b, { set: { rateEdit: 3 + (i % 28) } });
@@ -156,7 +155,7 @@ describe("GET changes", () => {
     expect(dto.machine.cpus).toBeGreaterThan(0);
   });
 
-  it("PATCH 成功回同形（含 changes）", async () => {
+  it("successful PATCH returns the same shape (including changes)", async () => {
     const b = await adminApp();
     const dto: SiteLimitsDto = (await patch(b, { set: { rateEdit: 7 } })).json();
     expect(item(dto, "rateEdit")).toMatchObject({ value: 7, source: "admin", stored: 7 });
@@ -164,7 +163,7 @@ describe("GET changes", () => {
     expect(dto.changes[0]).toMatchObject({ key: "rateEdit", oldValue: null, newValue: 7, oldEffective: 30, newEffective: 7 });
   });
 
-  it("帳號不存在的 actor 回 null", async () => {
+  it("actor of a nonexistent account is null", async () => {
     const b = await adminApp();
     await patch(b, { set: { rateEdit: 7 } });
     const other = await seedUser(b.db, { isAdmin: true });
@@ -175,8 +174,8 @@ describe("GET changes", () => {
   });
 });
 
-describe("同一時間的紀錄依 id 倒序", () => {
-  it("兩列 changed_at 相同 → id desc", async () => {
+describe("entries at the same time are ordered by id descending", () => {
+  it("two rows with equal changed_at -> id desc", async () => {
     const b = await adminApp();
     const at = new Date("2026-01-01T00:00:00.000Z");
     const mk = (key: string) => ({ key, oldValue: null, newValue: 1, oldEffective: 0, newEffective: 1, actorUserId: b.admin.id, changedAt: at });
@@ -188,8 +187,8 @@ describe("同一時間的紀錄依 id 倒序", () => {
   });
 });
 
-describe("未知 key 的紀錄照回", () => {
-  it("bogusKey 的紀錄不被濾掉、不 500", async () => {
+describe("entries for unknown keys are still returned", () => {
+  it("bogusKey entry is not filtered out and doesn't 500", async () => {
     const b = await adminApp();
     await b.db.insert(siteLimitChanges).values({ key: "bogusKey", oldValue: null, newValue: 1, oldEffective: 0, newEffective: 1, actorUserId: b.admin.id });
     const res = await get(b);

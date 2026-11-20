@@ -7,18 +7,18 @@ import { seedAuthProvider } from "./helpers/oidc-provider.js";
 import { adminApp, captureLogs, expectAdminOnly, providerRow } from "./helpers/admin-auth.js";
 
 const NUL = String.fromCodePoint(0);
-/** 落單的高位代理（U+D800）：JSON 序列化成 `\ud800`，server 端 parse 回來仍是落單代理。 */
+/** A lone high surrogate (U+D800): serializes to `\ud800` in JSON and still parses back on the server as a lone surrogate. */
 const LONE = String.fromCharCode(0xd800);
 const base = { template: "oidc", displayName: "Corp SSO", issuerUrl: "https://idp.example.com", clientId: "knotebook" } as const;
 
-describe("GET／POST /api/admin/auth/providers（#187）", () => {
-  it("兩個端點都只給站台管理員（非管理員 403、未登入 401）", async () => {
+describe("GET/POST /api/admin/auth/providers (#187)", () => {
+  it("both endpoints are site-admin only (non-admin 403, not signed in 401)", async () => {
     const { app, db } = await adminApp();
     await expectAdminOnly(app, db, "GET", "/api/admin/auth/providers");
     await expectAdminOnly(app, db, "POST", "/api/admin/auth/providers", base);
   });
 
-  it("POST 建立：201、一律停用、hasSecret、callbackUrl 是 <PUBLIC_URL>/api/auth/oidc/callback/<id>；回應不含 secret 任何形；DB 密文以 AAD 綁 id 解得開", async () => {
+  it("POST create: 201, always disabled, hasSecret, callbackUrl is <PUBLIC_URL>/api/auth/oidc/callback/<id>; response contains no form of the secret; DB ciphertext decrypts with the id as AAD", async () => {
     const { app, db, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, clientSecret: "s3cret-value", template: "gitlab" } });
     expect(res.statusCode).toBe(201);
@@ -35,7 +35,7 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(openClientSecret(testConfig.appSecret, row!)).toBe("s3cret-value");
   });
 
-  it("P1 POST 帶 autoCreateEnabled → 400 invalid_body、不建列（建立 API 不收此欄）", async () => {
+  it("POST with autoCreateEnabled -> 400 invalid_body, no row created (the create API doesn't accept it)", async () => {
     const { app, db, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, autoCreateEnabled: true } });
     expect(res.statusCode).toBe(400);
@@ -43,7 +43,7 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(await db.select().from(authProviders)).toHaveLength(0);
   });
 
-  it("P2 GET 列表帶 autoCreateEnabled", async () => {
+  it("GET list carries autoCreateEnabled", async () => {
     const { app, db, cookies } = await adminApp();
     const x = await seedAuthProvider(db, { issuerUrl: "https://x.example", sortOrder: 0, autoCreateEnabled: true });
     const y = await seedAuthProvider(db, { issuerUrl: "https://y.example", sortOrder: 1, autoCreateEnabled: false });
@@ -52,7 +52,7 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(list.map(p => [p.id, p.autoCreateEnabled])).toEqual([[x.id, true], [y.id, false]]);
   });
 
-  it("POST 不帶 clientSecret → hasSecret false、DB 密文 NULL", async () => {
+  it("POST without clientSecret -> hasSecret false, DB ciphertext NULL", async () => {
     const { app, db, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: base });
     expect(res.statusCode).toBe(201);
@@ -60,7 +60,7 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect((await providerRow(db, res.json().id))!.clientSecretEncrypted).toBeNull();
   });
 
-  it("P1（#299 驗收 1）POST 不帶 clientId → 201、clientId null、一律停用、callbackUrl 帶回應的 id；DB client_id NULL", async () => {
+  it("(#299) POST without clientId -> 201, clientId null, always disabled, callbackUrl carries the response id; DB client_id NULL", async () => {
     const { app, db, cookies } = await adminApp();
     const { clientId: _omit, ...noClientId } = base;
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: noClientId });
@@ -71,21 +71,21 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect((await providerRow(db, body.id))!.clientId).toBeNull();
   });
 
-  it("POST 的 sortOrder 接在現有最大值之後（新服務排最後）", async () => {
+  it("POST sortOrder goes after the current maximum (new provider sorts last)", async () => {
     const { app, db, cookies } = await adminApp();
     await seedAuthProvider(db, { issuerUrl: "https://a.example", sortOrder: 7 });
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: base });
     expect(res.json().sortOrder).toBe(8);
   });
 
-  it("POST 的 sortOrder 封頂 100000（＝PATCH 上限；之後編輯表單帶回原值仍合法）", async () => {
+  it("POST sortOrder is capped at 100000 (= the PATCH limit; the edit form sending the original value back stays valid)", async () => {
     const { app, db, cookies } = await adminApp();
     await seedAuthProvider(db, { issuerUrl: "https://a.example", sortOrder: 100_000 });
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: base });
     expect(res.json().sortOrder).toBe(100_000);
   });
 
-  it("GET 列表：排序（sortOrder → createdAt → id）、legacy 的 callbackUrl 是舊路徑、http issuer 標 insecure、resolved 標 issuerResolved；不含 secret", async () => {
+  it("GET list: order (sortOrder -> createdAt -> id), legacy callbackUrl is the old path, http issuer flagged insecure, resolved flagged issuerResolved; no secret", async () => {
     const { app, db, cookies } = await adminApp();
     const legacy = await seedAuthProvider(db, { issuerUrl: "http://idp.lan", legacyCallback: true, sortOrder: 1, clientSecret: "legacy-secret" });
     const first = await seedAuthProvider(db, { issuerUrl: "https://gitlab.example/", resolvedIssuer: "https://gitlab.example", sortOrder: 0, displayName: "<b>Corp</b> & Co" });
@@ -99,7 +99,7 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(res.body).not.toContain("clientSecretEncrypted");
   });
 
-  it("POST http issuer → 201，並記一行 warn（儲存時 log warn）", async () => {
+  it("POST http issuer -> 201 and one warn line (warn logged at save time)", async () => {
     const logs = captureLogs();
     const { app, cookies } = await adminApp({}, logs.options);
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, issuerUrl: "http://idp.lan" } });
@@ -111,35 +111,35 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(line!.obj).toMatchObject({ providerId: res.json().id });
   });
 
-  // 與 0014 的 CHECK 逐條對齊——zod 放行、CHECK 拒絕的形會變成 500。
+  // One-to-one with the CHECKs of 0014: shapes that zod lets through but a CHECK rejects would become a 500.
   it.each([
-    ["大寫 scheme（CHECK 大小寫敏感）", { issuerUrl: "HTTPS://idp.example.com" }, "The issuer URL must start with lowercase http:// or https://."],
-    ["issuer 513 字", { issuerUrl: `https://idp.example.com/${"a".repeat(489)}` }, "The issuer URL can be at most 512 characters."],
-    ["issuer 不是網址", { issuerUrl: "https://" }, "The issuer is not a valid URL."],
-    ["issuer 格式錯又帶帳密（refine 不得 throw 成 500）", { issuerUrl: "https://user:pass@ho st/v1" }, "The issuer is not a valid URL."],
-    ["issuer 帶帳密 user:pass@", { issuerUrl: "https://user:pass@idp.example.com" }, "The issuer URL can't contain a username or password."],
-    ["issuer 只帶 user@", { issuerUrl: "https://user@idp.example.com" }, "The issuer URL can't contain a username or password."],
-    ["顯示名 41 個 code point（emoji，UTF-16 長度 82）", { displayName: "😀".repeat(41) }, "The display name must be 1 to 40 characters."],
-    ["顯示名只有空白", { displayName: "   " }, "The display name must be 1 to 40 characters."],
-    ["顯示名含 NUL", { displayName: `a${NUL}b` }, "contains characters that can't be stored."],
-    ["client id 513 字", { clientId: "c".repeat(513) }, "The client ID must be 1 to 512 characters."],
-    // #299 驗收 2：clientId 可不帶，但帶了空字串／全空白仍是 400（不當成「沒填」），null 不收。
-    ["client id 空字串", { clientId: "" }, "The client ID must be 1 to 512 characters."],
-    ["client id 只有空白", { clientId: "   " }, "The client ID must be 1 to 512 characters."],
-    ["client id 為 null", { clientId: null }, "Invalid request body."],
-    ["clientSecret 空字串", { clientSecret: "" }, "The client secret can't be empty"],
-    ["clientSecret 只有空白", { clientSecret: "   " }, "The client secret can't be empty"],
-    // secret 上限、三個字串欄的 NUL／落單代理。
-    ["clientSecret 4097 字", { clientSecret: "s".repeat(4097) }, "The client secret can be at most 4096 characters."],
-    ["clientSecret 含 NUL", { clientSecret: `s${NUL}s` }, "The client secret contains characters that can't be stored."],
-    ["clientSecret 含落單代理", { clientSecret: `s${LONE}s` }, "The client secret contains characters that can't be stored."],
-    ["client id 含 NUL", { clientId: `c${NUL}c` }, "The client ID contains characters that can't be stored."],
-    ["client id 含落單代理", { clientId: `c${LONE}c` }, "The client ID contains characters that can't be stored."],
-    ["issuer 含 NUL", { issuerUrl: `https://idp.example.com/${NUL}` }, "The issuer URL contains characters that can't be stored."],
-    ["issuer 含落單代理", { issuerUrl: `https://idp.example.com/${LONE}` }, "The issuer URL contains characters that can't be stored."],
-    ["不認得的範本", { template: "github" }, "Invalid request body."],
-    ["多一個欄位（strict）", { enabled: true }, "Invalid request body."],
-  ])("POST 不合法輸入 → 400 invalid_body＋英文訊息、DB 沒有新列：%s", async (_name, patch, message) => {
+    ["uppercase scheme (the CHECK is case-sensitive)", { issuerUrl: "HTTPS://idp.example.com" }, "The issuer URL must start with lowercase http:// or https://."],
+    ["issuer of 513 characters", { issuerUrl: `https://idp.example.com/${"a".repeat(489)}` }, "The issuer URL can be at most 512 characters."],
+    ["issuer is not a URL", { issuerUrl: "https://" }, "The issuer is not a valid URL."],
+    ["malformed issuer with credentials (the refine must not throw into a 500)", { issuerUrl: "https://user:pass@ho st/v1" }, "The issuer is not a valid URL."],
+    ["issuer with credentials user:pass@", { issuerUrl: "https://user:pass@idp.example.com" }, "The issuer URL can't contain a username or password."],
+    ["issuer with only user@", { issuerUrl: "https://user@idp.example.com" }, "The issuer URL can't contain a username or password."],
+    ["display name of 41 code points (emoji, UTF-16 length 82)", { displayName: "😀".repeat(41) }, "The display name must be 1 to 40 characters."],
+    ["display name is whitespace only", { displayName: "   " }, "The display name must be 1 to 40 characters."],
+    ["display name contains NUL", { displayName: `a${NUL}b` }, "contains characters that can't be stored."],
+    ["client id of 513 characters", { clientId: "c".repeat(513) }, "The client ID must be 1 to 512 characters."],
+    // #299: clientId may be omitted, but an empty/all-whitespace string is still 400 (not treated as "not provided"), and null is rejected.
+    ["client id is an empty string", { clientId: "" }, "The client ID must be 1 to 512 characters."],
+    ["client id is whitespace only", { clientId: "   " }, "The client ID must be 1 to 512 characters."],
+    ["client id is null", { clientId: null }, "Invalid request body."],
+    ["clientSecret is an empty string", { clientSecret: "" }, "The client secret can't be empty"],
+    ["clientSecret is whitespace only", { clientSecret: "   " }, "The client secret can't be empty"],
+    // Secret upper bound; NUL / lone surrogate in the three string fields.
+    ["clientSecret of 4097 characters", { clientSecret: "s".repeat(4097) }, "The client secret can be at most 4096 characters."],
+    ["clientSecret contains NUL", { clientSecret: `s${NUL}s` }, "The client secret contains characters that can't be stored."],
+    ["clientSecret contains a lone surrogate", { clientSecret: `s${LONE}s` }, "The client secret contains characters that can't be stored."],
+    ["client id contains NUL", { clientId: `c${NUL}c` }, "The client ID contains characters that can't be stored."],
+    ["client id contains a lone surrogate", { clientId: `c${LONE}c` }, "The client ID contains characters that can't be stored."],
+    ["issuer contains NUL", { issuerUrl: `https://idp.example.com/${NUL}` }, "The issuer URL contains characters that can't be stored."],
+    ["issuer contains a lone surrogate", { issuerUrl: `https://idp.example.com/${LONE}` }, "The issuer URL contains characters that can't be stored."],
+    ["unknown template", { template: "github" }, "Invalid request body."],
+    ["extra field (strict)", { enabled: true }, "Invalid request body."],
+  ])("POST with invalid input -> 400 invalid_body + English message, no new row in the DB: %s", async (_name, patch, message) => {
     const { app, db, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, ...patch } });
     expect(res.statusCode).toBe(400);
@@ -147,14 +147,14 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(await db.select().from(authProviders)).toHaveLength(0);
   });
 
-  it("前後空白會被修掉後存（顯示名、issuer、client id）", async () => {
+  it("surrounding whitespace is trimmed before storing (display name, issuer, client id)", async () => {
     const { app, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, displayName: "  Corp  ", issuerUrl: " https://idp.example.com ", clientId: " knotebook " } });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ displayName: "Corp", issuerUrl: "https://idp.example.com", clientId: "knotebook" });
   });
 
-  it("clientSecret 前後的空白原樣存（不 trim；解開與送出的值相同）", async () => {
+  it("whitespace around clientSecret is stored as-is (no trim; the decrypted value equals the one sent)", async () => {
     const { app, db, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, clientSecret: "  padded secret \t" } });
     expect(res.statusCode).toBe(201);
@@ -162,13 +162,13 @@ describe("GET／POST /api/admin/auth/providers（#187）", () => {
     expect(openClientSecret(testConfig.appSecret, row!)).toBe("  padded secret \t");
   });
 
-  it("40 個 emoji 的顯示名可以存（code point 計數，與 CHECK 的 char_length 一致）", async () => {
+  it("a display name of 40 emoji can be stored (counted in code points, consistent with the CHECK's char_length)", async () => {
     const { app, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, displayName: "😀".repeat(40) } });
     expect(res.statusCode).toBe(201);
   });
 
-  it("POST 的 id 由 server 產（body 帶 id 會被 strict 拒）", async () => {
+  it("POST id is generated by the server (an id in the body is rejected by strict)", async () => {
     const { app, cookies } = await adminApp();
     const res = await app.inject({ method: "POST", url: "/api/admin/auth/providers", cookies, payload: { ...base, id: randomUUID() } });
     expect(res.statusCode).toBe(400);

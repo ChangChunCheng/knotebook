@@ -1,6 +1,4 @@
-/**
- * #93：全文索引抽取器。純函式，不連 DB。
- */
+/** #93: full-text index extractor. Pure functions, no DB. */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT, sectionize } from "@knotebook/shared";
@@ -27,7 +25,7 @@ async function editorDoc(blocks: Array<Record<string, unknown>>): Promise<Y.Doc>
   }
   return doc;
 }
-// 在未改 topLevelBlocks 的碼上實跑取得
+// golden values captured by running the code before topLevelBlocks was changed
 const GOLDEN_HASH = "01dbcb87f9d4075de27636b598be9980503470e31176ba28a45069a7cad984d6";
 const colRow = (id: string, cols: Array<Array<Record<string, unknown>>>) => ({
   id,
@@ -38,8 +36,8 @@ const colRow = (id: string, cols: Array<Array<Record<string, unknown>>>) => ({
 const ids = (b: Blk[]) => extractSearchSections(frag(searchDoc(b))).rows.map(r => r.sectionId);
 const bodyOf = (b: Blk[], sectionId: string) => extractSearchSections(frag(searchDoc(b))).rows.find(r => r.sectionId === sectionId)?.body;
 
-describe("並排（頂層單位擴充）", () => {
-  it("不含並排的既有文件 contentHash 逐位元組不變（golden）", async () => {
+describe("columns (top-level unit expansion)", () => {
+  it("an existing document without columns keeps a byte-identical contentHash (golden)", async () => {
     const doc = await editorDoc([
       { id: "ha", type: "heading", props: { level: 1 }, content: "A" },
       { id: "p1", type: "paragraph", content: "段落一" },
@@ -51,7 +49,7 @@ describe("並排（頂層單位擴充）", () => {
     expect(extractSearchSections(frag(doc)).contentHash).toBe(GOLDEN_HASH);
   });
 
-  it("列的兩欄文字都進 _top 的 body；欄內 heading 的字也在 body、不另成段", async () => {
+  it("both column texts of a row go into _top's body; a heading inside a column is in the body too, not a separate section", async () => {
     const doc = await editorDoc([
       colRow("r", [
         [{ id: "a", type: "paragraph", content: "左欄字" }],
@@ -67,11 +65,11 @@ describe("並排（頂層單位擴充）", () => {
   });
 });
 
-describe("深度（抽取器）", () => {
-  // 建鏈必須包在單一 doc.transact 裡：逐筆 insert 每次各開一個 transaction、收尾成本隨深度長，整條鏈是 O(n²)
-  // （CI 上單這段同步跑 52–68 s；超過 60 s 時 worker 等不到 vitest 的 onTaskUpdate RPC 回覆 → Unhandled Error、exit 1）。
-  // 單一 transaction 下 20 000 層本機實測約 20 ms，樹的形狀相同。
-  it("20 000 層 blockContainer 鏈 → 不拋，最深處的字出現在 body", () => {
+describe("depth (extractor)", () => {
+  // The chain must be built inside one doc.transact: inserting one by one opens a transaction each time and the closing cost grows with depth, so the whole chain is O(n^2)
+  // (on CI this stretch alone runs 52-68 s synchronously; past 60 s the worker misses the reply to vitest's onTaskUpdate RPC -> Unhandled Error, exit 1).
+  // A single transaction builds the same tree quickly.
+  it("a chain 20 000 blockContainers deep -> does not throw; the deepest text appears in the body", () => {
     const doc = new Y.Doc();
     doc.transact(() => {
       const group = new Y.XmlElement("blockGroup");
@@ -97,7 +95,7 @@ describe("深度（抽取器）", () => {
   });
 });
 
-describe("段落對應", () => {
+describe("section mapping", () => {
   const blocks: Blk[] = [
     { id: "p0", text: "foo" },
     { id: "p1", text: "bar" },
@@ -106,7 +104,7 @@ describe("段落對應", () => {
     { id: "h2", type: "heading", text: "Beta" },
     { id: "p3", text: "beta body" },
   ];
-  it("sectionId／ord 與 sectionize 一致；各段 body 只含自己的字", () => {
+  it("sectionId/ord match sectionize; each section's body contains only its own text", () => {
     const f = frag(searchDoc(blocks));
     const ex = extractSearchSections(f);
     const outline = sectionize(f);
@@ -115,30 +113,30 @@ describe("段落對應", () => {
     expect(bodyOf(blocks, "h1")).toBe("Alpha\nalpha body");
     expect(bodyOf(blocks, "h2")).toBe("Beta\nbeta body");
   });
-  it("相鄰 block 之間恰一個分隔：『foo』『bar』兩段落不產生 foobar", () => {
+  it("exactly one separator between adjacent blocks: paragraphs 'foo' and 'bar' do not produce foobar", () => {
     expect(bodyOf(blocks, "_top")).toBe("foo\nbar");
     expect(bodyOf(blocks, "_top")).not.toContain("foobar");
   });
-  it("空段落不產生多餘分隔（R-join）；只有結構沒有字的段不入索引（R-sep）", () => {
+  it("an empty paragraph adds no extra separator; a section with structure but no text is not indexed", () => {
     expect(bodyOf([{ id: "a", text: "x" }, { id: "b" }, { id: "c", text: "y" }], "_top")).toBe("x\ny");
     expect(ids([{ id: "h", type: "heading" }, { id: "p" }])).toEqual([]);
   });
-  it("ord 讓跳過的段落佔號：_top 空時第一個 heading 段的 ord 是 1", () => {
+  it("ord counts skipped sections: when _top is empty the first heading section has ord 1", () => {
     expect(extractSearchSections(frag(searchDoc([{ id: "h", type: "heading", text: "H" }]))).rows.map(r => r.ord)).toEqual([1]);
   });
 });
 
-describe("走訪規則", () => {
-  it("#269：wikilink → label 或 snapshotTitle（無方括號；不展開子節點；非字串 → 空）；inline 不加分隔", () => {
+describe("traversal rules", () => {
+  it("#269: wikilink -> label or snapshotTitle (no brackets; children not expanded; non-string -> empty); inline adds no separator", () => {
     expect(bodyOf([{ id: "p", inline: ["see ", { wikilink: "Roadmap" }, " now"] }], "_top")).toBe("see Roadmap now");
     expect(bodyOf([{ id: "p", inline: ["see ", { wikilink: "Roadmap", label: "the plan" }, " now"] }], "_top")).toBe("see the plan now");
     expect(bodyOf([{ id: "p", inline: ["see ", { wikilink: "Roadmap", label: "" }, " now"] }], "_top")).toBe("see Roadmap now");
     expect(bodyOf([{ id: "p", inline: ["x", { wikilink: 42 }] }], "_top")).toBe("x");
   });
-  it("#269：SEARCH_EXTRACTOR_VERSION 升到 2（抽取形變了 ⇒ 啟動回填重建既有索引）", () => {
+  it("#269: SEARCH_EXTRACTOR_VERSION is 2 (the extraction shape changed, so the startup backfill rebuilds existing indexes)", () => {
     expect(SEARCH_EXTRACTOR_VERSION).toBe(2);
   });
-  it("wikilink 的子節點（XmlText）不展開：只輸出 snapshotTitle", () => {
+  it("wikilink children (XmlText) are not expanded: only snapshotTitle is output", () => {
     const doc = searchDoc([{ id: "p", inline: ["a", { wikilink: "T" }, "b"] }]);
     const para = ((frag(doc).get(0) as Y.XmlElement).get(0) as Y.XmlElement).get(0) as Y.XmlElement;
     const w = para.get(1) as Y.XmlElement;
@@ -150,7 +148,7 @@ describe("走訪規則", () => {
     expect(body).not.toContain("HIDDEN");
     expect(body).toBe("aTb");
   });
-  it("mermaid 的 code 屬性入 body；codeBlock 文字入；image 的 caption／url 不入", () => {
+  it("a mermaid code property goes into the body; codeBlock text goes in; an image's caption/url do not", () => {
     const b: Blk[] = [
       { id: "p", text: "before" },
       { id: "m", type: "mermaid", attrs: { code: "graph TD; A-->MERMAIDX" } },
@@ -161,7 +159,7 @@ describe("走訪規則", () => {
     expect(body).toBe("before\ngraph TD; A-->MERMAIDX\nconst CODEX = 1;");
     expect(body).not.toMatch(/CAPTIONX|URLX|NAMEX/);
   });
-  it("巢狀 block（子 blockGroup）以分隔接在父 block 之後", () => {
+  it("a nested block (child blockGroup) follows its parent block after a separator", () => {
     const doc = searchDoc([{ id: "p", text: "parent" }]);
     const c = frag(doc).get(0) as Y.XmlElement;
     const container = c.get(0) as Y.XmlElement;
@@ -179,8 +177,8 @@ describe("走訪規則", () => {
   });
 });
 
-describe("敵意 id", () => {
-  it("重複的段落 id → 只有第一次出現的段落入索引（第二段的獨有字搜不到）", () => {
+describe("hostile ids", () => {
+  it("duplicate section ids -> only the first occurrence is indexed (words unique to the second cannot be found)", () => {
     const b: Blk[] = [
       { id: "dup", type: "heading", text: "First" },
       { id: "p1", text: "one" },
@@ -190,7 +188,7 @@ describe("敵意 id", () => {
     expect(ids(b)).toEqual(["dup"]);
     expect(extractSearchSections(frag(searchDoc(b))).rows.map(r => r.body).join("\n")).not.toContain("UNIQUE2");
   });
-  it("id 第一次出現在**空段**、後面的非空段同 id → 後者不入（read_note_section 讀到的是前者）", () => {
+  it("an id first seen on an **empty section** and reused by a later non-empty one -> the later one is not indexed (read_note_section reads the former)", () => {
     const b: Blk[] = [
       { id: "dup", type: "heading", text: "" },
       { id: "x", type: "heading", text: "Other" },
@@ -199,18 +197,18 @@ describe("敵意 id", () => {
     ];
     expect(ids(b)).toEqual(["x"]);
   });
-  it("超長、含 /、含 NUL 的 heading id → 該段不入；_top 照入", () => {
+  it("an over-long id, one containing /, or one containing NUL on a heading -> that section is not indexed; _top still is", () => {
     for (const bad of ["x".repeat(65), "a/b", "a\u0000b"]) {
       expect(ids([{ id: "p", text: "top" }, { id: bad, type: "heading", text: "H" }, { id: "q", text: "body" }]), bad).toEqual(["_top"]);
     }
   });
-  it("heading block 的 id 字面是 _top → 該段不入（_top 恆為第一段）", () => {
+  it("a heading block whose id is literally _top -> that section is not indexed (_top is the first section)", () => {
     expect(ids([{ id: "p", text: "top" }, { id: "_top", type: "heading", text: "H" }, { id: "q", text: "body" }])).toEqual(["_top"]);
   });
-  it("非 heading 的 container 與後面某段 heading 同 id → 那一段照入（它不是段落 id）", () => {
+  it("a non-heading container with the same id as a later section's heading -> that section is still indexed (it is not a section id)", () => {
     expect(ids([{ id: "same", text: "para" }, { id: "same", type: "heading", text: "H" }, { id: "q", text: "body" }])).toEqual(["_top", "same"]);
   });
-  it("任何頂層 container 的 id 為數字、空字串或缺 → 整篇 0 列、capped、indexedUnits 0", () => {
+  it("any top-level container whose id is a number, an empty string or missing -> 0 rows for the whole note, capped, indexedUnits 0", () => {
     for (const bad of [123, "", undefined]) {
       const ex = extractSearchSections(frag(searchDoc([{ id: "p", text: "ok" }, { id: bad, text: "x" }])));
       expect(ex, String(bad)).toMatchObject({ rows: [], capped: true, indexedUnits: 0 });
@@ -218,8 +216,8 @@ describe("敵意 id", () => {
   });
 });
 
-describe("清洗", () => {
-  it("文字、heading、wikilink 標題中的 NUL 與落單代理 → U+FFFD；成對代理原樣", () => {
+describe("sanitising", () => {
+  it("NUL and lone surrogates in text, headings and wikilink titles -> U+FFFD; paired surrogates unchanged", () => {
     const ex = extractSearchSections(frag(searchDoc([
       { id: "p", inline: ["a\u0000b \uD800 \uDC00 😀 ", { wikilink: "w\u0000t" }] },
       { id: "h", type: "heading", text: "H\u0000\uDFFF" },
@@ -230,8 +228,8 @@ describe("清洗", () => {
   });
 });
 
-describe("上限", () => {
-  it("body 合計 1 048 577 → indexedUnits 恰為上限、capped、其後段落不入", () => {
+describe("limits", () => {
+  it("body totalling 1 048 577 -> indexedUnits exactly at the limit, capped, later sections not indexed", () => {
     const ex = extractSearchSections(frag(searchDoc([
       { id: "p", text: "x".repeat(SEARCH_INDEX_NOTE_MAX + 1) },
       { id: "h", type: "heading", text: "after" },
@@ -240,7 +238,7 @@ describe("上限", () => {
     expect(ex.rows[0]!.body.length).toBe(SEARCH_INDEX_NOTE_MAX);
     expect(ex).toMatchObject({ indexedUnits: SEARCH_INDEX_NOTE_MAX, capped: true });
   });
-  it("切點落在代理對中間時退一格；退格後剩的 1 格不給後面的段（其後各段不入索引）", () => {
+  it("a cut point inside a surrogate pair backs off one unit; the one unit left after backing off is not given to later sections (later sections are not indexed)", () => {
     const ex = extractSearchSections(frag(searchDoc([
       { id: "p", text: `${"x".repeat(SEARCH_INDEX_NOTE_MAX - 1)}😀` },
       { id: "h", type: "heading", text: "a" },
@@ -249,7 +247,7 @@ describe("上限", () => {
     expect(ex.rows[0]!.body.length).toBe(SEARCH_INDEX_NOTE_MAX - 1);
     expect(ex.capped).toBe(true);
   });
-  it("某段被截成 0（只剩半個代理對的額度）→ 其後各段也不入", () => {
+  it("a section truncated to 0 (only half a surrogate pair of room left) -> later sections are not indexed either", () => {
     const ex = extractSearchSections(frag(searchDoc([
       { id: "p", text: "x".repeat(SEARCH_INDEX_NOTE_MAX - 1) },
       { id: "h", type: "heading", text: "😀zz" },
@@ -258,7 +256,7 @@ describe("上限", () => {
     expect(ex.rows.map(r => r.sectionId)).toEqual(["_top"]);
     expect(ex).toMatchObject({ indexedUnits: SEARCH_INDEX_NOTE_MAX - 1, capped: true });
   });
-  it("2001 個非空段落 → 2000 列、capped；恰 2000 個 → 2000 列、不 capped", () => {
+  it("2001 non-empty paragraphs -> 2000 rows, capped; exactly 2000 -> 2000 rows, not capped", () => {
     const heads = (n: number): Blk[] => Array.from({ length: n }, (_, i) => ({ id: `h${i}`, type: "heading", text: `h${i}` }));
     const over = extractSearchSections(frag(searchDoc(heads(SEARCH_INDEX_SECTIONS_MAX + 1))));
     expect(over.rows).toHaveLength(SEARCH_INDEX_SECTIONS_MAX);
@@ -268,7 +266,7 @@ describe("上限", () => {
     expect(exact.rows).toHaveLength(SEARCH_INDEX_SECTIONS_MAX);
     expect(exact.capped).toBe(false);
   });
-  it("heading 1001 → 存 1000；切點在代理對中間退一格（body 不截）", () => {
+  it("heading 1001 -> stored as 1000; a cut point inside a surrogate pair backs off one unit (body is not truncated)", () => {
     const a = extractSearchSections(frag(searchDoc([{ id: "h", type: "heading", text: "h".repeat(1001) }]))).rows[0]!;
     expect(a.heading.length).toBe(1000);
     expect(a.body.length).toBe(1001);
@@ -277,21 +275,21 @@ describe("上限", () => {
   });
 });
 
-describe("雜湊", () => {
+describe("hashing", () => {
   const b: Blk[] = [{ id: "p", text: "same content" }];
-  it("同內容同雜湊；改一個字 → 不同", () => {
+  it("same content, same hash; changing one character -> different", () => {
     const h1 = extractSearchSections(frag(searchDoc(b))).contentHash;
     expect(extractSearchSections(frag(searchDoc(b))).contentHash).toBe(h1);
     expect(extractSearchSections(frag(searchDoc([{ id: "p", text: "same contenT" }]))).contentHash).not.toBe(h1);
     expect(h1).toMatch(/^[0-9a-f]{64}$/);
   });
-  it("改 extractor 版本 → 不同；extractorVersion 欄等於常數", () => {
+  it("changing the extractor version -> different; the extractorVersion column equals the constant", () => {
     const ex = extractSearchSections(frag(searchDoc(b)));
     expect(ex.extractorVersion).toBe(SEARCH_EXTRACTOR_VERSION);
     expect(searchContentHash(SEARCH_EXTRACTOR_VERSION, ex.rows, ex.capped)).toBe(ex.contentHash);
     expect(searchContentHash(SEARCH_EXTRACTOR_VERSION + 1, ex.rows, ex.capped)).not.toBe(ex.contentHash);
   });
-  it("rows 相同、只有 capped 不同 → 雜湊不同（2000→2001 段；空筆記→含空 id container）", () => {
+  it("same rows, only capped differs -> different hash (2000 -> 2001 sections; empty note -> one with an empty-id container)", () => {
     const heads = (n: number): Blk[] => Array.from({ length: n }, (_, i) => ({ id: `h${i}`, type: "heading", text: `h${i}` }));
     const exact = extractSearchSections(frag(searchDoc(heads(SEARCH_INDEX_SECTIONS_MAX))));
     const over = extractSearchSections(frag(searchDoc(heads(SEARCH_INDEX_SECTIONS_MAX + 1))));

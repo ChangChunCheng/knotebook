@@ -20,9 +20,8 @@ import { createFakeDataTransfer, mockFinePointer, type FakeDataTransfer } from "
 import { NoteList } from "./NoteList";
 
 /**
- * 側欄拖曳接線：接手判準、落點範圍提示、放進資料夾／回根目錄（樂觀）、彈簧資料夾。
- * fixture（`sidebar/drag-zone.test.ts` 的子集）：個人 F ⊃ F1；根層 A、F 裡 N1、N2；群組 G 有 GF、根層 g1、GF 裡 g2、唯讀 gr；群組 H 有 HF、h1。
- * 計時：渲染與等樹用真計時，只在停留段切假的 setTimeout／clearTimeout。
+ * Fixture (a subset of `sidebar/drag-zone.test.ts`): personal F contains F1; root A; N1, N2 inside F; group G has GF, root g1, g2 inside GF, read-only gr; group H has HF, h1.
+ * Timing: rendering and waiting for the tree use real timers; setTimeout/clearTimeout are faked only for the dwell segment.
  */
 
 afterEach(() => {
@@ -62,15 +61,14 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
- * 假 server：GET 照常回；寫入（`PUT /api/notes/:id/folder`、`POST /api/folders`、`PATCH /api/folders/:id`）先掛著，`respond()` 依序才回
- * （預設成功＝更新 server 端的資料再回它，之後的重抓看得到新位置；POST 建出的資料夾 id 恆為 "NEW"）。
- * `extra` 給個別案例多加的筆記與資料夾。
+ * Fake server: GET answers as usual; writes (`PUT /api/notes/:id/folder`, `POST /api/folders`, `PATCH /api/folders/:id`) are held and answered in order by `respond()`
+ * (default success = update the server-side data then return it, so the following refetch sees the new position; a folder created by POST always has id "NEW").
+ * `extra` adds notes and folders for individual cases.
  */
 function stubServer(extra: { notes?: NoteDto[]; folders?: FolderDto[] } = {}) {
   const notes = [...NOTES, ...(extra.notes ?? [])].map((note) => ({ ...note }));
   const folders = [...FOLDERS, ...(extra.folders ?? [])].map((folder) => ({ ...folder }));
   const puts: { url: string; body: unknown }[] = [];
-  /** 每一發寫入（method、url、body）。 */
   const writes: { method: string; url: string; body: unknown }[] = [];
   const pending: ((reply?: Reply) => void)[] = [];
   const hold = (succeed: () => Response) =>
@@ -120,10 +118,9 @@ function stubServer(extra: { notes?: NoteDto[]; folders?: FolderDto[] } = {}) {
     fetchMock,
     puts,
     writes,
-    /** server 端的筆記與資料夾（案例可直接改，下一次重抓就看得到）。 */
+    /** Server-side notes and folders (a case can change them directly; the next refetch sees it). */
     notes,
     folders,
-    /** 等到有掛著的寫入，再回最早的那一發。 */
     respond: async (reply?: Reply) => {
       await waitFor(() => expect(pending.length).toBeGreaterThan(0));
       const next = pending.shift()!;
@@ -139,7 +136,7 @@ function DragProbe() {
   return <span data-testid="drag-active">{String(active)}</span>;
 }
 
-/** 渲染骨架＝`NoteList.test.tsx` 的 `renderNoteList`，再加 `<Toaster />` 與讀拖曳狀態的探針。 */
+/** Render skeleton = `renderNoteList` of `NoteList.test.tsx`, plus `<Toaster />` and a probe reading the drag state. */
 function renderNoteList(opts: { tab?: SidebarTab } = {}) {
   if (opts.tab) localStorage.setItem("sidebar.tab", opts.tab);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -167,7 +164,6 @@ const list = () => panel().querySelector("[data-sidebar-list]") as HTMLElement;
 const nodeOf = (kind: "note" | "folder" | "group", id: string) =>
   panel().querySelector(`[data-node-kind="${kind}"][data-node-id="${id}"]`) as HTMLElement | null;
 const noteLink = (id: string) => nodeOf("note", id)!.querySelector("a") as HTMLElement;
-/** 資料夾／群組的列（`<li>` 的第一個子元素）。 */
 const rowOf = (kind: "folder" | "group", id: string) => nodeOf(kind, id)!.firstElementChild as HTMLElement;
 const childIds = (kind: "folder" | "group", id: string) =>
   Array.from(nodeOf(kind, id)?.querySelector(":scope > div > ul")?.children ?? []).map((li) => li.getAttribute("data-node-id"));
@@ -179,14 +175,13 @@ async function waitForTree(id = "F") {
   await waitFor(() => expect(nodeOf(id === "G" ? "group" : "folder", id)).not.toBeNull());
 }
 
-/** 在筆記連結上 dragStart，回這一輪的假 DataTransfer。 */
 function startDrag(id: string, el: HTMLElement = noteLink(id)): FakeDataTransfer {
   const dt = createFakeDataTransfer(["text/uri-list", "text/plain"]);
   fireEvent.dragStart(el, { dataTransfer: dt });
   return dt;
 }
 
-describe("NoteList 拖曳", () => {
+describe("NoteList drag", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -198,7 +193,7 @@ describe("NoteList 拖曳", () => {
     act(() => dismissAllToasts());
   });
 
-  it("ND1 不是精細指標 → dragStart 不接手（不寫自訂型別）；之後對 F 的 dragOver 不處理", async () => {
+  it("not a fine pointer -> dragStart doesn't take over (no custom type written); a later dragOver on F isn't handled", async () => {
     mockFinePointer(false);
     stubServer();
     renderNoteList();
@@ -211,7 +206,7 @@ describe("NoteList 拖曳", () => {
     expect(scoped()).toHaveLength(0);
   });
 
-  it("ND2 接手：setData(DRAG_NOTE_MIME, 'A') 一次、不 clearData、effectAllowed 'all'", async () => {
+  it("takeover: setData(DRAG_NOTE_MIME, 'A') once, no clearData, effectAllowed 'all'", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -225,7 +220,7 @@ describe("NoteList 拖曳", () => {
     expect(dt.types).toEqual(["text/uri-list", "text/plain", DRAG_NOTE_MIME]);
   });
 
-  it("ND3 對 F 列 dragOver → 已處理、dropEffect move、F 的 <li> 標示；回到根層空白（原處）→ 不處理、全樹沒有標示", async () => {
+  it("dragOver on the F row -> handled, dropEffect move, F's <li> marked; back to blank root (original place) -> not handled, nothing in the whole tree marked", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -240,7 +235,7 @@ describe("NoteList 拖曳", () => {
     expect(scoped()).toHaveLength(0);
   });
 
-  it("ND4 drop 到 F：標示立刻消失；PUT {folderId:F}；回應前 A 已在 F 裡（樂觀）；回應後 toast「Moved to “F”」有 Undo", async () => {
+  it("drop on F: the mark disappears at once; PUT {folderId:F}; before the response A is already in F (optimistic); after the response the Moved-to-F toast has Undo", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -261,7 +256,7 @@ describe("NoteList 拖曳", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("ND5 drop 到 F、PUT 403 forbidden → A 回根層（回滾）、錯誤 toast 為 errors.forbidden", async () => {
+  it("drop on F, PUT 403 forbidden -> A back at root (rolled back), error toast is errors.forbidden", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -277,7 +272,7 @@ describe("NoteList 拖曳", () => {
     expect(childIds("folder", "F")).not.toContain("A");
   });
 
-  it("ND6 N1（在 F）drop 到清單空白 → body {folderId:null}、toast「Moved to “Top level”」；Undo → 放回 F", async () => {
+  it("N1 (in F) dropped on blank list space -> body {folderId:null}, the Moved-to-Top-level toast; Undo -> put back in F", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -297,7 +292,7 @@ describe("NoteList 拖曳", () => {
     await server.respond();
   });
 
-  it("ND7 在原處 drop（未曾 accept）→ drop 已 preventDefault、沒有任何請求", async () => {
+  it("drop at the original place (never accepted) -> drop is preventDefault-ed, no request", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -312,7 +307,7 @@ describe("NoteList 拖曳", () => {
     expect(server.puts).toHaveLength(0);
   });
 
-  it("ND8 dragOver F 後 dragEnd → 沒有標示；另一輪 drop 後不發 dragEnd → 沒有標示、拖曳狀態已結束", async () => {
+  it("dragEnd after dragOver on F -> no mark; another round dropped without dragEnd -> no mark, drag state ended", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -334,7 +329,7 @@ describe("NoteList 拖曳", () => {
     await server.respond();
   });
 
-  it("ND9 彈簧：收合的 F 上停 0.5 秒 → 展開（F1 出現）；dragEnd 後仍展開、localStorage 沒有折疊鍵", async () => {
+  it("spring: dwelling 0.5 s on a collapsed F -> expands (F1 appears); stays expanded after dragEnd, localStorage has no collapse key", async () => {
     setCollapsed("folder:F", true);
     stubServer();
     renderNoteList();
@@ -353,7 +348,7 @@ describe("NoteList 拖曳", () => {
     expect(localStorage.getItem("sidebar.collapsed.folder:F")).toBeNull();
   });
 
-  it("ND10 選取模式中 → dragStart 不接手", async () => {
+  it("selection mode -> dragStart doesn't take over", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -366,7 +361,7 @@ describe("NoteList 拖曳", () => {
     expect(screen.getByTestId("drag-active")).toHaveTextContent("false");
   });
 
-  it("ND10 最近 tab → dragStart 不接手", async () => {
+  it("Recent tab -> dragStart doesn't take over", async () => {
     stubServer();
     renderNoteList({ tab: "recent" });
     await waitFor(() => expect(nodeOf("note", "A")).not.toBeNull());
@@ -377,7 +372,7 @@ describe("NoteList 拖曳", () => {
     expect(screen.getByTestId("drag-active")).toHaveTextContent("false");
   });
 
-  it("ND11 群組 tab：g2 拖到 H 群組列 → 不處理、H 無標示；拖到清單最下方空白 → G 標示；drop → body {folderId:null}", async () => {
+  it("Groups tab: g2 dragged onto the H group row -> not handled, H not marked; dragged to blank space at the bottom of the list -> G marked; drop -> body {folderId:null}", async () => {
     const server = stubServer();
     renderNoteList({ tab: "workspace" });
     await waitForTree("G");
@@ -395,7 +390,7 @@ describe("NoteList 拖曳", () => {
     await server.respond();
   });
 
-  it("ND12 群組 tab：唯讀的 gr → dragStart 不接手", async () => {
+  it("Groups tab: read-only gr -> dragStart doesn't take over", async () => {
     stubServer();
     renderNoteList({ tab: "workspace" });
     await waitForTree("G");
@@ -406,7 +401,7 @@ describe("NoteList 拖曳", () => {
     expect(screen.getByTestId("drag-active")).toHaveTextContent("false");
   });
 
-  it("ND13 接手後指標移到容器外（document.body 的 dragover）→ 標示消失", async () => {
+  it("after takeover the pointer moves outside the container (dragover on document.body) -> the mark disappears", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -419,7 +414,7 @@ describe("NoteList 拖曳", () => {
     expect(scoped()).toHaveLength(0);
   });
 
-  it("ND14 來源已存在時，另一個不含自訂型別的拖曳（Files）對 F dragOver → 不處理、F 無標示", async () => {
+  it("with a source already present, another drag without the custom type (Files) dragOver on F -> not handled, F not marked", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -431,7 +426,7 @@ describe("NoteList 拖曳", () => {
     expect(scoped()).toHaveLength(0);
   });
 
-  it("ND15 F 收合、不停留直接 drop 到 F 列 → PUT 回應前 F 已展開、A 在 F 底下看得到", async () => {
+  it("F collapsed, dropping on the F row without dwelling -> before the PUT response F is already expanded and A is visible under it", async () => {
     setCollapsed("folder:F", true);
     const server = stubServer();
     renderNoteList();
@@ -447,7 +442,7 @@ describe("NoteList 拖曳", () => {
     await server.respond();
   });
 
-  it("ND16 發起拖曳的 NoteList 在拖曳中卸載 → 拖曳狀態結束、document 的 dragover 監聽移除", async () => {
+  it("the NoteList that started the drag unmounts mid-drag -> drag state ends, the document dragover listener is removed", async () => {
     stubServer();
     const { unmount } = renderNoteList();
     await waitForTree();
@@ -465,7 +460,7 @@ describe("NoteList 拖曳", () => {
 
 const previewOf = (root: HTMLElement = panel()) => root.querySelector<HTMLElement>('[data-node-kind="preview"]');
 
-/** 在 B 的連結上 dragOver 一發並停滿 0.5 秒（只在這一段用假的 setTimeout／clearTimeout）。 */
+/** dragOver once on B's link and dwell the full 0.5 s (fake setTimeout/clearTimeout only in this segment). */
 function holdOver(el: HTMLElement, dt: FakeDataTransfer) {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   fireEvent.dragOver(el, { dataTransfer: dt });
@@ -474,8 +469,8 @@ function holdOver(el: HTMLElement, dt: FakeDataTransfer) {
 }
 
 /**
- * 兩份 NoteList 並排（靜態卡與抽屜，各包 `[data-sidebar-instance]`，同 AppShell），共用同一個 SidebarTabProvider；
- * `hideDrawer()` 只卸載第二份。
+ * Two NoteLists side by side (static card and drawer, each wrapped in `[data-sidebar-instance]`, as in AppShell) sharing one SidebarTabProvider;
+ * `hideDrawer()` unmounts only the second.
  */
 function renderTwoInstances() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -505,7 +500,7 @@ function renderTwoInstances() {
   return { inst, node, hideDrawer: () => view.rerender(ui(false)) };
 }
 
-describe("NoteList 疊資料夾", () => {
+describe("NoteList stack into folder", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -517,7 +512,7 @@ describe("NoteList 疊資料夾", () => {
     act(() => dismissAllToasts());
   });
 
-  it("NS1 A 對 N2 列 dragOver 一發、停滿 0.5 秒 → N2 的列換成預覽（New folder、N2、A），帶 data-drop-scope、內層沒有 data-node-kind", async () => {
+  it("A dragged over the N2 row once and dwelling 0.5 s -> the N2 row becomes a preview (New folder, N2, A), with data-drop-scope and no data-node-kind inside", async () => {
     stubServer();
     renderNoteList();
     await waitForTree();
@@ -538,7 +533,7 @@ describe("NoteList 疊資料夾", () => {
     expect(preview!.querySelectorAll("[data-node-kind]")).toHaveLength(0);
   });
 
-  it("NS2 預覽出現後對 R 列 dragOver 兩發 → 預覽消失、N2 列回來；整段沒有 POST /api/folders", async () => {
+  it("after the preview appears, dragOver on the R row twice -> preview gone, N2 row back; no POST /api/folders throughout", async () => {
     const server = stubServer({ notes: [personalNote({ id: "R", title: "R" })] });
     renderNoteList();
     await waitForTree();
@@ -555,7 +550,7 @@ describe("NoteList 疊資料夾", () => {
     expect(server.writes).toEqual([]);
   });
 
-  it("NS3 對 N2 dragOver 未停滿就 drop → 照區域放進 F（PUT A {folderId:F}）、沒有 POST /api/folders", async () => {
+  it("dragOver on N2 then drop before the dwell completes -> placed into F by the zone (PUT A {folderId:F}), no POST /api/folders", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();
@@ -569,7 +564,7 @@ describe("NoteList 疊資料夾", () => {
     await server.respond();
   });
 
-  it("NS4 預覽上 drop → 建立中（aria-busy）期間兩份實例都不接手 dragStart；三發完成 → 改名框（New folder 全選）、沒有成功 toast；Save → toast「Created “New folder” with 2 notes」、焦點回新資料夾列", async () => {
+  it("drop on the preview -> while creating (aria-busy) neither instance takes over dragStart; after three requests complete -> rename box (New folder fully selected), no success toast; Save -> the Created-New-folder-with-2-notes toast, focus back to the new folder row", async () => {
     const server = stubServer();
     const { inst, node } = renderTwoInstances();
     await waitFor(() => expect(node("static", "folder", "F")).not.toBeNull());
@@ -608,7 +603,7 @@ describe("NoteList 疊資料夾", () => {
     expect(previewOf(inst("static"))).toBeNull();
     expect(screen.queryByText(/Created/)).toBeNull();
 
-    // 沿用預設名按 Save：不送 PATCH，關框後照樣出成功 toast。
+    // Press Save with the default name: no PATCH is sent, the success toast still appears after the box closes.
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("Created “New folder” with 2 notes", { exact: true })).toBeInTheDocument();
@@ -618,7 +613,7 @@ describe("NoteList 疊資料夾", () => {
     await waitFor(() => expect(node("static", "folder", "NEW")!.querySelector("button[aria-expanded]")).toHaveFocus());
   });
 
-  it("NS4 抽屜那一份發起疊資料夾、POST 還沒回時抽屜被關（卸載）→ 三發完成後沒有改名框，直接出「Created “New folder” with 2 notes」＋Undo", async () => {
+  it("stacking started from the drawer copy and the drawer is closed (unmounted) before the POST returns -> after three requests complete there is no rename box, the Created-New-folder-with-2-notes toast appears directly, with Undo", async () => {
     const server = stubServer();
     const { inst, node, hideDrawer } = renderTwoInstances();
     await waitFor(() => expect(node("drawer", "folder", "F")).not.toBeNull());
@@ -642,7 +637,7 @@ describe("NoteList 疊資料夾", () => {
     expect(previewOf(inst("static"))).toBeNull();
   });
 
-  it("NS4 兩份實例：靜態卡發起拖曳時卸載抽屜那一份 → 拖曳照常進行", async () => {
+  it("two instances: unmounting the drawer copy while the static card started the drag -> the drag continues as usual", async () => {
     stubServer();
     const { node, hideDrawer } = renderTwoInstances();
     await waitFor(() => expect(node("drawer", "folder", "F")).not.toBeNull());
@@ -658,8 +653,8 @@ describe("NoteList 疊資料夾", () => {
   });
 
   /**
-   * 停留計時已起算（假的 setTimeout）後重抓 `keys`，只推進到 0.5 秒之前、等 `landed()` 成立（react-query 的通知走被假造的 setTimeout），
-   * 再推過 0.5 秒讓舊計時到點。呼叫前要已在 B 上 dragOver 一發。
+   * After the dwell timer has started (fake setTimeout), refetch `keys`, advance only to just before 0.5 s and wait until `landed()` holds (react-query notifications go through the faked setTimeout),
+   * then push past 0.5 s so the old timer fires. Call after a dragOver on B.
    */
   async function refetchDuringHold(queryClient: QueryClient, keys: string[][], landed: () => boolean) {
     await act(async () => {
@@ -677,7 +672,7 @@ describe("NoteList 疊資料夾", () => {
     vi.useRealTimers();
   }
 
-  it("NS-C1 停留期間重抓、B 已不在原層（N2 被移到根層）→ 計時到點以當下的樹重判，不出預覽", async () => {
+  it("refetch during the dwell, B is no longer at its original level (N2 moved to root) -> when the timer fires it re-decides with the current tree, no preview", async () => {
     const server = stubServer();
     const { queryClient } = renderNoteList();
     await waitForTree();
@@ -693,7 +688,7 @@ describe("NoteList 疊資料夾", () => {
     expect(nodeOf("note", "N2")).not.toBeNull();
   });
 
-  it("NS-C2 停留期間重抓、B 變成唯讀（群組 g2 失去編輯權）→ 不出預覽", async () => {
+  it("refetch during the dwell, B became read-only (group g2 lost edit rights) -> no preview", async () => {
     const server = stubServer();
     const { queryClient } = renderNoteList({ tab: "workspace" });
     await waitForTree("G");
@@ -711,7 +706,7 @@ describe("NoteList 疊資料夾", () => {
     expect(nodeOf("note", "g2")).not.toBeNull();
   });
 
-  it("NS-C3 停留期間重抓、B 所在的 F 被搬到第 4 層底下（F 成第 5 層）→ 不出預覽", async () => {
+  it("refetch during the dwell, B's F was moved under level 4 (F becomes level 5) -> no preview", async () => {
     const server = stubServer({ folders: folderChain("D", 4) });
     const { queryClient } = renderNoteList();
     await waitForTree();
@@ -727,7 +722,7 @@ describe("NoteList 疊資料夾", () => {
     expect(nodeOf("note", "N2")).not.toBeNull();
   });
 
-  it("NS5 N2 在第 5 層資料夾 → 停滿後沒有預覽", async () => {
+  it("N2 in a level-5 folder -> no preview after the dwell", async () => {
     const server = stubServer({ folders: folderChain("D", 5), notes: [personalNote({ id: "deep", title: "deep", folderId: "D5" })] });
     renderNoteList();
     await waitFor(() => expect(nodeOf("note", "deep")).not.toBeNull());
@@ -740,7 +735,7 @@ describe("NoteList 疊資料夾", () => {
     expect(server.writes).toEqual([]);
   });
 
-  it("NS6 F 底下已有「New folder」→ 預覽顯示「New folder 2」", async () => {
+  it("F already has a 'New folder' under it -> the preview shows 'New folder 2'", async () => {
     stubServer({ folders: [folderDto({ id: "FN", name: "New folder", parentId: "F" })] });
     renderNoteList();
     await waitFor(() => expect(nodeOf("folder", "FN")).not.toBeNull());
@@ -751,7 +746,7 @@ describe("NoteList 疊資料夾", () => {
     expect(within(previewOf()!).getByText("New folder 2", { exact: true })).toBeInTheDocument();
   });
 
-  it("NS7 B 不可放置 → 停滿後沒有預覽、放開照區域規則（原處，不送任何請求）：群組 g1 → 唯讀 gr", async () => {
+  it("B can't be dropped on -> no preview after the dwell, releasing follows the zone rule (original place, no request): group g1 -> read-only gr", async () => {
     const server = stubServer();
     renderNoteList({ tab: "workspace" });
     await waitForTree("G");
@@ -765,7 +760,7 @@ describe("NoteList 疊資料夾", () => {
     expect(server.writes).toEqual([]);
   });
 
-  it("NS7 B 不可放置：與我共享 tab s1 → 兜底群組筆記 sg（群組 K 不在我的群組）", async () => {
+  it("B can't be dropped on: shared-with-me tab s1 -> fallback group note sg (group K isn't one of my groups)", async () => {
     const K = groupDto({ id: "K", name: "K" }, memberRole());
     const server = stubServer({ notes: [sharedNote({ id: "s1", title: "s1", role: "viewer" }), groupNote({ id: "sg", title: "sg", group: K })] });
     renderNoteList({ tab: "shared" });
@@ -781,7 +776,7 @@ describe("NoteList 疊資料夾", () => {
     expect(server.writes).toEqual([]);
   });
 
-  it("NS9 預覽中 dragEnd → 預覽消失、N2 回來、沒有請求", async () => {
+  it("dragEnd during the preview -> preview gone, N2 back, no requests", async () => {
     const server = stubServer();
     renderNoteList();
     await waitForTree();

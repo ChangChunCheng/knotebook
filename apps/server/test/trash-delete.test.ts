@@ -1,7 +1,3 @@
-/**
- * #181：`DELETE /api/notes/:id` 改成移入垃圾桶、單篇讀取三形的 `in_trash`、
- * 直連寫入的 `gone` 映射。
- */
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
@@ -30,15 +26,15 @@ const FORBIDDEN = { error: { code: "forbidden", message: "You don't have permiss
 const inTrash = (noteId: string) => ({ error: { code: "in_trash", message: "This note is in the trash." }, noteId });
 const del = (app: FastifyInstance, noteId: string, userId: string | null) => inject(app, "DELETE", `/api/notes/${noteId}`, userId);
 
-/** `spyCollabHooks` 把 `beforeNoteDeleted` 換成回 `release` spy 的版本（原本回的 release 不是 spy）。 */
+/** `spyCollabHooks` swapped for a version whose `beforeNoteDeleted` returns a `release` spy (the original's release is not a spy). */
 function gateHooks() {
   const release = vi.fn();
   const beforeNoteDeleted = vi.fn<(noteId: string) => Promise<NoteDeleteGate>>(async () => ({ release }));
   return { hooks: { ...spyCollabHooks(), beforeNoteDeleted }, beforeNoteDeleted, release };
 }
 
-describe("D1 移入", () => {
-  it("owner DELETE → 204；deleted_at 非 NULL、deleted_by＝owner；附件列與磁碟檔都在；清單不列；GET :id 404 in_trash＋noteId", async () => {
+describe("move to trash", () => {
+  it("owner DELETE -> 204; deleted_at non-NULL, deleted_by = owner; attachment rows and disk files still there; not in the list; GET :id is 404 in_trash + noteId", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const owner = await seedUser(db);
     const n = await seedNote(db, { ownerId: owner.id });
@@ -60,8 +56,8 @@ describe("D1 移入", () => {
   });
 });
 
-describe("D2 回應碼與錯誤形不變", () => {
-  it("分享 editor 403、陌生人 404、已在垃圾桶的再 DELETE 404 not_found（不是 in_trash）、未登入 401、Bearer 401", async () => {
+describe("response codes and error shapes unchanged", () => {
+  it("shared editor 403, stranger 404, DELETE on a note already in trash 404 not_found (not in_trash), unauthenticated 401, Bearer 401", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const editor = await seedUser(db);
@@ -90,8 +86,8 @@ describe("D2 回應碼與錯誤形不變", () => {
   });
 });
 
-describe("D3 閘門：結果不是 trashed 一律 release", () => {
-  it("① 204 → beforeNoteDeleted 被 await 一次、release 未被呼叫", async () => {
+describe("gate: whenever the result is not trashed, release", () => {
+  it("204 -> beforeNoteDeleted awaited once, release not called", async () => {
     const g = gateHooks();
     const { app, db } = await buildTestApp({ collabHooks: g.hooks });
     const owner = await seedUser(db);
@@ -102,7 +98,7 @@ describe("D3 閘門：結果不是 trashed 一律 release", () => {
     expect(g.release).not.toHaveBeenCalled();
   });
 
-  it("② 交易爆（BEFORE UPDATE trigger RAISE，只對該篇）→ 500、release 一次、deleted_at 仍 NULL", async () => {
+  it("transaction blows up (BEFORE UPDATE trigger RAISE, only for that note) -> 500, release once, deleted_at still NULL", async () => {
     const g = gateHooks();
     const { app, db } = await buildTestApp({ collabHooks: g.hooks });
     const owner = await seedUser(db);
@@ -120,13 +116,13 @@ describe("D3 閘門：結果不是 trashed 一律 release", () => {
     expect(await trashCols(pool, n.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("③ 鎖後在交易內被降權（note-trash-locked 縫拿掉角色的 can_delete）→ 403、release 一次、deleted_at 仍 NULL", async () => {
+  it("demoted inside the transaction after the lock (the note-trash-locked hook removes the role's can_delete) -> 403, release once, deleted_at still NULL", async () => {
     const g = gateHooks();
     const holder: { db?: Db; roleId?: string } = {};
     const { app, db } = await buildTestApp({
       collabHooks: g.hooks,
       groupTestHook: async point => {
-        // 只改 group_roles——notes 那一列正被交易 FOR UPDATE 持著，在這裡寫它會自我死等。
+        // Change only group_roles: the notes row is held FOR UPDATE by the transaction, writing it here would wait on itself.
         if (point === "note-trash-locked") await holder.db!.update(groupRoles).set({ canDelete: false }).where(eq(groupRoles.id, holder.roleId!));
       },
     });
@@ -145,7 +141,7 @@ describe("D3 閘門：結果不是 trashed 一律 release", () => {
     expect(await trashCols(db.$client, gn.id)).toEqual({ deleted_at: null, deleted_by: null });
   });
 
-  it("④ 授權之後、交易之前被別人先移入 → 交易內重判 none → 404、release 一次、deleted_by 仍是先移入的人", async () => {
+  it("moved to trash by someone else between authorization and the transaction -> re-evaluated as none inside the transaction -> 404, release once, deleted_by is still the first mover", async () => {
     const g = gateHooks();
     const { app, db } = await buildTestApp({ collabHooks: g.hooks });
     const owner = await seedUser(db);
@@ -164,8 +160,8 @@ describe("D3 閘門：結果不是 trashed 一律 release", () => {
   });
 });
 
-describe("D7 服務函式收大寫 id（MCP 等呼叫端不一定先轉小寫）", () => {
-  it("trashNote 傳大寫 id → trashed、閘門開在小寫 id 上且不 release、deleted_at 非 NULL", async () => {
+describe("service function accepts an uppercase id (callers such as MCP do not necessarily lowercase it first)", () => {
+  it("trashNote with an uppercase id -> trashed, the gate opens on the lowercase id without release, deleted_at non-NULL", async () => {
     const g = gateHooks();
     const { db, uploadsDir } = await buildTestApp({ collabHooks: g.hooks });
     const owner = await seedUser(db);
@@ -179,8 +175,8 @@ describe("D7 服務函式收大寫 id（MCP 等呼叫端不一定先轉小寫）
   });
 });
 
-describe("D4 in_trash 三形", () => {
-  it("群組垃圾桶筆記：admin、editDelete 得 in_trash；member、deleteOnly、editOnly、readOnly、outsider 得 not_found（與不存在逐位元組相同）；大寫 uuid 的 noteId 回小寫", async () => {
+describe("three in_trash shapes", () => {
+  it("a trashed group note: admin and editDelete get in_trash; member, deleteOnly, editOnly, readOnly and outsider get not_found (byte-for-byte same as nonexistent); an uppercase-uuid noteId comes back lowercase", async () => {
     const { app, db } = await buildTestApp();
     const s = await sixRoleScene(db);
     const gn = await seedNote(db, { groupId: s.groupId }, { slug: "d4-group" });
@@ -209,7 +205,7 @@ describe("D4 in_trash 三形", () => {
     }
   });
 
-  it("個人垃圾桶筆記：owner 的 :ref、/by-path、prev_slug 補查形得 in_trash；分享 editor 三形得 not_found", async () => {
+  it("a trashed personal note: the owner's :ref, /by-path and prev_slug lookup forms get in_trash; a shared editor gets not_found in all three", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const editor = await seedUser(db);
@@ -233,7 +229,6 @@ describe("D4 in_trash 三形", () => {
   });
 });
 
-/** `note_states` 該篇的現值（沒有列 → undefined）。 */
 async function stateOf(pool: Pool, noteId: string): Promise<{ ydoc: string; version: number } | undefined> {
   const { rows } = await pool.query<{ ydoc: string; version: number }>(
     `select encode(ydoc, 'hex') as ydoc, version from note_states where note_id = $1`,
@@ -243,7 +238,7 @@ async function stateOf(pool: Pool, noteId: string): Promise<{ ydoc: string; vers
 }
 const aiEditCount = async (db: Db, noteId: string) => (await db.select({ id: noteAiEdits.id }).from(noteAiEdits).where(eq(noteAiEdits.noteId, noteId))).length;
 
-/** 前置：活筆記＋一則 AI 修改紀錄＋一版版本＋一把 PAT；文件卸載後才回（`note_states` 從此不再動）。 */
+/** Precondition: live note + one AI edit record + one version + one PAT; returns only after the document is unloaded (note_states no longer changes from then on). */
 async function goneScene() {
   const ctx = await buildCollabTestApp();
   const owner = await seedUser(ctx.db);
@@ -263,17 +258,17 @@ const editNote = (app: FastifyInstance, token: string, noteId: string) =>
   mcpPost(app, rpc("tools/call", { name: "edit_note", arguments: { note_id: noteId, op: "append", markdown: "MCP 寫的" } }), { token });
 
 const GONE_ROWS: Array<[string, (s: GoneScene) => Promise<void>]> = [
-  ["POST …/edits", async s => {
+  ["POST .../edits", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/edits`, s.owner.id, { op: "append", markdown: "more" });
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);
   }],
-  ["POST …/edits/:editId/revert", async s => {
+  ["POST .../edits/:editId/revert", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/edits/${s.editId}/revert`, s.owner.id);
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);
   }],
-  ["POST …/versions/:seq/apply", async s => {
+  ["POST .../versions/:seq/apply", async s => {
     const res = await inject(s.ctx.app, "POST", `/api/notes/${s.noteId}/versions/${s.seq}/apply`, s.owner.id, { versionId: s.versionId, discardUnsaved: true });
     expect(res.statusCode, res.body).toBe(404);
     expect(res.json()).toEqual(NOT_FOUND);
@@ -288,7 +283,7 @@ const GONE_ROWS: Array<[string, (s: GoneScene) => Promise<void>]> = [
   }],
 ];
 
-describe("D5 gone 映射：授權通過、直連寫入前閘門已開（markDeleting）→ 各路徑既有的 not_found", () => {
+describe("gone mapping: authorization passes and the gate was opened (markDeleting) before the direct-connection write -> the existing not_found on each path", () => {
   it.each(GONE_ROWS)("%s", async (_name, check) => {
     const s = await goneScene();
     const pool: Pool = s.ctx.db.$client;
@@ -304,8 +299,8 @@ describe("D5 gone 映射：授權通過、直連寫入前閘門已開（markDele
   });
 });
 
-describe("D6 連結轉換：合併前一刻被移入 → NoteGoneError 收成 deleted", () => {
-  it("beforeMerge 縫裡 markTrashed → 該列仍 pending、attempts 不變、內容未改", async () => {
+describe("link conversion: moved to trash just before the merge -> NoteGoneError is folded into deleted", () => {
+  it("markTrashed inside the beforeMerge hook -> the row is still pending, attempts unchanged, content untouched", async () => {
     const holder: { ctx?: CollabTestCtx; noteId?: string; ownerId?: string; merges: number } = { merges: 0 };
     const ctx = await buildCollabTestApp({
       editingTestHooks: {
@@ -337,9 +332,9 @@ describe("D6 連結轉換：合併前一刻被移入 → NoteGoneError 收成 de
   });
 });
 
-// docs/known-limitations.md「A note in the trash still holds its URL and its custom public URL」與 api.md Trash 段靠這兩案釘。
-describe("D8 垃圾桶期間 slug 與公開別名仍佔用", () => {
-  it("移入後同一 owner 建同標題筆記 → slug 得 -2；垃圾桶那篇的 slug 不變", async () => {
+// These two cases pin the known-limitations statement that a note in the trash still holds its URL and custom public URL (and the api.md Trash section).
+describe("slug and public alias stay occupied while in trash", () => {
+  it("after the move, the same owner creating a note with the same title gets slug -2; the trashed note's slug is unchanged", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const first = await inject(app, "POST", "/api/notes", owner.id, { title: "Occupied Title" });
@@ -354,7 +349,7 @@ describe("D8 垃圾桶期間 slug 與公開別名仍佔用", () => {
     expect(await db.select({ slug: notes.slug }).from(notes).where(eq(notes.id, a.id))).toEqual([{ slug: "occupied-title" }]);
   });
 
-  it("移入後另一篇把網址改成垃圾桶那篇的 slug → 409 slug_taken；兩篇的 slug 都不變", async () => {
+  it("after the move, another note changing its URL to the trashed note's slug -> 409 slug_taken; both slugs unchanged", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const a = await seedNote(db, { ownerId: owner.id }, { slug: "occupied-custom" });
@@ -368,7 +363,7 @@ describe("D8 垃圾桶期間 slug 與公開別名仍佔用", () => {
     expect(Object.fromEntries(slugs.map(r => [r.id, r.slug]))).toEqual({ [a.id]: "occupied-custom", [b.id]: "other-note" });
   });
 
-  it("移入後另一篇設同一個公開別名 → 409 public_slug_taken", async () => {
+  it("after the move, another note setting the same public alias -> 409 public_slug_taken", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const a = await seedNote(db, { ownerId: owner.id }, { publicToken: "a".repeat(43), publicSlug: "occupied-alias" });

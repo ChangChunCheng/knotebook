@@ -13,24 +13,24 @@ afterEach(() => {
 
 describe("backTarget", () => {
   it.each([
-    ["清單序號不存在 → 換掉目前這格", { listIdx: null, currentIdx: 5 }, { kind: "replace" }],
-    ["目前序號不存在 → 換掉", { listIdx: 2, currentIdx: null }, { kind: "replace" }],
-    ["清單序號等於目前 → 換掉（同一格不能退）", { listIdx: 5, currentIdx: 5 }, { kind: "replace" }],
-    ["清單序號大於目前 → 換掉（記錄過期）", { listIdx: 7, currentIdx: 5 }, { kind: "replace" }],
-    ["清單序號小於目前 → 退 delta 格", { listIdx: 2, currentIdx: 5 }, { kind: "go", delta: -3 }],
-    ["差一格 → 退一格", { listIdx: 4, currentIdx: 5 }, { kind: "go", delta: -1 }],
-    ["清單在第 0 格 → 退到底", { listIdx: 0, currentIdx: 1 }, { kind: "go", delta: -1 }],
+    ["list index missing -> replace the current entry", { listIdx: null, currentIdx: 5 }, { kind: "replace" }],
+    ["current index missing -> replace", { listIdx: 2, currentIdx: null }, { kind: "replace" }],
+    ["list index equals current -> replace (the same entry cannot be gone back to)", { listIdx: 5, currentIdx: 5 }, { kind: "replace" }],
+    ["list index above current -> replace (stale record)", { listIdx: 7, currentIdx: 5 }, { kind: "replace" }],
+    ["list index below current -> go back by delta", { listIdx: 2, currentIdx: 5 }, { kind: "go", delta: -3 }],
+    ["one entry apart -> go back one", { listIdx: 4, currentIdx: 5 }, { kind: "go", delta: -1 }],
+    ["list at entry 0 -> go back to the start", { listIdx: 0, currentIdx: 1 }, { kind: "go", delta: -1 }],
   ])("%s", (_name, input, expected) => {
     expect(backTarget(input)).toEqual(expected);
   });
 });
 
 describe("historyIdx", () => {
-  it("讀 history.state.idx", () => {
+  it("reads history.state.idx", () => {
     stubHistoryState({ usr: null, key: "k", idx: 4 });
     expect(historyIdx()).toBe(4);
   });
-  it("state 為 null 或 idx 不是數字 → null", () => {
+  it("state null or idx not a number -> null", () => {
     stubHistoryState(null);
     expect(historyIdx()).toBeNull();
     stubHistoryState({ idx: "3" });
@@ -39,13 +39,13 @@ describe("historyIdx", () => {
 });
 
 describe("recordListIdx / readListIdx", () => {
-  it("記下目前序號，讀得回來", () => {
+  it("records the current index and reads it back", () => {
     stubHistoryState({ idx: 3 });
     recordListIdx();
     expect(readListIdx()).toBe(3);
   });
 
-  it("目前序號讀不到時不覆寫舊記錄", () => {
+  it("does not overwrite the old record when the current index cannot be read", () => {
     stubHistoryState({ idx: 3 });
     recordListIdx();
     stubHistoryState(null);
@@ -53,7 +53,7 @@ describe("recordListIdx / readListIdx", () => {
     expect(readListIdx()).toBe(3);
   });
 
-  it("沒記錄、內容不是整數 → null", () => {
+  it("no record, or content not an integer -> null", () => {
     expect(readListIdx()).toBeNull();
     sessionStorage.setItem("nav.listIdx", "abc");
     expect(readListIdx()).toBeNull();
@@ -61,7 +61,7 @@ describe("recordListIdx / readListIdx", () => {
     expect(readListIdx()).toBeNull();
   });
 
-  it("sessionStorage 讀寫丟錯 → readListIdx 回 null、recordListIdx 不丟", () => {
+  it("sessionStorage read/write throwing -> readListIdx returns null, recordListIdx does not throw", () => {
     stubHistoryState({ idx: 3 });
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");

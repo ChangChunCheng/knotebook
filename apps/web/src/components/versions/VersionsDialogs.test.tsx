@@ -45,7 +45,7 @@ function Harness({ target }: { target: VersionDto }) {
       <button type="button" onClick={() => s.openDialog({ kind: "rename", version: target })}>h-rename</button>
       <button type="button" onClick={() => s.openDialog({ kind: "delete", version: target })}>h-delete</button>
       <span data-testid="h-state">{JSON.stringify({ preview: s.preview, dialog: s.dialog?.kind ?? null })}</span>
-      {/* 編輯器替身：Ctrl+S 時焦點在 contenteditable 上。 */}
+      {/* Editor stand-in: focus is on a contenteditable at Ctrl+S. */}
       <div data-testid="h-editor" contentEditable suppressContentEditableWarning tabIndex={-1}>
         editor
       </div>
@@ -54,7 +54,7 @@ function Harness({ target }: { target: VersionDto }) {
 }
 function Host({ target }: { target: VersionDto }) {
   const value = useVersionsController({ noteId: NOTE, enabled: true });
-  // fallback：模擬頁首 ⋮——選單項按下（開儲存對話框）的同一批次就卸載；`fake-menu-trigger` 是交下來的 returnFocusRef。
+  // fallback: simulates the header kebab menu - the menu item unmounts in the same batch as its press (which opens the save dialog); `fake-menu-trigger` is the returnFocusRef handed down.
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(true);
   return (
@@ -74,7 +74,7 @@ function Host({ target }: { target: VersionDto }) {
           menu-item-save
         </button>
       )}
-      {/* 照 NotePage 的掛法：只在 dialog !== null 時掛，關閉即卸載。 */}
+      {/* Mounted like NotePage does: only when dialog !== null, and unmounted on close. */}
       {value.dialog !== null && <VersionsDialogs returnFocusRef={triggerRef} />}
     </VersionsProvider>
   );
@@ -94,14 +94,14 @@ const LIST = `/api/notes/${NOTE}/versions?limit=50`;
 const CUR = `/api/notes/${NOTE}/versions?limit=1`;
 const APPLY1 = `/api/notes/${NOTE}/versions/1/apply`;
 
-describe("VersionsDialogs＋useApplyFlow", () => {
+describe("VersionsDialogs + useApplyFlow", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("儲存：描述是固定句、不預告版號（#272）；名稱去頭尾空白送出；toast「Saved as 里程碑 (0003aaa)」；關閉", async () => {
+  it("save: the description is a fixed sentence that does not announce a version number (#272); the name is trimmed before sending; toast 'Saved as <name> (short id)'; the dialog closes", async () => {
     const calls = stub((url, init) => {
       if (url === LIST) return { status: 200, body: listBody(cur({ dirty: true })) };
       if (url === `/api/notes/${NOTE}/versions` && init?.method === "POST") return { status: 201, body: { ...v(3, { kind: "manual", name: "里程碑" }), upgraded: false } };
@@ -119,7 +119,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     await waitFor(() => expect(hState().dialog).toBeNull());
   });
 
-  it("儲存對話框點外面不關（表單型 dismissOnOutside={false}）、已填的名稱還在", async () => {
+  it("clicking outside the save dialog does not close it (form type, dismissOnOutside={false}) and the typed name stays", async () => {
     stub((url) => (url === LIST ? { status: 200, body: listBody(cur({ dirty: true })) } : undefined));
     renderDialogs();
     fireEvent.click(screen.getByText("h-save"));
@@ -130,7 +130,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(within(screen.getByRole("dialog")).getByLabelText("Version name (optional)")).toHaveValue("草稿");
   });
 
-  it("儲存遇到內容與基底相同（upgraded:true）→ toast 依回應的那一版，不用快取的基底", async () => {
+  it("saving when the content equals the base (upgraded:true) -> the toast follows the version in the response, not the cached base", async () => {
     stub((url, init) => {
       if (url === LIST) return { status: 200, body: listBody(cur({ baseSeq: 9 })) };
       if (url === `/api/notes/${NOTE}/versions` && init?.method === "POST") return { status: 201, body: { ...v(2, { kind: "manual" }), upgraded: true } };
@@ -142,7 +142,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(await screen.findByText(`Same content as ${vlabel(2)} — it is now a manual version`)).toBeInTheDocument();
   });
 
-  it("套用：重抓 current 不 dirty → 直接 POST apply（discardUnsaved:false、帶 versionId）、不跳對話框、toast、離開預覽", async () => {
+  it("apply: refetched current is not dirty -> POSTs apply directly (discardUnsaved:false, with versionId), no dialog, a toast, and the preview is left", async () => {
     const calls = stub((url) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: false })) };
       if (url === APPLY1) return { status: 200, body: { current: cur({ baseSeq: 1 }) } };
@@ -158,14 +158,14 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(hState().preview).toBeNull();
   });
 
-  it("面板快取寫著乾淨、但按套用前重抓到 dirty → 跳三選一（一律重抓）", async () => {
+  it("the panel cache says clean but the refetch before applying finds dirty -> the three-choice dialog appears (always refetches)", async () => {
     const calls = stub((url) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: true })) };
       return undefined;
     });
     const { queryClient } = renderDialogs();
     queryClient.setQueryData(versionListKey(NOTE, "all"), { pages: [listBody(cur({ dirty: false }))], pageParams: [undefined] });
-    // 種子要真的落在面板讀的鍵上（#258：鍵變長後曾種到沒人讀的鍵，這案的前提就空了）。
+    // The seed must land on the key the panel reads (#258: once the key grew longer, a seed landed on a key nobody reads and this case's premise was empty).
     expect(queryClient.getQueryData(versionListKey(NOTE, "all"))).toBeDefined();
     fireEvent.click(screen.getByText("h-apply"));
     const dialog = await screen.findByRole("dialog", { name: `Apply ${vlabel(1)}` });
@@ -175,7 +175,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(calls.some((c) => c.url === APPLY1)).toBe(false);
   });
 
-  it("三選一：取消 → 不打 apply；不儲存直接套用 → discardUnsaved:true", async () => {
+  it("three-choice: cancel -> no apply call; apply without saving -> discardUnsaved:true", async () => {
     const calls = stub((url) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: true })) };
       if (url === APPLY1) return { status: 200, body: { current: cur({ baseSeq: 1 }) } };
@@ -192,7 +192,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(calls.find((c) => c.url === APPLY1)?.body).toEqual({ versionId: vid(1), discardUnsaved: true });
   });
 
-  it("三選一：儲存當前版本 → 開儲存對話框；存完自動接著套用（discardUnsaved:false），POST 順序是先存後套用", async () => {
+  it("three-choice: save the current version -> opens the save dialog; after saving it applies automatically (discardUnsaved:false), and the POST order is save then apply", async () => {
     const calls = stub((url, init) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: true })) };
       if (url === LIST) return { status: 200, body: listBody(cur({ dirty: true })) };
@@ -210,7 +210,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(calls.find((c) => c.url === APPLY1)?.body).toEqual({ versionId: vid(1), discardUnsaved: false });
   });
 
-  it("直接套用收到 409 version_unsaved_changes → 改跳三選一", async () => {
+  it("a direct apply receiving 409 version_unsaved_changes -> the three-choice dialog appears instead", async () => {
     stub((url) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: false })) };
       if (url === APPLY1) return { status: 409, body: { error: { code: "version_unsaved_changes", message: "The note has changes that aren't in any saved version." } } };
@@ -221,7 +221,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(await screen.findByRole("dialog", { name: `Apply ${vlabel(1)}` })).toBeInTheDocument();
   });
 
-  it("409 version_mismatch → toast errors.version_mismatch、invalidate 清單、離開預覽、沒有對話框", async () => {
+  it("409 version_mismatch -> toast errors.version_mismatch, the list is invalidated, the preview is left and there is no dialog", async () => {
     const calls = stub((url) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: false })) };
       if (url === APPLY1) return { status: 409, body: { error: { code: "version_mismatch", message: "x" } } };
@@ -238,7 +238,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(calls.filter((c) => c.url === APPLY1)).toHaveLength(1);
   });
 
-  it("改名：自動版顯示「會轉為手動」提示；送出 PATCH { name }；全空白送 null", async () => {
+  it("rename: an auto version shows the will-become-manual notice; submits PATCH { name }; an all-blank name sends null", async () => {
     const calls = stub((url, init) => {
       if (url === `/api/notes/${NOTE}/versions/1` && init?.method === "PATCH") return { status: 200, body: v(1, { kind: "manual" }) };
       return undefined;
@@ -255,7 +255,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ name: null });
   });
 
-  it("刪除：成功 → DELETE、toast；刪的是預覽中那版 → 離開預覽", async () => {
+  it("delete: success -> DELETE and a toast; deleting the previewed version leaves the preview", async () => {
     stub((url, init) => {
       if (url === `/api/notes/${NOTE}/versions/1` && init?.method === "DELETE") return { status: 204 };
       return undefined;
@@ -269,7 +269,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(hState().preview).toBeNull();
   });
 
-  it("編輯器有焦點 → 開儲存對話框 → 取消／存完關閉 → 焦點都回到編輯器（受控 Dialog 沒有 Trigger，Radix 不會自己還原）", async () => {
+  it("editor has focus -> open the save dialog -> cancel / close after saving -> focus returns to the editor in both cases (a controlled Dialog has no Trigger, so Radix does not restore it by itself)", async () => {
     stub((url, init) => {
       if (url === LIST) return { status: 200, body: listBody(cur({ dirty: true })) };
       if (url === `/api/notes/${NOTE}/versions` && init?.method === "POST") return { status: 201, body: { ...v(3, { kind: "manual" }), upgraded: false } };
@@ -285,7 +285,6 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(document.activeElement).toBe(editor));
-    // 送出成功關閉也一樣。
     fireEvent.click(screen.getByText("h-save"));
     dialog = await screen.findByRole("dialog", { name: "Save current version" });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
@@ -295,7 +294,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
   });
 
-  it("fallback：從 ⋮ 選單開儲存對話框（記到的選單項已卸載）→ 取消 → 焦點退回 ⋮ 觸發鈕", async () => {
+  it("fallback: the save dialog opened from the kebab menu (the recorded menu item is already unmounted) -> cancel -> focus falls back to the kebab trigger button", async () => {
     stub((url) => (url === LIST ? { status: 200, body: listBody(cur({ dirty: true })) } : undefined));
     renderDialogs();
     const item = screen.getByText("menu-item-save");
@@ -310,7 +309,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "fake-menu-trigger" })));
   });
 
-  it("開對話框時焦點在 body（沒有可還的元素）→ 關閉後退回 ⋮ 觸發鈕，不是還給 body", async () => {
+  it("focus is on body when the dialog opens (nothing to give it back to) -> after closing it falls back to the kebab trigger button, not body", async () => {
     stub((url) => (url === LIST ? { status: 200, body: listBody(cur({ dirty: true })) } : undefined));
     renderDialogs();
     (document.activeElement as HTMLElement | null)?.blur();
@@ -323,7 +322,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "fake-menu-trigger" })));
   });
 
-  it("三選一 → 「儲存當前版本」換成儲存對話框時焦點留在新對話框裡（不被拉回編輯器）；存完套用後才回到編輯器", async () => {
+  it("three-choice -> when Save current version swaps to the save dialog, focus stays inside the new dialog (not pulled back to the editor); it returns to the editor only after saving and applying", async () => {
     stub((url, init) => {
       if (url === CUR) return { status: 200, body: listBody(cur({ dirty: true })) };
       if (url === LIST) return { status: 200, body: listBody(cur({ dirty: true })) };
@@ -338,7 +337,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     fireEvent.click(within(await screen.findByRole("dialog", { name: `Apply ${vlabel(1)}` })).getByRole("button", { name: "Save current version" }));
     const save = await screen.findByRole("dialog", { name: "Save current version" });
     await waitFor(() => expect(save.contains(document.activeElement)).toBe(true));
-    // 舊對話框卸載時 FocusScope 的還原事件在 setTimeout 0 送出——等過那一拍，焦點仍要在新對話框裡。
+    // When the old dialog unmounts, FocusScope's restore event fires at setTimeout 0: wait past that tick and focus must still be inside the new dialog.
     await new Promise((r) => setTimeout(r, 50));
     expect(save.contains(document.activeElement)).toBe(true);
     fireEvent.click(within(save).getByRole("button", { name: "Save" }));
@@ -347,7 +346,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
   });
 
-  it("存完再套用——存檔成功到套用完成之間，送出鈕不可再按（第二次點擊不觸發第二次 POST）", async () => {
+  it("save then apply: between a successful save and the apply finishing the submit button cannot be pressed again (a second click does not trigger a second POST)", async () => {
     let releaseApply: () => void = () => {};
     const calls: Array<{ method: string; url: string }> = [];
     const res = (status: number, body?: unknown) => ({ ok: status < 400, status, json: () => Promise.resolve(body) }) as Response;
@@ -369,7 +368,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     const save = await screen.findByRole("dialog", { name: "Save current version" });
     const submit = within(save).getByRole("button", { name: "Save" });
     fireEvent.click(submit);
-    // 存檔已成功（toast 出現）、套用 POST 還沒回來。
+    // The save already succeeded (toast shown) and the apply POST has not returned yet.
     expect(await screen.findByText(`Saved as ${vlabel(3)}`)).toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.url === APPLY1)).toBe(true));
     expect(submit).toBeDisabled();
@@ -382,7 +381,7 @@ describe("VersionsDialogs＋useApplyFlow", () => {
     expect(await screen.findByText(`Applied ${vlabel(1)}`)).toBeInTheDocument();
   });
 
-  it("刪除遇到 409 version_is_base → 對話框內行內錯誤、對話框留著", async () => {
+  it("a delete hitting 409 version_is_base -> an inline error inside the dialog and the dialog stays", async () => {
     stub((url, init) => {
       if (url === `/api/notes/${NOTE}/versions/1` && init?.method === "DELETE") return { status: 409, body: { error: { code: "version_is_base", message: "x" } } };
       return undefined;

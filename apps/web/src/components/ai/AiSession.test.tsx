@@ -25,19 +25,19 @@ import * as Y from "yjs";
 import { createNoteSizeGuard, estimateBlocksBytes } from "@/lib/note-size-guard";
 import { SelectionAiController } from "./SelectionAiController";
 
-// 包一層照呼叫原實作的 spy（斷言自動套用寫入的陣列身分）；不用 automock——那會讓套用變成什麼都不做。
+// Wrapped in a spy that calls the original implementation (assertions pick up the identity of the written arrays); not automock, which would turn applying into a no-op.
 vi.mock("@/collab/columns/keep-columns", async (importOriginal) => {
   const m = await importOriginal<typeof import("@/collab/columns/keep-columns")>();
   return { ...m, replaceBlocksKeepColumns: vi.fn(m.replaceBlocksKeepColumns) };
 });
-// 同上手法包 toast（GS9 要讓套用之後的 toast 丟例外）
+// Wrap toast the same way (one case needs a toast that throws after applying).
 vi.mock("@/components/ui/toast", async (importOriginal) => {
   const m = await importOriginal<typeof import("@/components/ui/toast")>();
   return { ...m, toast: vi.fn(m.toast) };
 });
 beforeEach(() => {
   vi.mocked(toast).mockReset();
-  vi.mocked(replaceBlocksKeepColumns).mockReset(); // 不可寫成箭頭直接回傳：beforeEach 回傳的函式會被當成 teardown 呼叫；mockReset 連 mockImplementationOnce 佇列一起清，並還原成包裝的原實作
+  vi.mocked(replaceBlocksKeepColumns).mockReset(); // Not an arrow returning it directly: a function returned from beforeEach is called as teardown. mockReset also clears the mockImplementationOnce queue and restores the wrapped original.
 });
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
@@ -89,7 +89,7 @@ async function finishStream(call: AiCall, text: string): Promise<void> {
   await waitFor(() => expect(phase()).not.toBe("streaming"));
 }
 
-describe("AiSession 狀態機（#263）", () => {
+describe("AiSession state machine (#263)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -99,7 +99,7 @@ describe("AiSession 狀態機（#263）", () => {
     vi.restoreAllMocks();
   });
 
-  it("open：取選取區塊當錨點、部分選取的子字串當 focus、進 input、開標亮", async () => {
+  it("open: uses the selected blocks as anchors, the partially selected substring as focus, enters input, turns highlight on", async () => {
     await mount();
     openOn("p1", 6, 10);
     const s = session.state;
@@ -109,7 +109,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(true));
   });
 
-  it("open：整塊選取 → focus 為空字串；跨區塊部分選取 → 換行分隔", async () => {
+  it("open: whole-block selection gives an empty focus; partial selection across blocks is newline separated", async () => {
     await mount();
     selectWholeBlocks(editor, "p1", "p2");
     act(() => session.open());
@@ -120,7 +120,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(session.state.phase === "input" && session.state.target.focus).toBe("beta gamma\nsecond");
   });
 
-  it("open：空選取（只放游標）或 NodeSelection（圖片）→ 不開", async () => {
+  it("open: empty selection (caret only) or NodeSelection (image) does not open", async () => {
     await mount({ doc: [...DOC, { id: "img", type: "image", props: { url: "https://example.com/a.png" } }] });
     placeCursor(editor, "p1", 2);
     act(() => session.open());
@@ -132,7 +132,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(phase()).toBe("idle");
   });
 
-  it("quick direct：串流完自動套用；activeAnchor 換成 insertedAnchor；before 是套用前凍結的原文；寫入的就是 prepared.blocks", async () => {
+  it("quick direct: auto-applies after streaming; activeAnchor becomes insertedAnchor; before is the original text frozen before applying; what is written is prepared.blocks", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -148,7 +148,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(vi.mocked(replaceBlocksKeepColumns).mock.calls[0]?.[2]).toBe(s.prepared.blocks);
   });
 
-  it("Instruct 一律預覽（就算清單把它標成 direct）；送 trim 後的 instruction 與 focus", async () => {
+  it("Instruct always previews (even if the list marks it direct); sends the trimmed instruction and focus", async () => {
     const { ai } = await mount({ actions: [REWRITE, { ...INSTRUCT, applyMode: "direct" }] });
     openOn("p1", 0, 5);
     startAction(INSTRUCT.id, "  make it upper  ");
@@ -164,7 +164,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).toContain("alpha beta gamma");
   });
 
-  it("Instruct 整塊選取 → wire 不帶 focus；空白指令不送", async () => {
+  it("Instruct on a whole-block selection: the wire request has no focus; a blank instruction is not sent", async () => {
     const { ai } = await mount();
     selectWholeBlocks(editor, "p1", "p1");
     act(() => session.open());
@@ -175,7 +175,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ai.calls[0]!.body.instruction).toBe("shorter");
   });
 
-  it("noChange：模型回的與原文只差 CRLF／尾端空白 → 不自動套用、preview.noChange、apply() 回 false、文件不動", async () => {
+  it("noChange: a reply differing from the original only by CRLF/trailing whitespace is not auto-applied, sets preview.noChange, apply() returns false, document untouched", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -192,7 +192,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("外層 <text> 剝除：prepared 與預覽都不含標記", async () => {
+  it("outer <text> wrapper is stripped: neither prepared nor the preview contains the markers", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -203,7 +203,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(JSON.stringify(s.preview.after)).not.toContain("<text>");
   });
 
-  it("空結果 → error 態 empty_result（不是 toast）", async () => {
+  it("empty result gives error state empty_result (not a toast)", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -211,11 +211,11 @@ describe("AiSession 狀態機（#263）", () => {
     expect(session.state.phase === "error" && session.state.code).toBe("empty_result");
   });
 
-  // 並排：AI 結果走與 MCP 相同的檢查；不合格 → error 態、不建預覽、不套用。
+  // Columns: AI results go through the same check as MCP; a failing result gives the error state, no preview, no apply.
   it.each([
     ["direct", REWRITE],
     ["preview", SUMMARIZE],
-  ])("GS1（%s）：串流完成的內容含排版用的 flex div→ error 態 unsupported_columns、文件不變、沒有寫入", async (_mode, action) => {
+  ])("%s: streamed content containing a layout flex div gives error state unsupported_columns, document unchanged, nothing written", async (_mode, action) => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     const before = docText();
@@ -228,7 +228,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("GS2：內容含裸 <img width> → error 態 unsupported_size", async () => {
+  it("content with a bare <img width> gives error state unsupported_size", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -237,17 +237,17 @@ describe("AiSession 狀態機（#263）", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("#94：選取涵蓋 mermaid 圖、AI 只改段落文字 → 自動套用後圖仍是 mermaid block、code 不變", async () => {
+  it("#94: selection covers a mermaid diagram and the AI changes only paragraph text: after auto-apply the diagram is still a mermaid block with the same code", async () => {
     const CODE = "graph TD; A-->B";
     const { ai } = await mount({ doc: [P("old words", "p1"), { id: "m", type: "mermaid", props: { code: CODE } }, P("tail", "p3")] });
     act(() => {
-      editor.setSelection("p1", "p3"); // 圖在中間（mermaid 沒有 content，不能當選取端點）
+      editor.setSelection("p1", "p3"); // diagram in the middle (mermaid has no content, so it cannot be a selection endpoint)
     });
     act(() => session.open());
     expect(session.state.phase === "input" && session.state.target.anchor.blockIds).toEqual(["p1", "m", "p3"]);
     startAction(REWRITE.id);
     const sent = ai.calls[0]!.body.text;
-    expect(sent).toContain("```mermaid\n" + CODE + "\n```"); // fixture 自檢：送出的是 fence
+    expect(sent).toContain("```mermaid\n" + CODE + "\n```"); // fixture check: the diagram is sent as a fence
     await finishStream(ai.calls[0]!, sent.replace("old", "new"));
     expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
     const doc = editor.document as Array<{ type: string; props: Record<string, unknown>; content?: unknown }>;
@@ -256,7 +256,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(doc[1]!.props.code).toBe(CODE);
   });
 
-  it("GS7：串流完成後 finish 意外丟例外 → error 態 internal（不卡在串流中）、沒有寫入、沒有未處理的 rejection", async () => {
+  it("finish throwing unexpectedly after streaming completes gives error state internal (not stuck streaming), nothing written, no unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
@@ -264,7 +264,7 @@ describe("AiSession 狀態機（#263）", () => {
       const { ai } = await mount();
       openOn("p1", 0, 5);
       startAction(REWRITE.id);
-      // finish 的第一步 anchorPlacement 讀 getParentBlock：在這裡造一個非預期的例外
+      // finish's first step anchorPlacement reads getParentBlock: provoke an unexpected throw there
       vi.spyOn(editor, "getParentBlock").mockImplementation(() => {
         throw new Error("boom");
       });
@@ -280,7 +280,7 @@ describe("AiSession 狀態機（#263）", () => {
     }
   });
 
-  it("GS9：direct 自動套用成功之後 toast 丟例外 → 仍是 done＋applied（還原入口在）、還原得回去、沒有未處理的 rejection", async () => {
+  it("toast throwing after a successful direct auto-apply: still done + applied (revert entry present), revert works, no unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
@@ -291,8 +291,8 @@ describe("AiSession 狀態機（#263）", () => {
       vi.mocked(toast).mockImplementationOnce(() => {
         throw new Error("boom");
       });
-      await finishStream(ai.calls[0]!, "see [[No Such Note]]"); // 重綁不到 → unboundCount 1 → 套用後發 rebindNotice toast
-      expect(vi.mocked(toast)).toHaveBeenCalledTimes(1); // fixture 自檢：丟例外的那次 toast 真的被呼叫了
+      await finishStream(ai.calls[0]!, "see [[No Such Note]]"); // cannot rebind -> unboundCount 1 -> a rebindNotice toast is sent after applying
+      expect(vi.mocked(toast)).toHaveBeenCalledTimes(1); // fixture check: the throwing toast really was called
       const s = session.state;
       expect(s.phase).toBe("done");
       expect(s.phase === "done" && s.applied !== null).toBe(true);
@@ -308,7 +308,7 @@ describe("AiSession 狀態機（#263）", () => {
     }
   });
 
-  it("GS8：預覽期間錨點被縮排、按套用 → 回 false、toast「原文已變更」、文件不變、沒有巢狀列", async () => {
+  it("anchor indented during preview, then apply: returns false, shows the original-text-changed toast, document unchanged, no nested row", async () => {
     const { ai } = await mount({ doc: [P("prev", "p0"), P("x words", "x")] });
     openOn("x", 0, 1);
     startAction(SUMMARIZE.id);
@@ -318,7 +318,7 @@ describe("AiSession 狀態機（#263）", () => {
       editor.setTextCursorPosition("x", "end");
       editor.nestBlock();
     });
-    expect(phase()).toBe("done"); // 游標在錨點內，不關
+    expect(phase()).toBe("done"); // caret is inside the anchor, so no close
     const before = docText();
     let applied = true;
     act(() => {
@@ -330,12 +330,12 @@ describe("AiSession 狀態機（#263）", () => {
     expect(shape(editor)).toBe("paragraph:prev{paragraph:x words}");
   });
 
-  it("GS6：AI 回了 core parse 會丟例外的內容 → error 態 unsupported_block（不卡在串流中）、框顯示錯誤文案、沒有寫入、沒有未處理的 rejection", async () => {
+  it("AI content that makes the core parse throw: error state unsupported_block (not stuck streaming), the box shows the error text, nothing written, no unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
-      // 照 SelectionAiBox.test 的真實掛法：SelectionAiController（渲染框）與 Probe 一起當 host 的 children
+      // Mounted like SelectionAiBox.test does: SelectionAiController (renders the box) and Probe are both children of the host
       editor = createTestEditor(DOC);
       const ai = stubAiFetch({ actions: ACTIONS });
       renderAiHost({ editor, children: <><SelectionAiController /><Probe /></> });
@@ -346,14 +346,14 @@ describe("AiSession 狀態機（#263）", () => {
       await finishStream(ai.calls[0]!, '<div data-content-type="paragraph">x</div>');
       expect(session.state.phase === "error" && session.state.code).toBe("unsupported_block");
       const region = await screen.findByTestId("selection-ai-box");
-      // 文案泛化（這碼也代表剖析例外與事件處理屬性，不只「區塊類型」）
+      // The message is generic: this code also covers parse exceptions and event-handler attributes, not just block types.
       const alert = await within(region).findByRole("alert");
       expect(alert).toHaveTextContent("That content contains something this note can't store.");
       expect(alert).not.toHaveTextContent("block type");
       expect(docText()).toBe(before);
       expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0)); // 讓 unhandledRejection 有機會先觸發
+        await new Promise((resolve) => setTimeout(resolve, 0)); // give unhandledRejection a chance to fire first
       });
       expect(unhandled).toEqual([]);
     } finally {
@@ -362,7 +362,7 @@ describe("AiSession 狀態機（#263）", () => {
   });
 
   const ROW2 = `<div data-kb-columns style="display:flex;gap:16px">\n<div data-kb-column style="flex:1">\n\nA\n\n</div>\n<div data-kb-column style="flex:1.5">\n\nB\n\n</div>\n</div>`;
-  it("GS5：錨點在欄內、AI 回正規形並排 → error 態 unsupported_columns；錨點在頂層 → 自動套用成一列", async () => {
+  it("anchor inside a column and the AI returns canonical columns: error state unsupported_columns; anchor at top level: auto-applies as one row", async () => {
     const { ai } = await mount({ doc: [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")]], "r")] });
     openOn("b1", 0, 1);
     startAction(REWRITE.id);
@@ -377,7 +377,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(shape(editor)).toBe("ROW[COL(paragraph:A) | COL(paragraph:B)]  ROW[COL(paragraph:a) | COL(paragraph:b)]");
   });
 
-  it("GS3（#305 站內 AI 半）：AI 只改一個字 → 套用後圖片寬度與兩張表的欄寬（含合併表頭的空段）都保留", async () => {
+  it("#305 (in-site AI half): the AI changes a single word, and after applying the image width and the column widths of both tables (including the empty paragraph in a merged header) are preserved", async () => {
     const table = (id: string, columnWidths: (number | undefined)[], rows: unknown[]) => ({
       id,
       type: "table",
@@ -412,7 +412,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ws[2]).toBe(80);
   });
 
-  it("GS4：只選段落的文字、圖片是它的縮排子 block → direct 動作不自動套用（hasNonTextBlock 看子孫）", async () => {
+  it("selecting only a paragraph's text whose indented child block is an image: a direct action does not auto-apply (hasNonTextBlock looks at descendants)", async () => {
     const { ai } = await mount({ doc: [withChildren(P("t", "p1"), [IMG("i1")])] });
     openOn("p1", 0, 1);
     expect(session.state.phase === "input" && session.state.target.anchor.blockIds).toEqual(["p1"]);
@@ -424,7 +424,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(vi.mocked(replaceBlocksKeepColumns)).not.toHaveBeenCalled();
   });
 
-  it("串流錯誤 → error 態；retry 以同一組 request（含 instruction 與 focus）重送", async () => {
+  it("stream error gives the error state; retry resends the same request (including instruction and focus)", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(INSTRUCT.id, "shorter");
@@ -440,7 +440,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ai.calls[1]!.body).toEqual(ai.calls[0]!.body);
   });
 
-  it("retry 在已自動套用後不可用", async () => {
+  it("retry is unavailable after an auto-apply", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -453,7 +453,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ai.calls).toHaveLength(1);
   });
 
-  /** 真的檢查函式（`createNoteSizeGuard`）：筆記現在約 `size` 位元組（另一份 Y.Doc 代表），上限＝現在的大小＋`headroom`。 */
+  /** Real check function (`createNoteSizeGuard`): the note is currently about `size` bytes (represented by another Y.Doc) and the limit is the current size plus `headroom`. */
   function realGuard(headroom: number) {
     const doc = new Y.Doc();
     doc.getText("t").insert(0, "x".repeat(20_000));
@@ -464,7 +464,7 @@ describe("AiSession 狀態機（#263）", () => {
     return { notified, calls, guard: (g: number) => (calls.push(g), guard(g)) };
   }
 
-  it("筆記大小上限（真的檢查）：AI 回一張大表格、會超過上限 → direct 不自動套用（停在 done、文件不動，不另跳「原文已變更」）；手動套用也回 false", async () => {
+  it("note size limit (real check): the AI returns a big table that would exceed the limit, so direct does not auto-apply (stays done, document untouched, no extra original-text-changed toast); manual apply also returns false", async () => {
     const g = realGuard(2_000);
     const { ai } = await mount({ sizeGuard: g.guard });
     openOn("p1", 0, 5);
@@ -489,7 +489,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(g.notified).toHaveLength(2);
   });
 
-  it("筆記大小上限（真的檢查）：同樣只剩一點空間，AI 改寫成較短的字（扣掉被取代的原文 → 成長 < 0）→ 照常自動套用", async () => {
+  it("note size limit (real check): with the same little room left, the AI rewrites to shorter text (minus the replaced original the growth is < 0) and auto-applies as usual", async () => {
     const g = realGuard(10);
     const { ai } = await mount({ sizeGuard: g.guard });
     openOn("p1", 0, 5);
@@ -501,7 +501,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).not.toContain("alpha beta gamma");
   });
 
-  it("手動套用成功 → 回 idle、文件換字、關標亮", async () => {
+  it("manual apply succeeds: returns to idle, document text replaced, highlight off", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -517,7 +517,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("apply(false)（預覽尚未就緒）→ 回 false、停在 done、文件不動（previewReady 是 apply 的前置條件）", async () => {
+  it("apply(false) (preview not ready) returns false, stays done, document untouched (previewReady is a precondition of apply)", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -531,7 +531,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).not.toContain("SUMMARY TEXT");
   });
 
-  it("手動套用撞守門（錨點被改）→ toast、停在 done、文件不動", async () => {
+  it("manual apply hits the guard (anchor changed): toast, stays done, document untouched", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -549,7 +549,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).not.toContain("SUMMARY TEXT");
   });
 
-  it("cancel：abort 串流、回 idle、關標亮", async () => {
+  it("cancel: aborts the stream, returns to idle, highlight off", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -559,7 +559,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("close：done → idle、關標亮", async () => {
+  it("close: done goes to idle, highlight off", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -569,7 +569,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("D12：done 態在 target 外做非空選取 → 自動關閉、關標亮；onAutoClose 被呼叫一次", async () => {
+  it("auto-close: a non-empty selection outside the target in the done state closes the box and turns highlight off; onAutoClose is called once", async () => {
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
@@ -581,7 +581,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("D12：串流中在 target 外選取不關；串流完成當下也不關；下一次選取變更才關", async () => {
+  it("auto-close: selecting outside the target while streaming does not close, nor does the moment streaming completes; the next selection change closes", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -593,7 +593,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(phase()).toBe("idle");
   });
 
-  it("D12：空選取（只放游標）不關；在 target 內選取不關", async () => {
+  it("auto-close: an empty selection (caret only) does not close; selecting inside the target does not close", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -604,7 +604,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(phase()).toBe("done");
   });
 
-  it("D12：input 與 error 態一樣——在 target 外做非空選取 → 自動關閉、關標亮；onAutoClose 各呼叫一次", async () => {
+  it("auto-close: input and error states behave the same - a non-empty selection outside the target closes the box and turns highlight off; onAutoClose is called once each", async () => {
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
@@ -627,7 +627,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("editable 轉 false：串流中 abort、回 idle、關標亮", async () => {
+  it("editable turning false: aborts the stream, returns to idle, highlight off", async () => {
     const { ai, host } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -637,7 +637,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("noteId 換手：非 idle 態回 idle、關標亮", async () => {
+  it("noteId change: non-idle states return to idle, highlight off", async () => {
     const { ai, host } = await mount();
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
@@ -647,7 +647,7 @@ describe("AiSession 狀態機（#263）", () => {
     await waitFor(() => expect(highlighted()).toBe(false));
   });
 
-  it("open() 從 done（已套用）出發：舊結果與還原入口丟棄、對當下選取開新框；串流中呼叫 open() 不動作", async () => {
+  it("open() from done (applied): the old result and revert entry are dropped and a new box opens on the current selection; calling open() while streaming does nothing", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -655,7 +655,7 @@ describe("AiSession 狀態機（#263）", () => {
     const s = session.state;
     if (s.phase !== "done" || !s.applied) throw new Error("預期已自動套用");
     const insertedId = s.applied.insertedAnchor.blockIds[0]!;
-    selectInBlock(editor, insertedId, 0, 3); // 在 activeAnchor 內：D12 不關
+    selectInBlock(editor, insertedId, 0, 3); // inside activeAnchor: auto-close does not close
     act(() => session.open());
     const reopened = session.state;
     if (reopened.phase !== "input") throw new Error(`預期 input，實得 ${reopened.phase}`);
@@ -666,10 +666,10 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ai.calls).toHaveLength(2);
   });
 
-  it("open() 從 input 與 error 出發：同樣先關舊框（error 的 request 丟棄）再對當下選取開新框", async () => {
+  it("open() from input and error: likewise closes the old box first (the error's request is dropped) and then opens a new one on the current selection", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
-    selectInBlock(editor, "p1", 6, 10); // 仍在 target 內：D12 不關
+    selectInBlock(editor, "p1", 6, 10); // still inside the target: auto-close does not close
     act(() => session.open());
     expect(session.state.phase === "input" && session.state.target.focus).toBe("beta");
     startAction(SUMMARIZE.id);
@@ -684,14 +684,14 @@ describe("AiSession 狀態機（#263）", () => {
     expect(s.phase === "input" && s.target.focus).toBe("gamma");
   });
 
-  it("selfWriteRef（自動套用＋還原那半）：串流中在 target 後方做非空選取 → direct 自動套用 → 還原，框仍在、回到未套用；D12 回呼 0 次", async () => {
-    // 白箱斷言 onAutoClose：沒有旗標時會在還原的取代期間 close()，但 revert() 隨後的 setState 會蓋掉 idle（同一批次），
-    // 框照樣留著——只看 state 抓不到（拿掉旗標只有 onAutoClose 斷言會紅）。
+  it("selfWriteRef (auto-apply + revert half): a non-empty selection after the target while streaming, then direct auto-apply, then revert: the box stays and returns to unapplied; the auto-close callback is called 0 times", async () => {
+    // White-box assertion on onAutoClose: without the flag, close() runs during the revert replacement, but the setState in revert()
+    // that follows overwrites idle (same batch) and the box stays anyway, so state alone cannot catch it (removing the flag only fails the onAutoClose assertion).
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
-    selectInBlock(editor, "p3", 0, 5); // target 後方；長度不同的替換會平移這個選取並發 selection change
+    selectInBlock(editor, "p3", 0, 5); // after the target; a replacement of different length shifts this selection and fires a selection change
     await finishStream(ai.calls[0]!, "A much longer rewritten first paragraph than before");
     expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
     act(() => session.revert());
@@ -702,12 +702,12 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).toContain("alpha beta gamma");
   });
 
-  it("selfWriteRef（手動套用那半，白箱）：選取在 target 後方時按套用，D12 回呼 0 次", async () => {
+  it("selfWriteRef (manual apply half, white-box): applying with the selection after the target calls the auto-close callback 0 times", async () => {
     const onAutoClose = vi.fn();
     const { ai } = await mount({ onAutoClose });
     openOn("p1", 0, 5);
     startAction(SUMMARIZE.id);
-    selectInBlock(editor, "p3", 0, 5); // 串流中選，不觸發 D12；完成後選取仍在 p3
+    selectInBlock(editor, "p3", 0, 5); // select while streaming, which does not trigger auto-close; the selection is still in p3 after completion
     await finishStream(ai.calls[0]!, "A much longer summary than the original first paragraph");
     act(() => {
       session.apply(true);
@@ -716,7 +716,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(phase()).toBe("idle");
   });
 
-  it("選取含圖片區塊時 direct 動作不自動套用（強制預覽）", async () => {
+  it("a direct action does not auto-apply when the selection contains an image block (forces preview)", async () => {
     const { ai } = await mount({ doc: [...DOC, { id: "img", type: "image", props: { url: "https://example.com/a.png" } }] });
     act(() => {
       editor._tiptapEditor.commands.selectAll();
@@ -728,7 +728,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).toContain("alpha beta gamma");
   });
 
-  it("還原撞 stale（插入的內容又被改）→ toast、applied 清空、文件不動", async () => {
+  it("revert hitting a stale anchor (the inserted content was edited again): toast, applied cleared, document untouched", async () => {
     const { ai } = await mount();
     openOn("p1", 0, 5);
     startAction(REWRITE.id);
@@ -744,7 +744,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(docText()).toContain("edited after apply");
   });
 
-  it("#269：送出的 markdown 把 wikilink 寫成 [現行標題 或 label](/notes/<id>)（匯出副本，不動文件）", async () => {
+  it("#269: the sent markdown writes a wikilink as [current title or label](/notes/<id>) (an exported copy, the document is untouched)", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
@@ -752,7 +752,7 @@ describe("AiSession 狀態機（#263）", () => {
     const ai = stubAiFetch({ actions: ACTIONS, notes: [{ id, title: "Live Title", slug: "live", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS }] });
     const host = renderAiHost({ editor, children: <Probe /> });
     await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
-    await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined()); // AiSessionProvider 的 useNotes 把快取填好
+    await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined()); // AiSessionProvider's useNotes fills the cache
     const before = JSON.stringify(editor.document);
     selectWholeBlocks(editor, "w1", "w1");
     act(() => session.open());
@@ -761,7 +761,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 
-  it("#269：open() 的 focus（部分選取）也把 wikilink 寫成 [現行標題](/notes/<id>)", async () => {
+  it("#269: open()'s focus (partial selection) also writes the wikilink as [current title](/notes/<id>)", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
@@ -770,15 +770,15 @@ describe("AiSession 狀態機（#263）", () => {
     const host = renderAiHost({ editor, children: <Probe /> });
     await waitFor(() => expect(session.actions).toHaveLength(ACTIONS.length));
     await waitFor(() => expect(host.queryClient.getQueryData(["notes"])).toBeDefined());
-    // wikilink 是 atom，佔 1 個位置："see "（4）＋wikilink（1）＝5，選到 " end" 之前（部分選取 ⇒ focus 非空）
+    // A wikilink is an atom occupying 1 position: "see " (4) + wikilink (1) = 5, so the selection ends before " end" (a partial selection, so focus is non-empty)
     openOn("w1", 0, 5);
     expect(session.state.phase === "input" && session.state.target.focus).toBe(`see [Live Title](/notes/${id}#b-h1)`);
   });
 
-  it("#269：文件存大寫 targetNoteId 時，送出的仍是現行標題（id 比對不分大小寫）", async () => {
-    const id = "abcdef12-3456-4abc-8def-0123456789ab"; // 清單（server）回的小寫 id
+  it("#269: when the document stores an uppercase targetNoteId the sent text still uses the current title (id matching is case-insensitive)", async () => {
+    const id = "abcdef12-3456-4abc-8def-0123456789ab"; // lowercase id as returned by the list (server)
     const upper = id.toUpperCase();
-    expect(upper).not.toBe(id); // fixture 自檢：真的有 a–f 字母會被轉大寫
+    expect(upper).not.toBe(id); // fixture check: it really has a-f letters that get uppercased
     editor = createTestEditor([
       { id: "w1", type: "paragraph", content: ["see ", { type: "wikilink", props: { targetNoteId: upper, snapshotTitle: "Old", label: "", anchorBlockId: "h1" } }, " end"] },
     ]);
@@ -793,7 +793,7 @@ describe("AiSession 狀態機（#263）", () => {
     expect(ai.calls[0]!.body.text).not.toContain("[Old]");
   });
 
-  it("#269：送出的 /notes/ 連結文字經 markdown 跳脫；AI 原樣回寫後 label 逐字保留（文字＝現行標題者 label 仍空）", async () => {
+  it("#269: the sent /notes/ link text is markdown-escaped; after the AI echoes it back the label is kept verbatim (a label stays empty when the text equals the current title)", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     const note: NoteDto = { id, title: "[Draft] Plan *v2*", slug: "draft", ownerId: "u1", role: "owner", createdAt: "x", updatedAt: "x", slugIsCustom: false, prevSlug: null, ownerHandle: "alice", lastEdited: null, group: null, groupId: null, folderId: null, permissions: OWNER_PERMS };
     const wl = (label: string) => ({ type: "wikilink", props: { targetNoteId: id, snapshotTitle: "Old", label, anchorBlockId: "" } });
@@ -808,7 +808,7 @@ describe("AiSession 狀態機（#263）", () => {
     startAction(REWRITE.id);
     const sent = ai.calls[0]!.body.text;
     expect(sent).toContain(`a [\\[Draft\\] Plan \\*v2\\*](/notes/${id}) b [a\\]b\\\\](/notes/${id}) end`);
-    // `/notes/` 連結的文字走 `escapeNoteLinkText`；#386 起一般文字（含外部連結的文字）也跳脫標記字元（`escapeTextNodes`），各只跳一次。
+    // `/notes/` link text goes through `escapeNoteLinkText`; since #386 ordinary text (including external link text) also escapes markup characters (`escapeTextNodes`), each escaped once.
     expect(sent).toContain("[k\\*z](https://example.com/x)");
     await finishStream(ai.calls[0]!, sent.replace(" end", " END"));
     const s = session.state;
@@ -821,8 +821,8 @@ describe("AiSession 狀態機（#263）", () => {
   });
 });
 
-// 並排：選取碰到並排時，錨點每個 block 換成它的頂層祖先（去重保序）；完全在單一欄內或不碰並排照舊。
-describe("AiSession open() 與並排：擴大成整列", () => {
+// Columns: when the selection touches columns, each anchor block becomes its top-level ancestor (deduplicated, order kept); a selection entirely inside one column or not touching columns is unchanged.
+describe("AiSession open() and columns: expanding to the whole row", () => {
   const TWO = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1"), P("q", "q1")]], "r"), P("z", "z")];
   const THREE = () => [P("x", "x"), row([[P("a", "a1")], [P("b", "b1")], [P("c", "c1")]], "r"), P("z", "z")];
   const NESTED = () => [P("x", "x"), row([[P("a", "a1")], [withChildren(P("p", "p1"), [P("c", "c1")])]], "r"), P("z", "z")];
@@ -848,12 +848,12 @@ describe("AiSession open() 與並排：擴大成整列", () => {
   });
 
   it.each<[string, () => unknown[], string, string, string[]]>([
-    ["AO1 跨欄 a..b", TWO, "a1", "b1", ["r"]],
-    ["AO2 三欄 a..c", THREE, "a1", "c1", ["r"]],
-    ["AO3 從列外 x 選進列內", TWO, "x", "b1", ["x", "r"]],
-    ["AO4 從欄內選到列外 z", TWO, "b1", "z", ["r", "z"]],
-    ["AO6 從末欄的巢狀子 block 選到列外 z（欄是祖父節點）", NESTED, "c1", "z", ["r", "z"]],
-  ])("%s → 進 input、錨點擴大成頂層整列、開標亮", async (_name, doc, from, to, expected) => {
+    ["across columns a..b", TWO, "a1", "b1", ["r"]],
+    ["three columns a..c", THREE, "a1", "c1", ["r"]],
+    ["from outside the row (x) into the row", TWO, "x", "b1", ["x", "r"]],
+    ["from inside a column to outside the row (z)", TWO, "b1", "z", ["r", "z"]],
+    ["from a nested child block of the last column to outside the row (z) (the column is the grandparent node)", NESTED, "c1", "z", ["r", "z"]],
+  ])("%s: goes to input, anchor expands to the whole top-level row, highlight on", async (_name, doc, from, to, expected) => {
     await mount({ doc: doc() });
     openRange(from, to);
     expect(phase()).toBe("input");
@@ -861,7 +861,7 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     await waitFor(() => expect(highlighted()).toBe(true));
   });
 
-  it("AO5 完全在單一欄內（b..q）→ 照常開框、錨點是兩個欄內段落", async () => {
+  it("entirely inside a single column (b..q): opens as usual, the anchors are the two paragraphs in the column", async () => {
     await mount({ doc: TWO() });
     openRange("b1", "q1");
     const s = session.state;
@@ -869,7 +869,7 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     expect(s.target.anchor.blockIds).toEqual(["b1", "q1"]);
   });
 
-  it("AO11 不碰並排時不擴大：縮排子 block 自己、縮排子 block 選到頂層段落 → 錨點照選取清單", async () => {
+  it("no expansion when columns are not touched: an indented child block by itself, or from an indented child block to a top-level paragraph: anchors follow the selection list", async () => {
     await mount({ doc: [withChildren(P("p", "p"), [P("k", "k1")]), P("z", "z"), row([[P("a", "a1")], [P("b", "b1")]], "r")] });
     openInside("k1");
     expect(anchorIds()).toEqual(["k1"]);
@@ -878,7 +878,7 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     expect(anchorIds()).toEqual(["k1", "z"]);
   });
 
-  it("AO12 focus 以擴大後的錨點算：b1 首到 z 尾 → Instruct 送 focus「b\\nq\\nz」（第 1 欄沒選到）；a1 首到 q1 尾（整列全文）→ 不帶 focus", async () => {
+  it("focus is computed from the expanded anchor: b1 start to z end: Instruct sends focus b\\nq\\nz (column 1 is not selected); a1 start to q1 end (the whole row text): no focus", async () => {
     const { ai } = await mount({ doc: TWO() });
     selectText(editor, contentStart(editor, "b1"), contentEnd(editor, "z"));
     act(() => session.open());
@@ -893,7 +893,7 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     expect(ai.calls[1]!.body).not.toHaveProperty("focus");
   });
 
-  it("AO7 從縮排的子 block 選進一列、AI 回並排 → 錨點是父段落與列；套用後沒有巢狀列、頂層是新列與 z", async () => {
+  it("from an indented child block into a row, with the AI returning columns: the anchors are the parent paragraph and the row; after applying there is no nested row and the top level is the new row plus z", async () => {
     const { ai } = await mount({ doc: [withChildren(P("p", "p"), [P("k", "k1")]), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z")] });
     openRange("k1", "b1");
     expect(anchorIds()).toEqual(["p", "r"]);
@@ -909,14 +909,14 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     expect(shape(editor)).toBe("ROW[COL(paragraph:A) | COL(paragraph:B)]  paragraph:z");
   });
 
-  it("AO8 錨點是整列、quick direct 只改一欄的字 → 自動套用後列仍兩欄、第 1 欄是 A；還原 → 回原狀、列仍兩欄", async () => {
+  it("anchor is the whole row and quick direct changes the text of one column: after auto-apply the row still has two columns and column 1 is A; revert restores the original, still two columns", async () => {
     const { ai } = await mount({ doc: TWO() });
     const original = shape(editor);
     openRange("a1", "b1");
     expect(anchorIds()).toEqual(["r"]);
     startAction(REWRITE.id);
     const sent = ai.calls[0]!.body.text;
-    expect(sent).toContain("\n\na\n\n"); // fixture 自檢：送出的是整列（含第 1 欄的 a）
+    expect(sent).toContain("\n\na\n\n"); // fixture check: the whole row was sent (including a in column 1)
     await finishStream(ai.calls[0]!, sent.replace("\n\na\n\n", "\n\nA\n\n"));
     expect(session.state.phase === "done" && session.state.applied !== null).toBe(true);
     expect(shape(editor)).toBe("paragraph:x  ROW[COL(paragraph:A) | COL(paragraph:b,paragraph:q)]  paragraph:z");
@@ -926,7 +926,7 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     expect(integrity(editor)).toEqual({ dupIds: 0, nullIds: 0, nestedRows: 0, valid: true });
   });
 
-  it("AO9 錨點擴大成整列後，在列內另選一段（selectionInsideAnchor）→ D12 不關框", async () => {
+  it("after the anchor expands to the whole row, selecting another segment inside the row (selectionInsideAnchor) does not auto-close the box", async () => {
     const onAutoClose = vi.fn();
     await mount({ doc: TWO(), onAutoClose });
     openRange("a1", "b1");
@@ -934,11 +934,11 @@ describe("AiSession open() 與並排：擴大成整列", () => {
     selectInBlock(editor, "q1", 0, 1);
     expect(phase()).toBe("input");
     expect(onAutoClose).not.toHaveBeenCalled();
-    selectInBlock(editor, "z", 0, 1); // 對照：列外 → 關
+    selectInBlock(editor, "z", 0, 1); // contrast: outside the row closes
     expect(phase()).toBe("idle");
   });
 
-  it("AO10 列的第 2 欄有圖片、從 a1 選到 z（擴大成 [r, z]）→ quick direct 不自動套用", async () => {
+  it("the row's second column has an image and the selection runs from a1 to z (expands to [r, z]): quick direct does not auto-apply", async () => {
     const { ai } = await mount({ doc: [P("x", "x"), row([[P("a", "a1")], [IMG("i1")]], "r"), P("z", "z")] });
     const before = docText();
     openRange("a1", "z");

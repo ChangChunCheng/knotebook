@@ -8,8 +8,8 @@ import { buildDestinationLevel, type DestItem, type DestPathStep, type DestSourc
 import { DestinationPickerDialog } from "./DestinationPickerDialog";
 import { EMPTY_FOLDER_INDEX, indexFolders } from "./folder-index";
 
-// 目的地選擇框（#181；一次一層：DPf1–DPf5）。
-// 層內容一律由 `buildDestinationLevel` 產生（與 SelectActionBar 同一支）。
+// Destination picker (#181; one level at a time).
+// Level content is always produced by `buildDestinationLevel` (the same one as SelectActionBar).
 
 type Props = Parameters<typeof DestinationPickerDialog>[0];
 
@@ -17,18 +17,18 @@ const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) 
 
 const PERSONAL: DestSpace = { kind: "personal" };
 const TEAM: DestSpace = { kind: "group", groupId: "ga", name: "Team" };
-/** 個人資料夾：A ⊃ A1、B。 */
+/** Personal folders: A contains A1, B. */
 const FA = folderDto({ id: "A", name: "A" });
 const FA1 = folderDto({ id: "A1", name: "A1", parentId: "A" });
 const FB = folderDto({ id: "B", name: "B" });
 const INDEX = indexFolders([FA, FA1, FB]);
 
-/** 我的筆記 tab 的批次 source（選取都在根層）；movingFolders 非空＝選了資料夾。 */
+/** Batch source of the My notes tab (selection at the root level); non-empty movingFolders = folders were selected. */
 function mine(mode: "move" | "copy", movingFolders: FolderDto[] = []): DestSource {
   return { mode, current: PERSONAL, makeCopy: mode === "copy", others: [TEAM], locations: [null], movingFolders };
 }
 
-/** 形（沒有上半部、沒有資料夾）：與 SelectActionBar 的過渡接法同形。 */
+/** Shape (no upper half, no folders): the same shape as SelectActionBar's transitional wiring. */
 function flat(mode: "move" | "copy"): DestSource {
   return { mode, current: null, makeCopy: false, others: mode === "move" ? [TEAM] : [PERSONAL, TEAM], locations: [], movingFolders: [] };
 }
@@ -62,7 +62,7 @@ function renderPicker(over: Partial<Props> = {}) {
 
 const dialog = () => screen.getByRole("dialog");
 const list = () => dialog().querySelector("ul") as HTMLUListElement;
-/** 每列：分隔線＝"---"，其餘＝按鈕的可及名稱（aria-label）。 */
+/** Each row: a separator = "---", otherwise the button's accessible name (aria-label). */
 const rows = () =>
   Array.from(list().children).map((li) => (li.getAttribute("role") === "separator" ? "---" : (li.querySelector("button")?.getAttribute("aria-label") ?? "?")));
 const item = (name: string) => within(dialog()).getByRole("button", { name });
@@ -73,8 +73,7 @@ describe("DestinationPickerDialog", () => {
     await i18n.changeLanguage("en");
   });
 
-  // ── 既有案（DP1–DP5），依一次一層的新 props 改寫
-  it("DP1 copy：My notes、Team 依序，沒有「Groups」小標；圖示 user／users；按 Team → onPick 群組根層", () => {
+  it("copy: My notes then Team in order, no \"Groups\" subheading; icons user/users; pressing Team calls onPick with the group root level", () => {
     const { onPick } = renderPicker({ mode: "copy", level: level(flat("copy"), [], EMPTY_FOLDER_INDEX) });
     expect(within(dialog()).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["My notes", "Team"]);
     expect(within(dialog()).queryByText("Groups")).toBeNull();
@@ -84,41 +83,41 @@ describe("DestinationPickerDialog", () => {
     expect(onPick).toHaveBeenCalledWith({ kind: "place", space: TEAM, folder: null });
   });
 
-  it("DP1 copy：按 My notes → onPick 我的筆記根層", () => {
+  it("copy: pressing My notes calls onPick with the My notes root level", () => {
     const { onPick } = renderPicker({ mode: "copy", level: level(flat("copy"), [], EMPTY_FOLDER_INDEX) });
     fireEvent.click(item("My notes"));
     expect(onPick).toHaveBeenCalledWith({ kind: "place", space: PERSONAL, folder: null });
   });
 
-  it("DP2 move：沒有 My notes，只有 Team；沒有「Groups」小標", () => {
+  it("move: no My notes, only Team; no \"Groups\" subheading", () => {
     renderPicker({ mode: "move" });
     expect(within(dialog()).queryByRole("button", { name: "My notes" })).toBeNull();
     expect(within(dialog()).queryByText("Groups")).toBeNull();
     expect(rows()).toEqual(["Team"]);
   });
 
-  it("DP3 level null → Loading…、沒有清單", () => {
+  it("level null: Loading... and no list", () => {
     renderPicker({ level: null });
     expect(within(dialog()).getByText("Loading…")).toBeInTheDocument();
     expect(list()).toBeNull();
   });
 
-  it("DP3 error → role=alert（errors.<code>）", () => {
+  it("error: role=alert (errors.<code>)", () => {
     renderPicker({ level: null, error: new ApiFail(500, "internal", "x") });
     expect(within(dialog()).getByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
   });
 
-  it("DP4 標題與描述：Move to、Choose where the 3 notes go.", () => {
+  it("title and description: Move to, Choose where the 3 notes go.", () => {
     renderPicker({ mode: "move" });
     expect(screen.getByRole("dialog", { name: "Move to" })).toHaveAccessibleDescription("Choose where the 3 notes go.");
   });
 
-  it("DP4 copy 標題 Copy to；單數描述", () => {
+  it("copy title Copy to; singular description", () => {
     renderPicker({ mode: "copy", count: 1, level: level(flat("copy"), [], EMPTY_FOLDER_INDEX) });
     expect(screen.getByRole("dialog", { name: "Copy to" })).toHaveAccessibleDescription("Choose where the note goes.");
   });
 
-  it("DP4 zh-TW：標題複製到、根我的筆記；沒有「群組」小標", async () => {
+  it("zh-TW: the copy-to title, the my-notes root; no groups subheading", async () => {
     await i18n.changeLanguage("zh-TW");
     try {
       renderPicker({ mode: "copy", level: level(flat("copy"), [], EMPTY_FOLDER_INDEX) });
@@ -130,7 +129,7 @@ describe("DestinationPickerDialog", () => {
     }
   });
 
-  it("DP4 zh-TW：move 標題移動到", async () => {
+  it("zh-TW: the move title is the move-to text", async () => {
     await i18n.changeLanguage("zh-TW");
     try {
       renderPicker({ mode: "move" });
@@ -140,15 +139,15 @@ describe("DestinationPickerDialog", () => {
     }
   });
 
-  it("DP5 Cancel → onOpenChange(false)、沒有 onPick", () => {
+  it("Cancel calls onOpenChange(false) and no onPick", () => {
     const { onPick, onOpenChange } = renderPicker();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Cancel" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  // ── 一次一層
-  it("DPf1 第一層：A（, open）、B、分隔線、Team 依序；分隔線是 li[role=separator]；點「A, open」→ onDrill、點 B → onPick", () => {
+  // One level at a time
+  it("first level: A (\", open\"), B, separator, Team in order; the separator is li[role=separator]; clicking \"A, open\" calls onDrill, clicking B calls onPick", () => {
     const { onDrill, onPick } = renderPicker({ level: level(mine("move")) });
     expect(rows()).toEqual(["A, open", "B", "---", "Team"]);
     expect(within(dialog()).getByRole("separator").tagName).toBe("LI");
@@ -166,7 +165,7 @@ describe("DestinationPickerDialog", () => {
     expect(onDrill).toHaveBeenCalledTimes(1);
   });
 
-  it("DPf1 copy 第一層：「Make a copy」copy 圖示、Top level house 圖示；共享空間項 share 圖示", () => {
+  it("copy first level: \"Make a copy\" with the copy icon, Top level with the house icon; the shared-space item with the share icon", () => {
     const source: DestSource = { mode: "copy", current: PERSONAL, makeCopy: true, others: [{ kind: "shared" }], locations: ["A"], movingFolders: [] };
     renderPicker({ mode: "copy", level: level(source) });
     expect(rows()).toEqual(["Make a copy", "Top level", "A, open", "B", "---", "Shared with me"]);
@@ -175,7 +174,7 @@ describe("DestinationPickerDialog", () => {
     expect(item("Shared with me").querySelector('svg[data-icon="share"]')).not.toBeNull();
   });
 
-  it("DPf2 以新 levelKey 渲染第二層 → 第一顆是 Back（chevron-left aria-hidden）且取得焦點、清單捲回頂端；點 Back → onBack", () => {
+  it("rendering a second level with a new levelKey: the first item is Back (chevron-left aria-hidden) and gets focus, the list scrolls back to the top; clicking Back calls onBack", () => {
     const view = renderPicker({ level: level(mine("move")) });
     list().scrollTop = 80;
     const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }];
@@ -192,7 +191,7 @@ describe("DestinationPickerDialog", () => {
     expect(view.onPick).not.toHaveBeenCalled();
   });
 
-  it("DPf2 同一個 levelKey、level 換新陣列重繪（資料夾重抓）→ 焦點不動、不捲動", () => {
+  it("same levelKey, level redrawn with a new array (folders refetch): focus does not move and nothing scrolls", () => {
     const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }];
     const view = renderPicker({ level: level(mine("move")) });
     view.rerender({ level: level(mine("move"), path), levelKey: JSON.stringify(path) });
@@ -205,17 +204,17 @@ describe("DestinationPickerDialog", () => {
     expect(list().scrollTop).toBe(40);
   });
 
-  it("DPf2 第一項 disabled 的層 → 焦點給第一個未停用的項目", () => {
+  it("a level whose first item is disabled: focus goes to the first enabled item", () => {
     const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }];
     const view = renderPicker({ level: level(mine("move", [FA]), path), levelKey: JSON.stringify(path), hasFolders: true });
-    // 回第一層：選了 A → A 自己反灰（self）且排第一，B 可按。
+    // Back to the first level: after choosing A, A itself is greyed (self) and first, B is pressable.
     view.rerender({ level: level(mine("move", [FA])), levelKey: "[]" });
     expect(rows()).toEqual(["A", "B", "---", "Team"]);
     expect(item("A")).toBeDisabled();
     expect(item("B")).toHaveFocus();
   });
 
-  it("DPf2 換層後整層都反灰（選了 A、B：兩個 self、Team crossSpace）→ 焦點給 footer 的 Cancel", () => {
+  it("after switching level everything is greyed (A and B chosen: two self, Team crossSpace): focus goes to the footer's Cancel", () => {
     const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }];
     const view = renderPicker({ level: level(mine("move", [FA, FB]), path), levelKey: JSON.stringify(path), hasFolders: true });
     expect(item("Back")).toBeEnabled();
@@ -225,18 +224,18 @@ describe("DestinationPickerDialog", () => {
     expect(within(dialog()).getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("DPf3 crossSpace 項 disabled＋title、描述下多一行同字；沒有 crossSpace 的層沒有那行", () => {
+  it("a crossSpace item is disabled + title, with the same text on one more line under the description; a level without crossSpace has no such line", () => {
     const view = renderPicker({ level: level(mine("move", [FB])), hasFolders: true });
     const team = item("Team");
     expect(team).toBeDisabled();
     expect(team).toHaveAttribute("title", CROSS_SPACE);
-    // self 反灰不帶 title。
+    // A self-greyed item has no title.
     expect(item("B")).toBeDisabled();
     expect(item("B")).not.toHaveAttribute("title");
     const line = within(dialog()).getByText(CROSS_SPACE);
     expect(line.tagName).toBe("P");
     expect(list()).not.toContainElement(line);
-    // 說明行列進對話框的可及描述。
+    // The explanation line is part of the dialog's accessible description.
     expect(dialog()).toHaveAccessibleDescription(`Choose where the 3 items go. ${CROSS_SPACE}`);
 
     view.rerender({ level: level(mine("move")), hasFolders: false });
@@ -246,15 +245,15 @@ describe("DestinationPickerDialog", () => {
     expect(item("Team")).not.toHaveAttribute("title");
   });
 
-  it("DPf4 hasFolders → 描述「Choose where the 2 items go.」；沒有 → 「Choose where the 2 notes go.」", () => {
-    // 只有上半部（群組／與我共享 tab）：沒有 crossSpace 項，描述只有這一句。
+  it("hasFolders: description \"Choose where the 2 items go.\"; without it: \"Choose where the 2 notes go.\"", () => {
+    // Only the upper half (group / shared-with-me tab): no crossSpace item, the description is just that one sentence.
     const view = renderPicker({ count: 2, hasFolders: true, level: level({ ...mine("move", [FB]), others: [] }) });
     expect(screen.getByRole("dialog", { name: "Move to" })).toHaveAccessibleDescription("Choose where the 2 items go.");
     view.rerender({ count: 2, hasFolders: false, level: level(mine("move")) });
     expect(screen.getByRole("dialog", { name: "Move to" })).toHaveAccessibleDescription("Choose where the 2 notes go.");
   });
 
-  it("DPf5 zh-TW：描述「選擇 2 項要放到哪裡。」、跨空間說明行；第二層「返回」（前導 chevron-left，可及名稱返回）取得焦點、移動到這裡", async () => {
+  it("zh-TW: the description and the cross-space explanation line; the second level's back button (leading chevron-left) gets focus, followed by the move-here item", async () => {
     await i18n.changeLanguage("zh-TW");
     try {
       const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }];

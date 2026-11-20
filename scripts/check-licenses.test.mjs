@@ -1,15 +1,4 @@
-// scripts/check-licenses.test.mjs
-//
-// check-licenses.mjs 核心邏輯的常駐測試（node:test，不依賴真的跑 pnpm ——全部餵手造
-// mock data）。跑法：`pnpm test:scripts`（= `node --test scripts/*.test.mjs`）。
-//
-// 覆蓋範圍：
-//   - GPL/LGPL 授權命中（含 EXEMPTIONS 生效）
-//   - Unknown 授權命中（含 UNKNOWN_ACKNOWLEDGED 生效）
-//   - @blocknote/xl- 依賴：頂層 devDependencies、巢狀 dependencies、
-//     optionalDependencies（頂層與巢狀）皆要命中；@blocknote/core 不誤傷
-//   - 依賴總數下限保護所依賴的計數函式（countLicensedPackages / totalDependencyNodes）
-//   - 形狀 assertion：不符預期輸入一律 throw
+// node:test; nothing runs pnpm - every case is fed hand-made mock data.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -23,7 +12,7 @@ import {
   findUnknownLicenseViolations,
 } from './check-licenses.mjs';
 
-test('findGplViolations: 命中 GPL 與 LGPL，不誤傷其他授權', () => {
+test('findGplViolations: matches GPL and LGPL, does not hit other licences', () => {
   const violations = findGplViolations({
     'LGPL-3.0': [{ name: 'foo-lib' }],
     'GPL-2.0-only': [{ name: 'baz' }],
@@ -33,12 +22,12 @@ test('findGplViolations: 命中 GPL 與 LGPL，不誤傷其他授權', () => {
   assert.deepEqual(violations.sort(), ['baz (GPL-2.0-only)', 'foo-lib (LGPL-3.0)'].sort());
 });
 
-test('findGplViolations: 全是 OSS 寬鬆授權時回傳空陣列', () => {
+test('findGplViolations: returns an empty array when all licences are permissive OSS', () => {
   const violations = findGplViolations({ MIT: [{ name: 'ok' }], 'Apache-2.0': [{ name: 'also-ok' }] });
   assert.deepEqual(violations, []);
 });
 
-test('findUnknownLicenseViolations: 命中 Unknown 授權', () => {
+test('findUnknownLicenseViolations: matches Unknown licences', () => {
   const violations = findUnknownLicenseViolations({
     Unknown: [{ name: 'mystery-pkg' }],
     MIT: [{ name: 'ok' }],
@@ -46,24 +35,24 @@ test('findUnknownLicenseViolations: 命中 Unknown 授權', () => {
   assert.deepEqual(violations, ['mystery-pkg']);
 });
 
-test('findUnknownLicenseViolations: 大小寫不敏感比對 "unknown" key', () => {
+test('findUnknownLicenseViolations: matches the "unknown" key case-insensitively', () => {
   const violations = findUnknownLicenseViolations({ unknown: [{ name: 'weird-case-pkg' }] });
   assert.deepEqual(violations, ['weird-case-pkg']);
 });
 
-test('countLicensedPackages: 跨授權桶加總', () => {
+test('countLicensedPackages: sums across licence buckets', () => {
   const total = countLicensedPackages({ MIT: [{ name: 'a' }, { name: 'b' }], ISC: [{ name: 'c' }] });
   assert.equal(total, 3);
 });
 
-test('analyzeWorkspaceDependencyTree: 頂層 dependencies 命中 @blocknote/xl-', () => {
+test('analyzeWorkspaceDependencyTree: top-level dependencies matching @blocknote/xl-', () => {
   const { blocknoteXlViolations } = analyzeWorkspaceDependencyTree([
     { name: 'app', dependencies: { '@blocknote/xl-pdf-exporter': { version: '1.0.0' } } },
   ]);
   assert.deepEqual(blocknoteXlViolations, ['@blocknote/xl-pdf-exporter']);
 });
 
-test('analyzeWorkspaceDependencyTree: 巢狀 dependencies 命中 @blocknote/xl-', () => {
+test('analyzeWorkspaceDependencyTree: nested dependencies matching @blocknote/xl-', () => {
   const { blocknoteXlViolations } = analyzeWorkspaceDependencyTree([
     {
       name: 'app',
@@ -75,7 +64,7 @@ test('analyzeWorkspaceDependencyTree: 巢狀 dependencies 命中 @blocknote/xl-'
   assert.deepEqual(blocknoteXlViolations, ['@blocknote/xl-docx-exporter']);
 });
 
-test('analyzeWorkspaceDependencyTree: 頂層與巢狀 devDependencies 皆命中 @blocknote/xl-', () => {
+test('analyzeWorkspaceDependencyTree: top-level and nested devDependencies both match @blocknote/xl-', () => {
   const { blocknoteXlViolations } = analyzeWorkspaceDependencyTree([
     {
       name: 'app',
@@ -93,7 +82,7 @@ test('analyzeWorkspaceDependencyTree: 頂層與巢狀 devDependencies 皆命中 
   );
 });
 
-test('analyzeWorkspaceDependencyTree: 頂層與巢狀 optionalDependencies 皆命中 @blocknote/xl-', () => {
+test('analyzeWorkspaceDependencyTree: top-level and nested optionalDependencies both match @blocknote/xl-', () => {
   const { blocknoteXlViolations } = analyzeWorkspaceDependencyTree([
     {
       name: 'app',
@@ -111,14 +100,14 @@ test('analyzeWorkspaceDependencyTree: 頂層與巢狀 optionalDependencies 皆�
   );
 });
 
-test('analyzeWorkspaceDependencyTree: @blocknote/core（非 xl- 前綴）不誤傷', () => {
+test('analyzeWorkspaceDependencyTree: @blocknote/core (not the xl- prefix) is not caught by mistake', () => {
   const { blocknoteXlViolations } = analyzeWorkspaceDependencyTree([
     { name: 'app', dependencies: { '@blocknote/core': { version: '1.0.0' } } },
   ]);
   assert.deepEqual(blocknoteXlViolations, []);
 });
 
-test('analyzeWorkspaceDependencyTree: totalDependencyNodes 對整棵樹去重計數', () => {
+test('analyzeWorkspaceDependencyTree: totalDependencyNodes counts the whole tree deduplicated', () => {
   const { totalDependencyNodes } = analyzeWorkspaceDependencyTree([
     {
       name: 'app',
@@ -128,42 +117,42 @@ test('analyzeWorkspaceDependencyTree: totalDependencyNodes 對整棵樹去重計
       },
     },
   ]);
-  // foo, bar, shared（去重，即使 shared 出現兩次）
+  // foo, bar, shared (deduplicated even though shared appears twice)
   assert.equal(totalDependencyNodes, 3);
 });
 
-test('assertLicensesShape: 合法形狀不 throw', () => {
+test('assertLicensesShape: a valid shape does not throw', () => {
   assert.doesNotThrow(() => assertLicensesShape({ MIT: [{ name: 'ok' }] }));
 });
 
-test('assertLicensesShape: 非 plain object（例如陣列）要 throw', () => {
+test('assertLicensesShape: a non-plain object (e.g. an array) throws', () => {
   assert.throws(() => assertLicensesShape([{ name: 'ok' }]));
 });
 
-test('assertLicensesShape: null 要 throw', () => {
+test('assertLicensesShape: null throws', () => {
   assert.throws(() => assertLicensesShape(null));
 });
 
-test('assertLicensesShape: 空物件要 throw', () => {
+test('assertLicensesShape: an empty object throws', () => {
   assert.throws(() => assertLicensesShape({}));
 });
 
-test('assertLicensesShape: value 不是陣列時要 throw', () => {
+test('assertLicensesShape: a value that is not an array throws', () => {
   assert.throws(() => assertLicensesShape({ MIT: { name: 'not-an-array' } }));
 });
 
-test('assertWorkspacePackagesShape: 合法形狀不 throw', () => {
+test('assertWorkspacePackagesShape: a valid shape does not throw', () => {
   assert.doesNotThrow(() => assertWorkspacePackagesShape([{ name: 'app' }]));
 });
 
-test('assertWorkspacePackagesShape: 非陣列要 throw', () => {
+test('assertWorkspacePackagesShape: a non-array throws', () => {
   assert.throws(() => assertWorkspacePackagesShape({ name: 'app' }));
 });
 
-test('assertWorkspacePackagesShape: 空陣列要 throw', () => {
+test('assertWorkspacePackagesShape: an empty array throws', () => {
   assert.throws(() => assertWorkspacePackagesShape([]));
 });
 
-test('assertWorkspacePackagesShape: 元素缺少 name 要 throw', () => {
+test('assertWorkspacePackagesShape: an element without name throws', () => {
   assert.throws(() => assertWorkspacePackagesShape([{ dependencies: {} }]));
 });

@@ -30,7 +30,7 @@ async function setup(opts: { group?: boolean; autoWaitMs?: number } = {}) {
     ...(opts.autoWaitMs !== undefined ? { autoWaitMs: opts.autoWaitMs } : {}),
   });
   svc.bind(host);
-  /** 把 doc 當成「載入中」：放進 host 並跑 noteLoaded。 */
+  /** Treat doc as "loaded": put it into the host and run noteLoaded. */
   const load = async (doc: Y.Doc) => {
     host.docs.set(note.id, doc);
     await svc.noteLoaded(note.id, doc);
@@ -42,7 +42,7 @@ async function setup(opts: { group?: boolean; autoWaitMs?: number } = {}) {
 }
 
 describe("noteLoaded", () => {
-  it("先同步抓 loadFingerprint 再讀 DB：await 期間文件被改，loadFingerprint 仍是呼叫當下那份", async () => {
+  it("loadFingerprint is grabbed synchronously before reading the DB: if the document changes during the await, loadFingerprint is still the one at call time", async () => {
     const s = await setup();
     const doc = paraDoc(["原文"]);
     const before = vfp(doc);
@@ -53,7 +53,7 @@ describe("noteLoaded", () => {
     expect(s.svc.debugState(s.note.id)).toMatchObject({ initialized: true, loadFingerprint: before, baseFingerprint: null, autoEnabled: true });
   });
 
-  it("讀基底、空間鍵與自動儲存開關：個人 u:<owner>；群組 g:<group>；站台關或空間關 → autoEnabled false", async () => {
+  it("reads base, space key and auto-save switch: personal u:<owner>; group g:<group>; site off or space off -> autoEnabled false", async () => {
     const s = await setup();
     await s.db.update(notes).set({ versionBaseSeq: 3, versionBaseFingerprint: "abc" }).where(eq(notes.id, s.note.id));
     await s.load(paraDoc(["x"]));
@@ -78,7 +78,7 @@ describe("noteLoaded", () => {
     expect(g.svc.debugState(g.note.id)!.autoEnabled).toBe(false);
   });
 
-  it("從 onLoadDocument 進來時 await 期間被 forget → 重來並初始化；rerun 模式則丟棄", async () => {
+  it("forgotten during the await when entered from onLoadDocument -> start over and initialize; in rerun mode it is discarded", async () => {
     const s = await setup();
     const doc = paraDoc(["x"]);
     s.host.docs.set(s.note.id, doc);
@@ -94,7 +94,7 @@ describe("noteLoaded", () => {
     expect(s.svc.debugState(s.note.id)).toBeUndefined();
   });
 
-  it("未初始化時 noteChanged 照記；初始化把結果併入同一個條目（editors 保留）", async () => {
+  it("when uninitialized noteChanged still records; initialization merges its result into the same entry (editors kept)", async () => {
     const s = await setup();
     const doc = paraDoc(["x"]);
     s.host.docs.set(s.note.id, doc);
@@ -104,7 +104,7 @@ describe("noteLoaded", () => {
     expect(s.svc.debugState(s.note.id)).toMatchObject({ initialized: true, editors: [{ userId: s.u.id, agentLabel: null }] });
   });
 
-  it("筆記已刪：條目標成已初始化但不自動切（auto-disabled、不 warn）", async () => {
+  it("note deleted: the entry is marked initialized but not auto-cutting (auto-disabled, no warn)", async () => {
     const s = await setup();
     await s.db.delete(notes).where(eq(notes.id, s.note.id));
     await s.load(paraDoc(["x"]));
@@ -114,7 +114,7 @@ describe("noteLoaded", () => {
 });
 
 describe("noteChanged", () => {
-  it("依 (userId, agentLabel) 去重、保留首次出現順序", async () => {
+  it("deduplicates by (userId, agentLabel), keeping first-appearance order", async () => {
     const s = await setup();
     await s.load(paraDoc(["x"]));
     const u2 = "00000000-0000-4000-8000-000000000002";
@@ -127,17 +127,17 @@ describe("noteChanged", () => {
   });
 });
 
-describe("cutIfDirty／isDirty", () => {
-  it("未初始化 → { skipped: uninitialized }、isDirty true（Map 有條目但 noteLoaded 沒跑完）", async () => {
+describe("cutIfDirty / isDirty", () => {
+  it("uninitialized -> { skipped: uninitialized }, isDirty true (Map has an entry but noteLoaded has not finished)", async () => {
     const s = await setup();
     const doc = paraDoc(["x"]);
     s.host.docs.set(s.note.id, doc);
-    s.svc.noteChanged(s.note.id, { userId: s.u.id, agentLabel: null }); // 建出 initialized:false 條目
+    s.svc.noteChanged(s.note.id, { userId: s.u.id, agentLabel: null }); // builds an initialized:false entry
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto" })).toEqual({ skipped: "uninitialized" });
     expect(await s.svc.isDirty(s.note.id, doc)).toBe(true);
   });
 
-  it("沒有基底：沒改 → null；打一字再刪 → null；改了 → 切 v1（editors＝待記名單 ∪ extra）且狀態更新", async () => {
+  it("no base: unchanged -> null; type one character and delete it -> null; changed -> cut v1 (editors = pending list + extra) and state updated", async () => {
     const s = await setup();
     const doc = paraDoc(["舊內容"]);
     await s.load(doc);
@@ -158,7 +158,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(vfp(restored)).toBe(vfp(doc));
   });
 
-  it("沒有基底且真空：自動不切；loadFingerprint 為 null（套用 reset 後）時非真空就算有改", async () => {
+  it("no base and vacuum: auto does not cut; when loadFingerprint is null (after an apply reset) a non-vacuum document counts as changed", async () => {
     const s = await setup();
     const vacuum = new Y.Doc();
     await s.load(vacuum);
@@ -174,17 +174,17 @@ describe("cutIfDirty／isDirty", () => {
     expect(await t.svc.cutIfDirty(t.note.id, doc, { kind: "auto" })).toMatchObject({ row: { seq: 1 } });
   });
 
-  it("暫時狀態（文件沒載入）：沒有基底時恆不 dirty、自動不切；手動照建；不進 Map", async () => {
+  it("transient state (document not loaded): with no base never dirty and auto does not cut; manual still creates; not put in the Map", async () => {
     const s = await setup();
     const doc = paraDoc(["沒載入"]);
     expect(await s.svc.isDirty(s.note.id, doc, doc)).toBe(false);
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto", transient: doc })).toBeNull();
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "manual", name: "里程碑", transient: doc })).toMatchObject({ upgraded: false, row: { seq: 1, kind: "manual", name: "里程碑" } });
     expect(s.svc.debugState(s.note.id)).toBeUndefined();
-    expect(await s.svc.isDirty(s.note.id, doc, doc)).toBe(false); // 有基底了，與基底相同
+    expect(await s.svc.isDirty(s.note.id, doc, doc)).toBe(false); // a base exists now, same as the base
   });
 
-  it("base_seq 四況：首版 null；基底＝最新 → null；基底≠最新（套用舊版後）→ 填基底；之後回到 null", async () => {
+  it("four base_seq cases: first version null; base = latest -> null; base != latest (after applying an old version) -> filled with the base; then back to null", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -198,12 +198,12 @@ describe("cutIfDirty／isDirty", () => {
     const v1doc = new Y.Doc();
     Y.applyUpdate(v1doc, v1!.ydoc);
     await s.db.update(notes).set({ versionBaseSeq: 1, versionBaseFingerprint: vfp(v1doc) }).where(eq(notes.id, s.note.id));
-    s.svc.endApply(s.note.id, { seq: 1, fingerprint: vfp(v1doc) }); // 模擬套用 v1 後（內容細節由其他測試驗）
+    s.svc.endApply(s.note.id, { seq: 1, fingerprint: vfp(v1doc) }); // simulates after applying v1 (content details are verified by other tests)
     expect(await cut("3")).toMatchObject({ row: { seq: 3, baseSeq: 1 } });
     expect(await cut("4")).toMatchObject({ row: { seq: 4, baseSeq: null } });
   });
 
-  it("#272 案 23：新列 base_version_id 與 base_seq 同填／同 NULL；notes.version_base_version_id 跟著切版、setVersionBase、clearVersionBase、reset", async () => {
+  it("#272: a new row's base_version_id and base_seq are both filled or both NULL; notes.version_base_version_id follows cuts, setVersionBase, clearVersionBase and reset", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -220,12 +220,12 @@ describe("cutIfDirty／isDirty", () => {
     Y.applyUpdate(v1doc, v1!.ydoc);
     expect(await setVersionBase(s.db, s.note.id, 1, vfp(v1doc), v1!.id)).toBe(true);
     expect(await baseVersionIdOf(s.db, s.note.id)).toBe(v1!.id);
-    s.svc.endApply(s.note.id, { seq: 1, fingerprint: vfp(v1doc) }); // 模擬套用 v1 後
+    s.svc.endApply(s.note.id, { seq: 1, fingerprint: vfp(v1doc) }); // simulates after applying v1
     await cut("3");
     const v3 = (await versionsOf(s.db, s.note.id))[2]!;
     expect([v3.baseSeq, v3.baseVersionId]).toEqual([1, v1!.id]);
     expect(await baseVersionIdOf(s.db, s.note.id)).toBe(v3.id);
-    // 切版當下基底列已不存在 → base_seq 與 base_version_id 都不填
+    // The base row no longer exists at cut time -> neither base_seq nor base_version_id is filled.
     await s.db.update(notes).set({ versionBaseSeq: 1, versionBaseFingerprint: vfp(v1doc), versionBaseVersionId: v1!.id }).where(eq(notes.id, s.note.id));
     s.svc.endApply(s.note.id, { seq: 1, fingerprint: vfp(v1doc) });
     await s.db.delete(noteVersions).where(sql`note_versions.note_id = ${s.note.id} and note_versions.seq = 1`);
@@ -239,7 +239,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(await baseVersionIdOf(s.db, s.note.id)).toBeNull();
   });
 
-  it("setVersionBase 的 EXISTS 同時比對 id——seq 被重用（同 seq 換了一列）後，過期的 (seq, 舊 versionId) 不設基底", async () => {
+  it("the EXISTS in setVersionBase also compares id - after seq is reused (a different row with the same seq), a stale (seq, old versionId) does not set the base", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -250,14 +250,14 @@ describe("cutIfDirty／isDirty", () => {
     const [v1, v2] = await versionsOf(s.db, s.note.id);
     const before = await baseVersionIdOf(s.db, s.note.id);
     expect(before).toBe(v2!.id);
-    // 模擬重置後 seq=1 被重用：同 seq 的列換了新 id
+    // Simulates seq=1 reused after a reset: the row with the same seq gets a new id.
     await s.db.update(noteVersions).set({ id: "00000000-0000-4000-8000-000000000001" }).where(eq(noteVersions.id, v1!.id));
     expect(await setVersionBase(s.db, s.note.id, 1, "fp", v1!.id)).toBe(false);
     expect(await baseVersionIdOf(s.db, s.note.id)).toBe(before);
     expect(await setVersionBase(s.db, s.note.id, 1, "fp", "00000000-0000-4000-8000-000000000001")).toBe(true);
   });
 
-  it("刪掉最新的非基底版後再切——依剩下的最新判斷，配號不重用", async () => {
+  it("cutting after deleting the latest non-base version - judged by the latest remaining, numbers are not reused", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -275,7 +275,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto" })).toMatchObject({ row: { seq: 4, baseSeq: null } });
   });
 
-  it("交易內基底指紋或空間鍵與記憶體不同 → null、不建列、以交易內的值回寫狀態", async () => {
+  it("base fingerprint or space key inside the transaction differs from memory -> null, no row created, state written back with the in-transaction values", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -292,7 +292,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(await versionsOf(s.db, s.note.id)).toEqual([]);
   });
 
-  it("手動且內容與基底相同 → upgraded:true，基底那版轉手動、套名稱，不新增列；名稱 null 保留原名", async () => {
+  it("manual with content equal to the base -> upgraded:true, the base version becomes manual and gets the name, no new row; name null keeps the old name", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -301,10 +301,10 @@ describe("cutIfDirty／isDirty", () => {
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "manual", name: "定稿" })).toMatchObject({ upgraded: true, row: { seq: 1, kind: "manual", name: "定稿" } });
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "manual", name: null })).toMatchObject({ upgraded: true, row: { seq: 1, name: "定稿" } });
     expect(await versionsOf(s.db, s.note.id)).toHaveLength(1);
-    expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto" })).toBeNull(); // 自動遇到相同 → null
+    expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto" })).toBeNull();
   });
 
-  it("applying／auto-disabled 只擋自動；isDirty 不看 applying", async () => {
+  it("applying / auto-disabled block only auto; isDirty ignores applying", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -322,7 +322,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "manual" })).toMatchObject({ row: { seq: 2 } });
   });
 
-  it("beginApply 在載入前就記下：noteLoaded 取 applyingSet 的值", async () => {
+  it("beginApply is recorded before loading: noteLoaded takes the value of applyingSet", async () => {
     const s = await setup();
     s.svc.beginApply(s.note.id);
     await s.load(paraDoc(["a"]));
@@ -331,7 +331,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(s.svc.debugState(s.note.id)!.applying).toBe(false);
   });
 
-  it("筆記已刪（暫時狀態與 Map 狀態兩形）→ { skipped: note-deleted }", async () => {
+  it("note deleted (both the transient and the Map state) -> { skipped: note-deleted }", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -343,7 +343,7 @@ describe("cutIfDirty／isDirty", () => {
     expect(await s.svc.cutIfDirty(s.note.id, doc, { kind: "manual", transient: doc })).toEqual({ skipped: "note-deleted" });
   });
 
-  it("文件已載入但 Map 沒條目（空窗期）→ uninitialized，即使帶了 transient", async () => {
+  it("document loaded but no Map entry (the gap) -> uninitialized, even with transient given", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     s.host.docs.set(s.note.id, doc);
@@ -351,8 +351,8 @@ describe("cutIfDirty／isDirty", () => {
   });
 });
 
-describe("relocated／forget", () => {
-  it("relocated：載入中的筆記立刻有 initialized:false 條目，重跑 noteLoaded 後以新空間初始化；沒載入的只清掉", async () => {
+describe("relocated / forget", () => {
+  it("relocated: a loaded note at once has an initialized:false entry and is initialized with the new space after noteLoaded reruns; one that is not loaded is only cleared", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -369,8 +369,8 @@ describe("relocated／forget", () => {
   });
 });
 
-describe("docFor／currentOf", () => {
-  it("沒載入：讀 note_states 當暫時文件；current 帶 baseSeq、nextSeq、dirty、autoEnabled（讀 DB）", async () => {
+describe("docFor / currentOf", () => {
+  it("not loaded: reads note_states as a transient document; current carries baseSeq, nextSeq, dirty, autoEnabled (read from the DB)", async () => {
     const s = await setup();
     const stored = paraDoc(["DB 裡的"]);
     await seedDoc(s.db, s.note.id, stored);
@@ -380,7 +380,7 @@ describe("docFor／currentOf", () => {
     expect(await s.svc.currentOf(s.note.id)).toEqual({ baseSeq: null, dirty: false, nextSeq: 1, autoEnabled: true });
   });
 
-  it("載入中：用活文件；autoEnabled 取這個載入週期的值（DB 改了不影響）", async () => {
+  it("loaded: uses the live document; autoEnabled takes the value of this load cycle (a DB change does not affect it)", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -391,15 +391,15 @@ describe("docFor／currentOf", () => {
     expect((await s.svc.currentOf(s.note.id))!.dirty).toBe(true);
   });
 
-  it("筆記不存在 → currentOf null", async () => {
+  it("note does not exist -> currentOf null", async () => {
     const s = await setup();
     await s.db.delete(notes).where(eq(notes.id, s.note.id));
     expect(await s.svc.currentOf(s.note.id)).toBeNull();
   });
 });
 
-describe("pruneNote／sweep", () => {
-  it("切版後清除：依 F／D 刪自動版本，留手動、基底、最新；改名成手動的不刪", async () => {
+describe("pruneNote / sweep", () => {
+  it("prune after a cut: deletes automatic versions by F/D, keeps manual, base and latest; one renamed to manual is not deleted", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -407,14 +407,14 @@ describe("pruneNote／sweep", () => {
       editPara(doc, 0, t => t.insert(0, ch));
       await s.svc.cutIfDirty(s.note.id, doc, { kind: "auto" });
     }
-    // 把 v1–v3 推到 60 天前的同一週；v2 改名成手動。
+    // Push v1-v3 to the same week 60 days ago; v2 is renamed to manual.
     await s.db.execute(sql`update note_versions set created_at = timestamptz '2026-08-01T10:00:00Z' + (seq || ' minutes')::interval where note_id = ${s.note.id} and seq <= 3`);
     await s.db.update(noteVersions).set({ kind: "manual", name: "留" }).where(sql`note_versions.note_id = ${s.note.id} and note_versions.seq = 2`);
     expect(await s.svc.pruneNote(s.note.id, new Date("2026-10-09T12:00:00Z"))).toBe(1);
-    expect((await versionsOf(s.db, s.note.id)).map(v => v.seq)).toEqual([2, 3, 4]); // v1 與 v3 同週、v3 較新
+    expect((await versionsOf(s.db, s.note.id)).map(v => v.seq)).toEqual([2, 3, 4]); // v1 and v3 in the same week, v3 newer
   });
 
-  it("sweep：游標續掃、一輪 0 筆就歸零（批次 100；250 篇的版本另有案驗）", async () => {
+  it("sweep: the cursor continues, 0 rows in a round resets it (batch 100; the 250-note case is verified elsewhere)", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -426,20 +426,20 @@ describe("pruneNote／sweep", () => {
     const now = new Date("2026-10-09T12:00:00Z");
     expect(await s.svc.sweep(now)).toBe(1);
     expect((await versionsOf(s.db, s.note.id)).map(v => v.seq)).toEqual([2, 3]);
-    expect(await s.svc.sweep(now)).toBe(0); // 游標在這篇之後 → 0 筆 → 游標歸零
-    // 歸零後重掃：v2 仍是「自動且早於界線」，所以這篇又被掃到（回 1＝掃到幾篇，不是刪幾列）；v2 是它那週唯一的候選，不刪。
+    expect(await s.svc.sweep(now)).toBe(0); // cursor is after this note -> 0 rows -> cursor resets
+    // After the reset the rescan: v2 is still "automatic and older than the cutoff", so this note is scanned again (a return of 1 = notes scanned, not rows deleted); v2 is the only candidate of its week, so it is not deleted.
     expect(await s.svc.sweep(now)).toBe(1);
     expect((await versionsOf(s.db, s.note.id)).map(v => v.seq)).toEqual([2, 3]);
   });
 });
 
-describe("#272 待切寫入（noteStored）", () => {
+describe("#272 pending writes (noteStored)", () => {
   const human = (userId: string) => ({ userId });
   const asJson = (userId: string, agentLabel: string | null = null) => ({ user_id: userId, agent_label: agentLabel });
   const direct = (source: "ai-edit" | "version-apply", userId: string, agentLabel: string | null, applied: boolean) =>
     ({ source, userId, tokenId: null, agentLabel, applied });
 
-  it("案 1：人落盤、指紋改變 → version_pending_at＝注入的 now、editors＝[人]、ref＝載入時指紋、緩衝清空、不出版", async () => {
+  it("human persist with a changed fingerprint -> version_pending_at = the injected now, editors = [human], ref = fingerprint at load, buffer cleared, nothing published", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -452,7 +452,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect(await versionsOf(s.db, s.note.id)).toEqual([]);
   });
 
-  it("案 2：同指紋再落盤 → version_pending_at 不變（零 DB）", async () => {
+  it("persist again with the same fingerprint -> version_pending_at unchanged (zero DB)", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -463,7 +463,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect((await pendingOf(s.db, s.note.id)).at).toEqual(new Date(T0));
   });
 
-  it("案 3：兩次落盤不同編輯者 → 先到先排、去重；跨 forget＋noteLoaded 同一人不重複", async () => {
+  it("two persists by different editors -> first come first served, deduplicated; across forget + noteLoaded the same person is not repeated", async () => {
     const s = await setup();
     const u2 = await seedUser(s.db);
     const doc = paraDoc(["a"]);
@@ -486,7 +486,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect(await pendingOf(s.db, s.note.id)).toMatchObject({ at: new Date(T0 + 2000), editors: [asJson(s.u.id), asJson(u2.id)] });
   });
 
-  it("案 4：ai-edit applied → 待切 editors 含 {userId, agentLabel}、不出版；applied=false 同人的落盤（寫入者不進名單）", async () => {
+  it("ai-edit applied -> pending editors contain {userId, agentLabel}, nothing published; a persist by the same person with applied=false (the writer does not enter the list)", async () => {
     const s = await setup();
     const u2 = await seedUser(s.db);
     const doc = paraDoc(["a"]);
@@ -501,7 +501,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect((await pendingOf(s.db, s.note.id)).editors).toEqual([asJson(s.u.id, "Claude"), asJson(u2.id)]);
   });
 
-  it("案 5：version-apply applied → 清待切、套用後的內容不算一次變動；被拒（applied=false）同人的落盤", async () => {
+  it("version-apply applied -> pending cleared, post-apply content does not count as a change; a persist by the same person when rejected (applied=false)", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -519,7 +519,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect((await pendingOf(s.db, s.note.id)).at).toEqual(new Date(T0));
   });
 
-  it("案 5（reset 子案）：beginApply → endApply(id, {reset}) 之後、外層 endApply(id) 之前，到期的待切 → skipped: applying、0 版；外層 endApply(id) 之後才切", async () => {
+  it("reset sub-case: after beginApply -> endApply(id, {reset}) and before the outer endApply(id), a due pending -> skipped: applying, 0 versions; cut only after the outer endApply(id)", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -537,7 +537,7 @@ describe("#272 待切寫入（noteStored）", () => {
     expect(await versionsOf(s.db, s.note.id)).toHaveLength(1);
   });
 
-  it("案 6：自動關閉 → 不待切、緩衝保留（留給手動儲存）；未初始化 → 不待切", async () => {
+  it("auto disabled -> not pending, buffer kept (left for manual save); uninitialized -> not pending", async () => {
     const s = await setup();
     await s.db.update(users).set({ autoVersions: false }).where(eq(users.id, s.u.id));
     const doc = paraDoc(["a"]);
@@ -551,13 +551,13 @@ describe("#272 待切寫入（noteStored）", () => {
     const t = await setup();
     const d2 = paraDoc(["b"]);
     t.host.docs.set(t.note.id, d2);
-    t.svc.noteChanged(t.note.id, { userId: t.u.id, agentLabel: null }); // 建出 initialized:false 條目
+    t.svc.noteChanged(t.note.id, { userId: t.u.id, agentLabel: null }); // builds an initialized:false entry
     editPara(d2, 0, x => x.insert(0, "y"));
     await t.svc.noteStored(t.note.id, d2, human(t.u.id));
     expect(await pendingOf(t.db, t.note.id)).toEqual(NO_PENDING);
   });
 
-  it("案 8：markPending 丟錯 → noteStored 往上拋（server.ts 吞掉只 warn）、lastStoredFingerprint 不前進 → 下一次落盤補寫", async () => {
+  it("markPending throws -> noteStored throws upward (server.ts swallows it and only warns), lastStoredFingerprint does not advance -> the next persist writes it again", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
@@ -572,16 +572,16 @@ describe("#272 待切寫入（noteStored）", () => {
     expect((await pendingOf(s.db, s.note.id)).at).toEqual(new Date(T0));
   });
 
-  it("案 9：relocated 重跑的空窗內落盤 → 下一次落盤算成變動（lastStoredFingerprint 取自 await 之前）", async () => {
+  it("persist during the gap while relocated reruns -> the next persist counts as a change (lastStoredFingerprint is taken before the await)", async () => {
     const s = await setup();
     const doc = paraDoc(["a"]);
     await s.load(doc);
-    s.svc.relocated([s.note.id]); // 同步：forget＋空白條目＋重跑 noteLoaded（同步段已取好 actual）
-    editPara(doc, 0, t => t.insert(0, "x")); // 空窗內的修改
-    await s.svc.noteStored(s.note.id, doc, human(s.u.id)); // 條目未初始化 → 不寫
+    s.svc.relocated([s.note.id]); // synchronous: forget + blank entry + rerun noteLoaded (the sync part already took `actual`)
+    editPara(doc, 0, t => t.insert(0, "x")); // a change during the gap
+    await s.svc.noteStored(s.note.id, doc, human(s.u.id)); // entry not initialized -> not written
     expect(await pendingOf(s.db, s.note.id)).toEqual(NO_PENDING);
     await expect.poll(() => s.svc.debugState(s.note.id)?.initialized).toBe(true);
-    await s.svc.noteStored(s.note.id, doc, human(s.u.id)); // 沒有新修改，但空窗那次沒被記到
+    await s.svc.noteStored(s.note.id, doc, human(s.u.id)); // no new change, but the one during the gap was not recorded
     expect((await pendingOf(s.db, s.note.id)).at).toEqual(new Date(T0));
   });
 });

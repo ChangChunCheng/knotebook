@@ -6,17 +6,17 @@ import { runMigrations } from "../src/db/migrate.js";
 import { seedAiActions } from "../src/db/seed-ai.js";
 import { aiActions } from "../src/db/schema.js";
 
-describe("seedAiActions（內建五動作 idempotent seed，#263）", () => {
-  it("跑兩次仍是五筆，且 id 恰為 BUILTIN_ACTION_IDS", async () => {
-    const { db } = await freshDb(); // freshDb() 內部 runMigrations() 已跑過一次 seed
-    await seedAiActions(db); // 第二次
+describe("seedAiActions (idempotent seed of the five builtin actions, #263)", () => {
+  it("running twice still yields five rows whose ids are exactly BUILTIN_ACTION_IDS", async () => {
+    const { db } = await freshDb(); // freshDb() already ran the seed once via runMigrations()
+    await seedAiActions(db);
 
     const rows = await db.select().from(aiActions);
     expect(rows.map((r) => r.id).sort()).toEqual([...BUILTIN_ACTION_IDS].sort());
     expect(rows).toHaveLength(5);
   });
 
-  it("name/applyMode 照內建表：五個內建動作新安裝一律 preview（#263 後續：Rewrite/Translate 由 direct 改 preview）", async () => {
+  it("name/applyMode follow the builtin table: the five builtin actions always install as preview on a new install (#263 follow-up: Rewrite/Translate changed from direct to preview)", async () => {
     const { db } = await freshDb();
     const rows = await db.select().from(aiActions);
     const byName = new Map(rows.map((r) => [r.name, r]));
@@ -29,7 +29,7 @@ describe("seedAiActions（內建五動作 idempotent seed，#263）", () => {
     expect(byName.size).toBe(5);
   });
 
-  it("#263 Instruct 預設值：system prompt、三佔位符 template（instruction／focus／text 各一行）、preview、sortOrder 4、modelId null、啟用", async () => {
+  it("#263 Instruct defaults: system prompt, a template with three placeholders (instruction/focus/text, one line each), preview, sortOrder 4, modelId null, enabled", async () => {
     const { db } = await freshDb();
     const [row] = await db.select().from(aiActions).where(eq(aiActions.id, INSTRUCT_ACTION_ID));
     expect(row).toMatchObject({
@@ -44,21 +44,21 @@ describe("seedAiActions（內建五動作 idempotent seed，#263）", () => {
     });
   });
 
-  it("admin 改動（Rewrite 的 systemPrompt＋停用、Instruct 的 template）後重跑 seed 不覆寫、不復活", async () => {
+  it("re-running the seed after admin edits (Rewrite's systemPrompt + disabled, Instruct's template) neither overwrites nor revives", async () => {
     const { db } = await freshDb();
     const [rewrite] = await db.select().from(aiActions).where(eq(aiActions.name, "Rewrite"));
     expect(rewrite).toBeDefined();
 
-    // applyMode 也算：既有站台（或 admin）留著的 direct 不會被新預設 preview 蓋掉（升級不改既有站台的值）。
+    // applyMode counts too: an existing direct (left by an existing site or admin) isn't overwritten by the new default preview (upgrades don't change existing sites' values).
     await db
       .update(aiActions)
       .set({ systemPrompt: "已由 admin 改寫過的 system prompt", enabled: false, applyMode: "direct" })
       .where(eq(aiActions.id, rewrite!.id));
     await db.update(aiActions).set({ userTemplate: "{{text}} / {{instruction}}" }).where(eq(aiActions.id, INSTRUCT_ACTION_ID));
 
-    // 重跑 seed（模擬下次啟動的 runMigrations）——ON CONFLICT (id) DO NOTHING 不應覆寫。
+    // Re-run the seed (simulates the next startup's runMigrations) - ON CONFLICT (id) DO NOTHING must not overwrite.
     await seedAiActions(db);
-    await runMigrations(db); // 連 migrate 整條路徑也重跑一次，確保接縫本身也是 idempotent
+    await runMigrations(db); // also re-run the whole migrate path, to make sure the seed call site is idempotent too
 
     const [afterRewrite] = await db.select().from(aiActions).where(eq(aiActions.id, rewrite!.id));
     expect(afterRewrite).toMatchObject({ systemPrompt: "已由 admin 改寫過的 system prompt", enabled: false, applyMode: "direct" });

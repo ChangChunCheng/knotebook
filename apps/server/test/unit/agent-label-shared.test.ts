@@ -1,10 +1,10 @@
-/** #247：派生規則只有 shared 一份——server 必須重新匯出同一個函式與 regex（不是複製一份）。 */
+/** #247: the derivation rule lives only in shared; the server must re-export the same function and regex, not a copy. */
 import { describe, expect, it } from "vitest";
 import * as shared from "@knotebook/shared";
 import { AGENT_LABEL_RE, deriveAgentLabel } from "../../src/auth/agent-label.js";
 
-describe("agent label 派生規則搬到 shared", () => {
-  it("server 的 deriveAgentLabel／AGENT_LABEL_RE 與 shared 是同一個參考", () => {
+describe("agent label derivation rule lives in shared", () => {
+  it("server's deriveAgentLabel/AGENT_LABEL_RE are the same references as shared's", () => {
     expect(typeof shared.deriveAgentLabel).toBe("function");
     expect(deriveAgentLabel).toBe(shared.deriveAgentLabel);
     expect(AGENT_LABEL_RE).toBe(shared.AGENT_LABEL_RE);

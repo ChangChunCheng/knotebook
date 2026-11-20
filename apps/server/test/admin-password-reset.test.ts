@@ -1,7 +1,4 @@
-/**
- * #286 管理員端：產生／取消重設密碼連結、`AdminUserDto` 兩欄、log 與錯誤遮蔽、清理掛點。
- * 停用連帶撤銷在 `admin-users.test.ts` 的停用段。
- */
+/** Revocation on disable is covered in the disable section of `admin-users.test.ts`. */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -18,10 +15,10 @@ import { hashToken } from "../src/auth/api-token.js";
 const PASSWORD = "correct-horse-battery";
 const TOKEN_RE = /^knbp_[A-Za-z0-9_-]{43}$/;
 const REDACTED = "產生重設密碼連結時發生非預期的資料庫錯誤（錯誤本體已遮蔽）";
-/** 同 `admin-ai-log-redaction.test.ts:27`：DrizzleQueryError 的 params 落進 JSON log 的兩形。 */
+/** Same as `admin-ai-log-redaction.test.ts`: the two shapes in which DrizzleQueryError params reach the JSON log. */
 const PARAMS_LEAK = /params: |"params"\s*:/;
 
-/** 以真 `hashPassword` 建有密碼的帳號（比照 `admin-users.test.ts` 的 insertUser）。 */
+/** Account with a password built via the real `hashPassword` (like insertUser in `admin-users.test.ts`). */
 async function userWithPassword(db: Db, over: { disabled?: boolean; email?: string } = {}) {
   const tag = randomUUID().slice(0, 12);
   const [u] = await db
@@ -37,7 +34,7 @@ async function userWithPassword(db: Db, over: { disabled?: boolean; email?: stri
   return u!;
 }
 
-/** pino 的 `logMethod` hook（結構化欄位）＋ stream（整份輸出字串）兩路一起收。 */
+/** Collects both the `logMethod` hook (structured fields) and the stream (whole output string). */
 function logs() {
   const lines: Array<{ msg?: string; obj: Record<string, unknown> }> = [];
   const out: string[] = [];
@@ -86,7 +83,7 @@ async function linkById(db: Db, id: string) {
   return row!;
 }
 
-/** 把連結整列推回過去（同時推 `created_at`，守住 `expiry_chk`）。 */
+/** Pushes the whole link row into the past (including `created_at`, to keep `expiry_chk` satisfied). */
 async function expireLink(db: Db, id: string) {
   await db.execute(sql`update one_time_links set created_at = now() - interval '3 hours', expires_at = now() - interval '1 hour' where id = ${id}`);
 }
@@ -96,7 +93,7 @@ async function disablePasswordLogin(db: Db) {
 }
 
 describe("POST /api/admin/users/:id/password-reset", () => {
-  it("G1：201 只回 token／expiresAt；DB 一列只存雜湊、時效＝expiresInHours", async () => {
+  it("201 returns only token/expiresAt; the DB row stores only the hash, lifetime = expiresInHours", async () => {
     const { app, db, admin, cookies } = await setup();
     const target = await userWithPassword(db);
     const res = await issue(app, cookies, target.id, { expiresInHours: 3 });
@@ -119,10 +116,10 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     ["0", { expiresInHours: 0 }],
     ["25", { expiresInHours: 25 }],
     ["1.5", { expiresInHours: 1.5 }],
-    ["字串 \"1\"", { expiresInHours: "1" }],
-    ["空物件", {}],
-    ["多欄", { expiresInHours: 1, extra: 1 }],
-  ])("G2：body %s → 400 invalid_body、不插列", async (_name, payload) => {
+    ["string \"1\"", { expiresInHours: "1" }],
+    ["empty object", {}],
+    ["extra field", { expiresInHours: 1, extra: 1 }],
+  ])("body %s -> 400 invalid_body, no row inserted", async (_name, payload) => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     const res = await issue(app, cookies, target.id, payload);
@@ -131,14 +128,14 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(await allLinks(db)).toHaveLength(0);
   });
 
-  it("G2：邊界 1 與 24 → 201", async () => {
+  it("boundaries 1 and 24 -> 201", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id, { expiresInHours: 1 })).statusCode).toBe(201);
     expect((await issue(app, cookies, target.id, { expiresInHours: 24 })).statusCode).toBe(201);
   });
 
-  it("G3：停用 409 user_disabled；無密碼 409 password_not_set；不存在／非 uuid 404；都不插列", async () => {
+  it("disabled 409 user_disabled; no password 409 password_not_set; nonexistent/non-uuid 404; no row inserted in any case", async () => {
     const { app, db, cookies } = await setup();
     const disabled = await userWithPassword(db, { disabled: true });
     const res1 = await issue(app, cookies, disabled.id);
@@ -161,14 +158,14 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(await allLinks(db)).toHaveLength(0);
   });
 
-  it("G3 回歸：大寫 UUID → 201、恰插一列", async () => {
+  it("regression: uppercase UUID -> 201, exactly one row inserted", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id.toUpperCase())).statusCode).toBe(201);
     expect(await allLinks(db)).toHaveLength(1);
   });
 
-  it("G4：帳密有效值關 → 合法目標與不存在的 uuid 都 403；非 uuid 404；壞 body 400；不插列", async () => {
+  it("effective password login value off -> valid target and nonexistent uuid both 403; non-uuid 404; bad body 400; no row inserted", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     await disablePasswordLogin(db);
@@ -185,14 +182,14 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(await allLinks(db)).toHaveLength(0);
   });
 
-  it("G4：PASSWORD_LOGIN_FORCE_ENABLE＋DB 關閉 → 201", async () => {
+  it("PASSWORD_LOGIN_FORCE_ENABLE + DB off -> 201", async () => {
     const { app, db, cookies } = await setup({ config: { ...testConfig, passwordLoginForceEnable: true } });
     const target = await userWithPassword(db);
     await disablePasswordLogin(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
   });
 
-  it("G5：連產兩支 → 第一支撤銷、第二支有效；log 的 replaced 依序 0、1", async () => {
+  it("generating two in a row -> the first is revoked, the second valid; log's replaced is 0, then 1", async () => {
     const { app, db, cookies, log } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
@@ -204,7 +201,7 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(log.lines.filter(l => l.msg === "產生重設密碼連結").map(l => l.obj.replaced)).toEqual([0, 1]);
   });
 
-  it("G7：產生不影響現有登入與密碼（cookie 仍有效、舊密碼仍可登入、token_version 不變）", async () => {
+  it("generating doesn't affect the current login and password (cookie still valid, old password still logs in, token_version unchanged)", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: target.email, password: PASSWORD } });
@@ -221,7 +218,7 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(row!.tv).toBe(0);
   });
 
-  it("G9：產生 log 的欄位恰為五鍵；整份 log 不含 token 明文與雜湊", async () => {
+  it("generate log has exactly five keys; whole log contains neither the token plaintext nor the hash", async () => {
     const { app, db, admin, cookies, log } = await setup();
     const target = await userWithPassword(db);
     const res = await issue(app, cookies, target.id);
@@ -237,7 +234,7 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(out).not.toContain(hashToken(token));
   });
 
-  it("G10：交易的非預期 DB 錯誤 → 500，log 遮蔽（無 params、無 64 位十六進位）", async () => {
+  it("unexpected DB error in the transaction -> 500, log redacted (no params, no 64-digit hex)", async () => {
     const { app, db, cookies, log } = await setup();
     const target = await userWithPassword(db);
     await db.execute(sql.raw("ALTER TABLE one_time_links ADD CONSTRAINT t286_block CHECK (false) NOT VALID"));
@@ -249,7 +246,7 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(out).not.toMatch(/[0-9a-f]{64}/);
   });
 
-  it("G11：產生成功後機會性清理 30 天前結束的舊列", async () => {
+  it("after a successful generate, old rows that ended more than 30 days ago are cleaned up opportunistically", async () => {
     const { app, db, cookies } = await setup();
     const other = await userWithPassword(db);
     const target = await userWithPassword(db);
@@ -274,9 +271,9 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(gone).toBe(true);
   });
 
-  // 產生先鎖 users 列。沒有這把鎖時，產生讀到「未停用」後停用才 commit，INSERT 的 FK 只取 KEY SHARE
-  // 不被擋 → 停用帳號留下一支有效連結（重新啟用即可用）。
-  it("G12：產生與停用並發——raw client 持 users 列鎖時停用，產生被擋，放行後 409 user_disabled、不插列", async () => {
+  // Generating locks the users row first. Without that lock, if generation reads "not disabled" and the disable commits afterwards,
+  // the INSERT's FK takes only KEY SHARE and isn't blocked -> a disabled account keeps a valid link (usable once re-enabled).
+  it("generate vs disable concurrency: raw client holds the users row lock while disabling, generate is blocked, then 409 user_disabled and no row after release", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     const client = await db.$client.connect();
@@ -297,10 +294,10 @@ describe("POST /api/admin/users/:id/password-reset", () => {
     expect(await allLinks(db)).toHaveLength(0);
   });
 
-  // 同一人並發產生兩支：users 列鎖讓兩發排隊，後一發把前一支標為取代，不撞 partial unique index。
-  // 交錯：raw client 以 SHARE MODE 鎖住 one_time_links，兩發都卡在撤銷那句之前——鎖是 NO KEY UPDATE 時第二發卡在 users 列；
-  // 鎖若弱成 FOR SHARE，兩發都會拿到列鎖、各自 INSERT，後到的撞 23505 → 500。
-  it("G13：同一人並發產生兩支 → 兩發都 201、最後恰一支有效", async () => {
+  // Same user generating two concurrently: the users row lock queues them and the later one marks the earlier as replaced, avoiding the partial unique index.
+  // Interleaving: a raw client takes SHARE MODE on one_time_links so both stop before the revoke statement - with a NO KEY UPDATE lock the second stops at the users row;
+  // if the lock were weakened to FOR SHARE both would get the row lock and each INSERT, and the later one would hit 23505 -> 500.
+  it("same user generating two concurrently -> both 201, exactly one valid at the end", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     const client = await db.$client.connect();
@@ -324,7 +321,7 @@ describe("POST /api/admin/users/:id/password-reset", () => {
 });
 
 describe("DELETE /api/admin/users/:id/password-reset", () => {
-  it("G6：204 撤銷；再取消 204；從未產生 204；不存在／非 uuid 404；log 三鍵", async () => {
+  it("204 revokes; cancelling again 204; never generated 204; nonexistent/non-uuid 404; log has three keys", async () => {
     const { app, db, admin, cookies, log } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
@@ -352,7 +349,7 @@ describe("DELETE /api/admin/users/:id/password-reset", () => {
     ]);
   });
 
-  it("G6：過期但未用的列也撤銷", async () => {
+  it("an expired but unused row is also revoked", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
@@ -362,7 +359,7 @@ describe("DELETE /api/admin/users/:id/password-reset", () => {
     expect((await linkById(db, link!.id)).revokedAt).not.toBeNull();
   });
 
-  it("G6：帳密關閉時取消照樣 204 且撤銷", async () => {
+  it("cancelling with password login off is still 204 and revokes", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
@@ -372,7 +369,7 @@ describe("DELETE /api/admin/users/:id/password-reset", () => {
     expect((await linkById(db, link!.id)).revokedAt).not.toBeNull();
   });
 
-  it("G6：DB 直接標停用的人 → 取消 204 且撤銷", async () => {
+  it("a user disabled directly in the DB -> cancel 204 and revokes", async () => {
     const { app, db, cookies } = await setup();
     const target = await userWithPassword(db);
     expect((await issue(app, cookies, target.id)).statusCode).toBe(201);
@@ -383,7 +380,7 @@ describe("DELETE /api/admin/users/:id/password-reset", () => {
   });
 });
 
-describe("AdminUserDto 的 hasPassword／passwordResetExpiresAt", () => {
+describe("hasPassword/passwordResetExpiresAt of AdminUserDto", () => {
   type Dto = { id: string; hasPassword: boolean; passwordResetExpiresAt: string | null };
 
   async function listed(app: FastifyInstance, cookies: Record<string, string>): Promise<Map<string, Dto>> {
@@ -392,7 +389,7 @@ describe("AdminUserDto 的 hasPassword／passwordResetExpiresAt", () => {
     return new Map((res.json() as Dto[]).map(u => [u.id, u]));
   }
 
-  it("GET／PATCH storage-plan 兩種回應；過期與撤銷 → null；回應不含 token 或雜湊", async () => {
+  it("both GET/PATCH storage-plan responses; expired and revoked -> null; response carries no token or hash", async () => {
     const { app, db, cookies } = await setup();
     const a = await userWithPassword(db);
     const b = await userWithPassword(db);
@@ -411,7 +408,7 @@ describe("AdminUserDto 的 hasPassword／passwordResetExpiresAt", () => {
     expect(list.get(b.id)).toMatchObject({ hasPassword: true, passwordResetExpiresAt: null });
     expect(list.get(c.id)).toMatchObject({ hasPassword: false, passwordResetExpiresAt: null });
 
-    // RETURNING 的關聯（drizzle 單表 RETURNING 去表名的雷）：有效連結時 PATCH 回應也要帶到期時間。
+    // RETURNING relation (drizzle's single-table RETURNING drops the table name): with a valid link the PATCH response must also carry the expiry.
     const [{ id: planId }] = (await db.execute<{ id: string }>(sql`select id from storage_plans limit 1`)).rows;
     const patched = await app.inject({ method: "PATCH", url: `/api/admin/users/${a.id}/storage-plan`, cookies, payload: { planId } });
     expect(patched.statusCode).toBe(200);

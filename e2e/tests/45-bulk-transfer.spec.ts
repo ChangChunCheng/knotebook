@@ -4,26 +4,27 @@ import { expect, test, type APIRequestContext, type BrowserContext, type Page } 
 import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs, randomEmail } from "./helpers.js";
 
 /**
- * bulk transfer（MCP 批次讀寫）六案：真瀏覽器 A 開著筆記時，agent 經 bulk 權杖下載、寫回、整包匯出。
+ * Bulk transfer (MCP batch read/write), six cases: while browser user A has a note open, the agent downloads, writes back and exports a whole bundle via a bulk token.
  *
- * 隔離：
- * - **專用使用者**（`createUserViaInvite`）：不用 ADMIN——ADMIN 有前面各檔留下的大量筆記，額度（`transferExport` 每人每小時 10 次、
- *   `contentRead` 每人每分鐘 120 次）也是 per user。**整檔只建一支 PAT**（notes:read notes:write＝設定頁的「Create and edit notes」）。
- * - 每案建自己的資料夾與筆記，**簽 bulk 權杖一律帶 `folder_id`**（範圍只含該案的筆記）；每案 `finally` 以 `DELETE /api/transfer/token`
- *   撤掉自己的權杖（一支 PAT 同時最多 3 張）。整檔只有 E5 打整包。標記字串一律隨機（重跑、髒疊不撞名）。
+ * Isolation:
+ * - A dedicated user (`createUserViaInvite`), not ADMIN: ADMIN has many notes left by earlier specs, and the limits (`transferExport` 10 per user per hour,
+ *   `contentRead` 120 per user per minute) are per user. One PAT for the whole file (notes:read notes:write = "Create and edit notes" in settings).
+ * - Each case creates its own folder and notes and signs the bulk token with `folder_id` (scope covers only that case's notes); each case revokes its own
+ *   token in `finally` with `DELETE /api/transfer/token` (one PAT can hold at most 3 tokens). Only E5 fetches the whole bundle. Marker strings are random (reruns and dirty stacks don't collide).
  *
- * 每案的順序寫死：① bulk 權杖單篇下載一次（拿 `base`）② A 在瀏覽器改 ③ 輪詢到 server 已有 A 的字 ④ `PUT`（E5 是整包）。
- * 規則改成「筆記動過就 409 note_changed」之後：E1–E3 的 ④ 改成預期 409；E1、E2 之後重新下載一次再寫回；E4 改成 ②③ 在 ① 之前。
- * ⚠ ③ **不准用 `GET /api/transfer/notes/:id`**：那支每呼叫一次就寫一列基底（每 (user, note) 只留 10 列，會把 ① 的基底擠掉）。
- *   改用 A 的 cookie 打 `GET /api/notes/:id/content`——`loadNoteDoc` 有 live doc 就 fork live（不讀落盤的 `note_states`）、不寫基底、
- *   cookie 讀者不 touch presence；吃 `contentRead`，所以間隔 400 ms。
+ * The step order of every case is fixed: (download) bulk-token single-note download once (gives `base`), (edit) A edits in the browser, (poll) poll until the server has A's text,
+ * (write) `PUT` (E5: the whole bundle). Since a note that was touched gets 409 note_changed: in E1-E3 the write is expected to be 409; after E1 and E2 download again before writing;
+ * in E4 the edit and the poll come before the download.
+ * Do not use `GET /api/transfer/notes/:id` for the poll: each call writes a base row (only 10 rows are kept per (user, note), which would push out the base from the download step).
+ * Use A's cookie on `GET /api/notes/:id/content` instead: `loadNoteDoc` forks the live doc when there is one (does not read the persisted `note_states`), writes no base,
+ * and a cookie reader does not touch presence; it spends `contentRead`, hence the 400 ms interval.
  *
- * E6（橫切）：每次 `goto` 筆記頁之後先等「Note title」標題框（lazy NotePage 的 fallback AppShell 會換殼），經 `openNote` 一處做掉。
- * 本檔不 reload：E1–E4 的「A 不重整就看到」就是靠這點成立。
- * 各案彼此獨立（不設 serial）：某案紅了，worker 重開時 `beforeAll` 會再建一個使用者與一支 PAT，後面的案照跑。
+ * After every `goto` of a note page wait for the "Note title" box (the lazy NotePage's fallback AppShell swaps shells); `openNote` does this in one place.
+ * This file never reloads: that is what lets E1-E4 assert that A sees the change without a refresh.
+ * Cases are independent (no serial): if one fails, the worker restarts and `beforeAll` creates another user and PAT, so later cases still run.
  *
- * ⚠ 畫面上的段落文字用 `editorBlocks` 讀（拿掉遠端游標的名牌）：寫回之後 agent 的游標名牌（`bn-collaboration-cursor__base`）
- *   插在它寫的那一段裡，`getByText(…, { exact: true })` 會因此找不到那一段（本機首跑實測）。
+ * Read paragraph text on screen with `editorBlocks` (strips remote cursor name tags): after a write-back the agent's cursor tag (`bn-collaboration-cursor__base`) sits
+ * inside the paragraph it wrote, so `getByText(..., { exact: true })` would not find that paragraph.
  */
 
 const POLL = { intervals: [400], timeout: 15_000 };
@@ -48,7 +49,6 @@ test.beforeAll(async ({ browser }) => {
   } finally {
     await adminCtx.close();
   }
-  // 桌面寬度的視窗（側欄固定顯示）。
   userCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   page = await userCtx.newPage();
   await loginAs(page, email, password);
@@ -60,7 +60,7 @@ test.beforeAll(async ({ browser }) => {
   const body = (await created.json()) as { id: string; token: string };
   pat = body.token;
   patId = body.id;
-  // 無 cookie 的 context：PAT 與 bulk 權杖的請求都從這裡發，cookie 不會替它們過認證。
+  // Cookie-less context: PAT and bulk-token requests are sent from here so cookies cannot authenticate them.
   anon = await browser.newContext();
 });
 
@@ -73,7 +73,6 @@ test.afterAll(async () => {
   }
 });
 
-/** 筆記頁 goto 之後：標題框（E6）→ 共編連上 → 編輯器掛上（可編輯＝已首次同步）。 */
 async function openNote(url: string): Promise<void> {
   await page.goto(url);
   await expect(page.getByRole("textbox", { name: "Note title" })).toBeVisible({ timeout: 15_000 });
@@ -83,7 +82,6 @@ async function openNote(url: string): Promise<void> {
 
 interface Case {
   noteId: string;
-  /** 筆記頁的網址（`/n/<owner>/<slug>`）。 */
   url: string;
   paras: string[];
   token: string;
@@ -92,8 +90,8 @@ interface Case {
 }
 
 /**
- * 一案的前置：個人空間根層建資料夾 → 在裡面建一篇 `n` 段的筆記（A 的 cookie）→ A 打開它 → 用 PAT 簽 bulk 權杖（帶 `folder_id`）。
- * 段落文字 `${label}-p${i}-${r}` 彼此不互為子字串（1–9 段）。
+ * Case setup: create a folder at the personal space root -> create a note with `n` paragraphs in it (A's cookie) -> A opens it -> sign a bulk token with the PAT (with `folder_id`).
+ * Paragraph texts `${label}-p${i}-${r}` are not substrings of one another (1-9 paragraphs).
  */
 async function setupCase(label: string, n: number, opts: { extra?: string; open?: boolean } = {}): Promise<Case> {
   const r = rand();
@@ -124,18 +122,17 @@ async function setupCase(label: string, n: number, opts: { extra?: string; open?
   return { noteId: dto.id, url, paras, token: sc.token, bulk: anon.request, auth: { Authorization: `Bearer ${sc.token}` } };
 }
 
-/** 每案 finally：撤掉這一案的 bulk 權杖（204）。清理失敗不得蓋掉原本的錯誤。 */
+/** Per-case finally: revokes this case's bulk token (204). A cleanup failure must not mask the original error. */
 async function revokeBulk(c: Case | undefined): Promise<void> {
   if (!c) return;
   try {
     const res = await c.bulk.delete(`${origin}/api/transfer/token`, { headers: c.auth });
     expect(res.status()).toBe(204);
   } catch {
-    // 盡力而為：上一個斷言若已失敗，這裡的錯誤不重要。
+    // Best effort: if an earlier assertion already failed, an error here doesn't matter.
   }
 }
 
-/** ① 單篇下載（寫一列基底）。每案至多兩次（E1、E2 被拒後重新下載）。 */
 async function download(c: Case): Promise<string> {
   const res = await c.bulk.get(`${origin}/api/transfer/notes/${c.noteId}`, { headers: c.auth });
   expect(res.status(), await res.text()).toBe(200);
@@ -146,7 +143,7 @@ async function download(c: Case): Promise<string> {
   return file;
 }
 
-/** ④ 寫回一篇（`write.curl` 的形：PUT、`text/markdown; charset=utf-8`、body＝整個檔）。 */
+/** Writes one note back; the request shape must match `write.curl` in `apps/server/src/mcp/tools/open-notes-as-files.ts` (PUT, `text/markdown; charset=utf-8`, body = the whole file). */
 async function writeBack(c: Case, file: string): Promise<Record<string, unknown>> {
   const res = await c.bulk.put(`${origin}/api/transfer/notes`, {
     headers: { ...c.auth, "Content-Type": "text/markdown; charset=utf-8" },
@@ -157,7 +154,6 @@ async function writeBack(c: Case, file: string): Promise<Record<string, unknown>
   return JSON.parse(text) as Record<string, unknown>;
 }
 
-/** 把檔案裡恰好一行 `old` 換成 `neu`（agent 改那一段）。 */
 function replaceLine(file: string, old: string, neu: string): string {
   const lines = file.split("\n");
   const hits = lines.flatMap((l, i) => (l === old ? [i] : []));
@@ -166,7 +162,6 @@ function replaceLine(file: string, old: string, neu: string): string {
   return lines.join("\n");
 }
 
-/** ③ 輪詢 server 的 live doc（A 的 cookie，不寫基底）直到 markdown 含全部 `needles`。 */
 async function pollServer(noteId: string, needles: string[]): Promise<string> {
   let md = "";
   await expect
@@ -184,8 +179,8 @@ async function pollServer(noteId: string, needles: string[]): Promise<string> {
 }
 
 /**
- * A 的畫面上主編輯器的頂層 block 文字（依序）。拿掉遠端游標的裝飾（名牌節點與它前後的 U+2060）再取文字，
- * 所以斷言比的是內容、不受名牌落在哪一段影響。
+ * Text of the main editor's top-level blocks on A's screen, in order. Strips remote-cursor decorations (name tag nodes and the U+2060 around them) before taking text,
+ * so assertions compare content regardless of which paragraph a name tag landed in.
  */
 async function editorBlocks(): Promise<string[]> {
   return editorLocator(page).evaluate(root =>
@@ -199,15 +194,14 @@ async function editorBlocks(): Promise<string[]> {
   );
 }
 
-/** A 不重整，畫面上的頂層 block 依序等於 `expected`。 */
 async function expectEditorBlocks(expected: string[], message: string): Promise<void> {
   await expect.poll(editorBlocks, { timeout: 15_000, message }).toEqual(expected);
 }
 
 /**
- * A 在某段（文字恰為 `para`）的段尾打字；`newParagraph`＝先 Enter 另起一段再打。
- * 游標經 `clickEndOfParagraph` 放：筆記剛打開時編輯器沒有焦點，點擊後 ProseMirror 的得焦計時器可能把 End 移好的游標拉回點擊處
- * （helpers 註解）；只等 PM 與 DOM 對齊不夠，字會打在段落中間。
+ * A types at the end of a paragraph whose text is exactly `para`; `newParagraph` presses Enter first to start a new paragraph.
+ * The caret is placed with `clickEndOfParagraph`: right after a note opens the editor has no focus, and after the click ProseMirror's focus timer can pull the caret that End moved
+ * back to the click point (see the helper's comment); waiting for PM and DOM to align is not enough, the text would land mid-paragraph.
  */
 async function typeAtEndOf(para: string, text: string, newParagraph = false): Promise<void> {
   await clickEndOfParagraph(page, editorLocator(page).getByText(para, { exact: true }));
@@ -215,7 +209,7 @@ async function typeAtEndOf(para: string, text: string, newParagraph = false): Pr
   await page.keyboard.type(text);
 }
 
-/** ④' 寫回、預期被拒：409 base_unavailable、reason note_changed（筆記動過就拒）。 */
+/** Write-back expected to be rejected: 409 base_unavailable, reason note_changed (a touched note is rejected). */
 async function writeBackRefused(c: Case, file: string): Promise<void> {
   const res = await c.bulk.put(`${origin}/api/transfer/notes`, {
     headers: { ...c.auth, "Content-Type": "text/markdown; charset=utf-8" },
@@ -226,22 +220,22 @@ async function writeBackRefused(c: Case, file: string): Promise<void> {
   expect((JSON.parse(text) as { error: { code: string; reason: string } }).error).toMatchObject({ code: "base_unavailable", reason: "note_changed" });
 }
 
-test("E1 A 在第 2 段打字後，agent 拿舊副本寫回 → 409、什麼都沒寫；重新下載後改第 5 段 → A 不重整就看到，第 2 段 A 打的字都在", async () => {
+test("E1 after A types in paragraph 2 the agent's stale copy is rejected with 409 and nothing is written; after downloading again and editing paragraph 5, A sees it without refreshing and A's text in paragraph 2 is intact", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   try {
     c = await setupCase("e1", 6);
     const [p1, p2, p3, p4, p5, p6] = c.paras as [string, string, string, string, string, string];
-    const stale = await download(c); // ①
+    const stale = await download(c); // (download)
     const aMark = `a-${rand()}`;
-    await typeAtEndOf(p2, ` ${aMark}`); // ②
-    await pollServer(c.noteId, [`${p2} ${aMark}`]); // ③
+    await typeAtEndOf(p2, ` ${aMark}`); // (edit)
+    await pollServer(c.noteId, [`${p2} ${aMark}`]); // (poll)
     const agentMark = `agent-${rand()}`;
-    await writeBackRefused(c, replaceLine(stale, p5, `${p5} ${agentMark}`)); // ④ 舊副本 → 409
+    await writeBackRefused(c, replaceLine(stale, p5, `${p5} ${agentMark}`)); // stale copy -> 409
     await pollServer(c.noteId, [`${p1}\n\n${p2} ${aMark}\n\n${p3}\n\n${p4}\n\n${p5}\n\n${p6}`]);
 
-    const file = await download(c); // ①' 重新下載（含 A 打的字）
-    const out = await writeBack(c, replaceLine(file, p5, `${p5} ${agentMark}`)); // ④'
+    const file = await download(c); // download again (includes A's text)
+    const out = await writeBack(c, replaceLine(file, p5, `${p5} ${agentMark}`)); // (write)
     expect(out).toMatchObject({ result: "applied", applied: 1, base: null });
     await expectEditorBlocks([p1, `${p2} ${aMark}`, p3, p4, `${p5} ${agentMark}`, p6], "A 不重整：第 5 段是 agent 的、第 2 段 A 打的字都在");
     await pollServer(c.noteId, [`${p1}\n\n${p2} ${aMark}\n\n${p3}\n\n${p4}\n\n${p5} ${agentMark}\n\n${p6}`]);
@@ -250,18 +244,18 @@ test("E1 A 在第 2 段打字後，agent 拿舊副本寫回 → 409、什麼都�
   }
 });
 
-test("E2 A 在第 3 段前插一段後，agent 拿舊副本改第 3 段 → 409；重新下載再改 → 插的段在、沒有存版", async () => {
+test("E2 after A inserts a paragraph before paragraph 3 the agent's stale copy editing paragraph 3 gets 409; after downloading again and editing, the inserted paragraph is kept and no version is saved", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   try {
     c = await setupCase("e2", 5);
     const [p1, p2, p3, p4, p5] = c.paras as [string, string, string, string, string];
-    const stale = await download(c); // ①
+    const stale = await download(c); // (download)
     const inserted = `a-inserted-${rand()}`;
-    await typeAtEndOf(p2, inserted, true); // ② 第 2 段尾 Enter＝新段落落在第 3 段之前
-    await pollServer(c.noteId, [`${p2}\n\n${inserted}\n\n${p3}`]); // ③ 確認是獨立一段、在第 3 段前
+    await typeAtEndOf(p2, inserted, true); // Enter at the end of paragraph 2: the new paragraph lands before paragraph 3
+    await pollServer(c.noteId, [`${p2}\n\n${inserted}\n\n${p3}`]); // confirm it is a separate paragraph before paragraph 3
     const agentMark = `agent-${rand()}`;
-    await writeBackRefused(c, replaceLine(stale, p3, `${p3} ${agentMark}`)); // ④ 舊副本 → 409
+    await writeBackRefused(c, replaceLine(stale, p3, `${p3} ${agentMark}`)); // stale copy -> 409
     const file = await download(c);
     const out = await writeBack(c, replaceLine(file, p3, `${p3} ${agentMark}`));
     expect(out).toMatchObject({ result: "applied", applied: 1 });
@@ -274,18 +268,18 @@ test("E2 A 在第 3 段前插一段後，agent 拿舊副本改第 3 段 → 409�
   }
 });
 
-test("E3 同一段兩邊都改：agent 的舊副本 → 409；A 的字留著、畫面不變、沒有存版", async () => {
+test("E3 both sides edit the same paragraph: the agent's stale copy gets 409; A's text stays, the screen is unchanged and no version is saved", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   try {
     c = await setupCase("e3", 5);
     const [p1, p2, p3, p4, p5] = c.paras as [string, string, string, string, string];
-    const file = await download(c); // ①
+    const file = await download(c); // (download)
     const aMark = `a-${rand()}`;
-    await typeAtEndOf(p3, ` ${aMark}`); // ②
-    await pollServer(c.noteId, [`${p3} ${aMark}`]); // ③
+    await typeAtEndOf(p3, ` ${aMark}`); // (edit)
+    await pollServer(c.noteId, [`${p3} ${aMark}`]); // (poll)
     const agentMark = `agent-${rand()}`;
-    await writeBackRefused(c, replaceLine(file, p3, `${p3} ${agentMark}`)); // ④
+    await writeBackRefused(c, replaceLine(file, p3, `${p3} ${agentMark}`)); // (write) refused
     await expectEditorBlocks([p1, p2, `${p3} ${aMark}`, p4, p5], "A 的字留著、agent 的沒寫進來");
     const md = await pollServer(c.noteId, [`${p3} ${aMark}`]);
     expect(md).not.toContain(agentMark);
@@ -297,19 +291,19 @@ test("E3 同一段兩邊都改：agent 的舊副本 → 409；A 的字留著、�
   }
 });
 
-test("E4 寫回改兩區：AI 修改紀錄列出兩列 file_sync；撤回其中一列只還原那一區", async () => {
+test("E4 write-back changing two regions: the AI edit log lists two file_sync rows; undoing one row restores only that region", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   try {
     c = await setupCase("e4", 6);
     const [p1, p2, , , p5] = c.paras as [string, string, string, string, string];
     const aMark = `a-${rand()}`;
-    await typeAtEndOf(p1, ` ${aMark}`); // ② A 改的是第 1 段（不在 agent 的兩區裡）——A 先改、agent 後下載（否則 409）
-    await pollServer(c.noteId, [`${p1} ${aMark}`]); // ③
-    const file = await download(c); // ① 含 A 打的字
+    await typeAtEndOf(p1, ` ${aMark}`); // A edits paragraph 1 (outside the agent's two regions): A edits first, the agent downloads afterwards (otherwise 409)
+    await pollServer(c.noteId, [`${p1} ${aMark}`]); // (poll)
+    const file = await download(c); // includes A's text
     const m2 = `agent2-${rand()}`;
     const m5 = `agent5-${rand()}`;
-    const out = await writeBack(c, replaceLine(replaceLine(file, p2, `${p2} ${m2}`), p5, `${p5} ${m5}`)); // ④ 兩區（中間隔著沒改的 3、4 段）
+    const out = await writeBack(c, replaceLine(replaceLine(file, p2, `${p2} ${m2}`), p5, `${p5} ${m5}`)); // two regions (paragraphs 3 and 4 between them unchanged)
     expect(out).toMatchObject({ result: "applied", applied: 2 });
     const editIds = out.editIds as string[];
     expect(editIds).toHaveLength(2);
@@ -321,7 +315,7 @@ test("E4 寫回改兩區：AI 修改紀錄列出兩列 file_sync；撤回其中�
     await page.getByRole("menuitem", { name: "AI edit history" }).click();
     const dialog = page.getByRole("dialog", { name: "AI edits on this note" });
     await expect(dialog).toBeVisible();
-    // 清單裡另有建筆記那一列（`POST /api/notes` 帶 content＝`replace_all`）；寫回的是恰好兩列 file_sync。
+    // The list also has the row for the note creation (`POST /api/notes` with content = `replace_all`); the write-back contributes exactly two file_sync rows.
     const syncRows = dialog.locator('li[data-testid^="ai-edit-"]').filter({ has: page.locator("code", { hasText: /^file_sync$/ }) });
     await expect(syncRows).toHaveCount(2);
     const rowA = dialog.getByTestId(`ai-edit-${editIds[0]}`);
@@ -329,10 +323,9 @@ test("E4 寫回改兩區：AI 修改紀錄列出兩列 file_sync；撤回其中�
     await expect(rowA.locator("code")).toHaveText("file_sync");
     await expect(rowB.locator("code")).toHaveText("file_sync");
 
-    // editIds 依文件順序（`record-file-sync.ts`：一句多列 INSERT ... RETURNING）：[0]＝第 2 段那一區。
+    // editIds follow document order (`record-file-sync.ts`: one multi-row INSERT ... RETURNING): [0] is the region in paragraph 2.
     await rowA.getByRole("button", { name: "Revert", exact: true }).click();
     await expect(page.getByText("Edit reverted.", { exact: true })).toBeVisible();
-    // 只還原第 2 段那一區；另一區與 A 的字都不動。
     await expectEditorBlocks([`${p1} ${aMark}`, p2, p3, p4, `${p5} ${m5}`, p6], "撤回一列只還原那一區");
     await expect(rowA.getByText("Already reverted", { exact: true })).toBeVisible();
     await expect(rowB.getByRole("button", { name: "Revert", exact: true })).toBeVisible();
@@ -342,7 +335,7 @@ test("E4 寫回改兩區：AI 修改紀錄列出兩列 file_sync；撤回其中�
   }
 });
 
-/** E6 的豐富內容（表格、巢狀清單、checklist、code block、圖片、並排）：瀏覽器第一次打開時若有正規化寫入 Yjs，寫回會被判 note_changed。 */
+/** Rich content for the first-open case (table, nested list, checklist, code block, image, columns): if the browser's first open writes a normalisation into Yjs, the write-back is judged note_changed. */
 const RICH = (r: string): string =>
   [
     `| h1-${r} | h2 |\n| --- | --- |\n| a | b |\n| c | d |`,
@@ -354,19 +347,19 @@ const RICH = (r: string): string =>
     `tail-${r}`,
   ].join("\n\n");
 
-test("E6 下載後才第一次在瀏覽器打開、不打字，再寫回改一段 → 200 applied、內容正確（打開筆記不算動過）", async () => {
+test("E6 opening in the browser for the first time only after the download, without typing, then writing back one paragraph gives 200 applied with correct content (opening a note does not count as touching it)", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   try {
     const r = rand();
     c = await setupCase("e6", 3, { extra: RICH(r), open: false });
     const [p1, p2, p3] = c.paras as [string, string, string];
-    const file = await download(c); // ① 還沒有人在瀏覽器打開過
-    await openNote(c.url); // ② 第一次打開（等標題框、連線、編輯器）
+    const file = await download(c); // nobody has opened it in a browser yet
+    await openNote(c.url); // first open (waits for title box, connection, editor)
     await expect(editorLocator(page)).toContainText(`tail-${r}`);
-    await page.waitForTimeout(2_000); // 不打字，讓打開時可能有的寫入先到 server
+    await page.waitForTimeout(2_000); // no typing: let any write caused by opening reach the server first
     const agentMark = `agent-${rand()}`;
-    const out = await writeBack(c, replaceLine(file, p2, `${p2} ${agentMark}`)); // ④ 預期不是 409
+    const out = await writeBack(c, replaceLine(file, p2, `${p2} ${agentMark}`)); // expected not to be 409
     expect(out).toMatchObject({ result: "applied", applied: 1 });
     const md = await pollServer(c.noteId, [`${p1}\n\n${p2} ${agentMark}\n\n${p3}`]);
     for (const part of [`h1-${r}`, `outer-${r}`, "deepest", `todo-${r}`, "const x = 1;", "e6.png", `left-${r}`, `right-${r}`, `tail-${r}`]) expect(md, part).toContain(part);
@@ -376,7 +369,7 @@ test("E6 下載後才第一次在瀏覽器打開、不打字，再寫回改一�
   }
 });
 
-test("E5 A 打標記並持續打字（未落盤）時整包匯出：包裡那篇含標記（讀的是 live doc）", async () => {
+test("E5 whole-bundle export while A types a marker continuously (not yet persisted): the note in the bundle contains the marker (read from the live doc)", async () => {
   test.setTimeout(120_000);
   let c: Case | undefined;
   let typing = false;
@@ -384,16 +377,16 @@ test("E5 A 打標記並持續打字（未落盤）時整包匯出：包裡那篇
   try {
     c = await setupCase("e5", 4);
     const [, p2] = c.paras as [string, string];
-    // 時間界線：從閒置開始。開筆記可能帶出一次正規化寫入，store 的 debounce 是 2 s——等 3 s 讓它先落盤，
-    // 之後打的第一個字重新起算 debounce 的 maxDebounce（約 10 s），在那之前 note_states 不會有標記。
+    // Time boundary: start from idle. Opening a note may trigger one normalisation write and the store's debounce is 2 s - wait 3 s so it persists first;
+    // the first character typed afterwards restarts maxDebounce (about 10 s), before which note_states has no marker.
     await page.waitForTimeout(3_000);
     const mark = `mk-${rand()}`;
-    // 不能只 click → End → 等 PM 與 DOM 對齊：編輯器這時還沒有焦點，得焦計時器可能把游標拉回點擊處，標記就打在段落中間
-    // （CI 曾得到 "e5-p2-17948518 mk-…zzz68016-…"）。clickEndOfParagraph 確認游標真的在這一段的尾端。
+    // Not just click -> End -> wait for PM and DOM to align: the editor has no focus yet, and the focus timer may pull the caret back to the click point so the marker lands mid-paragraph
+    // (CI once got "e5-p2-17948518 mk-...zzz68016-..."). clickEndOfParagraph confirms the caret is really at the end of this paragraph.
     await clickEndOfParagraph(page, editorLocator(page).getByText(p2, { exact: true }));
     const t0 = Date.now();
     await page.keyboard.type(` ${mark}`);
-    // 持續打字（每 200 ms 一字）直到匯出回應完成：store 的 2 s debounce 一直延後，落盤只會在 t0＋約 10 s（maxDebounce）。
+    // Type continuously (one character per 200 ms) until the export response completes: the store's 2 s debounce keeps being pushed back, so persistence happens only at about t0 + 10 s (maxDebounce).
     typing = true;
     typer = (async () => {
       while (typing) {
@@ -401,9 +394,9 @@ test("E5 A 打標記並持續打字（未落盤）時整包匯出：包裡那篇
         await new Promise(r => setTimeout(r, 200));
       }
     })();
-    await pollServer(c.noteId, [`${p2} ${mark}`]); // ③ live doc 已有標記
+    await pollServer(c.noteId, [`${p2} ${mark}`]); // the live doc already has the marker
 
-    const res = await c.bulk.get(`${origin}/api/transfer/export`, { headers: c.auth }); // ④ 整包（本檔唯一一次）
+    const res = await c.bulk.get(`${origin}/api/transfer/export`, { headers: c.auth }); // whole bundle (the only call in this file)
     const gz = await res.body();
     const tEnd = Date.now();
     typing = false;
@@ -414,7 +407,7 @@ test("E5 A 打標記並持續打字（未落盤）時整包匯出：包裡那篇
       tEnd - t0,
       "不承重：匯出在 t0＋8 s 之後才完成——live doc 可能已經落盤（store debounce 最長約 10 s），綠也證明不了讀的是 live",
     ).toBeLessThanOrEqual(8_000);
-    // 回應沒有 Content-Encoding（是 application/gzip 本體），Playwright 不會自動解壓。
+    // The response has no Content-Encoding (the body itself is application/gzip), so Playwright does not decompress it.
     const tar = gunzipSync(gz);
     expect(tar.includes(Buffer.from(`id: ${c.noteId}\n`, "utf8")), "包裡要有這一篇").toBe(true);
     expect(tar.includes(Buffer.from(`${p2} ${mark}`, "utf8")), "包裡那篇要含 A 還沒落盤的標記").toBe(true);

@@ -11,15 +11,6 @@ import { UserMenu } from "./UserMenu";
 import { stubLayoutTier } from "@/test/layout-tier";
 import { pressTrigger } from "@/test/menu-trigger";
 
-// 主題色選擇器：六個 RadioItem 渲染／role=menuitemradio／aria-checked、
-// 點選→data-accent＋localStorage＋選單不關閉、鍵盤方向鍵移動焦點。
-// 本檔現在也涵蓋 #78（選中改點內勾——ItemIndicator 只在 checked 渲染 Check，
-// 與焦點態的 ring 是正交維度）與 #79（主題色群組補 aria-labelledby 可及名稱）。
-//
-// Harness（比照 SettingsModal.test.tsx／NoteMenu.test.tsx 既有寫法）：
-// QueryClientProvider＋MemoryRouter＋ThemeProvider＋i18n＋`/api/auth/me` stub；
-// DropdownMenuTrigger 只掛 onPointerDown（Radix），純 click 開不了選單。
-
 const ACCENT_STORAGE_KEY = "knotebook:accent";
 
 interface FakeResponseInit {
@@ -75,15 +66,14 @@ function renderMenu(shortcuts: ShortcutsDialogApi | null = null, tour: TourApi |
   );
 }
 
-/** DropdownMenuTrigger（`UserMenu`）只掛 `onPointerDown`（Radix），純
- * `fireEvent.click` 開不了——見 SettingsModal.test.tsx 的 `openUserMenu`。 */
+/** `UserMenu`'s DropdownMenuTrigger only mounts `onPointerDown` (Radix), so a plain `fireEvent.click` cannot open it - see `openUserMenu` in SettingsModal.test.tsx. */
 async function openMenu(): Promise<void> {
   await waitFor(() => expect(screen.getByRole("button", { name: "Plain" })).toBeInTheDocument());
   pressTrigger(screen.getByRole("button", { name: "Plain" }));
   await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
 }
 
-describe("UserMenu 主題色選擇器", () => {
+describe("UserMenu accent picker", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.removeItem(ACCENT_STORAGE_KEY);
@@ -97,7 +87,7 @@ describe("UserMenu 主題色選擇器", () => {
     document.documentElement.removeAttribute("data-accent");
   });
 
-  it("渲染六個色點：role=menuitemradio，aria-checked 對應目前 accent（預設 indigo）", async () => {
+  it("renders six swatches: role=menuitemradio, aria-checked follows the current accent (default indigo)", async () => {
     renderMenu();
     await openMenu();
 
@@ -106,9 +96,9 @@ describe("UserMenu 主題色選擇器", () => {
 
     const indigo = screen.getByRole("menuitemradio", { name: "Indigo" });
     expect(indigo).toHaveAttribute("aria-checked", "true");
-    // title tooltip 也走 i18n 色名（跟 aria-label/textValue 同一個翻譯 key）。
+    // The title tooltip also uses the i18n color name (same translation key as aria-label/textValue).
     expect(indigo).toHaveAttribute("title", "Indigo");
-    // 色點取色唯一守衛：真的讀 --brand-swatch-indigo，不是隨手寫死的 hex。
+    // The swatch color must come from --brand-swatch-indigo, not a hard-coded hex.
     expect(indigo.getAttribute("style")).toContain("var(--brand-swatch-indigo)");
 
     for (const name of ["Blue", "Teal", "Sage", "Rose", "Gold"]) {
@@ -116,11 +106,10 @@ describe("UserMenu 主題色選擇器", () => {
     }
   });
 
-  // wrapper 的 outline-none 清掉了瀏覽器原生
-  // focus ring，鍵盤在六點間移動時畫面必須靠 data-[highlighted]:ring-foreground
-  // 補上可見指示——jsdom 不套用 CSS，這裡只能釘 class 字面量存在，行為級（真的
-  // 顯示出一圈）留給視覺驗證。
-  it("色點 class 含 data-[highlighted]:ring-foreground（鍵盤移動時的可見指示，補償 outline-none）", async () => {
+  // The wrapper's outline-none removes the native focus ring, so keyboard movement between the six swatches needs
+  // data-[highlighted]:ring-foreground as the visible cue. jsdom applies no CSS, so only the class literal is pinned;
+  // that the ring really shows is left to visual verification.
+  it("swatch class contains data-[highlighted]:ring-foreground (visible cue on keyboard movement, compensates outline-none)", async () => {
     renderMenu();
     await openMenu();
 
@@ -130,8 +119,8 @@ describe("UserMenu 主題色選擇器", () => {
     }
   });
 
-  // 色點視覺 16px；粗指標下放大到 28px，並用 after 擴到 44px 點擊範圍，間距跟著拉到圓心距 44。
-  it("色點在粗指標下放大並擴大點擊範圍，間距同步拉開", async () => {
+  // 16px visually; coarse pointer: 28px with an ::after widening the hit area to 44px, spacing widened to 44 center-to-center.
+  it("swatches grow and enlarge the hit area on coarse pointers, with spacing widened to match", async () => {
     renderMenu();
     await openMenu();
 
@@ -153,7 +142,7 @@ describe("UserMenu 主題色選擇器", () => {
     expect(group).toHaveClass("gap-2", "pointer-coarse:gap-4");
   });
 
-  it("點選色點 → 更新 <html> 的 data-accent 與 localStorage，且選單不關閉", async () => {
+  it("clicking a swatch updates <html> data-accent and localStorage, and the menu stays open", async () => {
     renderMenu();
     await openMenu();
 
@@ -161,24 +150,21 @@ describe("UserMenu 主題色選擇器", () => {
 
     await waitFor(() => expect(document.documentElement.getAttribute("data-accent")).toBe("teal"));
     expect(window.localStorage.getItem(ACCENT_STORAGE_KEY)).toBe("teal");
-    // 選色不關選單（onSelect preventDefault）——選單這時應該還在畫面上。
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: "Teal" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("menuitemradio", { name: "Indigo" })).toHaveAttribute("aria-checked", "false");
   });
 
-  // 這裡只驗證 document.activeElement 有沒有真的移動；移動當下畫面上是否看得見
-  // （data-[highlighted]:ring-foreground，補償 wrapper 的 outline-none）是另一條
-  // class 字面量案的職責，見上方那條測試。
-  it("鍵盤 ArrowDown 依 DOM 序移動焦點（視覺上橫排，鍵盤仍走選單原生的上下）", async () => {
+  // Only checks that document.activeElement really moves; whether the highlight is visible is the job of the
+  // class-literal test above.
+  it("keyboard ArrowDown moves focus in DOM order (swatches sit in a row visually, the keyboard still follows the menu's native up/down)", async () => {
     renderMenu();
     await openMenu();
 
     const radios = screen.getAllByRole("menuitemradio");
 
-    // pointerDown 開的選單不會自動把焦點帶進第一個項目（Radix 的 entry-focus
-    // 只在鍵盤觸發時才生效）——這裡直接把焦點放上第一個色點，模擬「使用者已經
-    // 用方向鍵導覽到這裡」的狀態，純粹測「再按一次 ArrowDown 會不會移動」。
+    // A menu opened by pointerDown does not move focus to the first item (Radix entry-focus only applies to keyboard opens), so
+    // focus the first swatch directly to simulate having arrived by arrow keys; this isolates whether another ArrowDown moves focus.
     act(() => radios[0].focus());
     await waitFor(() => expect(document.activeElement).toBe(radios[0]));
 
@@ -189,10 +175,9 @@ describe("UserMenu 主題色選擇器", () => {
     await waitFor(() => expect(document.activeElement).toBe(radios[2]));
   });
 
-  // #78：選中態改成「點內打勾」（Radix ItemIndicator，checked 時才渲染），
-  // 焦點態的 ring 維持不動——見上方 data-[highlighted]:ring-foreground 那條。
-  // 案 A：選中點渲染 Check（svg），且 class 含 text-popover。
-  it("選中的色點在點內渲染 Check（svg），class 含 text-popover", async () => {
+  // #78: the selection is a check inside the swatch (Radix ItemIndicator, rendered only when checked); the focus ring
+  // is unchanged - see the data-[highlighted]:ring-foreground test above.
+  it("the selected swatch renders a Check (svg) whose class contains text-popover", async () => {
     renderMenu();
     await openMenu();
 
@@ -202,9 +187,8 @@ describe("UserMenu 主題色選擇器", () => {
     expect(indigoSvg).toHaveClass("text-popover");
   });
 
-  // 案 B：未選中的色點不渲染 svg——ItemIndicator unchecked 時 DOM 裡完全沒有
-  // 子元素，防「勾畫在所有點上」的假綠：這條如果誤把 svg 畫在每個點上會抓到。
-  it("未選中的色點不渲染 Check（svg 為 null）", async () => {
+  // ItemIndicator leaves no child element when unchecked; guards against a false pass where the check is drawn on every swatch.
+  it("unselected swatches render no Check (svg is null)", async () => {
     renderMenu();
     await openMenu();
 
@@ -212,8 +196,7 @@ describe("UserMenu 主題色選擇器", () => {
     expect(teal.querySelector("svg")).toBeNull();
   });
 
-  // 案 C：切換選色後，勾跟著移動到新選中的色點（indigo → teal）。
-  it("切換選色後，勾跟著移動到新選中的色點", async () => {
+  it("after changing the selection the check moves to the newly selected swatch", async () => {
     renderMenu();
     await openMenu();
 
@@ -224,9 +207,9 @@ describe("UserMenu 主題色選擇器", () => {
     expect(screen.getByRole("menuitemradio", { name: "Indigo" }).querySelector("svg")).toBeNull();
   });
 
-  // 案 D（負向）：色點 class 不含 ring-ring（低對比選中 ring 已廢除），且含
-  // 置中用的 flex/items-center/justify-center 字面（置中是勾可見性的前提）。
-  it("色點 class 不含 ring-ring（低對比選中 ring 已廢除，改點內勾），且含置中用的 flex/items-center/justify-center", async () => {
+  // Negative: no ring-ring (the low-contrast selection ring is gone); the centering classes (flex/items-center/justify-center)
+  // must exist because centering is what makes the check visible.
+  it("swatch class has no ring-ring (low-contrast selection ring removed in favour of the inner check) and has flex/items-center/justify-center for centering", async () => {
     renderMenu();
     await openMenu();
 
@@ -238,9 +221,9 @@ describe("UserMenu 主題色選擇器", () => {
     }
   });
 
-  // #79：主題色群組的可及名稱——RadioGroup 的 role=group 要能算出
-  // t("userMenu.accent") 這個名字，斷言不寫死英文字面。
-  it("主題色 RadioGroup 有可及名稱（aria-labelledby 指到「主題色」Label）", async () => {
+  // #79: accessible name of the accent group - the RadioGroup's role=group must resolve t("userMenu.accent");
+  // the assertion does not hard-code the English text.
+  it("accent RadioGroup has an accessible name (aria-labelledby points at the accent Label)", async () => {
     renderMenu();
     await openMenu();
 
@@ -248,9 +231,9 @@ describe("UserMenu 主題色選擇器", () => {
   });
 });
 
-// 站台管理入口：admin 才看得到「Site admin」，點了導 /admin/users 且**帶**
-// backgroundLocation（#247 起站台管理是 modal，關閉時回到原頁）。
-describe("UserMenu 站台管理入口", () => {
+// Site admin entry: only admins see it; it navigates to /admin/users with backgroundLocation in state
+// (since #247 site admin is a modal and closing returns to the previous page).
+describe("UserMenu site admin entry", () => {
   const ADMIN: UserDto = { ...USER, displayName: "Plain", isAdmin: true };
 
   function stubFetchAs(user: UserDto) {
@@ -296,7 +279,7 @@ describe("UserMenu 站台管理入口", () => {
     vi.unstubAllGlobals();
   });
 
-  it("admin：看得到「Site admin」；點了導 /admin/users，state 帶 backgroundLocation（#247：站台管理是 modal）", async () => {
+  it("admin sees \"Site admin\"; clicking navigates to /admin/users with backgroundLocation in state (#247: site admin is a modal)", async () => {
     stubFetchAs(ADMIN);
     renderMenuWithProbe();
     await openMenu();
@@ -308,7 +291,7 @@ describe("UserMenu 站台管理入口", () => {
     expect(state?.backgroundLocation?.pathname).toBe("/n/tester/some-note");
   });
 
-  it("非 admin：看不到「Site admin」（「Settings」仍在）", async () => {
+  it("non-admin does not see \"Site admin\" (\"Settings\" is still there)", async () => {
     stubFetchAs(USER);
     renderMenuWithProbe();
     await openMenu();
@@ -317,7 +300,7 @@ describe("UserMenu 站台管理入口", () => {
     expect(screen.queryByRole("menuitem", { name: "Site admin" })).not.toBeInTheDocument();
   });
 
-  it("zh-TW：入口文案是「站台管理」", async () => {
+  it("zh-TW: the entry label is localized", async () => {
     await i18n.changeLanguage("zh-TW");
     stubFetchAs(ADMIN);
     renderMenuWithProbe();
@@ -327,7 +310,7 @@ describe("UserMenu 站台管理入口", () => {
   });
 });
 
-describe("UserMenu「說明」項", () => {
+describe("UserMenu Help item", () => {
   const ADMIN_USER: UserDto = { ...USER, isAdmin: true };
 
   beforeEach(async () => {
@@ -339,7 +322,7 @@ describe("UserMenu「說明」項", () => {
     vi.unstubAllGlobals();
   });
 
-  it("U1 在「Settings」之後、「Site admin」之前", async () => {
+  it("comes after \"Settings\" and before \"Site admin\"", async () => {
     renderMenu({ open: vi.fn() });
     await openMenu();
     const names = screen.getAllByRole("menuitem").map((el) => el.textContent ?? "");
@@ -351,14 +334,14 @@ describe("UserMenu「說明」項", () => {
     expect(admin).toBe(shortcuts + 1);
   });
 
-  it("U2 可及名稱恰為 Help（getByRole 的字串 name 是全字比對；提示字 aria-hidden）；項內有 Ctrl+/，Mac 是 ⌘/", async () => {
+  it("accessible name is Help (a string name in getByRole matches the whole string; the hint text is aria-hidden); the item shows Ctrl+/, on Mac the Command sign + /", async () => {
     renderMenu({ open: vi.fn() });
     await openMenu();
     const item = screen.getByRole("menuitem", { name: "Help" });
     expect(item).toHaveTextContent("Ctrl+/");
   });
 
-  it("選單裡只有「Help」：沒有 Keyboard shortcuts，也沒有單獨的 Feature tour（有導覽 context 時也一樣）", async () => {
+  it("the menu has only \"Help\": no Keyboard shortcuts and no standalone Feature tour (also with a tour context)", async () => {
     renderMenu({ open: vi.fn() }, { start: vi.fn() });
     await openMenu();
     const names = screen.getAllByRole("menuitem").map((el) => el.textContent ?? "");
@@ -367,7 +350,7 @@ describe("UserMenu「說明」項", () => {
     expect(screen.queryByRole("menuitem", { name: /Feature tour/ })).toBeNull();
   });
 
-  it("zh-TW：項目名稱是「說明」", async () => {
+  it("zh-TW: the item name is localized", async () => {
     await i18n.changeLanguage("zh-TW");
     renderMenu({ open: vi.fn() });
     await waitFor(() => expect(screen.getByRole("button", { name: "Plain" })).toBeInTheDocument());
@@ -376,14 +359,14 @@ describe("UserMenu「說明」項", () => {
     expect(screen.queryByRole("menuitem", { name: "快捷鍵介紹" })).toBeNull();
   });
 
-  it("U2 MacIntel：提示字是 ⌘/", async () => {
+  it("MacIntel: the hint is the Command sign + /", async () => {
     vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel" });
     renderMenu({ open: vi.fn() });
     await openMenu();
     expect(screen.getByRole("menuitem", { name: "Help" })).toHaveTextContent("⌘/");
   });
 
-  it("U3 aria-keyshortcuts：Control+/；Mac 是 Meta+/", async () => {
+  it("aria-keyshortcuts is Control+/ (Meta+/ on Mac)", async () => {
     const view = renderMenu({ open: vi.fn() });
     await openMenu();
     expect(screen.getByRole("menuitem", { name: "Help" })).toHaveAttribute("aria-keyshortcuts", "Control+/");
@@ -394,10 +377,10 @@ describe("UserMenu「說明」項", () => {
     expect(screen.getByRole("menuitem", { name: "Help" })).toHaveAttribute("aria-keyshortcuts", "Meta+/");
   });
 
-  it("U4 選該項：open 被呼叫一次、第一個參數是觸發鈕；選單已關", async () => {
+  it("selecting the item calls open once with the trigger button as first argument; the menu closes", async () => {
     const open = vi.fn();
     renderMenu({ open });
-    const trigger = await screen.findByRole("button", { name: "Plain" }); // 選單開著時觸發鈕被標 aria-hidden，先抓
+    const trigger = await screen.findByRole("button", { name: "Plain" }); // grab the trigger first: it is aria-hidden while the menu is open
     await openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Help" }));
     expect(open).toHaveBeenCalledTimes(1);
@@ -405,7 +388,7 @@ describe("UserMenu「說明」項", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("有導覽 context：打開說明視窗時停在 tour 頁", async () => {
+  it("with a tour context: the help dialog opens on the tour page", async () => {
     const open = vi.fn();
     renderMenu({ open }, { start: vi.fn() });
     await openMenu();
@@ -414,7 +397,7 @@ describe("UserMenu「說明」項", () => {
     expect(open.mock.calls[0]![1]).toBe("tour");
   });
 
-  it("沒有導覽 context：停在快捷鍵的 global 頁", async () => {
+  it("without a tour context: the help dialog opens on the shortcuts global page", async () => {
     const open = vi.fn();
     renderMenu({ open });
     await openMenu();
@@ -423,7 +406,7 @@ describe("UserMenu「說明」項", () => {
     expect(open.mock.calls[0]![1]).toBe("global");
   });
 
-  it("U5 沒有 Provider（不在 AppShell 底下）：沒有這一項", async () => {
+  it("without a Provider (outside AppShell): no such item", async () => {
     renderMenu(null);
     await openMenu();
     expect(screen.queryByRole("menuitem", { name: "Help" })).toBeNull();
@@ -431,7 +414,7 @@ describe("UserMenu「說明」項", () => {
   });
 });
 
-describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同一條路）", () => {
+describe("UserMenu Settings item Ctrl+, hint (same path as AppShell's Ctrl+,)", () => {
   let lastLocation: Location | null = null;
   function Probe() {
     lastLocation = useLocation();
@@ -464,7 +447,7 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
     vi.unstubAllGlobals();
   });
 
-  it("U6 在 AppShell 底下：Settings 項可及名稱仍是 Settings，旁邊標 Ctrl+,（aria-hidden），aria-keyshortcuts 是 Control+,", async () => {
+  it("inside AppShell: the Settings item's accessible name stays Settings, with Ctrl+, beside it (aria-hidden) and aria-keyshortcuts Control+,", async () => {
     renderWithProbe({ open: vi.fn() });
     await openMenu();
     const item = screen.getByRole("menuitem", { name: "Settings" });
@@ -474,7 +457,7 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
     expect(hint?.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("U6 MacIntel：⌘, 與 Meta+,", async () => {
+  it("MacIntel: Command sign + , and Meta+,", async () => {
     vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel" });
     renderWithProbe({ open: vi.fn() });
     await openMenu();
@@ -483,7 +466,7 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
     expect(item).toHaveAttribute("aria-keyshortcuts", "Meta+,");
   });
 
-  it("U7 不在 AppShell 底下（沒有 context）：Settings 項沒有提示字、也沒有 aria-keyshortcuts（那個快捷鍵在這裡不作用）", async () => {
+  it("outside AppShell (no context): the Settings item has no hint and no aria-keyshortcuts (that shortcut does nothing here)", async () => {
     renderWithProbe(null);
     await openMenu();
     const item = screen.getByRole("menuitem", { name: "Settings" });
@@ -491,7 +474,7 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
     expect(item).not.toHaveAttribute("aria-keyshortcuts");
   });
 
-  it("U8 點 Settings：導 /settings/account，state 帶 backgroundLocation（與 Ctrl+, 同一條路）", async () => {
+  it("clicking Settings navigates to /settings/account with backgroundLocation in state (same path as Ctrl+,)", async () => {
     renderWithProbe({ open: vi.fn() });
     await openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
@@ -503,7 +486,7 @@ describe("UserMenu「設定」項的 Ctrl+, 提示（與 AppShell 的 Ctrl+, 同
 
 const AVATAR_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
-describe("UserMenu 頭像形（avatar）", () => {
+describe("UserMenu avatar form", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -525,7 +508,7 @@ describe("UserMenu 頭像形（avatar）", () => {
     );
   }
 
-  it("UA1 觸發鈕只有頭像：名稱仍是 displayName、點擊範圍 44、視覺 32、沒有名字文字與齒輪", async () => {
+  it("the trigger shows only the avatar: name stays displayName, hit area 44, visual 32, no name text or gear", async () => {
     renderAvatar();
     const trigger = await screen.findByRole("button", { name: "Plain" });
     expect(trigger).toHaveClass("h-11", "w-11");
@@ -534,7 +517,7 @@ describe("UserMenu 頭像形（avatar）", () => {
     expect((trigger.querySelector("span") as HTMLElement).style.width).toBe("32px");
   });
 
-  it("UA2 選單內容不變：開得起來、有 Settings 與 Log out", async () => {
+  it("menu content is unchanged: it opens and has Settings and Log out", async () => {
     renderAvatar();
     pressTrigger(await screen.findByRole("button", { name: "Plain" }));
     await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
@@ -542,14 +525,14 @@ describe("UserMenu 頭像形（avatar）", () => {
     expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
   });
 
-  it("UA3 預設（row）形不變：有名字文字", async () => {
+  it("default (row) form is unchanged: shows the name text", async () => {
     renderMenu();
     const trigger = await screen.findByRole("button", { name: "Plain" });
     expect(trigger.textContent).toContain("Plain");
     expect(trigger).not.toHaveClass("w-11");
   });
 
-  it("UA4 有頭貼：觸發鈕內是共用頭像的 img（src 是 avatarUrl），名稱與 44 點擊範圍不變", async () => {
+  it("with an avatar: the trigger holds the shared avatar img (src is avatarUrl), name and 44 hit area unchanged", async () => {
     stubFetch({ ...USER, avatar: { id: AVATAR_ID, v: 4, pending: false } });
     renderAvatar();
     const trigger = await screen.findByRole("button", { name: "Plain" });
@@ -560,7 +543,7 @@ describe("UserMenu 頭像形（avatar）", () => {
     expect((imgs[0].parentElement as HTMLElement).style.width).toBe("32px");
   });
 
-  it("UA5 頭貼 pending 也顯示 img；沒有頭貼則是首字", async () => {
+  it("a pending avatar also shows the img; without an avatar it shows the initial", async () => {
     stubFetch({ ...USER, avatar: { id: AVATAR_ID, v: 1, pending: true } });
     const view = renderAvatar();
     const trigger = await screen.findByRole("button", { name: "Plain" });
@@ -574,7 +557,7 @@ describe("UserMenu 頭像形（avatar）", () => {
   });
 });
 
-describe("UserMenu 帳號列頭像", () => {
+describe("UserMenu account row avatar", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -589,20 +572,20 @@ describe("UserMenu 帳號列頭像", () => {
     return screen.findByRole("button", { name: user.displayName });
   }
 
-  it.each([false, true])("有頭貼（pending=%s）：觸發鈕內有一個 img，src 是 avatarUrl(id, v)", async pending => {
+  it.each([false, true])("with an avatar (pending=%s): the trigger holds one img whose src is avatarUrl(id, v)", async pending => {
     const trigger = await renderTrigger({ ...USER, avatar: { id: AVATAR_ID, v: 4, pending } });
     const imgs = trigger.querySelectorAll("img");
     expect(imgs).toHaveLength(1);
     expect(imgs[0].getAttribute("src")).toBe(avatarUrl(AVATAR_ID, 4));
   });
 
-  it("沒有頭貼：沒有 img，顯示首字", async () => {
+  it("without an avatar: no img, shows the initial", async () => {
     const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
     expect(trigger.querySelector("img")).toBeNull();
     expect(trigger).toHaveTextContent(/^A/);
   });
 
-  it("img 載入失敗：退回首字", async () => {
+  it("img load failure falls back to the initial", async () => {
     const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: { id: AVATAR_ID, v: 1, pending: false } });
     fireEvent.error(trigger.querySelector("img")!);
     expect(trigger.querySelector("img")).toBeNull();
@@ -610,13 +593,13 @@ describe("UserMenu 帳號列頭像", () => {
     expect(letter).toBeDefined();
   });
 
-  it("首字的 inline font-size 是 10px（24px 頭像）", async () => {
+  it("the initial's inline font-size is 10px (24px avatar)", async () => {
     const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
     const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === "A")!;
     expect(letter.style.fontSize).toBe("10px");
   });
 
-  it("首字狀態的底色是 bg-primary、字色是 text-primary-foreground，不被 bg-muted 蓋掉", async () => {
+  it("initial state uses bg-primary background and text-primary-foreground text, not overridden by bg-muted", async () => {
     const trigger = await renderTrigger({ ...USER, displayName: "alice", avatar: null });
     const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === "A")!;
     expect(letter).toHaveClass("bg-primary", "text-primary-foreground");
@@ -624,7 +607,7 @@ describe("UserMenu 帳號列頭像", () => {
     expect(letter).not.toHaveClass("text-foreground");
   });
 
-  it("觸發鈕的可及名稱仍是 displayName（有頭貼時也一樣）", async () => {
+  it("the trigger's accessible name stays displayName (also with an avatar)", async () => {
     stubFetch({ ...USER, displayName: "Alice Lin", avatar: { id: AVATAR_ID, v: 1, pending: false } });
     renderMenu();
     expect(await screen.findByRole("button", { name: "Alice Lin" })).toBeInTheDocument();
@@ -634,14 +617,14 @@ describe("UserMenu 帳號列頭像", () => {
     ["王小明", "王"],
     ["👩‍💻 dev", "👩‍💻"],
     ["éclair", "É"],
-  ])("名字 %j 的首字顯示完整一字 %j", async (displayName, expected) => {
+  ])("name %j shows the full first character %j", async (displayName, expected) => {
     const trigger = await renderTrigger({ ...USER, displayName, avatar: null });
     const letter = Array.from(trigger.querySelectorAll("span")).find((el) => el.textContent === expected);
     expect(letter).toBeDefined();
   });
 });
 
-describe("UserMenu 手機 sheet", () => {
+describe("UserMenu phone sheet", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     stubFetch();
@@ -663,7 +646,7 @@ describe("UserMenu 手機 sheet", () => {
     );
   }
 
-  it("UM-S1 手機：貼底 sheet、列 48px／16px 字（色點不變大）、最上面仍是名字（不另加標題）；選項目後關閉、焦點回頭像", async () => {
+  it("phone: bottom sheet, 48px rows with 16px text (swatches do not grow), the name stays on top (no extra title); selecting an item closes it and focus returns to the avatar", async () => {
     stubLayoutTier("phone");
     renderAvatarMenu();
     const trigger = await screen.findByRole("button", { name: "Plain" });
@@ -681,7 +664,7 @@ describe("UserMenu 手機 sheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("UM-S2 640 以上：照舊是貼著觸發鈕的小選單", async () => {
+  it("640 and above: stays a small menu anchored to the trigger", async () => {
     stubLayoutTier("overlay");
     renderAvatarMenu();
     pressTrigger(await screen.findByRole("button", { name: "Plain" }));

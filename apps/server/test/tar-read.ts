@@ -1,11 +1,11 @@
 /**
- * 測試用的 tar.gz 讀取器（unit 與整合共用）。懂 pax `path`（`x` 型標頭）；ustar 以外的型別丟錯。
- * `readTarGz`：gzip 必須完整、tar 必須有結尾的兩個零區塊，否則 throw（中止的串流就是這樣認出來的）。
+ * Understands pax `path` (`x`-type headers); types other than ustar throw.
+ * `readTarGz`: gzip must be complete and tar must end with two zero blocks, otherwise it throws (that is how an aborted stream is recognised).
  */
 import zlib from "node:zlib";
 
 export interface TarEntry {
-  /** dir 不帶尾斜線。 */
+  /** `dir` has no trailing slash. */
   path: string;
   type: "file" | "dir";
   data: Buffer;
@@ -43,7 +43,6 @@ function parsePax(buf: Buffer): Record<string, string> {
   return out;
 }
 
-/** 走過未壓縮的 tar 位元組。`requireEnd`：沒有結尾零區塊就 throw。 */
 export function parseTar(tar: Buffer, opts: { requireEnd: boolean } = { requireEnd: true }): { entries: TarEntry[]; headers: TarHeaderInfo[]; ended: boolean } {
   const entries: TarEntry[] = [];
   const headers: TarHeaderInfo[] = [];
@@ -92,12 +91,11 @@ export function parseTar(tar: Buffer, opts: { requireEnd: boolean } = { requireE
   return { entries, headers, ended };
 }
 
-/** 完整的 `.tar.gz` → 項目（依序）。gzip 不完整或 tar 沒結尾 → throw。 */
 export function readTarGz(buf: Buffer): TarEntry[] {
   return parseTar(zlib.gunzipSync(buf)).entries;
 }
 
-/** 串流到一半的位元組：以 Z_SYNC_FLUSH 解開，tar 不要求結尾。 */
+/** Bytes of a half-sent stream: inflated with Z_SYNC_FLUSH, tar need not have an end. */
 export function readPartialTarGz(buf: Buffer): TarEntry[] {
   return parseTar(zlib.gunzipSync(buf, { finishFlush: zlib.constants.Z_SYNC_FLUSH }), { requireEnd: false }).entries;
 }

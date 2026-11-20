@@ -1,8 +1,7 @@
 /**
- * #181：MCP 垃圾桶工具。LT 段測 list_trash；DN／RN 段測 delete_note／restore_note（另有 DS、PX、SC 段）。併入資料夾後補 FD 段（移入留在資料夾並寫路徑快照、還原回原資料夾，
- * 資料夾已刪則重建路徑；資料夾功能加入後 restore_note 的 note 帶 folder、list_trash 每項帶 folderPath，delete_note 仍不帶）。
- * 比對對象一律是同一人 cookie 的 REST（`GET /api/trash`、`DELETE /api/notes/:id`、`POST /api/trash/restore`，同一組服務函式）。
- * 造垃圾桶狀態打 `DELETE /api/notes/:id` 或 `markTrashed`；大量資料與病態字串直改 DB。斷言共編閘門（`isDeleting`）的案接真的 hooks。
+ * REST through the same user's cookie is the oracle because both sides use the same service functions; trash state is created via
+ * `DELETE /api/notes/:id` or `markTrashed`; large data and pathological strings are written directly to the DB; cases asserting the
+ * `isDeleting` gate use real hooks.
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
@@ -57,13 +56,12 @@ async function call(app: FastifyInstance, auth: Auth, name: string, args?: unkno
   expect(res.statusCode, res.body).toBe(200);
   return res.json().result as Result;
 }
-/** `list_trash` 必須成功（唯讀憑證上沒註冊、或 42P18 收成 internal 時這裡就紅）。 */
+/** Fails the test if `list_trash` errors (unregistered on a read-only credential, or 42P18 mapped to internal). */
 async function listTrashOf(app: FastifyInstance, auth: Auth, cursor?: string): Promise<ListTrashOut> {
   const r = await call(app, auth, "list_trash", cursor === undefined ? {} : { cursor });
   expect(r.isError, JSON.stringify(r.content)).toBeUndefined();
   return r.structuredContent as unknown as ListTrashOut;
 }
-/** 資料夾：`list_trash` 從頭翻到 `nextCursor` 為 null；每頁 `truncated` ≡ `nextCursor !== null`。 */
 async function listTrashAll(app: FastifyInstance, auth: Auth): Promise<ListTrashOut[]> {
   const pages: ListTrashOut[] = [];
   let cursor: string | undefined;
@@ -76,7 +74,7 @@ async function listTrashAll(app: FastifyInstance, auth: Auth): Promise<ListTrash
   }
   throw new Error("list_trash 翻了 20 頁還沒到底");
 }
-/** 同一毫秒改依 id 排：把剛移入那篇的 `deleted_at` 設成前一篇＋2 ms，讓「依序移入」的順序不靠微秒。 */
+/** Spaces trash times apart so ordering doesn't depend on microseconds (same-millisecond ties fall back to id order): sets `deleted_at` to the previous note's + 2 ms. */
 async function spaceAfter(db: Db, noteId: string, prevId: string): Promise<void> {
   await db.$client.query(
     `update notes set deleted_at = (select deleted_at from notes where id = $2) + interval '2 milliseconds' where id = $1`,
@@ -95,8 +93,8 @@ async function trash(app: FastifyInstance, noteId: string, userId: string): Prom
   expect(res.statusCode, res.body).toBe(204);
 }
 
-describe("LT1 範圍與順序：與 GET /api/trash 逐字相同", () => {
-  it("個人兩篇＋群組（編輯＋刪除角色）一篇；別人的垃圾桶與活筆記不出現 → RW、R、session 的 items[].id 都等於 REST（含順序）", async () => {
+describe("list_trash: scope and order are byte-identical to GET /api/trash", () => {
+  it("two personal notes plus one group note (editDelete role); others' trash and live notes are absent -> items[].id equals REST (including order) for RW, R and session", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const groupAdmin = await seedUser(ctx.db);
@@ -119,15 +117,15 @@ describe("LT1 範圍與順序：與 GET /api/trash 逐字相同", () => {
     await spaceAfter(ctx.db, theirs.id, b.id);
 
     const rest = (await restListOf(ctx.app, me.id)).items.map(i => i.id);
-    expect(rest).toEqual([b.id, gn.id, a.id]); // 前提：REST 本身是對的
+    expect(rest).toEqual([b.id, gn.id, a.id]); // precondition: REST order itself is correct
     for (const auth of [await tokenOf(ctx, me.id, RW), await tokenOf(ctx, me.id, R), await sessionOf(me.id)]) {
       expect((await listTrashOf(ctx.app, auth)).items.map(i => i.id)).toEqual(rest);
     }
   });
 });
 
-describe("LT2 角色", () => {
-  it("群組垃圾桶筆記：admin、editDelete 列得到；deleteOnly、editOnly、member、readOnly、outsider 列不到", async () => {
+describe("list_trash: roles", () => {
+  it("group trash note: listed for admin and editDelete; not for deleteOnly, editOnly, member, readOnly, outsider", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const n = await seedNote(ctx.db, { groupId: s.groupId });
@@ -140,8 +138,8 @@ describe("LT2 角色", () => {
   });
 });
 
-describe("LT3 每頁 100 與翻頁", () => {
-  // 個人與群組各一批、時間交錯（各隔 1 秒），keyset 兩支都要帶到。
+describe("list_trash: 100 per page and paging", () => {
+  // Personal and group batches interleaved in time (1 s apart); the keyset must carry both.
   const seedMany = (db: Db, u: SeededUser, n: number, offset = 0) =>
     db.$client.query(
       `insert into notes (owner_id, title, slug, deleted_at, deleted_by)
@@ -155,7 +153,7 @@ describe("LT3 每頁 100 與翻頁", () => {
       [groupId, n, groupId.slice(0, 8), by.id],
     );
 
-  it("101 篇（個人 51＋群組 50 交錯）→ 第一頁 100、truncated、有 nextCursor、無 pageCutShort；續翻 1 篇、truncated false、nextCursor null；兩頁合計＝REST 逐字同序", async () => {
+  it("101 notes (51 personal + 50 group, interleaved): page 1 has 100, truncated, nextCursor, no pageCutShort; page 2 has 1, truncated false, nextCursor null; both pages together equal REST in order", async () => {
     const ctx = await buildCollabTestApp();
     const big = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "LT3", [{ userId: big.id, role: "admin" }]);
@@ -168,11 +166,11 @@ describe("LT3 每頁 100 與翻頁", () => {
     expect([pages[1]!.items.length, pages[1]!.truncated, pages[1]!.nextCursor]).toEqual([1, false, null]);
     const restB = await restListOf(ctx.app, big.id);
     expect(restB.items).toHaveLength(101);
-    expect(restB.items.some(i => i.group !== null)).toBe(true); // 前提：fixture 含群組項
+    expect(restB.items.some(i => i.group !== null)).toBe(true); // precondition: fixture includes group items
     expect(pages.flatMap(p => p.items.map(i => i.id))).toEqual(restB.items.map(i => i.id));
   });
 
-  it("剛好 100 篇 → 100 筆、truncated false、nextCursor null", async () => {
+  it("exactly 100 notes: 100 items, truncated false, nextCursor null", async () => {
     const ctx = await buildCollabTestApp();
     const exact = await seedUser(ctx.db);
     await seedMany(ctx.db, exact, 100);
@@ -181,8 +179,8 @@ describe("LT3 每頁 100 與翻頁", () => {
   });
 });
 
-describe("LT4 欄位", () => {
-  it("保留 7 天：retentionDays 7、每項 purgeAt 等於 REST；改成 NULL → MCP 與 REST 的 retentionDays、purgeAt 全是 null", async () => {
+describe("list_trash: fields", () => {
+  it("7-day retention: retentionDays 7 and each purgeAt equals REST; set to NULL -> retentionDays and purgeAt are null in both MCP and REST", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "LT4", [{ userId: me.id, role: "admin" }]);
@@ -207,7 +205,7 @@ describe("LT4 欄位", () => {
     expect(restNone.items.map(i => i.purgeAt)).toEqual([null, null]);
   });
 
-  it("刪除者帳號被刪 → deletedBy null；個人筆記 group null；一般資料沒有任何 *Truncated 鍵", async () => {
+  it("deleter account deleted -> deletedBy null; personal note has group null; ordinary data has no *Truncated keys", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db, { displayName: "LT4 Me" });
     const x = await seedUser(ctx.db);
@@ -233,7 +231,7 @@ describe("LT4 欄位", () => {
     }
   });
 
-  it("標題 300 個 \"、刪除者 displayName 300 個 \"、群組名 80 個 U+0001 → 三個 *Truncated: true，逃脫後長度都 ≤ 200", async () => {
+  it("title of 300 \", deleter displayName of 300 \" and group name of 80 U+0001 -> three *Truncated: true, escaped length <= 200", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db, { displayName: '"'.repeat(300) });
     const g = await seedGroup(ctx.db, "LT4 trunc", [{ userId: me.id, role: "admin" }]);
@@ -246,12 +244,12 @@ describe("LT4 欄位", () => {
     expect(escapedLength(item!.title)).toBeLessThanOrEqual(200);
     expect(escapedLength(item!.deletedBy!.displayName)).toBeLessThanOrEqual(200);
     expect(escapedLength(item!.group!.name)).toBeLessThanOrEqual(200);
-    expect(item!.title).toBe('"'.repeat(100)); // 前提：真的被截了（一個 " 逃脫後算 2）
+    expect(item!.title).toBe('"'.repeat(100)); // precondition: really truncated (an escaped " counts 2)
   });
 });
 
-describe("LT5 輸入", () => {
-  it("{} 成功；{ limit: 5 } → SDK 輸入驗證錯誤（無 structuredContent、訊息含 limit）；不帶 arguments → SDK 的 Required", async () => {
+describe("list_trash: input", () => {
+  it("{} succeeds; { limit: 5 } -> SDK input validation error (no structuredContent, message mentions limit); no arguments -> SDK \"Required\"", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx, me.id, R);
@@ -266,8 +264,8 @@ describe("LT5 輸入", () => {
   });
 });
 
-describe("LT6 鏡像與模型面字串", () => {
-  it("content[0].text 逐字是 structuredContent 的 JSON；description／truncated 講翻頁與 folderPath（舊句不在），retentionDays 講明管理員可改設定", async () => {
+describe("list_trash: mirror and model-facing strings", () => {
+  it("content[0].text is exactly the JSON of structuredContent; description/truncated explain paging and folderPath (old sentence absent), retentionDays says admins can change the setting", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id });
@@ -283,7 +281,7 @@ describe("LT6 鏡像與模型面字串", () => {
       outputSchema: { properties: Record<string, { description?: string }> };
     }>;
     const t = tools.find(x => x.name === "list_trash")!;
-    // 資料夾功能加了 cursor：新句在、「沒有分頁」的舊句不在；folderPath 的定義以「還原的去處」為準（舊的錨不得回來）。
+    // Folders added the cursor: the new sentence is present and the old "no pagination" one absent; folderPath is defined as the restore destination (the old anchor must not return).
     expect(t.description).toContain("pass `nextCursor` back as `cursor`");
     expect(t.description).toContain(`up to ${MCP_PAGE_MAX} per call`);
     expect(t.description).not.toContain("only the newest");
@@ -297,14 +295,14 @@ describe("LT6 鏡像與模型面字串", () => {
     expect(t.outputSchema.properties.truncated!.description).toContain("the same as `nextCursor` not being null");
     expect(t.outputSchema.properties.truncated!.description).not.toContain("older ones were left out");
     expect(t.outputSchema.properties.items!.description).toContain("`deletedBy` is null when the account that moved it there no longer exists");
-    // 清理用的是當下的設定：purgeAt／保留天數都不是固定事實。
+    // Cleanup uses the current setting, so purgeAt and retention days are not fixed facts.
     expect(t.description).toContain("an admin can change it");
     expect(t.outputSchema.properties.retentionDays!.description).toContain("an admin can change it");
   });
 });
 
-describe("LT7 站台設定列不在", () => {
-  it("DELETE FROM site_settings 後呼叫 → isError、code internal（runTool 收例外）", async () => {
+describe("list_trash: site settings row missing", () => {
+  it("call after DELETE FROM site_settings -> isError, code internal (runTool catches the exception)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx, me.id, R);
@@ -315,10 +313,9 @@ describe("LT7 站台設定列不在", () => {
   });
 });
 
-// ───────────────────────── 資料夾：folderPath、cursor ─────────────────────────
 
-describe("LT8 folderPath（還原的去處）", () => {
-  it("資料夾還在 → 即時路徑（期間改名、搬動也跟著）；資料夾已刪 → 移入時的快照；根層 → []", async () => {
+describe("list_trash: folderPath (restore destination)", () => {
+  it("folder exists -> live path (follows renames and moves meanwhile); folder deleted -> snapshot from trash time; root level -> []", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const pool = ctx.db.$client;
@@ -340,7 +337,7 @@ describe("LT8 folderPath（還原的去處）", () => {
     await pool.query(`update folders set parent_id = $2 where id = $1`, [b, c]);
     expect(await pathOf(live.id)).toEqual(["C", "B"]);
 
-    await pool.query(`delete from folders where id = $1`, [d]); // notes.folder_id → NULL（FK set null），快照留著
+    await pool.query(`delete from folders where id = $1`, [d]); // notes.folder_id -> NULL (FK set null), snapshot stays
     expect((await noteFolderCols(pool, gone.id))!.folder_id).toBeNull();
     expect(await pathOf(gone.id)).toEqual(["D"]);
     expect(await pathOf(root.id)).toEqual([]);
@@ -348,7 +345,7 @@ describe("LT8 folderPath（還原的去處）", () => {
     expect("folderPathTruncated" in item).toBe(false);
   });
 
-  it("八層各 27 個 \"（直寫 DB）→ 留最後 7 段、folderPathTruncated、成本 ≤ 400；五層 [33,40,40,40,41] 個 \" → 5 段全留、末段截成 40、成本恰 400", async () => {
+  it("eight levels of 27 \" each (written directly to the DB) -> last 7 segments kept, folderPathTruncated, cost <= 400; five levels [33,40,40,40,41] \" -> all 5 segments kept, last cut to 40, cost exactly 400", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const eight = await seedFolderChain(ctx.db, { personal: me.id }, Array.from({ length: 8 }, () => '"'.repeat(27)));
@@ -372,8 +369,8 @@ describe("LT8 folderPath（還原的去處）", () => {
   });
 });
 
-describe("LT9 壞游標", () => {
-  it("{ cursor: \"x\" }、list_notes 發的游標、t| 之後夾 NUL、id 不是 UUID、時間不是日期、超範圍年份 → invalid_body＋BAD_CURSOR_MESSAGE；之後照常列", async () => {
+describe("list_trash: bad cursor", () => {
+  it("{ cursor: \"x\" }, a list_notes cursor, NUL after t|, id not a UUID, time not a date, out-of-range year -> invalid_body with BAD_CURSOR_MESSAGE; listing works afterwards", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id }, { title: "LT9" });
@@ -382,10 +379,10 @@ describe("LT9 壞游標", () => {
     await trash(ctx.app, n.id, me.id);
     const auth = await tokenOf(ctx, me.id, R);
     const notesCursor = ((await call(ctx.app, auth, "list_notes", { limit: 1 })).structuredContent!.nextCursor as string | null)!;
-    expect(notesCursor).not.toBeNull(); // 前提：真的拿到一個 list_notes 游標
+    expect(notesCursor).not.toBeNull(); // precondition: really got a list_notes cursor
     const enc = (s: string) => Buffer.from(s, "utf8").toString("base64url");
     const withNul = enc(`t|${new Date().toISOString()}${String.fromCharCode(0)}|${n.id}`);
-    // 偽造的兩段：id 不是 UUID、時間不是日期；以及 JS 收、pg 不收的超範圍年份——都要是 invalid_body，不是 internal。
+    // Forged two-part cursors (id not a UUID, time not a date) and an out-of-range year that JS accepts but pg rejects: all must be invalid_body, not internal.
     const badId = enc(`t|${new Date().toISOString()}|zzz`);
     const badDate = enc(`t|not-a-date|${n.id}`);
     const farYear = enc(`t|+275760-09-13T00:00:00.000Z|${n.id}`);
@@ -398,8 +395,8 @@ describe("LT9 壞游標", () => {
   });
 });
 
-describe("LT-K 毫秒邊界", () => {
-  it("101 篇：第 100 與第 101 篇同一毫秒、差 1 µs，µs 序與 id 序相反（µs 較大的給 id 較小者）→ 兩頁合計 101、不重，序列與 REST 逐字相同", async () => {
+describe("list_trash: millisecond boundary", () => {
+  it("101 notes: the 100th and 101st share a millisecond and differ by 1 us, with us order opposite to id order (larger us has the smaller id) -> two pages total 101 with no duplicates, same sequence as REST", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const pool = ctx.db.$client;
@@ -415,10 +412,10 @@ describe("LT-K 毫秒邊界", () => {
     await pool.query(`update notes set deleted_at = $2::timestamptz + interval '501 microseconds' where id = $1`, [small, ms]);
     await pool.query(`update notes set deleted_at = $2::timestamptz + interval '500 microseconds' where id = $1`, [large, ms]);
     const same = await pool.query<{ n: number }>(`select count(*)::int as n from notes where date_trunc('milliseconds', deleted_at) = $1::timestamptz`, [ms]);
-    expect(same.rows[0]!.n).toBe(2); // 前提：這一毫秒恰好兩篇
+    expect(same.rows[0]!.n).toBe(2); // precondition: exactly two notes in this millisecond
 
     const rest = (await restListOf(ctx.app, me.id)).items.map(i => i.id);
-    expect(rest.slice(99)).toEqual([large, small]); // 同一毫秒依 id DESC（不是 µs）
+    expect(rest.slice(99)).toEqual([large, small]); // same millisecond orders by id DESC (not us)
     const pages = await listTrashAll(ctx.app, await tokenOf(ctx, me.id, R));
     expect(pages.map(p => p.items.length)).toEqual([100, 1]);
     const ids = pages.flatMap(p => p.items.map(i => i.id));
@@ -427,13 +424,12 @@ describe("LT-K 毫秒邊界", () => {
   });
 });
 
-// ───────────────────────── delete_note／restore_note ─────────────────────────
 
 type DeleteOut = { id: string; title: string; titleTruncated?: true; purgeAt: string | null };
 type NoteSummary = { id: string; title: string; owner: { kind: string }; url: string; role: string };
 
 const realHooks = { collabHooks: createCollabHooks } as const;
-/** 測試自持的 edit 桶：呼叫後 `remaining` 仍是 EDIT_N ＝這次呼叫沒扣它。 */
+/** Test-owned edit limiter: `remaining` still equal to EDIT_N after a call means the call didn't charge it. */
 const EDIT_N = 5;
 const editLimiter = () => new FixedWindowLimiter({ limit: EDIT_N, windowMs: 600_000 });
 const emptyLimiter = () => new FixedWindowLimiter({ limit: 0, windowMs: 600_000 });
@@ -445,7 +441,6 @@ function remaining(l: FixedWindowLimiter, key: string): number {
 const isTrashed = async (db: Db, id: string) => (await trashCols(db.$client, id))!.deleted_at !== null;
 const busyErr = () => Object.assign(new Error("serialization"), { code: "40001" });
 
-/** 一定成功的 delete_note／restore_note（失敗時把錯誤印進斷言訊息）。 */
 async function deleteOk(app: FastifyInstance, auth: Auth, noteId: string): Promise<DeleteOut> {
   const r = await call(app, auth, "delete_note", { note_id: noteId });
   expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
@@ -459,8 +454,8 @@ async function restoreOk(app: FastifyInstance, auth: Auth, noteId: string): Prom
 const listNotesIds = async (app: FastifyInstance, auth: Auth) =>
   ((await call(app, auth, "list_notes", {})).structuredContent!.notes as Array<{ id: string; url: string }>);
 
-describe("DN1 owner 移入個人筆記", () => {
-  it("RWD 憑證 → { id, title, purgeAt }（purgeAt 等於 REST 清單那一項）；deleted_by＝owner；閘門關著；list_notes 不再列它", async () => {
+describe("delete_note: owner trashes a personal note", () => {
+  it("RWD credential -> { id, title, purgeAt } (purgeAt equals the REST list entry); deleted_by is the owner; gate closed; list_notes no longer lists it", async () => {
     const ctx = await buildCollabTestApp(realHooks);
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id }, { title: "DN1 note" });
@@ -478,8 +473,8 @@ describe("DN1 owner 移入個人筆記", () => {
   });
 });
 
-describe("DN2 not_found 同形", () => {
-  it("已在垃圾桶的同一篇、別人的私人筆記、隨機 uuid → structuredContent 逐欄相同", async () => {
+describe("delete_note: not_found has the same shape", () => {
+  it("note already in trash, someone else's private note, random uuid -> structuredContent identical field by field", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -499,8 +494,8 @@ describe("DN2 not_found 同形", () => {
   });
 });
 
-describe("DN3 分享者", () => {
-  it("viewer 與 editor 分享 → forbidden＋DELETE_FORBIDDEN_MESSAGE；deleted_at 仍 NULL", async () => {
+describe("delete_note: shared users", () => {
+  it("viewer and editor shares -> forbidden with DELETE_FORBIDDEN_MESSAGE; deleted_at stays NULL", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: owner.id });
@@ -514,8 +509,8 @@ describe("DN3 分享者", () => {
   });
 });
 
-describe("DN4 六角色", () => {
-  it("admin、editDelete、deleteOnly 成功；member、editOnly、readOnly forbidden；outsider 與隨機 uuid 逐欄相同；deleteOnly 之後 list_trash 不含、restore_note not_found", async () => {
+describe("delete_note: six roles", () => {
+  it("admin, editDelete, deleteOnly succeed; member, editOnly, readOnly are forbidden; outsider equals random uuid field by field; after deleteOnly, list_trash excludes it and restore_note gives not_found", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const roles = ["admin", "editDelete", "deleteOnly", "member", "editOnly", "readOnly", "outsider"] as const;
@@ -541,8 +536,8 @@ describe("DN4 六角色", () => {
   });
 });
 
-describe("DN5 大寫 id", () => {
-  it("note_id 全大寫 → 成功、回應 id 是小寫、DB 列被移入", async () => {
+describe("delete_note: uppercase id", () => {
+  it("all-uppercase note_id -> succeeds, response id is lowercase, DB row is trashed", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id });
@@ -552,21 +547,21 @@ describe("DN5 大寫 id", () => {
   });
 });
 
-describe("DN13 長標題", () => {
-  it("標題 300 個 \" → titleTruncated true、escapedLength ≤ 200、已移入", async () => {
+describe("delete_note: long title", () => {
+  it("title of 300 \" -> titleTruncated true, escapedLength <= 200, trashed", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id }, { title: '"'.repeat(300) });
     const out = await deleteOk(ctx.app, await tokenOf(ctx, me.id, RWD), n.id);
     expect(out.titleTruncated).toBe(true);
     expect(escapedLength(out.title)).toBeLessThanOrEqual(200);
-    expect(out.title).toBe('"'.repeat(100)); // 前提：真的被截了（一個 " 逃脫後算 2）
+    expect(out.title).toBe('"'.repeat(100)); // precondition: really truncated (an escaped " counts 2)
     expect(await isTrashed(ctx.db, n.id)).toBe(true);
   });
 });
 
-describe("DN6 TOCTOU：鎖後在交易內被降權", () => {
-  it("note-trash-locked 縫把 editDelete 的角色改成無刪除 → forbidden、deleted_at 仍 NULL、閘門已收", async () => {
+describe("delete_note: TOCTOU: role downgraded inside the transaction after the lock", () => {
+  it("the note-trash-locked hook changes editDelete's role to one without delete -> forbidden, deleted_at stays NULL, gate closed", async () => {
     const holder: { db?: Db; roleId?: string } = {};
     const hook: GroupTestHook = async point => {
       if (point === "note-trash-locked" && holder.roleId) await holder.db!.update(groupRoles).set({ canDelete: false }).where(eq(groupRoles.id, holder.roleId));
@@ -585,8 +580,8 @@ describe("DN6 TOCTOU：鎖後在交易內被降權", () => {
   });
 });
 
-describe("DN7 edit 桶", () => {
-  it("edit 桶 0 格：owner → too_many_requests、deleted_at 仍 NULL；outsider → not_found、viewer 分享者 → forbidden（兩道檢查都在扣桶之前）", async () => {
+describe("delete_note: edit limiter", () => {
+  it("edit limiter with 0 slots: owner -> too_many_requests, deleted_at stays NULL; outsider -> not_found, viewer share -> forbidden (both checks run before the limiter is charged)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { edit: emptyLimiter() } });
     const owner = await seedUser(ctx.db);
     const outsider = await seedUser(ctx.db);
@@ -607,8 +602,8 @@ describe("DN7 edit 桶", () => {
   });
 });
 
-describe("DN8 token 寫入預算（tokenWrite 扣點在 HTTP 上是活的）", () => {
-  it("tokenWrite 0 格：RWD 憑證 → too_many_requests、deleted_at 仍 NULL、edit 桶沒被扣；session 照常成功", async () => {
+describe("delete_note: token write budget (tokenWrite charging is live over HTTP)", () => {
+  it("tokenWrite with 0 slots: RWD credential -> too_many_requests, deleted_at stays NULL, edit limiter not charged; session still succeeds", async () => {
     const edit = editLimiter();
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite: emptyLimiter(), edit } });
     const me = await seedUser(ctx.db);
@@ -625,7 +620,7 @@ describe("DN8 token 寫入預算（tokenWrite 扣點在 HTTP 上是活的）", (
     expect(await isTrashed(ctx.db, theirs.id)).toBe(true);
   });
 
-  it("共享鍵：tokenWrite 2 格，edit_note append 一格、delete_note 一格成功，第三發 delete_note → too_many_requests（桶 key 與既有寫入工具同為 token:${userId}）", async () => {
+  it("shared key: tokenWrite with 2 slots, edit_note append takes one and delete_note one, third delete_note -> too_many_requests (limiter key is token:${userId}, same as the other write tools)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite: new FixedWindowLimiter({ limit: 2, windowMs: 600_000 }) } });
     const me = await seedUser(ctx.db);
     const a = await seedNote(ctx.db, { ownerId: me.id });
@@ -642,8 +637,8 @@ describe("DN8 token 寫入預算（tokenWrite 扣點在 HTTP 上是活的）", (
   });
 });
 
-describe("DN9 交易被併發犧牲", () => {
-  it("note-trash-locked 丟 40001 → server_busy＋DELETE_BUSY_MESSAGE；deleted_at 仍 NULL；閘門已收", async () => {
+describe("delete_note: transaction picked as a concurrency victim", () => {
+  it("note-trash-locked throws 40001 -> server_busy with DELETE_BUSY_MESSAGE; deleted_at stays NULL; gate closed", async () => {
     const ctx = await buildCollabTestApp({
       ...realHooks,
       groupTestHook: async point => {
@@ -658,8 +653,8 @@ describe("DN9 交易被併發犧牲", () => {
     await vi.waitFor(() => expect(ctx.collab.isDeleting(n.id)).toBe(false));
   });
 
-  // DN9b：busy 句宣稱「沒移入」只對可重試的交易中止成立；其他例外交給 runTool 收成 internal（不得一律 server_busy）。
-  it("DN9b：note-trash-locked 丟一般 Error → internal（不是 server_busy）；deleted_at 仍 NULL", async () => {
+  // The busy sentence claims "not trashed" only for retryable transaction aborts; other exceptions go to runTool as internal (not always server_busy).
+  it("note-trash-locked throws a plain Error -> internal (not server_busy); deleted_at stays NULL", async () => {
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
         if (point === "note-trash-locked") throw new Error("boom");
@@ -674,8 +669,8 @@ describe("DN9 交易被併發犧牲", () => {
   });
 });
 
-describe("DN10 站台設定列不在", () => {
-  it("DELETE FROM site_settings 後 delete_note → internal、deleted_at 仍 NULL、edit 桶沒被扣（設定在扣桶與移入之前讀）", async () => {
+describe("delete_note: site settings row missing", () => {
+  it("delete_note after DELETE FROM site_settings -> internal, deleted_at stays NULL, edit limiter not charged (settings are read before the charge and the trashing)", async () => {
     const edit = editLimiter();
     const ctx = await buildCollabTestApp({ limiters: { edit } });
     const me = await seedUser(ctx.db);
@@ -689,8 +684,8 @@ describe("DN10 站台設定列不在", () => {
   });
 });
 
-describe("DN11 purgeAt 跟著當下設定", () => {
-  it("保留 3 天 → purgeAt＝deleted_at＋3 天（SQL 算）；NULL → null；兩種都等於緊接著 list_trash 那一項", async () => {
+describe("delete_note: purgeAt follows the current setting", () => {
+  it("retention 3 days -> purgeAt = deleted_at + 3 days (computed in SQL); NULL -> null; both equal the entry of the list_trash that follows", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx, me.id, RWD);
@@ -712,8 +707,8 @@ describe("DN11 purgeAt 跟著當下設定", () => {
   });
 });
 
-describe("DN12 授權之後才落空：commit 後重讀與交易內重判", () => {
-  it("移入交易持鎖時 site_settings 列被刪 → 移入照樣 commit，loadTrashedMeta 落空 → not_found＋同一句", async () => {
+describe("delete_note: failing only after authorization: re-read after commit and re-check inside the transaction", () => {
+  it("site_settings row deleted while the trashing transaction holds the lock -> trashing still commits, loadTrashedMeta fails -> not_found with the same sentence", async () => {
     const holder: { db?: Db; armed?: boolean } = {};
     const hook: GroupTestHook = async point => {
       if (point === "note-trash-locked" && holder.armed) await holder.db!.$client.query(`delete from site_settings`);
@@ -725,10 +720,10 @@ describe("DN12 授權之後才落空：commit 後重讀與交易內重判", () =
     holder.armed = true;
     const r = await call(ctx.app, await tokenOf(ctx, me.id, RWD), "delete_note", { note_id: n.id });
     expect(r.structuredContent).toEqual({ code: "not_found", message: DELETE_NOT_FOUND_MESSAGE });
-    expect(await isTrashed(ctx.db, n.id)).toBe(true); // 前提：移入確實 commit 了，落空的是 commit 後那一讀
+    expect(await isTrashed(ctx.db, n.id)).toBe(true); // precondition: trashing did commit; what failed is the read after commit
   });
 
-  it("交易內重判 none（授權之後被別人先移入）→ not_found＋同一句，deleted_by 仍是先移入的人", async () => {
+  it("re-check inside the transaction sees none (someone else trashed it after authorization) -> not_found with the same sentence; deleted_by stays the first trasher", async () => {
     let open!: () => void;
     const gate = new Promise<void>(r => { open = r; });
     let entered!: () => void;
@@ -757,8 +752,8 @@ describe("DN12 授權之後才落空：commit 後重讀與交易內重判", () =
   });
 });
 
-describe("RN1 owner 還原", () => {
-  it("delete_note → restore_note：role owner、url 與移入前 list_notes 相同；deleted_at／deleted_by NULL；閘門已開；list_notes 又列得到", async () => {
+describe("restore_note: owner restores", () => {
+  it("delete_note then restore_note: role owner, url equals the pre-trash list_notes one; deleted_at/deleted_by NULL; gate open; list_notes lists it again", async () => {
     const ctx = await buildCollabTestApp(realHooks);
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id }, { title: "RN1" });
@@ -775,8 +770,8 @@ describe("RN1 owner 還原", () => {
   });
 });
 
-describe("RN2 not_found 同形", () => {
-  it("已還原的同一篇、活筆記、隨機 uuid、別人的個人垃圾桶筆記 → structuredContent 逐欄相同", async () => {
+describe("restore_note: not_found has the same shape", () => {
+  it("already restored note, live note, random uuid, someone else's personal trash note -> structuredContent identical field by field", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -795,7 +790,7 @@ describe("RN2 not_found 同形", () => {
     expect(await isTrashed(ctx.db, theirs.id)).toBe(true);
   });
 
-  it("預判之後被別人先還原（交易內 not_in_trash）→ 同一句 not_found", async () => {
+  it("someone else restored it after the pre-check (not_in_trash inside the transaction) -> same not_found sentence", async () => {
     let open!: () => void;
     const gate = new Promise<void>(r => { open = r; });
     let entered!: () => void;
@@ -824,8 +819,8 @@ describe("RN2 not_found 同形", () => {
   });
 });
 
-describe("RN3 群組", () => {
-  it("editDelete 還原 admin 移入的群組筆記 → owner.kind group、role editor", async () => {
+describe("restore_note: group", () => {
+  it("editDelete restores a group note trashed by admin -> owner.kind group, role editor", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const n = await seedNote(ctx.db, { groupId: s.groupId });
@@ -836,8 +831,8 @@ describe("RN3 群組", () => {
   });
 });
 
-describe("RN4 六角色", () => {
-  it("admin、editDelete 成功；deleteOnly、editOnly、member、readOnly、outsider → 與隨機 uuid 逐欄相同的 not_found", async () => {
+describe("restore_note: six roles", () => {
+  it("admin and editDelete succeed; deleteOnly, editOnly, member, readOnly, outsider -> not_found identical to a random uuid field by field", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const roles = ["admin", "editDelete", "deleteOnly", "editOnly", "member", "readOnly", "outsider"] as const;
@@ -855,8 +850,8 @@ describe("RN4 六角色", () => {
   });
 });
 
-describe("RN5 edit 桶", () => {
-  it("edit 桶 0 格：owner → too_many_requests、仍在垃圾桶；無垃圾桶權者 → not_found（預判在扣桶之前）", async () => {
+describe("restore_note: edit limiter", () => {
+  it("edit limiter with 0 slots: owner -> too_many_requests, still in trash; caller without trash permission -> not_found (pre-check runs before the charge)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { edit: emptyLimiter() } });
     const owner = await seedUser(ctx.db);
     const outsider = await seedUser(ctx.db);
@@ -871,8 +866,8 @@ describe("RN5 edit 桶", () => {
   });
 });
 
-describe("RN6 token 寫入預算", () => {
-  it("tokenWrite 0 格：RWD 憑證 restore_note → too_many_requests、仍在垃圾桶、edit 桶沒被扣；session 照常成功", async () => {
+describe("restore_note: token write budget", () => {
+  it("tokenWrite with 0 slots: RWD credential restore_note -> too_many_requests, still in trash, edit limiter not charged; session still succeeds", async () => {
     const edit = editLimiter();
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite: emptyLimiter(), edit } });
     const me = await seedUser(ctx.db);
@@ -892,8 +887,8 @@ describe("RN6 token 寫入預算", () => {
   });
 });
 
-describe("RN7 交易被併發犧牲", () => {
-  it("note-restore-locked 丟 40001 → server_busy＋RESTORE_BUSY_MESSAGE；仍在垃圾桶", async () => {
+describe("restore_note: transaction picked as a concurrency victim", () => {
+  it("note-restore-locked throws 40001 -> server_busy with RESTORE_BUSY_MESSAGE; still in trash", async () => {
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
         if (point === "note-restore-locked") throw busyErr();
@@ -908,8 +903,8 @@ describe("RN7 交易被併發犧牲", () => {
     expect(await trashCols(ctx.db.$client, n.id)).toEqual(before);
   });
 
-  // RN7b：同 DN9b——「was not restored」只對可重試的交易中止成立；其他例外是 internal。
-  it("RN7b：note-restore-locked 丟一般 Error → internal（不是 server_busy）；仍在垃圾桶", async () => {
+  // "was not restored" holds only for retryable transaction aborts; other exceptions are internal.
+  it("note-restore-locked throws a plain Error -> internal (not server_busy); still in trash", async () => {
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
         if (point === "note-restore-locked") throw new Error("boom");
@@ -926,8 +921,8 @@ describe("RN7 交易被併發犧牲", () => {
   });
 });
 
-describe("模型面字串", () => {
-  it("delete_note／restore_note 的 description 與 purgeAt 說明：新子句在、被拿掉的舊說法不在", async () => {
+describe("model-facing strings", () => {
+  it("delete_note/restore_note descriptions and the purgeAt explanation: new clauses present, removed old wording absent", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const tools = (await mcpPost(ctx.app, rpc("tools/list"), await tokenOf(ctx, me.id, RWD))).json().result.tools as Array<{
@@ -947,7 +942,7 @@ describe("模型面字串", () => {
     expect(del.outputSchema.properties.purgeAt!.description).toContain("list_trash shows the current date");
     expect(res.description).toContain("a different owner and URL");
     expect(res.description).not.toContain("same URL");
-    // RN+ 在、回應形那句仍在。
+    // The folderPath sentence is present and the response-shape sentence still is.
     expect(res.description).toContain(
       "It usually goes back into the folder that list_trash shows as its `folderPath`, re-creating folders on that path that are missing.",
     );
@@ -955,11 +950,11 @@ describe("模型面字串", () => {
   });
 });
 
-describe("PX REST／MCP 同一份 fixture", () => {
-  it("六角色＋outsider＋逐人分享的檢視者／編輯者 × 移入／列出／還原：REST 與 MCP 的結果對映表逐格相同", async () => {
+describe("REST and MCP over the same fixture", () => {
+  it("six roles + outsider + per-person shared viewer/editor x trash/list/restore: the REST and MCP result tables match cell by cell", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
-    // 逐人分享：另一人的個人筆記分享給他們。
+    // Per-person shares: another user's personal note shared to them.
     const shareOwner = await seedUser(ctx.db);
     const users: Record<string, SeededUser> = {
       admin: s.admin, editDelete: s.editDelete, deleteOnly: s.deleteOnly, member: s.member, editOnly: s.editOnly, readOnly: s.readOnly,
@@ -1016,8 +1011,8 @@ describe("PX REST／MCP 同一份 fixture", () => {
   });
 });
 
-describe("SC1 註冊", () => {
-  it("R／RW／RWM 沒有 delete_note／restore_note／delete_folder、有 list_trash；RWD／RWMD／session 四支都有；名字都不含 purge／empty／permanent；RWM 直接呼叫 delete_note → Tool not found", async () => {
+describe("registration", () => {
+  it("R/RW/RWM have no delete_note/restore_note/delete_folder but have list_trash; RWD/RWMD/session have all four; no name contains purge/empty/permanent; RWM calling delete_note -> Tool not found", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const n = await seedNote(ctx.db, { ownerId: me.id });
@@ -1044,8 +1039,8 @@ describe("SC1 註冊", () => {
   });
 });
 
-describe("SC2", () => {
-  it("RWMD 憑證：edit_note append、copy_note（個人、群組）、create_note（群組）、move_note_to_group 之後沒有任何筆記在垃圾桶", async () => {
+describe("write tools never trash", () => {
+  it("RWMD credential: after edit_note append, copy_note (personal, group), create_note (group), move_note_to_group, no note is in the trash", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "SC2", [{ userId: me.id, role: "admin" }]);
@@ -1063,11 +1058,10 @@ describe("SC2", () => {
     await ok("create_note", { title: "SC2 group", group_id: g.id });
     await ok("move_note_to_group", { note_id: n.id, group_id: g.id });
     const { rows } = await ctx.db.$client.query<{ n: number }>(`select count(*)::int n from notes`);
-    expect(rows[0]!.n).toBe(4); // 原篇、兩份副本、新建那篇
+    expect(rows[0]!.n).toBe(4); // original, two copies, the newly created note
   });
 });
 
-/** 由葉往根走 `parent_id`，回根 → 葉的名字。 */
 async function folderPathOf(db: Db, folderId: string): Promise<string[]> {
   const out: string[] = [];
   let cur: string | null = folderId;
@@ -1080,8 +1074,8 @@ async function folderPathOf(db: Db, folderId: string): Promise<string[]> {
   return out;
 }
 
-describe("FD1 資料夾裡的筆記：delete_note → restore_note（個人）", () => {
-  it("移入後 folder_id 不動、快照 [A,B,C]（REST folderPath 相同）；restore_note 回同一個資料夾、快照清掉", async () => {
+describe("notes in folders: delete_note -> restore_note (personal)", () => {
+  it("trashing keeps folder_id and stores snapshot [A,B,C] (same as REST folderPath); restore_note returns to the same folder and clears the snapshot", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const [, , c] = await seedFolderChain(ctx.db, { personal: me.id }, ["A", "B", "C"]);
@@ -1098,8 +1092,8 @@ describe("FD1 資料夾裡的筆記：delete_note → restore_note（個人）",
   });
 });
 
-describe("FD2 資料夾在垃圾桶期間被刪：restore_note 重建路徑", () => {
-  it("個人：DELETE /api/folders/A 之後 folder_id NULL、快照仍在；restore_note → 新的 A/B/C（個人空間）、筆記在 C、快照清掉", async () => {
+describe("folder deleted while the note is in trash: restore_note recreates the path", () => {
+  it("personal: after DELETE /api/folders/A, folder_id is NULL and the snapshot stays; restore_note -> new A/B/C (personal space), note in C, snapshot cleared", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const [a, , c] = await seedFolderChain(ctx.db, { personal: me.id }, ["A", "B", "C"]);
@@ -1120,7 +1114,7 @@ describe("FD2 資料夾在垃圾桶期間被刪：restore_note 重建路徑", ()
     expect(await folderRow(ctx.db.$client, cols.folder_id!)).toMatchObject({ kind: "personal", owner_id: me.id, group_id: null });
   });
 
-  it("群組：admin 刪掉群組資料夾 X 之後 restore_note → 新的 X/Y 建在同一個群組、筆記在 Y", async () => {
+  it("group: after admin deletes group folder X, restore_note -> new X/Y in the same group, note in Y", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "FD2", [{ userId: me.id, role: "admin" }]);
@@ -1143,8 +1137,8 @@ describe("FD2 資料夾在垃圾桶期間被刪：restore_note 重建路徑", ()
   });
 });
 
-describe("FD3 MCP 回應的資料夾欄（restore_note 帶 folder、list_trash 帶 folderPath、delete_note 沒有）", () => {
-  it("資料夾裡的筆記：delete_note 沒有含 folder 的鍵；list_trash 的 folderPath 與 REST 同值；restore_note 的 note.folder 是原資料夾", async () => {
+describe("folder fields in MCP responses (restore_note has folder, list_trash has folderPath, delete_note has neither)", () => {
+  it("note in a folder: delete_note has no key containing folder; list_trash folderPath equals REST; restore_note note.folder is the original folder", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const [f] = await seedFolderChain(ctx.db, { personal: me.id }, ["F"]);
@@ -1167,7 +1161,7 @@ describe("FD3 MCP 回應的資料夾欄（restore_note 帶 folder、list_trash �
     const note = await restoreOk(ctx.app, auth, n.id);
     expect(note.id).toBe(n.id);
     expect((note as NoteSummary & { folder?: unknown }).folder).toEqual({ id: f, name: "F" });
-    expect(folderKeys(note)).toEqual(["folder"]); // 多出其他含 folder 的鍵就紅
+    expect(folderKeys(note)).toEqual(["folder"]); // any extra key containing folder fails
     expect((await noteFolderCols(ctx.db.$client, n.id))!.folder_id).toBe(f);
   });
 });

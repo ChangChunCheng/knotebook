@@ -6,7 +6,7 @@ import { MediaLightbox } from "./MediaLightbox";
 import type { ZoomSource } from "./context";
 import { fitView, wheelFactor, zoomAt, type Size } from "./zoom-math";
 
-// jsdom 沒有 PointerEvent；補一個帶 pointerId／pointerType 的 MouseEvent，讓 clientX／clientY 等欄位進得去。
+// jsdom has no PointerEvent: add a MouseEvent carrying pointerId/pointerType so fields such as clientX/clientY get in.
 class FakePointerEvent extends MouseEvent {
   pointerId: number;
   pointerType: string;
@@ -79,14 +79,14 @@ function img(): HTMLImageElement {
   return screen.getByRole("dialog").querySelector("img")!;
 }
 
-/** 內容元素目前的位置與大小（從 style 讀回）。 */
+/** Current position and size of the content element (read back from style). */
 function geometry(el: HTMLElement) {
   const m = /translate\((-?[\d.e+-]+)px,\s*(-?[\d.e+-]+)px\)/.exec(el.style.transform);
   if (!m) throw new Error(`no translate in "${el.style.transform}"`);
   return { width: parseFloat(el.style.width), height: parseFloat(el.style.height), x: Number(m[1]), y: Number(m[2]) };
 }
 
-/** 視窗座標 `p` 底下的原圖座標。 */
+/** Image coordinate under window coordinate `p`. */
 function contentPointUnder(el: HTMLElement, natural: Size, p: { x: number; y: number }) {
   const g = geometry(el);
   const scale = g.width / natural.width;
@@ -99,7 +99,7 @@ function tap(target: Element, x: number, y: number, pointerId = 1, pointerType =
 }
 
 describe("MediaLightbox", () => {
-  it("大圖等比縮進視窗並置中；名稱是 caption，畫面下方顯示 caption，說明是操作提示", () => {
+  it("a large image is scaled proportionally into the window and centered; the name is the caption, the caption shows under the image, the description is the operation hint", () => {
     const { dialog } = setup();
     const g = geometry(img());
     expect(img().style.width).toBe("1000px");
@@ -117,7 +117,7 @@ describe("MediaLightbox", () => {
     expect(img().getAttribute("draggable")).toBe("false");
   });
 
-  it("小圖不放大、原尺寸置中；名稱退回 alt，再退回「Image」", () => {
+  it("a small image is not enlarged and sits centered at its original size; the name falls back to alt, then \"Image\"", () => {
     setup(image({ naturalWidth: 200, naturalHeight: 100, caption: "", alt: "box.png" }));
     expect(img().style.width).toBe("200px");
     expect(img().style.transform).toContain("translate(400px, 350px)");
@@ -127,7 +127,7 @@ describe("MediaLightbox", () => {
     expect(screen.getByRole("dialog", { name: "Image" })).toBeInTheDocument();
   });
 
-  it("svg：放入換過根 id 的字串，style 裡的選擇器跟著換；名稱是「Diagram」", () => {
+  it("svg: put in with its root id replaced, and the selectors in style follow; the name is \"Diagram\"", () => {
     const { dialog, viewport } = setup({
       kind: "svg",
       svg: '<svg id="mermaid-7" viewBox="0 0 300 200"><style>#mermaid-7 .node{}</style></svg>',
@@ -148,7 +148,7 @@ describe("MediaLightbox", () => {
     expect(box.style.height).toBe("200px");
   });
 
-  it("滾輪：以游標為中心放大，游標底下的原圖座標不變", () => {
+  it("wheel: zooms in around the cursor, the image coordinate under the cursor is unchanged", () => {
     const { viewport } = setup();
     const anchor = { x: 300, y: 400 };
     const before = contentPointUnder(img(), BIG, anchor);
@@ -165,16 +165,16 @@ describe("MediaLightbox", () => {
     expect(after.y).toBeCloseTo(before.y, 6);
   });
 
-  it("滾輪送來無效的量：不丟例外、畫面不變", () => {
+  it("wheel with an invalid delta: no exception, view unchanged", () => {
     const { viewport } = setup();
-    // 事件建構子不收 NaN，建好再把欄位換掉。
+    // The event constructor does not accept NaN: build it and replace the field afterwards.
     const event = createEvent.wheel(viewport, { deltaY: -100, clientX: 300, clientY: 400 });
     Object.defineProperty(event, "deltaY", { value: Number.NaN });
     expect(() => fireEvent(viewport, event)).not.toThrow();
     expect(img().style.width).toBe("1000px");
   });
 
-  it("鍵盤：+ 放大、- 縮回、0 回到符合視窗、方向鍵往看過去的方向移；帶 Ctrl 的不攔", () => {
+  it("keyboard: + zooms in, - zooms back, 0 returns to fit-to-window, arrow keys move toward the direction of looking; with Ctrl they are not intercepted", () => {
     const { dialog } = setup();
     fireEvent.keyDown(dialog, { key: "+" });
     expect(geometry(img()).width).toBeCloseTo(1200, 6);
@@ -199,7 +199,7 @@ describe("MediaLightbox", () => {
     expect(geometry(img())).toEqual(now);
   });
 
-  it("Esc 呼叫 onClose 一次；關閉鈕也呼叫 onClose", () => {
+  it("Esc calls onClose once; the close button also calls onClose", () => {
     const { dialog, onClose } = setup();
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -207,7 +207,7 @@ describe("MediaLightbox", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it("點背景（不移動）關閉；點在圖上不關", () => {
+  it("clicking the background (without moving) closes; clicking on the image does not", () => {
     const { viewport, onClose } = setup();
     tap(img(), 500, 400);
     expect(onClose).not.toHaveBeenCalled();
@@ -215,14 +215,14 @@ describe("MediaLightbox", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("在圖上點兩下（相隔 100ms）切換放大與符合視窗；相隔 400ms 不切換", () => {
+  it("double-clicking on the image (100ms apart) toggles zoom and fit-to-window; 400ms apart does not toggle", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     setup();
     vi.setSystemTime(10_000);
     tap(img(), 500, 400);
     vi.setSystemTime(10_100);
     tap(img(), 500, 400);
-    // 符合視窗是 0.5 倍 → 切到 max(1, 2 × 0.5) = 1 倍
+    // Fit-to-window is 0.5x -> switches to max(1, 2 x 0.5) = 1x
     expect(img().style.width).toBe("2000px");
     vi.setSystemTime(11_000);
     tap(img(), 500, 400);
@@ -236,7 +236,7 @@ describe("MediaLightbox", () => {
     expect(img().style.width).toBe("1000px");
   });
 
-  it("兩下點擊相距太遠（> 24px）不切換", () => {
+  it("two clicks too far apart (> 24px) do not toggle", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     setup();
     vi.setSystemTime(10_000);
@@ -246,7 +246,7 @@ describe("MediaLightbox", () => {
     expect(img().style.width).toBe("1000px");
   });
 
-  it("在背景按下、移動 20px 再放開：是拖曳不是點擊，不關閉", () => {
+  it("pressing on the background, moving 20px and releasing: a drag, not a click, so it does not close", () => {
     const { viewport, onClose } = setup();
     fireEvent.pointerDown(viewport, { pointerId: 1, clientX: 900, clientY: 50 });
     fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 920, clientY: 50 });
@@ -254,7 +254,7 @@ describe("MediaLightbox", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("拖曳平移：放大後跟著指標移動，且不能拖出內容邊界", () => {
+  it("drag panning: after zooming in it follows the pointer and cannot be dragged past the content bounds", () => {
     const { dialog, viewport } = setup();
     fireEvent.keyDown(dialog, { key: "+" });
     fireEvent.keyDown(dialog, { key: "+" });
@@ -264,15 +264,15 @@ describe("MediaLightbox", () => {
     const moved = geometry(img());
     expect(moved.x).toBeCloseTo(start.x - 30, 6);
     expect(moved.y).toBeCloseTo(start.y - 10, 6);
-    // 往右下拖很遠：寬比視窗大的那一軸左緣停在視窗左緣（內容一直蓋滿視窗）；
-    // 高比視窗小的那一軸停在下緣貼齊視窗下緣（拖不出視窗）
+    // Dragged far to the lower right: on the axis where the width exceeds the window the left edge stops at the window's left edge (the content always covers the window);
+    // on the axis where the height is smaller than the window it stops with the bottom edge flush to the window's bottom (cannot be dragged out of the window)
     fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 5000, clientY: 5000 });
     expect(geometry(img()).x).toBe(0);
     expect(geometry(img()).y).toBeCloseTo(800 - 720, 6);
     fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 5000, clientY: 5000 });
   });
 
-  it("小圖拖不出視窗", () => {
+  it("a small image cannot be dragged out of the window", () => {
     const { viewport } = setup(image({ naturalWidth: 200, naturalHeight: 100 }));
     fireEvent.pointerDown(img(), { pointerId: 1, clientX: 500, clientY: 400 });
     fireEvent.pointerMove(viewport, { pointerId: 1, clientX: -5000, clientY: -5000 });
@@ -283,22 +283,22 @@ describe("MediaLightbox", () => {
     expect(geometry(img()).y).toBe(700);
   });
 
-  it("指標送來無效的座標：不丟例外、畫面不變", () => {
+  it("pointer with an invalid coordinate: no exception, view unchanged", () => {
     const { viewport } = setup();
     fireEvent.pointerDown(img(), { pointerId: 1, clientX: 500, clientY: 400 });
-    // 事件建構子不收 NaN，建好再把欄位換掉。
+    // The event constructor does not accept NaN: build it and replace the field afterwards.
     const event = createEvent.pointerMove(viewport, { pointerId: 1, clientX: 510, clientY: 400 });
     Object.defineProperty(event, "clientX", { value: Number.NaN });
     expect(() => fireEvent(viewport, event)).not.toThrow();
     expect(img().style.transform).toContain("translate(0px, 150px)");
-    // 之後正常的移動照常平移（壞事件沒有把起點弄壞）
+    // a later normal move still pans (the bad event did not corrupt the start point)
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "+" });
     const zoomed = geometry(img());
     fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 490, clientY: 400 });
     expect(geometry(img()).x).toBeCloseTo(zoomed.x - 10, 6);
   });
 
-  it("放大後視窗尺寸改變：回到新尺寸的符合視窗", () => {
+  it("window size change after zooming in: returns to fit-to-window of the new size", () => {
     const { dialog } = setup();
     fireEvent.keyDown(dialog, { key: "+" });
     expect(geometry(img()).width).toBeCloseTo(1200, 6);
@@ -309,14 +309,14 @@ describe("MediaLightbox", () => {
     expect(img().style.transform).toContain("translate(0px, 50px)");
   });
 
-  it("視窗尺寸沒變的回報不重設縮放", () => {
+  it("a report that the window size did not change does not reset the zoom", () => {
     const { dialog } = setup();
     fireEvent.keyDown(dialog, { key: "+" });
     act(() => observerCallbacks.forEach(cb => cb()));
     expect(geometry(img()).width).toBeCloseTo(1200, 6);
   });
 
-  it("量到視窗尺寸之前不渲染內容", () => {
+  it("does not render content before the window size has been measured", () => {
     viewportSize = { width: 0, height: 0 };
     const { viewport } = setup();
     expect(viewport.querySelector("img")).toBeNull();
@@ -325,14 +325,14 @@ describe("MediaLightbox", () => {
     expect(img().style.width).toBe("1000px");
   });
 
-  it("兩指：以中點縮放，第一個中點底下的原圖座標跟著手指到新中點", () => {
+  it("two fingers: zooms around the midpoint, the image coordinate under the first midpoint follows the fingers to the new midpoint", () => {
     const { viewport, onClose } = setup();
     const oldMid = { x: 450, y: 400 };
     const before = contentPointUnder(img(), BIG, oldMid);
     fireEvent.pointerDown(img(), { pointerId: 1, clientX: 400, clientY: 400 });
     fireEvent.pointerDown(img(), { pointerId: 2, clientX: 500, clientY: 400 });
     fireEvent.pointerMove(viewport, { pointerId: 2, clientX: 600, clientY: 400 });
-    // 兩指距離 100 → 200：放大 2 倍（0.5 → 1）
+    // Finger distance 100 -> 200: zoom 2x (0.5 -> 1)
     expect(geometry(img()).width).toBeCloseTo(2000, 6);
     const newMid = { x: 500, y: 400 };
     const after = contentPointUnder(img(), BIG, newMid);
@@ -343,7 +343,7 @@ describe("MediaLightbox", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("內容坐在筆記的卡面上：圖片與 svg 外框都帶 bg-card", () => {
+  it("the content sits on the note's card surface: both the image and the svg frame carry bg-card", () => {
     setup();
     expect(img()).toHaveClass("bg-card");
     cleanup();
@@ -351,7 +351,7 @@ describe("MediaLightbox", () => {
     expect(viewport.querySelector("svg")!.parentElement).toHaveClass("bg-card");
   });
 
-  it("svg：按下與拖曳之後，視窗裡仍是同一個 svg 節點（不被重新解析換掉）", () => {
+  it("svg: after pressing and dragging, the window still holds the same svg node (not re-parsed and replaced)", () => {
     const { viewport } = setup({ kind: "svg", svg: '<svg id="mermaid-5" viewBox="0 0 300 200"></svg>', naturalWidth: 300, naturalHeight: 200 });
     const before = viewport.querySelector("svg")!;
     fireEvent.pointerDown(before, { pointerId: 1, clientX: 500, clientY: 400 });
@@ -361,10 +361,10 @@ describe("MediaLightbox", () => {
     expect(viewport.querySelector("svg")).toBe(before);
   });
 
-  it("根 svg 沒有 id：內層 svg 的 id 不被換掉", () => {
+  it("root svg without an id: the inner svg's id is not replaced", () => {
     const { viewport } = setup({
       kind: "svg",
-      // 內層 id 取一個測試期間不會被 nextMermaidId() 發到的號碼
+      // Pick an inner id that nextMermaidId() will not issue during the test
       svg: '<svg viewBox="0 0 30 20"><svg id="mermaid-9999"></svg><style>#mermaid-9999{}</style></svg>',
       naturalWidth: 30,
       naturalHeight: 20,
@@ -373,7 +373,7 @@ describe("MediaLightbox", () => {
     expect(viewport.querySelector("style")!.textContent).toBe("#mermaid-9999{}");
   });
 
-  it("觸控與筆點背景：放開時不關，等接下來的 click 才關（避免點到底下的頁面）", () => {
+  it("touch and pen on the background: release does not close, it waits for the following click (avoids hitting the page underneath)", () => {
     for (const pointerType of ["touch", "pen"]) {
       const { viewport, onClose } = setup();
       tap(viewport, 900, 50, 1, pointerType);
@@ -384,7 +384,7 @@ describe("MediaLightbox", () => {
     }
   });
 
-  it("觸控點背景後沒有 click（例如長按），下一次按下就取消待關：之後點圖的 click 不關閉", () => {
+  it("after touching the background with no click following (for example a long press), the next press cancels the pending close: a later click on the image does not close", () => {
     const { viewport, onClose } = setup();
     tap(viewport, 900, 50, 1, "touch");
     tap(img(), 500, 400, 1, "touch");
@@ -392,7 +392,7 @@ describe("MediaLightbox", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("滑鼠點背景：放開就關，之後的 click 不再關一次", () => {
+  it("mouse click on the background: closes on release, and the following click does not close again", () => {
     const { viewport, onClose } = setup();
     tap(viewport, 900, 50, 1, "mouse");
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -400,7 +400,7 @@ describe("MediaLightbox", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("觸控在背景拖曳或點圖之後的 click 不關閉", () => {
+  it("a click after a touch drag on the background or a tap on the image does not close", () => {
     const { viewport, onClose } = setup();
     fireEvent.pointerDown(viewport, { pointerId: 1, pointerType: "touch", clientX: 900, clientY: 50 });
     fireEvent.pointerMove(viewport, { pointerId: 1, pointerType: "touch", clientX: 920, clientY: 50 });
@@ -411,7 +411,7 @@ describe("MediaLightbox", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("失去指標捕捉的指標不再被追蹤：之後另一指單指拖曳是平移，不是捏合", () => {
+  it("a pointer that lost pointer capture is no longer tracked: a later single-finger drag with another finger pans instead of pinching", () => {
     const { dialog, viewport } = setup();
     fireEvent.keyDown(dialog, { key: "+" });
     fireEvent.keyDown(dialog, { key: "+" });
@@ -426,7 +426,7 @@ describe("MediaLightbox", () => {
     expect(moved.y).toBeCloseTo(start.y - 10, 6);
   });
 
-  it("關閉（卸載）時呼叫 restoreFocus", async () => {
+  it("closing (unmount) calls restoreFocus", async () => {
     const restoreFocus = vi.fn();
     function Host() {
       const [open, setOpen] = useState(true);
@@ -439,7 +439,7 @@ describe("MediaLightbox", () => {
   });
 });
 
-describe("MediaLightbox 對背後頁面的處理", () => {
+describe("MediaLightbox handling of the page behind", () => {
   function withPage() {
     const page = document.createElement("main");
     page.innerHTML = "<button>behind</button>";
@@ -452,7 +452,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     document.querySelectorAll("body > main").forEach(page => page.remove());
   });
 
-  it("開著時不動 body 上會讓整份文件重算樣式的東西：不改行內樣式、不加屬性、不插樣式表", () => {
+  it("while open it touches nothing on body that would make the whole document recompute styles: no inline style change, no attribute added, no stylesheet inserted", () => {
     withPage();
     const bodyAttrs = () => Array.from(document.body.attributes).map(a => `${a.name}=${a.value}`);
     const before = bodyAttrs();
@@ -463,7 +463,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(document.querySelectorAll("style").length).toBe(styles);
   });
 
-  it("背後的頁面對輔助科技隱藏，關掉後還原；畫面本身標 aria-modal", async () => {
+  it("the page behind is hidden from assistive technology and restored after closing; the view itself is marked aria-modal", async () => {
     const page = withPage();
     function Host() {
       const [open, setOpen] = useState(true);
@@ -478,7 +478,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(page).not.toHaveAttribute("aria-hidden");
   });
 
-  it("只有關閉鈕可聚焦時，Tab／Shift+Tab 都停在它上面", () => {
+  it("when only the close button is focusable, Tab and Shift+Tab both stay on it", () => {
     withPage();
     const { dialog } = setup();
     const close = within(dialog).getByRole("button", { name: "Close" });
@@ -491,21 +491,20 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(document.activeElement).toBe(close);
   });
 
-  it("圖裡有連結（mermaid 的 click … href）：Tab／Shift+Tab 在連結與關閉鈕之間循環，不走到背後的頁面", () => {
+  it("links inside the image (mermaid's click ... href): Tab/Shift+Tab cycle between the links and the close button and never reach the page behind", () => {
     withPage();
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><a href="https://example.com/a"><text>A</text></a><a href="https://example.com/b"><text>B</text></a></svg>';
     const { dialog } = setup({ kind: "svg", svg, naturalWidth: 200, naturalHeight: 100 });
     const [first, second] = Array.from(dialog.querySelectorAll("a"));
     const close = within(dialog).getByRole("button", { name: "Close" });
-    // 最後一個（關閉鈕）按 Tab 回到第一個連結；第一個按 Shift+Tab 回到關閉鈕。
     act(() => close.focus());
     fireEvent.keyDown(close, { key: "Tab" });
     expect(document.activeElement).toBe(first);
     fireEvent.keyDown(first!, { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(close);
-    // 中間的元素之間交給瀏覽器照文件順序移動：不擋。
     act(() => first!.focus());
+    // between the links, Tab is left to the browser's document order (not intercepted)
     const middle = createEvent.keyDown(first!, { key: "Tab" });
     fireEvent(first!, middle);
     expect(middle.defaultPrevented).toBe(false);
@@ -515,7 +514,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(back.defaultPrevented).toBe(false);
   });
 
-  it("焦點在畫面本身（點過或拖過圖之後）時 Shift+Tab：不走到背後的頁面，移到關閉鈕", () => {
+  it("with focus on the view itself (after clicking or dragging the image) Shift+Tab does not go to the page behind but moves to the close button", () => {
     withPage();
     const { dialog } = setup();
     act(() => dialog.focus());
@@ -526,7 +525,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
   });
 
-  it("Alt（Option）加上下鍵不捲背後的頁面；Alt 加左右鍵（瀏覽器的上一頁、下一頁）照舊交給瀏覽器", () => {
+  it("Alt (Option) with up/down does not scroll the page behind; Alt with left/right (browser back/forward) is left to the browser as usual", () => {
     const { dialog } = setup();
     for (const key of ["ArrowUp", "ArrowDown"]) {
       const event = createEvent.keyDown(dialog, { key, altKey: true });
@@ -540,7 +539,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     }
   });
 
-  it("按在捲軸上（目標是 <html>）不搶走焦點；關掉後不再攔", async () => {
+  it("pressing on the scrollbar (target is <html>) does not steal focus; after closing it no longer intercepts", async () => {
     function Host() {
       const [open, setOpen] = useState(true);
       return open ? <MediaLightbox source={image()} onClose={() => setOpen(false)} restoreFocus={() => undefined} /> : null;
@@ -560,7 +559,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(after.defaultPrevented).toBe(false);
   });
 
-  it("Ctrl／⌘ 加 Home、End、上下鍵不捲背後的頁面；Ctrl 加 + 之類照舊交給瀏覽器", () => {
+  it("Ctrl/Cmd with Home, End, up/down does not scroll the page behind; Ctrl with + and similar are left to the browser as usual", () => {
     const { dialog } = setup();
     for (const [key, mod] of [
       ["Home", "ctrlKey"],
@@ -579,19 +578,19 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(img().style.width).toBe(before);
   });
 
-  it("按在捲軸上（目標是 <html>）不算點外面，不關閉", async () => {
+  it("pressing on the scrollbar (target is <html>) does not count as an outside click, so it does not close", async () => {
     const { onClose } = setup();
-    // Radix 在下一個 task 才開始聽外面的按下
+    // Radix starts listening for outside presses only in the next task
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
-    // Radix 等按下後的 click 才判定「點外面」
+    // Radix decides "outside click" only on the click after the press
     fireEvent.pointerDown(document.documentElement);
     fireEvent.click(document.documentElement);
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("焦點被移到背後的頁面：不關閉，焦點拉回關閉鈕", () => {
+  it("focus moved to the page behind: does not close, focus is pulled back to the close button", () => {
     const page = withPage();
     const { dialog, onClose } = setup();
     act(() => page.querySelector("button")!.focus());
@@ -599,7 +598,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
   });
 
-  it("翻頁鍵、Home／End、空白鍵不捲背後的頁面；關閉鈕上的空白鍵照舊", () => {
+  it("page keys, Home/End and Space do not scroll the page behind; Space on the close button works as usual", () => {
     const { dialog } = setup();
     for (const key of ["PageUp", "PageDown", "Home", "End", " "]) {
       const event = createEvent.keyDown(dialog, { key });
@@ -612,7 +611,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
     expect(space.defaultPrevented).toBe(false);
   });
 
-  it("關閉鈕上的滾輪也被擋下（不捲背後的頁面）；畫面整片不接受觸控捲動", () => {
+  it("the wheel on the close button is also blocked (does not scroll the page behind); the whole view does not accept touch scrolling", () => {
     const { dialog } = setup();
     const close = within(dialog).getByRole("button", { name: "Close" });
     const wheel = createEvent.wheel(close, { deltaY: 100, cancelable: true });
@@ -622,7 +621,7 @@ describe("MediaLightbox 對背後頁面的處理", () => {
   });
 });
 
-describe("MediaLightbox 鎖背後頁面的捲動", () => {
+describe("MediaLightbox locking scroll of the page behind", () => {
   function pointer(fine: boolean) {
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: query === "(pointer: fine)" ? fine : false,
@@ -655,7 +654,7 @@ describe("MediaLightbox 鎖背後頁面的捲動", () => {
     root().removeAttribute("style");
   });
 
-  it("滑鼠裝置：開著時 <html> 是 overflow: hidden；有佔位的捲軸時加 scrollbar-gutter: stable；關掉後還原", async () => {
+  it("mouse device: while open <html> is overflow: hidden; with a space-reserving scrollbar scrollbar-gutter: stable is added; restored after closing", async () => {
     pointer(true);
     gutter(15);
     render(<Host />);
@@ -666,7 +665,7 @@ describe("MediaLightbox 鎖背後頁面的捲動", () => {
     expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("");
   });
 
-  it("沒有佔位的捲軸（覆蓋式捲軸、頁面不捲）：只鎖捲動，不加 scrollbar-gutter（不會多出一條空位）", () => {
+  it("no space-reserving scrollbar (overlay scrollbars, page does not scroll): only scrolling is locked, no scrollbar-gutter (no empty strip appears)", () => {
     pointer(true);
     gutter(0);
     render(<Host />);
@@ -674,7 +673,7 @@ describe("MediaLightbox 鎖背後頁面的捲動", () => {
     expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("");
   });
 
-  it("關掉後還原成原本的行內值（含 !important）", async () => {
+  it("after closing it restores the original inline values (including !important)", async () => {
     pointer(true);
     gutter(15);
     root().style.setProperty("overflow", "clip", "important");
@@ -687,14 +686,14 @@ describe("MediaLightbox 鎖背後頁面的捲動", () => {
     expect(root().style.getPropertyValue("scrollbar-gutter")).toBe("auto");
   });
 
-  it("沒有捲軸的觸控裝置：不動 <html> 的樣式", () => {
+  it("touch device without a scrollbar: <html> style is untouched", () => {
     pointer(false);
     gutter(0);
     render(<Host />);
     expect(root().getAttribute("style")).toBeNull();
   });
 
-  it("觸控為主但有佔位的捲軸（例如平板模式的 Windows）：照樣鎖捲動、留住捲軸位置", async () => {
+  it("mostly touch but with a space-reserving scrollbar (e.g. Windows in tablet mode): still locks scrolling and keeps the scrollbar's place", async () => {
     pointer(false);
     gutter(15);
     render(<Host />);
@@ -705,8 +704,8 @@ describe("MediaLightbox 鎖背後頁面的捲動", () => {
   });
 });
 
-describe("MediaLightbox 載入中的灰塊", () => {
-  it("圖片載入前顯示灰塊（依原尺寸比例）、圖本身先隱形；load 後灰塊消失、圖現身", () => {
+describe("MediaLightbox loading placeholder", () => {
+  it("before the image loads a grey block (original aspect ratio) shows and the image itself is invisible; after load the block goes away and the image appears", () => {
     const { viewport } = setup();
     const skeleton = viewport.querySelector<HTMLElement>("[data-zoom-skeleton]");
     expect(skeleton).not.toBeNull();
@@ -717,13 +716,13 @@ describe("MediaLightbox 載入中的灰塊", () => {
     expect(img().className).not.toContain("opacity-0");
   });
 
-  it("圖載入失敗也會收掉灰塊，不會永遠卡著", () => {
+  it("an image load failure also removes the grey block so it is not stuck forever", () => {
     const { viewport } = setup();
     fireEvent.error(img());
     expect(viewport.querySelector("[data-zoom-skeleton]")).toBeNull();
   });
 
-  it("灰塊顯示時 Esc 與關閉鈕都能關", () => {
+  it("with the grey block showing, Esc and the close button both close", () => {
     const { dialog, onClose } = setup();
     expect(dialog.querySelector("[data-zoom-skeleton]")).not.toBeNull();
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -731,14 +730,14 @@ describe("MediaLightbox 載入中的灰塊", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("svg 不必等：沒有灰塊", () => {
+  it("svg does not wait: no grey block", () => {
     const { viewport } = setup({ kind: "svg", svg: '<svg id="m1"></svg>', naturalWidth: 200, naturalHeight: 100 });
     expect(viewport.querySelector("[data-zoom-skeleton]")).toBeNull();
   });
 });
 
-describe("MediaLightbox 游標", () => {
-  it("符合視窗時維持預設游標；放大到超出視窗是 grab，拖曳中是 grabbing，放開回 grab；縮回符合視窗又回預設", () => {
+describe("MediaLightbox cursor", () => {
+  it("fit-to-window keeps the default cursor; zoomed beyond the window it is grab, while dragging grabbing, back to grab on release; zooming back to fit goes back to default", () => {
     const { dialog, viewport } = setup();
     expect(img().style.cursor).toBe("");
     expect(viewport.style.cursor).toBe("");
@@ -756,7 +755,7 @@ describe("MediaLightbox 游標", () => {
     expect(viewport.style.cursor).toBe("");
   });
 
-  it("svg 放大後同樣是 grab", () => {
+  it("an svg after zooming is also grab", () => {
     const { dialog } = setup({ kind: "svg", svg: '<svg id="m1"></svg>', naturalWidth: 2000, naturalHeight: 1000 });
     const content = dialog.querySelector<HTMLElement>("[data-zoom-viewport] > div")!;
     expect(content.style.cursor).toBe("");
@@ -765,8 +764,8 @@ describe("MediaLightbox 游標", () => {
   });
 });
 
-describe("MediaLightbox 快取圖", () => {
-  it("圖已載好（complete 且有原尺寸）：一渲染就沒有灰塊、圖不隱形", () => {
+describe("MediaLightbox cached image", () => {
+  it("image already loaded (complete with an original size): no grey block on render and the image is not invisible", () => {
     vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
     vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(2000);
     const { viewport } = setup();

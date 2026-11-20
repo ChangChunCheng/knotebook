@@ -22,9 +22,8 @@ import {
 import { EMPTY_FOLDER_INDEX, indexFolders, type FolderIndex } from "./folder-index";
 
 /**
- * 逐層目的地清單。
- * fixture：個人資料夾 A ⊃ A1、B；群組 G（member：create＋edit）有 GF ⊃ GF1；群組 H（member）無資料夾；群組 R（只讀）；共享資料夾 SF。
- * 斷言形一律比 `[kind, label, 有沒有 drill, disabled]`。
+ * Per-level destination list. Fixture: personal folder A > A1, B; group G (member: create + edit) with GF > GF1; group H (member) without folders;
+ * group R (read-only); shared folder SF. Assertions compare `[kind, label, has drill, disabled]`.
  */
 
 const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) => string;
@@ -81,8 +80,8 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
 });
 
-describe("DL1 個人筆記在根、move、第一層", () => {
-  it("[folder A ›, folder B, sep, space G ›, space H]：沒有根目錄、沒有 R", () => {
+describe("personal note at root, move, first level", () => {
+  it("[folder A >, folder B, sep, space G >, space H]: no root entry, no R", () => {
     expect(noteLevel(mine(), "move")).toEqual([
       ["folder", "A", true, null],
       ["folder", "B", false, null],
@@ -92,7 +91,7 @@ describe("DL1 個人筆記在根、move、第一層", () => {
     ]);
   });
 
-  it("目標與 drill：資料夾＝放進它、空間＝它的根層；drill 指向下一層", () => {
+  it("target and drill: a folder means put into it, a space means its root; drill points to the next level", () => {
     const items = level(noteDestSource(mine(), "move", GROUPS));
     const a = items[0]!;
     const b = items[1]!;
@@ -106,8 +105,8 @@ describe("DL1 個人筆記在根、move、第一層", () => {
   });
 });
 
-describe("DL2 同一篇在 A1、move", () => {
-  it("第一層多「根目錄」在最前", () => {
+describe("same note in A1, move", () => {
+  it("first level gets a root entry at the front", () => {
     expect(noteLevel(mine("A1"), "move")).toEqual([
       ["root", "Top level", false, null],
       ["folder", "A", true, null],
@@ -120,21 +119,21 @@ describe("DL2 同一篇在 A1、move", () => {
   });
 });
 
-describe("DL3 點進 A", () => {
+describe("drilled into A", () => {
   const PATH: DestPathStep[] = [{ kind: "folder", folderId: "A" }];
 
-  it("筆記在 A1：[back, here, folder A1]、無分隔線、here 不反灰；A1 就是所在處且沒有子資料夾 → current", () => {
+  it("note in A1: [back, here, folder A1], no separator, here not greyed out; A1 is the current location with no subfolders -> current", () => {
     expect(noteLevel(mine("A1"), "move", PATH)).toEqual([BACK, ["here", "Move here", false, null], ["folder", "A1", false, "current"]]);
     expect(level(noteDestSource(mine("A1"), "move", GROUPS), PATH)[1]).toMatchObject({ target: { kind: "place", space: PERSONAL, folder: A } });
   });
 
-  it("筆記在 A：here → current", () => {
+  it("note in A: here -> current", () => {
     expect(noteLevel(mine("A"), "move", PATH)).toEqual([BACK, ["here", "Move here", false, "current"], ["folder", "A1", false, null]]);
   });
 });
 
-describe("DL4 點進 G", () => {
-  it("[back, root, folder GF ›]：根目錄恆顯示、指 G 的根層", () => {
+describe("drilled into G", () => {
+  it("[back, root, folder GF >]: the root entry is always shown and points at G's root", () => {
     const path: DestPathStep[] = [{ kind: "space", space: G_SPACE }];
     expect(noteLevel(mine(), "move", path)).toEqual([BACK, ["root", "Top level", false, null], ["folder", "GF", true, null]]);
     const items = level(noteDestSource(mine(), "move", GROUPS), path);
@@ -142,14 +141,14 @@ describe("DL4 點進 G", () => {
     expect(items[2]).toMatchObject({ target: { kind: "place", space: G_SPACE, folder: GF }, drill: { kind: "folder", folderId: "GF" } });
   });
 
-  it("再點進 GF：[back, here, folder GF1]", () => {
+  it("drilling further into GF: [back, here, folder GF1]", () => {
     const path: DestPathStep[] = [{ kind: "space", space: G_SPACE }, { kind: "folder", folderId: "GF" }];
     expect(noteLevel(mine(), "move", path)).toEqual([BACK, ["here", "Move here", false, null], ["folder", "GF1", false, null]]);
   });
 });
 
-describe("DL5 就是所在處、又沒有子資料夾的資料夾項", () => {
-  it("筆記在 B → B current、A 不反灰", () => {
+describe("folder entry that is the current location and has no subfolders", () => {
+  it("note in B -> B is current, A is not greyed out", () => {
     expect(noteLevel(mine("B"), "move")).toEqual([
       ["root", "Top level", false, null],
       ["folder", "A", true, null],
@@ -161,8 +160,8 @@ describe("DL5 就是所在處、又沒有子資料夾的資料夾項", () => {
   });
 });
 
-describe("DL6 群組筆記 move", () => {
-  it("edit：在根 → [folder GF ›]、無下半部；在 GF1 → [root, folder GF ›]", () => {
+describe("group note move", () => {
+  it("edit: at root -> [folder GF >] with no lower section; in GF1 -> [root, folder GF >]", () => {
     expect(noteLevel(inG(), "move")).toEqual([["folder", "GF", true, null]]);
     expect(noteLevel(inG("GF1"), "move")).toEqual([
       ["root", "Top level", false, null],
@@ -171,14 +170,14 @@ describe("DL6 群組筆記 move", () => {
     expect(noteDestSource(inG(), "move", GROUPS)).toMatchObject({ current: G_SPACE, others: [], locations: [null] });
   });
 
-  it("edit: false → isEmptyDestination 為 true", () => {
+  it("edit: false -> isEmptyDestination is true", () => {
     expect(isEmptyDestination(noteDestSource(inG(null, false), "move", GROUPS), INDEX, t)).toBe(true);
     expect(isEmptyDestination(noteDestSource(inG(), "move", GROUPS), INDEX, t)).toBe(false);
   });
 });
 
-describe("DL7 共享筆記 move", () => {
-  it("沒放置 → [folder SF]；放在 SF → [root, folder SF current]", () => {
+describe("shared note move", () => {
+  it("not placed -> [folder SF]; placed in SF -> [root, folder SF current]", () => {
     expect(noteLevel(shared(), "move")).toEqual([["folder", "SF", false, null]]);
     expect(noteLevel(shared("SF"), "move")).toEqual([
       ["root", "Top level", false, null],
@@ -187,15 +186,15 @@ describe("DL7 共享筆記 move", () => {
     expect(level(noteDestSource(shared(), "move", GROUPS))[0]).toMatchObject({ target: { kind: "place", space: SHARED, folder: SF } });
   });
 
-  it("沒有共享資料夾也沒有放置 → 空；有共享資料夾 → 不空", () => {
+  it("no shared folder and no placement -> empty; with a shared folder -> not empty", () => {
     const noShared = indexFolders([A, A1, B, GF, GF1]);
     expect(isEmptyDestination(noteDestSource(shared(), "move", GROUPS), noShared, t)).toBe(true);
     expect(isEmptyDestination(noteDestSource(shared(), "move", GROUPS), INDEX, t)).toBe(false);
   });
 });
 
-describe("DL8 copy 三形", () => {
-  it("個人筆記 → [makeCopy, folder A ›, folder B, sep, space G ›, space H]（下半部不含我的筆記）", () => {
+describe("copy, three shapes", () => {
+  it("personal note -> [makeCopy, folder A >, folder B, sep, space G >, space H] (lower section excludes My notes)", () => {
     expect(noteLevel(mine(), "copy")).toEqual([
       ["makeCopy", "Make a copy", false, null],
       ["folder", "A", true, null],
@@ -207,7 +206,7 @@ describe("DL8 copy 三形", () => {
     expect(level(noteDestSource(mine(), "copy", GROUPS))[0]).toMatchObject({ target: { kind: "makeCopy" } });
   });
 
-  it("群組筆記（G 是候選）→ [makeCopy, folder GF ›, sep, space 我的筆記 ›, space H]", () => {
+  it("group note (G is a candidate) -> [makeCopy, folder GF >, sep, space My notes >, space H]", () => {
     expect(noteLevel(inG(), "copy")).toEqual([
       ["makeCopy", "Make a copy", false, null],
       ["folder", "GF", true, null],
@@ -217,7 +216,7 @@ describe("DL8 copy 三形", () => {
     ]);
   });
 
-  it("共享筆記 → [space 我的筆記 ›, space G ›, space H]（無上半部、無分隔線）", () => {
+  it("shared note -> [space My notes >, space G >, space H] (no upper section, no separator)", () => {
     expect(noteLevel(shared("SF"), "copy")).toEqual([
       ["space", "My notes", true, null],
       ["space", "G", true, null],
@@ -225,7 +224,7 @@ describe("DL8 copy 三形", () => {
     ]);
   });
 
-  it("R 的只讀筆記 copy → [space 我的筆記 ›, space G ›, space H]", () => {
+  it("copy of R's read-only note -> [space My notes >, space G >, space H]", () => {
     const readOnly = groupNote({ id: "r1", title: "RN", group: R, edit: false });
     expect(noteLevel(readOnly, "copy")).toEqual([
       ["space", "My notes", true, null],
@@ -234,7 +233,7 @@ describe("DL8 copy 三形", () => {
     ]);
   });
 
-  it("copy 的 here 與資料夾項在來源位置不反灰", () => {
+  it("for copy, here and folder entries at the source location are not greyed out", () => {
     expect(noteLevel(mine("B"), "copy")).toEqual([
       ["makeCopy", "Make a copy", false, null],
       ["root", "Top level", false, null],
@@ -252,8 +251,8 @@ describe("DL8 copy 三形", () => {
   });
 });
 
-describe("DL9 批次 move 帶資料夾", () => {
-  it("movingFolders=[A] → A self 無 drill；下半部 G、H crossSpace 無 drill", () => {
+describe("batch move including folders", () => {
+  it("movingFolders=[A] -> A is self without drill; lower-section G and H are crossSpace without drill", () => {
     expect(shape(level(batch({ movingFolders: [A] })))).toEqual([
       ["folder", "A", false, "self"],
       ["folder", "B", false, null],
@@ -263,14 +262,14 @@ describe("DL9 批次 move 帶資料夾", () => {
     ]);
   });
 
-  it("點進 B 的 here 可按", () => {
+  it("here inside B is enabled", () => {
     expect(shape(level(batch({ movingFolders: [A] }), [{ kind: "folder", folderId: "B" }]))).toEqual([
       BACK,
       ["here", "Move here", false, null],
     ]);
   });
 
-  it("子孫也是 self（路徑已在 A 裡，例如快取更新前點進）", () => {
+  it("descendants are self too (the path is already inside A, e.g. drilled before the cache refreshed)", () => {
     expect(shape(level(batch({ movingFolders: [A] }), [{ kind: "folder", folderId: "A" }]))).toEqual([
       BACK,
       ["here", "Move here", false, "self"],
@@ -279,22 +278,22 @@ describe("DL9 批次 move 帶資料夾", () => {
   });
 });
 
-describe("DL10 深度上限（server：parentDepth + height > FOLDER_DEPTH_MAX）", () => {
+describe("depth limit (server: parentDepth + height > FOLDER_DEPTH_MAX)", () => {
   const D = folderChain("D", 4);
   const DEEP = indexFolders([A, A1, B, ...D]);
-  const source = batch({ movingFolders: [A] }); // A 高度 2
+  const source = batch({ movingFolders: [A] }); // A has height 2
 
-  it("點進 D1 › D2 › D3：here（3＋2＝5）可按、D4（4＋2＝6）tooDeep", () => {
+  it("drilled into D1 > D2 > D3: here (3 + 2 = 5) is enabled, D4 (4 + 2 = 6) is tooDeep", () => {
     const path: DestPathStep[] = ["D1", "D2", "D3"].map((folderId) => ({ kind: "folder", folderId }));
     expect(shape(level(source, path, DEEP))).toEqual([BACK, ["here", "Move here", false, null], ["folder", "D4", false, "tooDeep"]]);
   });
 
-  it("點進 D1 › D2：D3 可按且帶 drill", () => {
+  it("drilled into D1 > D2: D3 is enabled and has drill", () => {
     const path: DestPathStep[] = ["D1", "D2"].map((folderId) => ({ kind: "folder", folderId }));
     expect(shape(level(source, path, DEEP))).toEqual([BACK, ["here", "Move here", false, null], ["folder", "D3", true, null]]);
   });
 
-  it("tooDeep 的資料夾即使有子資料夾也不帶 drill；它的 here 也 tooDeep", () => {
+  it("a tooDeep folder has no drill even with subfolders; its here is tooDeep too", () => {
     const D5 = folderChain("D", 5);
     const deeper = indexFolders([A, A1, B, ...D5]);
     const path: DestPathStep[] = ["D1", "D2", "D3"].map((folderId) => ({ kind: "folder", folderId }));
@@ -304,10 +303,10 @@ describe("DL10 深度上限（server：parentDepth + height > FOLDER_DEPTH_MAX�
   });
 });
 
-describe("DL11 全部已在該處才反灰（批次）", () => {
-  const FLAT = indexFolders([A, B]); // A 沒有子資料夾的版本
+describe("greyed out only when all are already there (batch)", () => {
+  const FLAT = indexFolders([A, B]); // variant where A has no subfolders
 
-  it("一在 A、一在根 → A 不反灰", () => {
+  it("one in A, one at root -> A is not greyed out", () => {
     expect(shape(level(batch({ locations: ["A", null] }), [], FLAT))).toEqual([
       ["root", "Top level", false, null],
       ["folder", "A", false, null],
@@ -318,13 +317,13 @@ describe("DL11 全部已在該處才反灰（批次）", () => {
     ]);
   });
 
-  it("兩項都在 A → A current", () => {
+  it("both in A -> A is current", () => {
     expect(shape(level(batch({ locations: ["A", "A"] }), [], FLAT))[1]).toEqual(["folder", "A", false, "current"]);
   });
 });
 
-describe("DL12 資料夾未載到（EMPTY_FOLDER_INDEX）", () => {
-  it("只有根目錄與空間項、全部無 drill", () => {
+describe("folders not loaded (EMPTY_FOLDER_INDEX)", () => {
+  it("only root and space entries, none with drill", () => {
     expect(noteLevel(mine("A1"), "move", [], EMPTY_FOLDER_INDEX)).toEqual([
       ["root", "Top level", false, null],
       SEP,
@@ -339,26 +338,26 @@ describe("DL12 資料夾未載到（EMPTY_FOLDER_INDEX）", () => {
   });
 });
 
-describe("DL13 path 指到不存在的資料夾", () => {
-  it("A1 已不在 → 回到 A 那層", () => {
+describe("path points at a missing folder", () => {
+  it("A1 is gone -> falls back to A's level", () => {
     const noA1 = indexFolders([A, B, GF, GF1, SF]);
     const path: DestPathStep[] = [{ kind: "folder", folderId: "A" }, { kind: "folder", folderId: "A1" }];
     expect(noteLevel(mine(), "move", path, noA1)).toEqual([BACK, ["here", "Move here", false, null]]);
   });
 
-  it("第一步就不在 → 回到第一層（後面仍存在的步也丟掉）", () => {
+  it("first step is gone -> falls back to the first level (later steps that still exist are dropped too)", () => {
     const path: DestPathStep[] = [{ kind: "folder", folderId: "gone" }, { kind: "folder", folderId: "A1" }];
     expect(noteLevel(mine(), "move", path)).toEqual(noteLevel(mine(), "move"));
   });
 
-  it("點進的空間已不在 source（群組清單重抓後消失）→ 回到第一層", () => {
+  it("the drilled space is no longer in source (vanished after the group list refetch) -> falls back to the first level", () => {
     const path: DestPathStep[] = [{ kind: "space", space: { kind: "group", groupId: "x", name: "X" } }];
     expect(noteLevel(mine(), "move", path)).toEqual(noteLevel(mine(), "move"));
   });
 });
 
-describe("DL14 可及名稱與路徑字串", () => {
-  it("en：drill 項「A, open」、back「Back」、其餘＝label", () => {
+describe("accessible names and path strings", () => {
+  it("en: drill item 'A, open', back 'Back', everything else equals label", () => {
     const items = level(noteDestSource(mine(), "move", GROUPS));
     expect(items[0]).toMatchObject({ label: "A", accessibleName: "A, open" });
     expect(items[1]).toMatchObject({ label: "B", accessibleName: "B" });
@@ -368,7 +367,7 @@ describe("DL14 可及名稱與路徑字串", () => {
     expect(inner[1]).toMatchObject({ accessibleName: "Move here" });
   });
 
-  it("zh-TW：drill 項「A，開啟下一層」、back「返回」", async () => {
+  it("zh-TW: drill item 'A, open next level' and the zh-TW Back label", async () => {
     await i18n.changeLanguage("zh-TW");
     const items = level(noteDestSource(mine(), "move", GROUPS));
     expect(items[0]).toMatchObject({ accessibleName: "A，開啟下一層" });
@@ -376,14 +375,14 @@ describe("DL14 可及名稱與路徑字串", () => {
     expect(inner[0]).toMatchObject({ label: "返回", accessibleName: "返回" });
   });
 
-  it("destinationPathLabel：個人 A1、群組根、共享 SF", () => {
+  it("destinationPathLabel: personal A1, group root, shared SF", () => {
     expect(destinationPathLabel(PERSONAL, A1, INDEX, t)).toBe("My notes › A › A1");
     expect(destinationPathLabel(G_SPACE, null, INDEX, t)).toBe("G");
     expect(destinationPathLabel(SHARED, SF, INDEX, t)).toBe("Shared with me › SF");
     expect(destinationPathLabel(PERSONAL, null, INDEX, t)).toBe("My notes");
   });
 
-  it("destinationShortLabel：資料夾名；根層＝Top level／根目錄", async () => {
+  it("destinationShortLabel: folder name; root level is the Top level label (en) / the root label (zh-TW)", async () => {
     expect(destinationShortLabel(A1, t)).toBe("A1");
     expect(destinationShortLabel(null, t)).toBe("Top level");
     await i18n.changeLanguage("zh-TW");
@@ -391,14 +390,14 @@ describe("DL14 可及名稱與路徑字串", () => {
   });
 });
 
-describe("noteDestSource 與 spaceKey", () => {
-  it("spaceKey 三形", () => {
+describe("noteDestSource and spaceKey", () => {
+  it("spaceKey, three shapes", () => {
     expect(spaceKey(PERSONAL)).toBe("personal");
     expect(spaceKey(SHARED)).toBe("shared");
     expect(spaceKey(G_SPACE)).toBe("group:g");
   });
 
-  it("locations＝[note.folderId]、movingFolders 恆空；群組名取自 groups", () => {
+  it("locations = [note.folderId] and movingFolders is empty; the group name comes from groups", () => {
     expect(noteDestSource(mine("A1"), "copy", GROUPS)).toEqual({
       mode: "copy",
       current: PERSONAL,
@@ -418,25 +417,25 @@ describe("noteDestSource 與 spaceKey", () => {
     expect(noteDestSource(shared("SF"), "move", GROUPS)).toMatchObject({ current: SHARED, makeCopy: false, others: [], locations: ["SF"] });
   });
 
-  it("群組改名後筆記快取還是舊名 → 空間名以 groups 為準；groups 裡沒有才用 note.group.name", () => {
+  it("group renamed but the note cache still has the old name -> the space name follows groups; note.group.name is used only when groups lacks it", () => {
     const stale = groupNote({ id: "g2", title: "GN", group: { ...G, name: "Old G" } });
     expect(noteDestSource(stale, "move", GROUPS).current).toEqual(G_SPACE);
     expect(noteDestSource(stale, "move", []).current).toEqual({ kind: "group", groupId: "g", name: "Old G" });
   });
 
-  it("群組只讀筆記 move → current null、others 空（第一層必空）", () => {
+  it("read-only group note move -> current null, others empty (so the first level is empty)", () => {
     const readOnly = groupNote({ id: "r1", title: "RN", group: R, edit: false });
     expect(noteDestSource(readOnly, "move", GROUPS)).toMatchObject({ current: null, others: [] });
     expect(isEmptyDestination(noteDestSource(readOnly, "move", GROUPS), INDEX, t)).toBe(true);
   });
 
-  it("groups 未到（[]）：個人 move 只剩本空間；群組筆記 copy 退成沒有上半部", () => {
+  it("groups not loaded ([]): personal move keeps only its own space; group note copy loses the upper section", () => {
     expect(noteDestSource(mine(), "move", [])).toMatchObject({ current: PERSONAL, others: [] });
     expect(noteDestSource(inG(), "copy", [])).toMatchObject({ current: null, makeCopy: false, others: [PERSONAL] });
   });
 });
 
-describe("字串", () => {
+describe("strings", () => {
   const get = (obj: unknown, path: string): unknown =>
     path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 

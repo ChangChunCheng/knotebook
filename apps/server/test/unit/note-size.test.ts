@@ -1,6 +1,6 @@
 /**
- * 筆記大小上限（`notes/note-size.ts`）：依結果判斷的規則（`capBlocks`＋`measureTrial` 的四個數；API／MCP／批次寫回／撤回／套用版本／複製用）、
- * 七種繞法、設定。瀏覽器的協作更新不在 server 檢查（網頁編輯器自己擋）。
+ * Note size limit (`notes/note-size.ts`): the rule judged on results (`capBlocks` + the four numbers of `measureTrial`; used by API/MCP/batch write-back/undo/apply version/copy),
+ * the seven bypass forms, and configuration. Collab updates from the browser aren't checked on the server (the web editor blocks them itself).
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -30,18 +30,18 @@ const mkPara = (s: string) => {
   p.insert(0, [t]);
   return p;
 };
-/** 一篇筆記：本文 fragment 下每個字串一段。 */
+/** A note: one paragraph per string under the body fragment. */
 function noteDoc(paras: string[]): Y.Doc {
   const d = new Y.Doc();
   d.transact(() => frag(d).insert(0, paras.map(mkPara)));
   return d;
 }
-/** 超過上限的筆記：第 0 段 100 000 字、另外 39 段各 200 字；上限＝狀態減 1 000。 */
+/** A note over the cap: paragraph 0 has 100,000 characters, 39 others have 200 each; the cap = state minus 1,000. */
 function overCap() {
   const doc = noteDoc(Array.from({ length: 40 }, (_, i) => (i === 0 ? "y".repeat(100_000) : "x".repeat(200))));
   return { doc, cap: stateSize(doc) - 1_000 };
 }
-/** 一個協作用戶端（同瀏覽器）：先同步 server 那份，之後每次 `edit` 回傳那筆交易的 update（不套到 server 那份上）。 */
+/** A collab client (same as a browser): first syncs the server's copy, then each `edit` returns the update of that transaction (not applied to the server's copy). */
 function client(server: Y.Doc) {
   const c = new Y.Doc();
   Y.applyUpdate(c, Y.encodeStateAsUpdate(server));
@@ -64,33 +64,33 @@ function varuint(n: number, out: number[]) {
   out.push(n);
 }
 
-describe("capBlocks：超過上限、比原本大，而且（還在的內容變多，或狀態一次長超過 SLACK）才擋", () => {
+describe("capBlocks: blocked only when over the cap, larger than before, and (the live content grows, or the state grows by more than SLACK at once)", () => {
   const m = (stateBefore: number, stateAfter: number, liveBefore: number, liveAfter: number): SizeMeasure => ({ stateBefore, stateAfter, liveBefore, liveAfter });
   it.each([
-    [m(100, 150, 10, 60), 200, false], // 上限內
-    [m(100, 201, 10, 60), 200, true], // 長過上限、內容變多
-    [m(300, 250, 50, 60), 200, false], // 已超過、狀態變小（即使內容變多）
-    [m(300, 301, 50, 51), 200, true], // 已超過、加一個字
-    [m(300, 343, 50, 50), 200, false], // 已超過、等量改寫（狀態多 43 B）→ 接受
-    [m(300, 300 + SIZE_SLACK_BYTES, 50, 40), 200, false], // 內容變少、狀態長剛好 SLACK → 接受
-    [m(300, 301 + SIZE_SLACK_BYTES, 50, 40), 200, true], // 內容變少、狀態長超過 SLACK → 擋（只長簿記的花招）
-    [m(0, 200, 0, 100), 200, false], // 剛好等於上限
-  ])("%o cap %i → %s", (mm, cap, expected) => {
+    [m(100, 150, 10, 60), 200, false], // within the cap
+    [m(100, 201, 10, 60), 200, true], // grew past the cap, content grew
+    [m(300, 250, 50, 60), 200, false], // already over, state got smaller (even if content grew)
+    [m(300, 301, 50, 51), 200, true], // already over, one character added
+    [m(300, 343, 50, 50), 200, false], // already over, equal-size rewrite (state grows 43 B) -> accepted
+    [m(300, 300 + SIZE_SLACK_BYTES, 50, 40), 200, false], // content shrank, state grew exactly SLACK -> accepted
+    [m(300, 301 + SIZE_SLACK_BYTES, 50, 40), 200, true], // content shrank, state grew more than SLACK -> blocked (a trick that only grows bookkeeping)
+    [m(0, 200, 0, 100), 200, false], // exactly equal to the cap
+  ])("%o cap %i -> %s", (mm, cap, expected) => {
     expect(capBlocks(mm, cap)).toBe(expected);
   });
-  it("SLACK 4 KiB；growsPastCap（複製用）＝超過上限且比原本大", () => {
+  it("SLACK is 4 KiB; growsPastCap (for copy) = over the cap and larger than before", () => {
     expect(SIZE_SLACK_BYTES).toBe(4096);
     expect(growsPastCap(0, 201, 200)).toBe(true);
     expect(growsPastCap(300, 250, 200)).toBe(false);
   });
-  it("413 訊息說的是實際規則：刪除與改短照樣接受，要加內容就拆筆記", () => {
+  it("the 413 message states the actual rule: deleting and shortening are still accepted, to add content split the note", () => {
     expect(noteTooLargeMessage(5)).toContain("Deleting and shortening are still accepted");
     expect(noteTooLargeMessage(5)).not.toMatch(/always accepted|adds no more than it removes/);
   });
 });
 
-describe("liveContentBytes／measureTrial：還在的內容用 Yjs 的編碼器量", () => {
-  it("每一種內容都算到它的大小：文字、屬性（key＋值）、格式、embed、子文件的 guid／meta、XmlHook 的名稱、BigInt", () => {
+describe("liveContentBytes/measureTrial: remaining content is measured with Yjs's encoder", () => {
+  it("every kind of content is counted at its size: text, attributes (key + value), formats, embeds, subdocument guid/meta, XmlHook names, BigInt", () => {
     const N = 50_000;
     const cases: Array<[string, (d: Y.Doc) => void]> = [
       ["text", d => text(d, 0).insert(0, "a".repeat(N))],
@@ -110,12 +110,12 @@ describe("liveContentBytes／measureTrial：還在的內容用 Yjs 的編碼器�
       expect(liveContentBytes(doc) - before, name).toBeGreaterThanOrEqual(N * 0.9);
     }
   });
-  it("刪掉的不算；measureTrial 回前後四個數（在新文件上套用）", () => {
+  it("deleted content doesn't count; measureTrial returns the four before/after numbers (applied on a new document)", () => {
     const doc = noteDoc(["hello wonderful world"]);
     const u = client(doc)(d => text(d, 0).delete(6, 10));
     const r = measure(doc, u);
     expect(r.stateBefore).toBe(stateSize(doc));
-    expect(r.liveAfter).toBe(r.liveBefore - 10); // 切成兩顆不多算長度前綴
+    expect(r.liveAfter).toBe(r.liveBefore - 10); // splitting into two items doesn't count the length prefix twice
     const applied = new Y.Doc();
     Y.applyUpdate(applied, Y.encodeStateAsUpdate(doc));
     Y.applyUpdate(applied, u);
@@ -123,11 +123,11 @@ describe("liveContentBytes／measureTrial：還在的內容用 Yjs 的編碼器�
   });
 });
 
-describe("五種繞法：在超過上限的筆記上一律擋", () => {
-  it("1 重複的刪除範圍（同一段刪 40 次，聲稱刪了 4 MB）＋插入 1 MiB", () => {
+describe("five bypass forms: always blocked on a note over the cap", () => {
+  it("duplicated delete ranges (the same range deleted 40 times, claiming 4 MB deleted) + inserting 1 MiB", () => {
     const { doc, cap } = overCap();
     let u = client(doc)(d => text(d, 5).insert(0, "Z".repeat(MiB)));
-    expect(u[u.length - 1]).toBe(0); // 空的刪除集
+    expect(u[u.length - 1]).toBe(0); // an empty delete set
     const item = text(doc, 0)._start!;
     const ds: number[] = [];
     varuint(1, ds);
@@ -141,7 +141,7 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
     expect(capBlocks(measure(doc, u), cap)).toBe(true);
   });
 
-  it("2 同一筆裡設一個 1 MiB 的 key 再刪掉（內容是 ContentDeleted，key 留在狀態裡）：本文裡 → 大小擋；別的根 → 根型別擋", () => {
+  it("set a 1 MiB key in the same transaction and then delete it (the content is ContentDeleted, the key stays in the state): in the body -> blocked by size; in another root -> blocked by root type", () => {
     const { doc, cap } = overCap();
     const K = "K".repeat(MiB);
     const inNote = client(doc)(d => {
@@ -149,7 +149,7 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
       para(d, 3).removeAttribute(K);
     });
     const m = measure(doc, inNote);
-    expect(m.liveAfter).toBe(m.liveBefore); // 內容沒變多：靠 SLACK 擋
+    expect(m.liveAfter).toBe(m.liveBefore); // content didn't grow: blocked by SLACK
     expect(m.stateAfter - m.stateBefore).toBeGreaterThan(MiB);
     expect(capBlocks(m, cap)).toBe(true);
     const foreign = client(doc)(d => {
@@ -159,7 +159,7 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
     expect(capBlocks(measure(doc, foreign), cap)).toBe(true);
   });
 
-  it("3 子文件的 meta／guid 1 MiB（＋刪 3 個字）", () => {
+  it("subdocument meta/guid of 1 MiB (plus deleting 3 characters)", () => {
     for (const opts of [{ meta: "M".repeat(MiB) }, { guid: "G".repeat(MiB) }]) {
       const { doc, cap } = overCap();
       const inNote = client(doc)(d => {
@@ -175,7 +175,7 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
     }
   });
 
-  it("4 XmlHook 的名稱 1 MiB（＋刪 3 個字）", () => {
+  it("XmlHook name of 1 MiB (plus deleting 3 characters)", () => {
     const { doc, cap } = overCap();
     const inNote = client(doc)(d => {
       para(d, 1).insert(1, [new Y.XmlHook("H".repeat(MiB)) as never]);
@@ -189,7 +189,7 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
     expect(capBlocks(measure(doc, foreign), cap)).toBe(true);
   });
 
-  it("5 ContentAny 裡的 BigInt（JSON 量不出來的值）", () => {
+  it("BigInt inside ContentAny (a value JSON can't measure)", () => {
     const { doc, cap } = overCap();
     const big = () => Array.from({ length: 100_000 }, (_, i) => BigInt(i) * 1_000_000_000_000n);
     const inNote = client(doc)(d => para(d, 2).setAttribute("b", big() as never));
@@ -199,8 +199,8 @@ describe("五種繞法：在超過上限的筆記上一律擋", () => {
   });
 });
 
-describe("另兩種：刪 1 個字＋大屬性、大連結格式", () => {
-  it("刪 1 個字＋設 4 MiB 的屬性 → 擋", () => {
+describe("two more: delete 1 character plus a large attribute, a large link format", () => {
+  it("delete 1 character + set a 4 MiB attribute -> blocked", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => {
       text(d, 4).delete(0, 1);
@@ -208,15 +208,15 @@ describe("另兩種：刪 1 個字＋大屬性、大連結格式", () => {
     });
     expect(capBlocks(measure(doc, u), cap)).toBe(true);
   });
-  it("套一個 2 MiB 的連結格式 → 擋", () => {
+  it("apply a 2 MiB link format -> blocked", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => text(d, 4).format(0, 5, { link: { href: "https://e.com/" + "q".repeat(2 * MiB) } }));
     expect(capBlocks(measure(doc, u), cap)).toBe(true);
   });
 });
 
-describe("超過上限的筆記：正常的刪減與改寫照樣接受，加內容擋", () => {
-  it("全選＋打一個字 → 接受（試套一次）", () => {
+describe("on a note over the cap: ordinary deletions and rewrites are still accepted, adding content is blocked", () => {
+  it("select all + type one character -> accepted (applied once as a trial)", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => {
       frag(d).delete(1, frag(d).length - 1);
@@ -225,18 +225,18 @@ describe("超過上限的筆記：正常的刪減與改寫照樣接受，加內�
     });
     expect(capBlocks(measure(doc, u), cap)).toBe(false);
   });
-  it("等量改寫（abc → xyz）→ 接受", () => {
+  it("equal-size rewrite (abc -> xyz) -> accepted", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => {
       text(d, 6).delete(10, 3);
       text(d, 6).insert(10, "xyz");
     });
     const m = measure(doc, u);
-    expect(m.stateAfter).toBeGreaterThan(m.stateBefore); // 狀態變大一點，內容沒變多
+    expect(m.stateAfter).toBeGreaterThan(m.stateBefore); // the state grows a little, the content doesn't
     expect(m.liveAfter).toBe(m.liveBefore);
     expect(capBlocks(measure(doc, u), cap)).toBe(false);
   });
-  it("刪一大段＋打幾個字→ 接受", () => {
+  it("delete a large span + type a few characters -> accepted", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => {
       text(d, 0).delete(0, 90_000);
@@ -244,7 +244,7 @@ describe("超過上限的筆記：正常的刪減與改寫照樣接受，加內�
     });
     expect(capBlocks(measure(doc, u), cap)).toBe(false);
   });
-  it("選一個字、打一個較長的字取代（狀態只長幾十位元組，但內容變多）→ 擋", () => {
+  it("select one character and type a longer one to replace it (the state grows only tens of bytes, but the content grows) -> blocked", () => {
     const { doc, cap } = overCap();
     const u = client(doc)(d => {
       text(d, 6).delete(10, 3);
@@ -256,9 +256,9 @@ describe("超過上限的筆記：正常的刪減與改寫照樣接受，加內�
   });
 });
 
-describe("NOTE_MAX_BYTES 設定", () => {
+describe("NOTE_MAX_BYTES setting", () => {
   const base = { DATABASE_URL: "postgres://u:p@localhost:5432/db", APP_SECRET: "a".repeat(64), PUBLIC_URL: "http://localhost:3000" };
-  it("預設 5 MiB；正整數可設；空字串＝未設；0、負數、小數、非數字、超過 1 GiB → 開機失敗", () => {
+  it("default 5 MiB; a positive integer can be set; empty string = unset; 0, negatives, decimals, non-numbers and anything above 1 GiB -> startup fails", () => {
     expect(DEFAULT_NOTE_MAX_BYTES).toBe(5_242_880);
     expect(loadConfig(base).limitEnv.noteMaxBytes, "沒設＝undefined").toBeUndefined();
     expect(loadConfig({ ...base, NOTE_MAX_BYTES: "1048576" }).limitEnv.noteMaxBytes).toBe(1_048_576);
@@ -267,8 +267,8 @@ describe("NOTE_MAX_BYTES 設定", () => {
   });
 });
 
-describe("collabMaxPayloadBytes（協作 WebSocket 單則訊息上限）", () => {
-  it("沒設 env → 兩倍後台頁面最大值加 1 MiB（11 MiB）；有設 → 兩倍 env 值加 1 MiB；不超過 ws 預設的 100 MiB", () => {
+describe("collabMaxPayloadBytes (limit of a single collab WebSocket message)", () => {
+  it("without env: twice the largest admin page value plus 1 MiB (11 MiB); with env: twice the env value plus 1 MiB; never above ws's default 100 MiB", () => {
     expect(collabMaxPayloadBytes(undefined)).toBe(11_534_336);
     expect(collabMaxPayloadBytes(1_048_576)).toBe(3_145_728);
     expect(collabMaxPayloadBytes(1_073_741_824)).toBe(104_857_600);

@@ -10,26 +10,18 @@ import {
 } from "./helpers.js";
 
 /**
- * 觸控裝置（`pointer: coarse`）的點擊範圍與輸入框字級；滑鼠（`pointer: fine`）維持原樣。
+ * Tap areas and input font sizes on touch devices (`pointer: coarse`); the mouse (`pointer: fine`) stays as before.
  *
- * 56-1 清單（390、360 觸控）：tab 與列 44 高；列內 ⋮、「＋」、最愛星號的點擊範圍 ≥ 44×44，同一列相鄰兩顆圓心距 ≥ 44。
- * 56-2 選單（390、360 觸控）：⋮ 選單與使用者選單每一項 ≥ 40 高；主題色票點擊範圍 44×44、相鄰圓心距 ≥ 44。
- * 56-3 筆記頁頁首（390、360 觸控）：‹、星號、分享、⋮ 的點擊範圍 ≥ 40×44。
- * 56-4 選取模式（390 觸控）：標題列的「Select all」「Done」（有框線）點擊範圍 ≥ 44 高。
- * 56-5 輸入框字級（觸控）：登入頁、清單搜尋框、筆記頁（標題框、程式碼區塊語言下拉）、分享對話框（含共用 Select 的角色觸發鈕）、設定頁，
- *      每個看得到的 input／select／textarea 的 computed font-size 都不小於 16px（搜尋框與程式碼區塊語言下拉量到剛好 16px）。
- * 56-6 搜尋框（800、1280 觸控）：沒有 Ctrl K 提示；清除 ✕ 的點擊範圍 44×44，但輸入框文字區右緣內 1px 點下去仍是輸入框。
- * 56-7 滑鼠不變（390、1280 滑鼠）：列 28、tab 36、列內鈕的點擊範圍就是 24×24；選單項 1280 是 32，390 的 ⋮ 是貼底的 sheet（不分指標）所以是 48；
- *      1280 的側欄搜尋框 13px、Ctrl K 提示還在。
- * 56-8 共用 Select（分享對話框的角色觸發鈕）：390 觸控字級 16px、點擊高不比同列輸入框矮、每個選項點擊範圍 ≥ 40 高；
- *      1280 滑鼠觸發鈕視覺高 32、選項高 32。
+ * 56-5: the search box and the code block language dropdown measure exactly 16px; the 1280 sidebar search box is 13px and keeps its Ctrl K hint.
+ * 56-6: a press 1px inside the right edge of the input's text area still hits the input, not the clear button.
+ * 56-7: the 390 kebab is a bottom sheet regardless of pointer type, so its items are 48 high; at 1280 menu items are 32.
  *
- * 不在範圍內（原因）：
- * - Mantine／BlockNote 內建的輸入框與下拉（例如連結工具列的網址框）：字級由該套件的樣式決定，不是我們的 class。
- * - 同一篇筆記有好幾位在線時頭像列的「+N」徽章與 ⋮ 會不會重疊：要多個使用者同時連線的實機才看得出來。
- * - 真手指的落點偏差與 iOS 聚焦放大：桌面 Chromium 驗不到，只能量 CSS 與點擊範圍，要實機看。
+ * Out of scope (reason):
+ * - Mantine/BlockNote built-in inputs and dropdowns (e.g. the link toolbar's URL box): the font size is decided by that package's styles, not our classes.
+ * - Whether the avatar list's "+N" badge and the kebab overlap when several people are online on one note: it needs a real setup with several users connected at once.
+ * - Where a real finger lands and iOS focus zoom: desktop Chromium can't verify them; only CSS and tap areas are measured, so they need a real device.
  *
- * 帳號與資料建一次（alice），以 API 建在寬視窗，之後各案例開新 context 操作。
+ * The account and data are created once (alice) through the API in a wide viewport; each case then opens a new context to operate.
  */
 
 const RUN = Date.now();
@@ -38,7 +30,7 @@ const PHONES = [
   { width: 390, height: 844 },
   { width: 360, height: 780 },
 ] as const;
-/** `tapAreaOf` 每 0.5px 取樣，每一側最多少算 0.5px（兩側合計 1px），所以 44 量到 43.5、40 量到 39.5 都算夠；容差取 1。 */
+/** `tapAreaOf` samples every 0.5px and can under-count each side by up to 0.5px (1px in total), so 44 measured as 43.5 and 40 as 39.5 still count as enough; the tolerance is 1. */
 const TOL = 1;
 
 const TITLES = {
@@ -104,10 +96,10 @@ const titleBox = (page: Page): Locator => page.locator('[aria-label="Note title"
 const noteLink = (scope: Locator, title: string): Locator => scope.getByRole("link", { name: new RegExp("^" + title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) });
 const rowOf = (scope: Locator, title: string): Locator => scope.locator("li[data-node-kind='note']").filter({ hasText: title });
 
-/** 搜尋框所在的清單範圍：1280 以上是固定側欄，其餘走 `openListOnCompact`（手機的清單、640–1279 的抽屜）。 */
+/** The list scope holding the search box: from 1280 up it is the fixed sidebar, otherwise `openListOnCompact` (the phone's list, the drawer at 640-1279). */
 async function listScope(page: Page, width: number): Promise<Locator> {
   if (width >= 1280) {
-    // 搜尋時 tab 列換成結果，所以不用「含 tab 列」過濾；固定側欄是頁面上第一個 complementary。
+    // While searching the tab bar is replaced by results, so don't filter on the tab bar; the fixed sidebar is the first complementary on the page.
     await expect(page.getByRole("tablist", { name: "Sidebar sections" })).toBeVisible({ timeout: 15_000 });
     return page.getByRole("complementary").first();
   }
@@ -120,13 +112,13 @@ async function openNote(page: Page, sidebar: Locator, title: string): Promise<vo
   await expect(titleBox(page)).toHaveValue(title, { timeout: 15_000 });
 }
 
-/** 看得見的 input／select／textarea／Select 觸發鈕裡，字級小於 16px 的（排除第三方元件；iOS 只在小於 16px 時聚焦放大）。回傳「共幾個、哪幾個太小」。 */
+/** Among the visible input/select/textarea/Select trigger buttons, those with a font size under 16px (third-party components excluded; iOS zooms on focus only below 16px). Returns "how many in total, which are too small". */
 async function fieldFontSizes(page: Page): Promise<{ count: number; bad: string[] }> {
   return page.evaluate(() => {
     const bad: string[] = [];
     let count = 0;
     for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, select, textarea, [role=combobox]:not(input)"))) {
-      // Radix Select 在表單內渲染 aria-hidden 的原生 select 做表單同步，不是使用者看得到的欄位。
+      // Radix Select renders an aria-hidden native select inside a form for form sync; it is not a field the user sees.
       if (el instanceof HTMLSelectElement && el.getAttribute("aria-hidden") === "true") continue;
       if (el instanceof HTMLInputElement && ["checkbox", "radio", "hidden", "file", "button", "submit", "range", "color"].includes(el.type)) continue;
       if (el.closest('[class*="mantine-"], .bn-toolbar, .bn-form-popover') !== null) continue;
@@ -140,7 +132,6 @@ async function fieldFontSizes(page: Page): Promise<{ count: number; bad: string[
   });
 }
 
-/** 目前開著的選單裡每一項（含子選單觸發項、勾選項、單選項）的高度。 */
 async function menuItemHeights(page: Page): Promise<Array<{ name: string; height: number }>> {
   return page.evaluate(() => {
     const menu = document.querySelector('[role="menu"]');
@@ -153,7 +144,7 @@ async function menuItemHeights(page: Page): Promise<Array<{ name: string; height
 }
 
 for (const phone of PHONES) {
-  test(`56-1 清單 ${phone.width} 觸控：tab 與列 44 高、列內鈕點擊範圍 ≥ 44×44 且相鄰圓心距 ≥ 44`, async ({ browser }) => {
+  test(`56-1 list ${phone.width} touch: tabs and rows 44 high, row button tap areas >= 44x44 with adjacent centers >= 44 apart`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openAs(browser, phone, true);
     try {
@@ -173,7 +164,6 @@ for (const phone of PHONES) {
       await showSidebarTab(page, "My notes", sidebar);
       await expect(noteLink(sidebar, TITLES.plain)).toBeVisible({ timeout: 15_000 });
 
-      // 一般列與最愛列：列高、⋮、最愛星號（最愛列的星號與 ⋮ 相鄰）
       for (const title of [TITLES.plain, TITLES.fav]) {
         const link = noteLink(sidebar, title);
         const row = rowOf(sidebar, title);
@@ -187,7 +177,7 @@ for (const phone of PHONES) {
         expect(more.tap[0], `${title} ⋮ 點擊寬`).toBeGreaterThanOrEqual(44 - TOL);
         expect(more.tap[1], `${title} ⋮ 點擊高`).toBeGreaterThanOrEqual(44 - TOL);
         if (title === TITLES.fav) {
-          // 觸控：最愛是一顆不能點的標記（不是按鈕，沒有點擊範圍），在 ⋮ 左邊一格；⋮ 永遠是最右一格
+          // Touch: a favorite is a marker that can't be clicked (not a button, no tap area), one slot left of the kebab; the kebab is always the rightmost slot.
           await expect(row.getByRole("button", { name: "Favorite", exact: true })).toHaveCount(0);
           const marker = row.getByRole("img", { name: "Favorite", exact: true });
           await expect(marker).toBeVisible();
@@ -199,7 +189,6 @@ for (const phone of PHONES) {
         }
       }
 
-      // 資料夾列：「＋」與資料夾 ⋮ 相鄰；列高 44
       const folderRow = sidebar.locator("li[data-node-kind='folder']").filter({ hasText: FOLDER }).first();
       await expect(folderRow).toBeVisible();
       const folderBox = (await folderRow.locator("> div").first().boundingBox({ timeout: 10_000 }))!;
@@ -213,7 +202,7 @@ for (const phone of PHONES) {
       }
       expect(Math.abs(folderMore.center[0] - plus.center[0]), "＋ 與資料夾 ⋮ 圓心距").toBeGreaterThanOrEqual(44 - TOL);
 
-      // 視覺框外 8px 點下去：命中的還是那顆鈕（只往上下量；左右可能是相鄰鈕）
+      // Press 8px outside the visual box: it still hits that button (measured only up and down; left and right may be the adjacent button).
       const moreButton = rowOf(sidebar, TITLES.plain).getByRole("button", { name: `Note actions for ${TITLES.plain}`, exact: true });
       const box = (await moreButton.boundingBox({ timeout: 10_000 }))!;
       for (const dy of [-(box.height / 2 + 8), box.height / 2 + 8]) {
@@ -229,7 +218,7 @@ for (const phone of PHONES) {
     }
   });
 
-  test(`56-2 選單 ${phone.width} 觸控：⋮ 選單與使用者選單每項 ≥ 40 高；色票點擊範圍 44×44`, async ({ browser }) => {
+  test(`56-2 menus ${phone.width} touch: every item of the kebab menu and the user menu >= 40 high; swatch tap area 44x44`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openAs(browser, phone, true);
     try {
@@ -238,7 +227,6 @@ for (const phone of PHONES) {
       await expect(sidebar).toBeVisible({ timeout: 15_000 });
       await showSidebarTab(page, "My notes", sidebar);
 
-      // 列的 ⋮ 選單
       await sidebar.getByRole("button", { name: `Note actions for ${TITLES.plain}`, exact: true }).click();
       await expect(page.getByRole("menu")).toBeVisible();
       const noteItems = await menuItemHeights(page);
@@ -247,11 +235,10 @@ for (const phone of PHONES) {
       await page.keyboard.press("Escape");
       await expect(page.getByRole("menu")).toHaveCount(0);
 
-      // 使用者選單
       await page.locator("[data-phone-top-bar]").getByRole("button", { name: alice.displayName, exact: true }).click();
       const menu = page.getByRole("menu");
       await expect(menu).toBeVisible();
-      // 手機的選單是由下往上升起的 sheet：進場動畫跑完再量（還在畫面外的部分 elementFromPoint 打不到）
+      // On a phone the menu is a sheet rising from the bottom: measure after the entry animation (the part still off screen can't be hit by elementFromPoint).
       await expect.poll(() => menu.evaluate((el) => el.getAnimations().length)).toBe(0);
       const userItems = await menuItemHeights(page);
       const swatchNames = await menu.evaluate((el) =>
@@ -282,7 +269,7 @@ for (const phone of PHONES) {
     }
   });
 
-  test(`56-3 筆記頁頁首 ${phone.width} 觸控：‹、星號、分享、⋮ 的點擊範圍 ≥ 40×44`, async ({ browser }) => {
+  test(`56-3 note page header ${phone.width} touch: tap areas of the back chevron, star, share and kebab >= 40x44`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openAs(browser, phone, true);
     try {
@@ -312,7 +299,7 @@ for (const phone of PHONES) {
   });
 }
 
-test("56-4 選取模式 390 觸控：標題列的「Select all」「Done」點擊範圍 ≥ 44 高", async ({ browser }) => {
+test("56-4 select mode 390 touch: the header's \"Select all\" and \"Done\" have a tap area >= 44 high", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openAs(browser, PHONES[0], true);
   try {
@@ -334,9 +321,8 @@ test("56-4 選取模式 390 觸控：標題列的「Select all」「Done」點�
   }
 });
 
-test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享對話框、設定頁的每個輸入框都不小於 16px", async ({ browser }) => {
+test("56-5 input font size (touch): every input on the login page, list, note page, share dialog and settings page is at least 16px", async ({ browser }) => {
   test.setTimeout(180_000);
-  // 登入頁（未登入）
   let login: { count: number; bad: string[] } = { count: 0, bad: [] };
   const anon = await browser.newContext({ hasTouch: true, isMobile: true, viewport: PHONES[0] });
   try {
@@ -355,7 +341,6 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     await page.goto("/");
     const sidebar = page.getByRole("complementary");
     await expect(sidebar).toBeVisible({ timeout: 15_000 });
-    // 手機清單沒在搜尋時沒有搜尋框：先點 Search 開搜尋層。
     await sidebar.getByRole("button", { name: "Search notes", exact: true }).click();
     await expect(sidebar.getByRole("textbox", { name: "Search notes", exact: true })).toBeVisible();
     const list = await fieldFontSizes(page);
@@ -363,7 +348,6 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     expect(list.bad, "清單").toEqual([]);
     await sidebar.getByRole("button", { name: "Cancel", exact: true }).click();
 
-    // 筆記頁：標題框與程式碼區塊語言下拉
     await openNote(page, sidebar, TITLES.code);
     const codeSelect = page.locator(".bn-editor .bn-block-content[data-content-type=codeBlock] select");
     await expect(codeSelect).toHaveCount(1, { timeout: 15_000 });
@@ -372,11 +356,10 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     expect(note.count, "筆記頁輸入框數（標題框）").toBeGreaterThanOrEqual(1);
     expect(note.bad, "筆記頁").toEqual([]);
 
-    // 分享對話框
     await page.locator("header").getByRole("button", { name: "Share", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible({ timeout: 15_000 });
-    // 「Members only」才會出現新增分享表單，裡面有共用 Select 的角色觸發鈕。
+    // The add-share form only appears under "Members only", and it contains the shared Select's role trigger button.
     await dialog.getByRole("radio", { name: /^Members only/ }).click();
     await expect(dialog.getByRole("combobox", { name: "Role for new share", exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(dialog.locator("input, select, textarea").first()).toBeVisible({ timeout: 15_000 });
@@ -385,7 +368,6 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
     expect(share.bad, "分享對話框").toEqual([]);
     await page.keyboard.press("Escape");
 
-    // 設定頁
     await page.goto("/settings/account");
     await expect(page.locator("input:visible, select:visible, textarea:visible").first()).toBeVisible({ timeout: 15_000 });
     const settings = await fieldFontSizes(page);
@@ -398,7 +380,7 @@ test("56-5 輸入框字級（觸控）：登入頁、清單、筆記頁、分享
 });
 
 for (const width of [800, 1280] as const) {
-  test(`56-6 搜尋框 ${width} 觸控：沒有 Ctrl K 提示；✕ 點擊範圍 44×44 且不搶文字區的點擊`, async ({ browser }) => {
+  test(`56-6 search box ${width} touch: no Ctrl K hint; the clear button's tap area is 44x44 and doesn't steal presses on the text area`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openAs(browser, { width, height: 900 }, true);
     try {
@@ -418,7 +400,7 @@ for (const width of [800, 1280] as const) {
       expect(area.tap[1], "✕ 點擊高").toBeGreaterThanOrEqual(44 - TOL);
       expect(area.visual[0], "✕ 視覺寬不變").toBeLessThanOrEqual(24.5);
 
-      // 文字區右緣內 1px 點下去：命中輸入框本身，不是 ✕
+      // Press 1px inside the right edge of the text area: it hits the input itself, not the clear button.
       const probe = await search.evaluate((el) => {
         const box = el.getBoundingClientRect();
         const style = getComputedStyle(el);
@@ -436,7 +418,7 @@ for (const width of [800, 1280] as const) {
 }
 
 for (const phone of [PHONES[0], { width: 1280, height: 900 }] as const) {
-  test(`56-7 滑鼠 ${phone.width}：列 28、tab 36、選單項 32、列內鈕點擊範圍就是 24×24；1280 搜尋框 13px、Ctrl K 還在`, async ({ browser }) => {
+  test(`56-7 mouse ${phone.width}: row 28, tab 36, menu item 32 (48 in the 390 bottom sheet), row button tap area is just 24x24; at 1280 the search box is 13px and Ctrl K is still there`, async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page } = await openAs(browser, phone, false);
     try {
@@ -451,14 +433,14 @@ for (const phone of [PHONES[0], { width: 1280, height: 900 }] as const) {
       const more = scope.getByRole("button", { name: `Note actions for ${TITLES.fav}`, exact: true });
       await row.hover();
       const area = await tapAreaOf(more);
-      // 滑鼠下沒有擴張：24×24，取樣步進 0.5px 可能多算 0.5px，所以容許 24 到 25。
+      // No enlargement under a mouse: 24x24; sampling at 0.5px steps may over-count by 0.5px, so 24 to 25 is allowed.
       for (const side of area.tap) {
         expect(side, "⋮ 點擊範圍").toBeGreaterThanOrEqual(24);
         expect(side, "⋮ 點擊範圍").toBeLessThanOrEqual(25);
       }
 
       if (phone.width >= 1280) {
-        // 手機版面的搜尋框另有自己的樣式（16px、沒有 Ctrl K 提示），只有側欄裡的搜尋框量這兩項
+        // The phone layout's search box has its own style (16px, no Ctrl K hint), so only the search box in the sidebar is measured for these two.
         const search = scope.getByRole("textbox", { name: "Search notes", exact: true });
         expect(await search.evaluate((el) => getComputedStyle(el).fontSize), "搜尋框字級").toBe("13px");
         await expect(scope.locator("kbd")).toBeVisible();
@@ -477,7 +459,7 @@ for (const phone of [PHONES[0], { width: 1280, height: 900 }] as const) {
   });
 }
 
-/** 打開 TITLES.plain 的分享對話框，回傳「Role for new share」觸發鈕。 */
+/** Opens TITLES.plain's share dialog and returns the "Role for new share" trigger button. */
 async function openShareRoleTrigger(page: Page): Promise<Locator> {
   await page.goto("/");
   const sidebar = await listScope(page, page.viewportSize()!.width);
@@ -491,14 +473,14 @@ async function openShareRoleTrigger(page: Page): Promise<Locator> {
   return trigger;
 }
 
-test("56-8 共用 Select 390 觸控：分享對話框的角色觸發鈕字級 16px、不比同列輸入框矮，每個選項點擊範圍 ≥ 40 高", async ({ browser }) => {
+test("56-8 shared Select 390 touch: the share dialog's role trigger has font size 16px, is no shorter than the input in its row, and every option has a tap area >= 40 high", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openAs(browser, PHONES[0], true);
   try {
     const trigger = await openShareRoleTrigger(page);
     expect(await trigger.evaluate((el) => getComputedStyle(el).fontSize), "觸發鈕字級").toBe("16px");
     const triggerArea = await tapAreaOf(trigger);
-    // field 變體與同列輸入框同高（輸入框觸控下也是 32），不另外撐高；點擊面要等於輸入框，不能更矮。
+    // The field variant has the same height as the input in the row (inputs are also 32 under touch) and is not made taller; its tap surface must equal the input's, not be shorter.
     const emailArea = await tapAreaOf(page.getByRole("dialog").getByLabel("Email address", { exact: true }));
     expect(triggerArea.tap[1], "觸發鈕點擊高").toBeGreaterThanOrEqual(emailArea.tap[1] - TOL);
     await trigger.click();
@@ -517,7 +499,7 @@ test("56-8 共用 Select 390 觸控：分享對話框的角色觸發鈕字級 16
   }
 });
 
-test("56-8 共用 Select 1280 滑鼠：觸發鈕視覺高 32、選項高是桌面值 32", async ({ browser }) => {
+test("56-8 shared Select 1280 mouse: the trigger's visual height is 32 and the options have the desktop height 32", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openAs(browser, { width: 1280, height: 900 }, false);
   try {

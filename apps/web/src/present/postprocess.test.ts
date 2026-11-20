@@ -27,40 +27,40 @@ const WIKILINK = '<p>see <span data-inline-content-type="wikilink" data-target-n
 describe("postprocessSlide", () => {
   beforeEach(() => renderMermaid.mockReset());
 
-  it("所有 img/video/audio[src] 走 resolveMedia（公開變體映射到公開端點）", () => {
+  it("all img/video/audio[src] go through resolveMedia (the public variant maps to the public endpoint)", () => {
     const { host } = run('<img src="/api/uploads/a" alt=""><video src="/api/uploads/v"></video><audio src="/api/uploads/s"></audio>', publicCtx);
     expect(host.querySelector("img")!.getAttribute("src")).toBe("/api/public/notes/TOKEN/uploads/a");
     expect(host.querySelector("video")!.getAttribute("src")).toBe("/api/public/notes/TOKEN/uploads/v");
     expect(host.querySelector("audio")!.getAttribute("src")).toBe("/api/public/notes/TOKEN/uploads/s");
   });
 
-  it("a[data-kn-media]（檔案連結）走 resolveMedia；文字連結的 /api/uploads/ 不映射", () => {
+  it("a[data-kn-media] (file link) goes through resolveMedia; /api/uploads/ in text links isn't mapped", () => {
     const { host } = run('<a href="/api/uploads/f" data-kn-media="">f.pdf</a><a href="/api/uploads/g">text</a>', publicCtx);
     const [file, text] = Array.from(host.querySelectorAll("a"));
     expect(file.getAttribute("href")).toBe("/api/public/notes/TOKEN/uploads/f");
     expect(text.getAttribute("href")).toBe("/api/uploads/g");
   });
 
-  it("文字連結：http(s)、mailto、相對留下；#… 拿掉 href（reveal 會攔截當跳頁）；其他 scheme 拿掉", () => {
+  it("text links: http(s), mailto and relative are kept; #... loses its href (reveal would intercept it as a slide jump); other schemes are dropped", () => {
     const { host } = run('<a href="https://e/x">1</a><a href="mailto:a@b">2</a><a href="/n/a/b">3</a><a href="#/abc">4</a><a href="ftp://e">5</a>', member());
     expect(Array.from(host.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual(["https://e/x", "mailto:a@b", "/n/a/b", null, null]);
   });
 
-  it("不經消毒器直接餵 postprocessSlide：ftp:／tel:／javascript: 連結的 href 由協定白名單拿掉（白名單自己承重）", () => {
+  it("postprocessSlide fed directly without the sanitizer: ftp: / tel: / javascript: hrefs are removed by the protocol allowlist (the allowlist is load-bearing here)", () => {
     const template = document.createElement("template");
     template.innerHTML = '<a href="ftp://e/f">1</a><a href="tel:+886123">2</a><a href="javascript:alert(1)">3</a><a href="https://e/x">4</a><a href="mailto:a@b">5</a>';
     postprocessSlide(template.content, member());
     expect(Array.from(template.content.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual([null, null, null, "https://e/x", "mailto:a@b"]);
   });
 
-  it("留下的 a 一律 target=_blank、rel=noopener noreferrer", () => {
+  it("every kept a gets target=_blank, rel=noopener noreferrer", () => {
     const { host } = run('<a href="https://e/x">1</a>', member());
     const a = host.querySelector("a")!;
     expect(a.getAttribute("target")).toBe("_blank");
     expect(a.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
-  it("video／audio 加 controls 與 preload=metadata；checkbox disabled；details open", () => {
+  it("video / audio get controls and preload=metadata; checkbox disabled; details open", () => {
     const { host } = run('<video src="https://e/v.mp4"></video><audio src="https://e/a.mp3"></audio><ul><li><input type="checkbox" checked><p>x</p></li></ul><details><summary>s</summary><p>c</p></details>', member());
     for (const media of host.querySelectorAll("video, audio")) {
       expect(media.hasAttribute("controls")).toBe(true);
@@ -70,14 +70,14 @@ describe("postprocessSlide", () => {
     expect(host.querySelector("details")!.hasAttribute("open")).toBe(true);
   });
 
-  it("table 外包 div.kn-present-table[data-prevent-swipe]（①）", () => {
+  it("table wrapped in div.kn-present-table[data-prevent-swipe]", () => {
     const { host } = run("<table><tbody><tr><td>c</td></tr></tbody></table>", member());
     const wrap = host.querySelector("table")!.parentElement!;
     expect(wrap.className).toBe("kn-present-table");
     expect(wrap.hasAttribute("data-prevent-swipe")).toBe(true);
   });
 
-  it("wikilink（已登入）未就緒：<a href=/notes/<encodeURIComponent(id)>>＋snapshotTitle（文字）、新分頁、不顯示 [[ ]]", () => {
+  it("wikilink (signed in) not ready: <a href=/notes/<encodeURIComponent(id)>> plus snapshotTitle (text), new tab, no [[ ]] shown", () => {
     const { host } = run(WIKILINK, member(() => ({ kind: "pending" })));
     const a = host.querySelector("a")!;
     expect(a.getAttribute("href")).toBe("/notes/n%201");
@@ -87,14 +87,14 @@ describe("postprocessSlide", () => {
     expect(host.textContent).not.toContain("[[");
   });
 
-  it("wikilink（已登入）命中：canonical href＋現行標題", () => {
+  it("wikilink (signed in) hit: canonical href plus current title", () => {
     const { host } = run(WIKILINK, member(() => ({ kind: "found", href: "/n/tester/new", title: "New title" })));
     const a = host.querySelector("a")!;
     expect(a.getAttribute("href")).toBe("/n/tester/new");
     expect(a.textContent).toBe("New title");
   });
 
-  it("wikilink（已登入）清單有但沒這篇：斷鏈樣式純文字（不是連結）", () => {
+  it("wikilink (signed in) list loaded but note missing: broken-link style plain text (not a link)", () => {
     const { host } = run(WIKILINK, member(() => ({ kind: "broken" })));
     expect(host.querySelector("a")).toBeNull();
     const span = host.querySelector(".kn-present-wikilink-broken")!;
@@ -102,13 +102,13 @@ describe("postprocessSlide", () => {
     expect(span.getAttribute("title")).toBe("This linked note no longer exists.");
   });
 
-  it("wikilink（公開）：純文字 snapshotTitle，沒有任何元素包它", () => {
+  it("wikilink (public): plain-text snapshotTitle, no element wraps it", () => {
     const { host } = run(WIKILINK, publicCtx);
     expect(host.querySelector("a, span")).toBeNull();
     expect(host.textContent).toBe("see Old <b>title");
   });
 
-  it("mermaid：標記元素清空、收成 job（code 原文）；空白 code 的直接移除", () => {
+  it("mermaid: marker element emptied and collected as a job (original code); blank code is removed directly", () => {
     const { host, jobs } = run('<div data-kn-mermaid="">graph TD; A--&gt;B</div><div data-kn-mermaid="">   </div>', member());
     expect(jobs).toHaveLength(1);
     expect(jobs[0].code).toBe("graph TD; A-->B");
@@ -118,7 +118,7 @@ describe("postprocessSlide", () => {
   });
 
   const WL = (attrs: string) => `<p><span data-inline-content-type="wikilink" data-target-note-id="n1" data-snapshot-title="Snap"${attrs}><a href="/notes/n1">x</a></span></p>`;
-  it("#269 member：命中 → 文字 label 優先、href＝canonical＋#b-錨點；未就緒 → /notes/<id>＋錨點、label 優先；斷鏈 → label 優先的純文字", () => {
+  it("#269 member: hit -> text label preferred, href = canonical + #b-anchor; not ready -> /notes/<id> + anchor, label preferred; broken -> label-preferred plain text", () => {
     const found = member(() => ({ kind: "found", href: "/n/h/x", title: "Live" }));
     let a = run(WL(' data-label="L" data-anchor-block-id="b1"'), found).host.querySelector("a")!;
     expect([a.getAttribute("href"), a.textContent]).toEqual(["/n/h/x#b-b1", "L"]);
@@ -129,7 +129,7 @@ describe("postprocessSlide", () => {
     const span = run(WL(' data-label="L"'), member(() => ({ kind: "broken" }))).host.querySelector(".kn-present-wikilink-broken")!;
     expect(span.textContent).toBe("L");
   });
-  it("#269 public：純文字 label || snapshotTitle（不連公開目標）", () => {
+  it("#269 public: plain-text label || snapshotTitle (doesn't link to a public target)", () => {
     expect(run(WL(' data-label="L"'), publicCtx).host.textContent).toBe("L");
     expect(run(WL(""), publicCtx).host.textContent).toBe("Snap");
     expect(run(WL(' data-label="L"'), publicCtx).host.querySelector("a")).toBeNull();
@@ -139,7 +139,7 @@ describe("postprocessSlide", () => {
 describe("runMermaidJob", () => {
   beforeEach(() => renderMermaid.mockReset());
 
-  it("成功 → innerHTML 放 SVG；回 true", async () => {
+  it("success -> SVG in innerHTML; returns true", async () => {
     renderMermaid.mockResolvedValue({ ok: true, svg: '<svg data-x="1"></svg>' });
     const el = document.createElement("div");
     expect(await runMermaidJob({ el, code: "graph TD" }, "dark", () => true, "err")).toBe(true);
@@ -147,7 +147,7 @@ describe("runMermaidJob", () => {
     expect(el.querySelector("svg[data-x]")).not.toBeNull();
   });
 
-  it("錯誤 → 提示＋原始碼 <pre>（textContent，不是 HTML）", async () => {
+  it("error -> hint plus source <pre> (textContent, not HTML)", async () => {
     renderMermaid.mockResolvedValue({ ok: false, message: "Parse error" });
     const el = document.createElement("div");
     await runMermaidJob({ el, code: "<img src=x onerror=alert(1)>" }, "light", () => true, "Diagram error");
@@ -156,7 +156,7 @@ describe("runMermaidJob", () => {
     expect(el.querySelector("img")).toBeNull();
   });
 
-  it("空（message 為空字串）→ 移除元素", async () => {
+  it("empty (message is an empty string) -> element removed", async () => {
     renderMermaid.mockResolvedValue({ ok: false, message: "" });
     const parent = document.createElement("div");
     const el = document.createElement("div");
@@ -165,7 +165,7 @@ describe("runMermaidJob", () => {
     expect(parent.childElementCount).toBe(0);
   });
 
-  it("世代過期（isCurrent 回 false）→ 結果丟掉、回 false", async () => {
+  it("stale generation (isCurrent returns false) -> result dropped, returns false", async () => {
     renderMermaid.mockResolvedValue({ ok: true, svg: "<svg></svg>" });
     const el = document.createElement("div");
     expect(await runMermaidJob({ el, code: "graph TD" }, "light", () => false, "err")).toBe(false);

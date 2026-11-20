@@ -3,9 +3,9 @@ import { vi } from "vitest";
 type Listener = (event: Event) => void;
 
 /**
- * #229 overlay 測試用的 reveal 替身（`vi.mock("reveal.js", …)` 把 default 換成它）。
- * initialize() 預設在 microtask 裡 resolve；`FakeReveal.autoResolve = false` 時由測試 `resolveInit()`。
- * slide(h, v) 索引變了就送 slidechanged（currentSlide 依我們的 DOM 結構找）；pressKey 呼叫 config.keyboard 的對應函式。
+ * A reveal stand-in for the overlay tests (`vi.mock("reveal.js", ...)` swaps the default for it).
+ * initialize() resolves in a microtask by default; with `FakeReveal.autoResolve = false` the test calls `resolveInit()`.
+ * slide(h, v) sends slidechanged when the index changes (currentSlide is found from our DOM structure); pressKey calls the matching function of config.keyboard.
  */
 export class FakeReveal {
   static instances: FakeReveal[] = [];
@@ -70,7 +70,6 @@ export class FakeReveal {
     this.resolver?.();
   }
 
-  /** controller 在 initialize resolve、核對通過之後才 on("slidechanged")——測試以它判斷「已就緒」。 */
   listenerCount(type: string): number {
     return this.listeners.get(type)?.size ?? 0;
   }

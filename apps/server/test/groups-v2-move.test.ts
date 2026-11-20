@@ -1,7 +1,3 @@
-/**
- * #175：`POST /api/notes/:id/move`——個人筆記移進群組（功能面）。交錯案在 `groups-v2-move-race.test.ts`，
- * 真共編連線的踢線在 `groups-v2-revocation.test.ts` 檔尾。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
@@ -22,7 +18,7 @@ const move = async (app: FastifyInstance, noteId: string, userId: string, payloa
 const get = async (app: FastifyInstance, url: string, userId: string) => app.inject({ method: "GET", url, cookies: await cookieOf(userId) });
 
 describe("#175 POST /api/notes/:id/move", () => {
-  it("個人筆記移進群組：200 新形 DTO；DB 清 shares／token／別名／prev、owner NULL、slug 與 slug_is_custom 不變、updated_at 不動；轉址恰一列；AI 紀錄／links／uploads／note_states 跟著 UUID", async () => {
+  it("personal note moved into a group: 200 with the new DTO shape; DB clears shares/token/alias/prev and owner, keeps slug and slug_is_custom, leaves updated_at alone; exactly one redirect row; AI records, links, uploads and note_states follow the UUID", async () => {
     const spy = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: spy });
     const [owner, c, admin] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
@@ -60,11 +56,11 @@ describe("#175 POST /api/notes/:id/move", () => {
     const [noteIds, userIds] = spy.onGroupAccessChanged.mock.calls[0]!;
     expect(noteIds).toEqual([n.id]);
     expect([...userIds].sort()).toEqual([c.id, owner.id].sort());
-    // #297：移動清 token／別名，但公開頁寬度保留（再公開時沿用）。
+    // #297: the move clears token and alias but keeps the public page width (reused when published again).
     expect((await db.$client.query("select public_width from notes where id = $1", [n.id])).rows).toEqual([{ public_width: "full" }]);
   });
 
-  it("100 字元自訂 slug 在群組撞名 → ≤60、-2 結尾、slug_is_custom 仍 true、updated_at 不動、舊 /n/ 網址轉到它", async () => {
+  it("100-char custom slug colliding in the group -> at most 60 chars, ends in -2, slug_is_custom stays true, updated_at unchanged, the old /n/ URL redirects to it", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -81,24 +77,22 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(Array.from(expected).length).toBeLessThanOrEqual(60);
     expect(expected.endsWith("-2")).toBe(true);
     expect(validateSlug(expected)).toBeNull();
-    // 撞名改了網址名（-2）也不動 updated_at——`docs/known-limitations.md`「**`list_notes` pages through live data, not a snapshot.**」條的「moving a note into a group can give it
-    // a new URL name, but does not move it in this order」靠這條（案 1 是不撞名的形）；MCP `list_notes` 說明
-    // （`LIST_NOTES_DESCRIPTION`）的同義句「a note moved into one of your groups … appear at their own unchanged
-    // positions」也靠它。兩句都由移動路徑寫入。
+    // A collision rename (-2) must not touch updated_at either: docs/known-limitations.md (`list_notes` pagination) and `LIST_NOTES_DESCRIPTION` both promise
+    // that a note moved into a group keeps its position; the move path is what makes that true (the previous test is the non-colliding shape).
     expect(await noteState(db.$client, n.id)).toMatchObject({ slug: expected, slug_is_custom: true, group_id: g.id, updated_at: before.updated_at });
     const old = await get(app, `/api/notes/by-path/${owner.handle}/${base}`, owner.id);
     expect(old.statusCode).toBe(200);
     expect(old.json()).toMatchObject({ id: n.id, groupId: g.id, slug: expected });
   });
 
-  it("slug 撞名重試（note-move-slug-candidate）：探測之後、寫入之前群組裡冒出同名 → savepoint 回滾、重探測拿 -2；交易其餘部分照常 commit", async () => {
+  it("slug collision retry (note-move-slug-candidate): a same-name group note appears after the probe and before the write -> savepoint rolls back, the re-probe gets -2; the rest of the transaction commits", async () => {
     const state: { candidates: string[] } = { candidates: [] };
     const holder: { groupId?: string; db?: Db } = {};
     const built = await buildTestApp({
       groupTestHook: async (point, ctx) => {
         if (point !== "note-move-slug-candidate") return;
         state.candidates.push(ctx.slug!);
-        // 另一條連線（pool）先 commit 一篇同 slug 的群組筆記——移動的 UPDATE 撞 notes_group_slug_idx。
+        // Another connection (pool) commits a group note with the same slug first, so the move's UPDATE hits notes_group_slug_idx.
         if (state.candidates.length === 1) await seedNote(holder.db!, { groupId: holder.groupId! }, { slug: ctx.slug! });
       },
     });
@@ -120,7 +114,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(await db.select({ oldPath: noteRedirects.oldPath }).from(noteRedirects)).toEqual([{ oldPath: `/n/${owner.handle}/plan` }]);
   });
 
-  it("移動後以大寫 handle 開舊網址 → 轉址命中 200", async () => {
+  it("old URL opened with an uppercase handle after the move -> redirect hit, 200", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -136,7 +130,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(byGroup.json()).toMatchObject({ id: n.id, groupId: g.id });
   });
 
-  it("公開連結當下失效：舊 token 的匿名讀取 404；移動不扣 publicLink 桶", async () => {
+  it("public link invalid immediately: anonymous read with the old token is 404; the move does not consume the publicLink limiter", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ publicLink: new FixedWindowLimiter({ limit: 1, windowMs: 600_000 }) }) });
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "admin" }]);
@@ -152,7 +146,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(reopen.json().token).not.toBe(token);
   });
 
-  it("授權：逐人分享 editor／viewer → 403 forbidden；陌生人 → 404 not_found；群組筆記（任何角色）→ 403；不存在的筆記 → 404", async () => {
+  it("authorization: per-user editor/viewer share -> 403 forbidden; stranger -> 404 not_found; group note (any role) -> 403; missing note -> 404", async () => {
     const { app, db } = await buildTestApp();
     const [owner, ed, vw, stranger, admin, member] = await Promise.all([seedUser(db), seedUser(db), seedUser(db), seedUser(db), seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: member.id, role: "member" }, { userId: ed.id, role: "member" }, { userId: vw.id, role: "member" }]);
@@ -185,7 +179,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(await sharesOf(db, n.id)).toHaveLength(2);
   });
 
-  it("目標：非 UUID、不存在、非成員、成員但角色無 can_create → 404 group_not_found，四種 body 逐位元組相同；筆記原封不動", async () => {
+  it("target: non-UUID, missing, non-member, or member whose role lacks can_create -> 404 group_not_found with byte-identical bodies for all four; note untouched", async () => {
     const { app, db } = await buildTestApp();
     const [owner, admin, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const notMine = await seedGroup(db, "NotMine", [{ userId: admin.id, role: "admin" }]);
@@ -209,7 +203,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(await db.select().from(noteRedirects)).toEqual([]);
   });
 
-  it("body strict：多餘鍵 → 400 invalid_body；缺 groupId → 400；groupId 非字串 → 400", async () => {
+  it("strict body: extra key -> 400 invalid_body; missing groupId -> 400; non-string groupId -> 400", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -223,7 +217,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(await noteState(db.$client, n.id)).toEqual(before);
   });
 
-  it("移動後 GET /api/notes：該篇落在群組分支（role editor、group 有值），owner 的個人分支沒有它", async () => {
+  it("GET /api/notes after the move: the note is in the group branch (role editor, group set) and not in the owner's personal branch", async () => {
     const { app, db } = await buildTestApp();
     const owner = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: owner.id, role: "member" }]);
@@ -236,7 +230,7 @@ describe("#175 POST /api/notes/:id/move", () => {
     expect(rows[0]).toMatchObject({ ownerId: null, role: "editor", group: { id: g.id, name: "G" } });
   });
 
-  it("create-only 角色（能新建、不能編輯）移入 → 200，回應 role viewer、permissions.edit false；onGroupAccessChanged 名單含 owner（重驗會把他的共編連線降為唯讀）", async () => {
+  it("create-only role (can create, cannot edit) moving in -> 200 with role viewer and permissions.edit false; onGroupAccessChanged list includes the owner (re-verification downgrades their collab connection to read-only)", async () => {
     const spy = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: spy });
     const [owner, admin] = await Promise.all([seedUser(db), seedUser(db)]);
@@ -254,6 +248,6 @@ describe("#175 POST /api/notes/:id/move", () => {
     });
     expect(spy.onGroupAccessChanged).toHaveBeenCalledTimes(1);
     expect(spy.onGroupAccessChanged.mock.calls[0]).toEqual([[n.id], [owner.id]]);
-    // 共編連線真的被降為唯讀（provider 拿到 viewer）由 groups-v2-revocation.test.ts 檔尾「create-only」案以真連線驗。
+    // That the collab connection is really downgraded to read-only (provider gets viewer) is verified with a real connection by the create-only test at the end of groups-v2-revocation.test.ts.
   });
 });

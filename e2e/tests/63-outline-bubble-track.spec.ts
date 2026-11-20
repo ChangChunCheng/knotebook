@@ -3,16 +3,10 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs, randomEmail } from "./helpers.js";
 
 /**
- * 手機標題大綱泡泡的軌道：泡泡沿右緣的軌道移動，它在軌道上的位置就是捲動的位置；點它開底部面板。
- * 全部在觸控的 390×844，除了 63-4（700×900、滑鼠）；每個案例開新 context。
+ * The track of the phone outline bubble: the bubble moves along a track at the right edge and its position on the track is the scroll position; tapping it opens the bottom panel.
+ * All in touch 390x844 except 63-4 (700x900, mouse); every case opens a new context.
  *
- * 63-1 手機輕點：點泡泡開底部面板。
- * 63-2 手機編輯中：泡泡的軌道停在編輯工具列之上、頁首之下。
- * 63-3 手機位置：捲到最上，泡泡貼著軌道上端；捲到一半，泡泡在軌道中間；捲到底，泡泡貼著軌道下端、不壓到「New note」鈕。
- * 63-4 700×900（640-767）：卡片的捲動容器捲到最上、一半、到底，泡泡依序在軌道上端、中間、下端；軌道停在「Version history」鈕之上。
- * 63-5 公開頁手機（未登入）：捲動容器捲到最上、一半、到底，泡泡依序在軌道上端、中間、下端；頁面沒有 ⋮。
- *
- * 帳號與資料：用邀請建一個帳號（alice），唯讀的筆記在 beforeAll 以 API 建一次（含一篇開了公開連結的）。
+ * Account and data: one account (alice) is created through an invite and the read-only notes are created once in beforeAll via the API (including one with a public link).
  */
 
 test.use({ actionTimeout: 15_000 });
@@ -74,7 +68,7 @@ test.beforeAll(async ({ browser }) => {
 
 interface ContextOptions {
   viewport?: { width: number; height: number };
-  /** 手機：390×844、觸控（`viewport` 不用）。 */
+  /** Phone: 390x844, touch (`viewport` is not used). */
   phone?: boolean;
 }
 
@@ -84,13 +78,12 @@ async function newContext(browser: Browser, options: ContextOptions = {}): Promi
     try {
       window.localStorage.setItem("sidebar.width", "320");
     } catch {
-      // 讀不到 localStorage 時照預設寬跑。
+      // When localStorage can't be read, run with the default width.
     }
   });
   return { context, page: await context.newPage() };
 }
 
-/** 以 alice 登入、開 `path`，等標題框（筆記頁的 lazy 外殼換完）。 */
 async function openNote(browser: Browser, path: string, options: ContextOptions = {}): Promise<{ context: BrowserContext; page: Page }> {
   const { context, page } = await newContext(browser, options);
   await loginAs(page, alice.email, PASSWORD);
@@ -118,7 +111,7 @@ interface Place {
 }
 
 /**
- * 捲到 `y`（奇偶交替差 1 px，才一定有捲動事件），泡泡在的時候量一次。泡泡停止捲動 1.5 秒就消失，慢的機器上可能已經不在：整段重來。
+ * Scrolls to `y` (alternating by 1 px so a scroll event is certain) and measures once while the bubble is present. The bubble disappears 1.5 seconds after scrolling stops and on a slow machine may already be gone: the whole step is retried.
  */
 async function measureAt(page: Page, scrollTo: (y: number) => Promise<unknown>, y: number, check: (m: Place) => Promise<void> | void): Promise<void> {
   let attempt = 0;
@@ -131,7 +124,6 @@ async function measureAt(page: Page, scrollTo: (y: number) => Promise<unknown>, 
   }).toPass({ timeout: 15_000 });
 }
 
-/** 最上、一半、到底：泡泡依序貼著軌道上端、在正中、貼著下端。 */
 async function expectFollowsScroll(page: Page, scrollTo: (y: number) => Promise<unknown>, max: number): Promise<void> {
   await measureAt(page, scrollTo, 1, (m) => {
     expect(Math.abs(m.chipTop - m.trackTop), "捲到最上：泡泡貼著軌道上端").toBeLessThanOrEqual(2);
@@ -144,7 +136,7 @@ async function expectFollowsScroll(page: Page, scrollTo: (y: number) => Promise<
   });
 }
 
-test("63-1 手機輕點：點泡泡開底部面板", async ({ browser }) => {
+test("63-1 phone tap: tapping the bubble opens the bottom panel", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -160,7 +152,7 @@ test("63-1 手機輕點：點泡泡開底部面板", async ({ browser }) => {
   }
 });
 
-test("63-2 手機編輯中：軌道在編輯工具列與頁首之間", async ({ browser }) => {
+test("63-2 phone while editing: the track is between the editing toolbar and the header", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -168,13 +160,11 @@ test("63-2 手機編輯中：軌道在編輯工具列與頁首之間", async ({ 
     const toolbar = page.locator("[data-mobile-edit-toolbar]");
     await expect(toolbar).toBeVisible();
 
-    // 捲到最上：泡泡在軌道頂端，那裡就是頁首下緣之下（軌道上端跟著 --kb-sticky-top）。
     await measureAt(page, (y) => scrollWindowTo(page, y), 1, async (m) => {
       const header = (await page.locator("[data-note-header-slot]").boundingBox())!;
       expect(Math.abs(m.chipTop - m.trackTop), "捲到最上：泡泡貼著軌道上端").toBeLessThanOrEqual(2);
       expect(m.chipTop, "泡泡上緣不高過頁首下緣").toBeGreaterThanOrEqual(header.y + header.height);
     });
-    // 捲到底：泡泡在軌道底端，那裡在編輯工具列之上。
     await measureAt(page, (y) => scrollWindowTo(page, y), await windowMax(page), async (m) => {
       const capsule = (await toolbar.locator(":scope > *").first().boundingBox())!;
       expect(Math.abs(m.chipBottom - (m.trackTop + m.trackHeight)), "捲到底：泡泡貼著軌道下端").toBeLessThanOrEqual(2);
@@ -185,7 +175,7 @@ test("63-2 手機編輯中：軌道在編輯工具列與頁首之間", async ({ 
   }
 });
 
-test("63-3 手機位置：泡泡在軌道上的位置就是捲動位置，貼底時不壓到 New note 鈕", async ({ browser }) => {
+test("63-3 phone position: the bubble's position on the track is the scroll position, and at the bottom it doesn't overlap the New note button", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -204,7 +194,7 @@ test("63-3 手機位置：泡泡在軌道上的位置就是捲動位置，貼底
   }
 });
 
-test("63-4 700 寬（640-767）：捲動容器的位置就是泡泡在軌道上的位置；軌道在 Version history 鈕之上", async ({ browser }) => {
+test("63-4 700 wide (640-767): the scroll container's position is the bubble's position on the track; the track is above the Version history button", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { viewport: { width: 700, height: 900 } });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -222,7 +212,7 @@ test("63-4 700 寬（640-767）：捲動容器的位置就是泡泡在軌道上�
   }
 });
 
-test("63-5 公開頁手機（未登入）：捲動容器的位置就是泡泡在軌道上的位置；頁面沒有 ⋮", async ({ browser }) => {
+test("63-5 public page on a phone (logged out): the scroll container's position is the bubble's position on the track; the page has no kebab", async ({ browser }) => {
   const { context, page } = await newContext(browser, { phone: true });
   try {
     await page.goto(`/p/${notes.publicToken}`);

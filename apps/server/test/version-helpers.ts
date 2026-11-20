@@ -1,5 +1,5 @@
-// 版本歷史整合測試的共用縫。文件一律以「BlockNote 形」手造（blockGroup > blockContainer(id) > paragraph > XmlText），
-// 不 mount 編輯器——版本服務只讀 Yjs 結構，造法與內容指紋無關。例外：`seedOldNote` 模擬「瀏覽器寫過的舊筆記」，走 EditorSession。
+// Documents are hand-built in BlockNote shape (blockGroup > blockContainer(id) > paragraph > XmlText) without mounting the editor - the version service reads only the Yjs structure,
+// so how it is built is irrelevant to the content fingerprint. Exception: `seedOldNote` simulates "an old note written by a browser" and goes through EditorSession.
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import * as Y from "yjs";
@@ -31,7 +31,7 @@ export function paraDoc(texts: string[]): Y.Doc {
   return doc;
 }
 
-/** 5000 層巢狀（每層 blockContainer > [paragraph, blockGroup]）：`canonicalizeNode` 的遞迴在這個深度 RangeError。 */
+/** 5000 nested levels (each blockContainer > [paragraph, blockGroup]): `canonicalizeNode`'s recursion throws RangeError at this depth. */
 export function deepDoc(depth: number): Y.Doc {
   const doc = new Y.Doc();
   const g = new Y.XmlElement("blockGroup");
@@ -48,7 +48,6 @@ export function deepDoc(depth: number): Y.Doc {
   return doc;
 }
 
-/** 對第 i 顆頂層段落的 XmlText 做一次編輯（一個 transaction）。 */
 export function editPara(doc: Y.Doc, i: number, fn: (t: Y.XmlText) => void): void {
   const p = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))[i]!.get(0) as Y.XmlElement;
   doc.transact(() => fn(p.get(0) as Y.XmlText));
@@ -77,7 +76,6 @@ export async function noteBase(db: Db, noteId: string): Promise<{ counter: numbe
   return r!;
 }
 
-/** #272：`notes` 的待切三欄（`version_pending_at`／`_editors`／`_ref_fingerprint`）。 */
 export interface Pending {
   at: Date | null;
   editors: VersionEditorJson[];
@@ -93,13 +91,12 @@ export async function pendingOf(db: Db, noteId: string): Promise<Pending> {
   return r!;
 }
 
-/** #272：`notes.version_base_version_id`（目前基底那一版的 uuid）。 */
 export async function baseVersionIdOf(db: Db, noteId: string): Promise<string | null> {
   const [r] = await db.select({ id: notes.versionBaseVersionId }).from(notes).where(eq(notes.id, noteId));
   return r!.id;
 }
 
-/** #272：等這篇的待切滿足 `pred`（預設＝有待切）。落盤 debounce 2 s 之後 `noteStored` 才寫，所以 WS 編輯後要等它。 */
+/** Waits until the note's pending cut satisfies `pred` (default: has pending). `noteStored` writes only after the 2 s persist debounce, so after a WS edit this must be awaited. */
 export async function waitForPending(db: Db, noteId: string, pred: (p: Pending) => boolean = p => p.at !== null, ms = 10_000): Promise<Pending> {
   const deadline = Date.now() + ms;
   let last: Pending | null = null;
@@ -111,7 +108,7 @@ export async function waitForPending(db: Db, noteId: string, pred: (p: Pending) 
   throw new Error(`等待逾時（${ms}ms）：待切 ${JSON.stringify(last)}`);
 }
 
-/** 「舊筆記」：功能上線前就存在、`note_states` 有內容、沒有任何版本（以 server 端 EditorSession 寫 markdown 再直接插 `note_states`）。 */
+/** An "old note": existed before the feature shipped, `note_states` has content, no versions at all (written as markdown by the server-side EditorSession, then inserted directly into `note_states`). */
 export async function seedOldNote(db: Db, noteId: string, markdown: string): Promise<void> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(testEditingRuntime, doc);

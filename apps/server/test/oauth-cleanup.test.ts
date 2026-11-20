@@ -1,9 +1,8 @@
 /**
- * #132：機會性清理（`runOauthCleanup`）的五條 DELETE。
- *
- * 這一族守的是每一條的**述詞邊界**：① 看 last_used_at 不是 created_at、② 只清「建立超過
- * 24h 且從沒換出過 grant／code」的殭屍、③④ 只清過期的、⑤ 只清 PAT 且要過期滿 30 天。
- * 述詞少一半仍全綠是本專案反覆踩過的假綠形，所以每條都配一個「不該被清掉」的對照。
+ * Each of the five DELETEs in `runOauthCleanup` is tested at its predicate boundary, each paired with a counterpart that must not be
+ * deleted: a predicate missing half of its condition staying green is a recurring false-green shape in this project. Idle client:
+ * last_used_at, not created_at; zombie client: created over 24 h ago and never exchanged a grant/code; expired request/code: only
+ * expired ones; PAT: only PATs expired for over 30 days.
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -13,14 +12,14 @@ import { runOauthCleanup } from "../src/oauth/cleanup.js";
 import type { Db } from "../src/db/index.js";
 import { freshDb, insertPasswordUser } from "./helpers.js";
 
-// 這族只要 db（不打路由），用 freshDb 而非 buildTestApp——省掉八次建整個 app。
-// 用既有的 `insertPasswordUser`（email 走 randomUUID，不會撞唯一鍵）。
+// This family needs only db (no routes), so use freshDb instead of buildTestApp, saving building the whole app eight times.
+// Use the existing `insertPasswordUser` (email from randomUUID, no unique-key collision).
 async function createUser(db: Db): Promise<string> {
   return (await insertPasswordUser(db)).id;
 }
 
-describe("機會性清理", () => {
-  it("① 30 天未使用的 client 連同其 grant 一起消失", async () => {
+describe("opportunistic cleanup", () => {
+  it("idle client: unused for 30 days disappears together with its grant", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -62,7 +61,7 @@ describe("機會性清理", () => {
       await runOauthCleanup(db);
 
       expect(await db.select().from(oauthClients)).toHaveLength(0);
-      // CASCADE 帶走三者，未過期的 request／code 也一併消失
+      // CASCADE removes the three; unexpired request/code go too
       expect(await db.select().from(apiTokens)).toHaveLength(0);
       expect(await db.select().from(oauthRequests)).toHaveLength(0);
       expect(await db.select().from(oauthCodes)).toHaveLength(0);
@@ -71,9 +70,9 @@ describe("機會性清理", () => {
     }
   });
 
-  // ① 的判準是 last_used_at，而 Bearer 驗證成功會連帶更新它（#130 的 touchLastUsed）
-  // ——兩個時間戳語意一致，天天在用的 client 才不會被清掉。
-  it("① 不碰 last_used_at 在 30 天內的 client（即使 created_at 是 90 天前）", async () => {
+  // The idle criterion is last_used_at, and a successful Bearer authentication updates it too (touchLastUsed, #130): both timestamps
+  // share semantics so a client in daily use isn't purged.
+  it("idle client: spares clients with last_used_at within 30 days (even if created_at was 90 days ago)", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -82,10 +81,10 @@ describe("機會性清理", () => {
         clientName: "Active",
         redirectUris: ["http://127.0.0.1/cb"],
         createdAt: sql`now() - interval '90 days'`,
-        // 緊邊界：29 天而非 1 小時，門檻寫成 24h 之類就會紅
+        // Tight boundary: 29 days rather than 1 hour (a threshold changed to something like 24h would fail)
         lastUsedAt: sql`now() - interval '29 days'`,
       });
-      // 必須有 grant，否則會落進 ② 的殭屍條件而被刪——這一案要測的是 ① 不誤刪。
+      // Needs a grant, else it falls into the zombie-client condition and gets deleted: this case tests that idle-client delete doesn't over-delete.
       await db.insert(apiTokens).values({
         userId,
         kind: "oauth",
@@ -105,11 +104,11 @@ describe("機會性清理", () => {
     }
   });
 
-  it("OAUTH_APP_IDLE_DAYS 是 30（docs 與 CHANGELOG 都寫 30 天）", () => {
+  it("OAUTH_APP_IDLE_DAYS is 30 (docs and CHANGELOG say 30 days)", () => {
     expect(OAUTH_APP_IDLE_DAYS).toBe(30);
   });
 
-  it("① 的界線是 OAUTH_APP_IDLE_DAYS（±1 小時）", async () => {
+  it("idle client boundary is OAUTH_APP_IDLE_DAYS (+/-1 hour)", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -147,7 +146,7 @@ describe("機會性清理", () => {
     }
   });
 
-  it("② 建立超過 24h 且無 grant／code 的殭屍 client 消失，有 code 的留下", async () => {
+  it("zombie client: created over 24 h ago with no grant/code disappears; one with a code stays", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -178,7 +177,7 @@ describe("機會性清理", () => {
     }
   });
 
-  it("② 有 grant 的 client 也留下（述詞的另一半）", async () => {
+  it("zombie client: one with a grant also stays (the other half of the predicate)", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -207,10 +206,10 @@ describe("機會性清理", () => {
     }
   });
 
-  it("② 不碰建立未滿 24h 的 client（剛註冊還沒授權完）", async () => {
+  it("zombie client: spares clients created less than 24 h ago (just registered, authorization not finished)", async () => {
     const { db, close } = await freshDb();
     try {
-      // 緊邊界：23 小時（門檻若被改鬆成 1 小時就會紅）
+      // Tight boundary: 23 hours (a threshold loosened to 1 hour would fail)
       await db.insert(oauthClients).values({
         clientId: "fresh",
         clientName: "Fresh",
@@ -224,9 +223,9 @@ describe("機會性清理", () => {
     }
   });
 
-  // ② 排在 ③④ 之前，所以「唯一的 code 剛過期」的殭屍要兩輪才清乾淨。這是自癒行為，
-  // 但沒有測試的話它只是一句註解；把 ③④ 移到 ② 之前，第一輪的斷言就會紅。
-  it("② 與 ③④ 的順序：唯一的 code 已過期時，client 第二輪才消失", async () => {
+  // Zombie delete runs before expired-request/code delete, so a zombie whose only code just expired takes two rounds to clear.
+  // Without this test the self-healing would only be a claim in a comment; moving the expired deletes before zombie delete would fail the first-round assertion.
+  it("zombie vs expired-code order: with the only code expired, the client disappears on the second round", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -247,7 +246,7 @@ describe("機會性清理", () => {
       });
 
       await runOauthCleanup(db);
-      // ② 看到 code 還在而放過 client，④ 隨後清掉那個 code
+      // Zombie delete sees the code still there and spares the client, then expired-code delete removes that code
       expect(await db.select().from(oauthClients)).toHaveLength(1);
       expect(await db.select().from(oauthCodes)).toHaveLength(0);
 
@@ -258,7 +257,7 @@ describe("機會性清理", () => {
     }
   });
 
-  it("③④ 過期的 request 與 code 消失，未過期的留下", async () => {
+  it("expired requests and codes disappear, unexpired ones stay", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -295,7 +294,7 @@ describe("機會性清理", () => {
     }
   });
 
-  it("⑤ 只清過期超過 30 天的 PAT，不碰未到 30 天的與不到期的", async () => {
+  it("PAT delete: only PATs expired over 30 days are removed; ones under 30 days and non-expiring ones stay", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);
@@ -328,9 +327,9 @@ describe("機會性清理", () => {
     }
   });
 
-  // ⑤ 的 `kind='pat'` 那半段：oauth grant 的 access 過期 31 天**不該**被這條清掉
-  // （refresh 不到期，授權仍然有效；它只由 ① 與撤銷收斂）。
-  it("⑤ 不碰 access 過期超過 30 天的 oauth grant", async () => {
+  // The `kind='pat'` half of PAT delete: an oauth grant whose access expired 31 days ago must **not** be removed (refresh never
+  // expires, the authorization is still valid; only idle-client delete and revocation retire it).
+  it("PAT delete spares an oauth grant whose access expired over 30 days ago", async () => {
     const { db, close } = await freshDb();
     try {
       const userId = await createUser(db);

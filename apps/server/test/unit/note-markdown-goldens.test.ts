@@ -1,5 +1,5 @@
-// 讀路徑 markdown 的 golden：同一份 blocks 在 server 與 web 讀出逐位元組相同。
-// 輸入一律先寫進編輯器，再拿 `ed.document`（完整 blocks，與真實讀路徑同形）去序列化——external HTML 的 data-* 順序跟著 props 鍵序走。
+// Golden for the read-path markdown: the same blocks read out byte-identically on server and web.
+// Inputs are always written into the editor first and `ed.document` (the full blocks, the same shape as the real read path) is serialized: the data-* order of external HTML follows the key order of props.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -11,7 +11,7 @@ import { COLUMNS_OPEN_TAG, blocksToNoteMarkdown, columnOpenTag } from "@knoteboo
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" }); rt.installGlobals();
 type Ed = EditorSession["editor"];
 
-// ⚠ 同 editing-colors.test.ts：每一處 open 都 `try/finally close()`（lease 不變量）。
+// Same as editing-colors.test.ts: every open is `try/finally close()` (lease invariant).
 const withSession = async <T>(fn: (ed: Ed) => T, doc = new Y.Doc()): Promise<T> => {
   const s = await EditorSession.open(rt, doc);
   try {
@@ -21,7 +21,7 @@ const withSession = async <T>(fn: (ed: Ed) => T, doc = new Y.Doc()): Promise<T> 
   }
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
 type AnyBlocks = any[];
 const docWith = async (blocks: AnyBlocks): Promise<Y.Doc> => {
   const doc = new Y.Doc();
@@ -41,8 +41,8 @@ const byId = (id: string): GoldenCase => {
 };
 const count = (s: string, sub: string) => s.split(sub).length - 1;
 
-describe("note-markdown goldens（讀出）", () => {
-  it("id 不重複、roundTrip 是已知值", () => {
+describe("note-markdown goldens (read-out)", () => {
+  it("ids are unique and roundTrip is a known value", () => {
     const ids = goldens.cases.map(c => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of goldens.cases) expect(ROUND_TRIPS, c.id).toContain(c.roundTrip);
@@ -54,8 +54,8 @@ describe("note-markdown goldens（讀出）", () => {
     expect(md, `${c.id} 實際：${JSON.stringify(md)}`).toBe(c.markdown);
   });
 
-  // 並排列的 markdown 形：列的 markdown＝外層行＋各欄（開標籤、空行、欄內容單獨序列化、空行、</div>）＋ </div>。
-  it.each(["G1-cols-3", "G1-cols-4", "G1-cols-mixed"])("GC：%s 由欄內容單獨序列化組出", async id => {
+  // The markdown shape of columns rows: a row's markdown = the outer line + each column (open tag, blank line, the column content serialized alone, blank line, </div>) + </div>.
+  it.each(["G1-cols-3", "G1-cols-4", "G1-cols-mixed"])("columns: %s is assembled from column contents serialized alone", async id => {
     const c = byId(id);
     const doc = await docWith(c.blocks);
     const expected = await withSession(ed => {
@@ -95,9 +95,9 @@ describe("note-markdown goldens（讀出）", () => {
     }],
     ["G3-table-colspan-partial", md => expect(md).toContain('colspan="2" colwidth="120,"')],
     ["G3-table-colored-merged", md => expect(count(md, 'colwidth=","')).toBe(2)],
-  ])("規則斷言：%s", (id, check) => check(byId(id).markdown));
+  ])("rule assertion: %s", (id, check) => check(byId(id).markdown));
 
-  it("G0-control：只有加了欄寬的表格變 HTML，其餘段落逐字同 G0-plain", () => {
+  it("G0-control: only a table with column widths turns into HTML, the other paragraphs are identical to G0-plain character for character", () => {
     const plain = byId("G0-plain").markdown.split("\n\n");
     const ctl = byId("G0-control").markdown.split("\n\n");
     const ti = plain.findIndex(s => s.startsWith("| h1"));
@@ -107,8 +107,8 @@ describe("note-markdown goldens（讀出）", () => {
     expect(ctl.filter((_, i) => i !== ti)).toEqual(plain.filter((_, i) => i !== ti));
   });
 
-  // #222 以來經 MCP 往返存下的 NaN 欄寬（JSON 寫不出 NaN，以程式造）。
-  it("G3-nan-legacy：既存 NaN 欄寬讀成空段，與 G3-table-colored-merged 逐字相同", async () => {
+  // NaN column widths saved via MCP round trips since #222 (JSON can't write NaN, so it is built in code).
+  it("G3-nan-legacy: an existing NaN column width reads as an empty paragraph, identical to G3-table-colored-merged character for character", async () => {
     const base = byId("G3-table-colored-merged");
     const blocks = structuredClone(base.blocks);
     blocks[0].content.columnWidths = [NaN, NaN, undefined];
@@ -121,19 +121,19 @@ describe("note-markdown goldens（讀出）", () => {
   });
 });
 
-// round-trip：每個 golden 的 markdown 原樣寫回（parseMarkdownForNote，候選清單一律 []，與讀出端不轉換一致）→ 寫進新文件 → 再讀。
+// round-trip: each golden's markdown is written back as-is (parseMarkdownForNote, candidates always [], consistent with the read side not converting) -> written into a new document -> read again.
 const ORIGIN = "http://localhost";
-/** 去掉 id 的 block JSON。 */
+/** Block JSON without ids. */
 const shape = (blocks: unknown): string => JSON.stringify(blocks, (k, v) => (k === "id" ? undefined : v));
 const writeBack = (md: string) => withSession(ed => parseMarkdownForNote(ed, md, [], ORIGIN));
-/** blocks 經真編輯器寫進新文件，回讀出的 markdown 與 `ed.document`。 */
+/** blocks are written into a new document through the real editor, then the read-back markdown and `ed.document` are returned. */
 const readBack = async (blocks: AnyBlocks) => withSession(ed => [blocksToNoteMarkdown(ed, ed.document), ed.document] as const, await docWith(blocks));
 const accepted = (id: string, r: Awaited<ReturnType<typeof writeBack>>): AnyBlocks => {
   if ("error" in r) throw new Error(`${id} 寫回被拒：${r.error}`);
   return r.blocks;
 };
 
-describe("note-markdown goldens（原樣寫回 RT）", () => {
+describe("note-markdown goldens (written back as-is, round trip)", () => {
   it.each(goldens.cases.map(c => [c.id, c] as const))("RT %s", async (_id, c) => {
     const r = await writeBack(c.markdown);
     if (c.roundTrip.startsWith("reject:")) {
@@ -142,7 +142,7 @@ describe("note-markdown goldens（原樣寫回 RT）", () => {
     }
     const [md2, doc2] = await readBack(accepted(c.id, r));
     if (c.roundTrip === "skip") {
-      // 攤平類（不合法結構、pipe table 的合併格）不要求等於原文，但寫回一次就收斂：md2 再寫回、再讀仍是 md2
+      // Flattening kinds (invalid structure, merged cells of a pipe table) needn't equal the original, but converge after one write-back: md2 written back and read again is still md2
       const [md3] = await readBack(accepted(`${c.id}（第二輪）`, await writeBack(md2)));
       expect(md3, `${c.id} 第二輪：${JSON.stringify(md3)}`).toBe(md2);
       return;
@@ -154,7 +154,7 @@ describe("note-markdown goldens（原樣寫回 RT）", () => {
     }
   });
 
-  it("RT G3-nan-legacy：既存 NaN 欄寬的讀出原樣寫回被接受，再讀的 markdown 與結構同 G3-table-colored-merged", async () => {
+  it("RT G3-nan-legacy: reading an existing NaN column width and writing it back as-is is accepted, and the re-read markdown and structure equal G3-table-colored-merged", async () => {
     const base = byId("G3-table-colored-merged");
     const blocks = structuredClone(base.blocks);
     blocks[0].content.columnWidths = [NaN, NaN, undefined];
@@ -165,7 +165,7 @@ describe("note-markdown goldens（原樣寫回 RT）", () => {
     expect(shape(doc2)).toBe(shape(docBase));
   });
 
-  it("RT G2-img-escape：寫回的 name、caption、url 逐字等於原值", async () => {
+  it("RT G2-img-escape: the written-back name, caption and url equal the originals character for character", async () => {
     const c = byId("G2-img-escape");
     const p = accepted(c.id, await writeBack(c.markdown))[0].props;
     const o = c.blocks[0].props;

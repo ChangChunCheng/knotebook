@@ -1,8 +1,3 @@
-/**
- * `UserDto.avatar` 的每一處產生點各一案：
- * 閘門（`GET /api/auth/me`）、帳密登入、重設密碼、OIDC 待定連結、`PATCH /api/auth/profile` 的兩個分支（純 UPDATE／改名交易）、
- * 註冊、接受邀請。再加一案證明閘門的 60 秒快取要靠 `invalidate` 才會換新。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { UserAvatarDto } from "@knotebook/shared";
@@ -17,7 +12,7 @@ import { OIDC_PENDING_COOKIE, unsealPendingLink } from "../src/auth/oidc-pending
 
 const PW = "correct-horse-battery-staple";
 
-/** alice 的目前頭貼（版本 3）加一張非目前的舊候選（先插，讀取若漏掉 is_current 條件會先撿到它）；回目前那張該有的 DTO。 */
+/** alice's current avatar (version 3) plus an older non-current candidate (inserted first: if the read misses the is_current condition it picks that one up first); returns the DTO the current one should have. */
 async function giveAlicePicture(db: Db, userId: string): Promise<UserAvatarDto> {
   await seedAvatarRow(db, { userId, originalSize: 4000, displaySize: 200 });
   const current = await seedAvatarRow(db, { userId, originalSize: 5000, displaySize: 300, isCurrent: true });
@@ -25,8 +20,8 @@ async function giveAlicePicture(db: Db, userId: string): Promise<UserAvatarDto> 
   return { id: current, v: 3, pending: false };
 }
 
-describe("UserDto.avatar：閘門（GET /api/auth/me）", () => {
-  it("alice 有目前頭貼（另有一張非目前的候選）→ 只回目前那張；沒有頭貼的 bob → null", async () => {
+describe("UserDto.avatar: gate (GET /api/auth/me)", () => {
+  it("alice with a current avatar (and a non-current candidate) -> only the current one is returned; bob with no avatar -> null", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -38,7 +33,7 @@ describe("UserDto.avatar：閘門（GET /api/auth/me）", () => {
     expect(b.json().avatar).toBeNull();
   });
 
-  it("顯示圖尚未補產的目前頭貼 → pending: true", async () => {
+  it("current avatar with display image not generated yet -> pending: true", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const id = await seedAvatarRow(db, { userId: alice.id, originalSize: 800, displaySize: 0, isCurrent: true });
@@ -46,7 +41,7 @@ describe("UserDto.avatar：閘門（GET /api/auth/me）", () => {
     expect(res.json().avatar).toEqual({ id, v: 1, pending: true });
   });
 
-  it("閘門有 60 秒快取：換掉目前頭貼後 /me 仍是舊值，invalidate 之後才是新值", async () => {
+  it("the gate has a 60 s cache: after replacing the current avatar /me still shows the old value until invalidate", async () => {
     const { db } = await freshDb();
     const gate = new UserGate(db);
     const { app } = await buildTestApp({ db, gate });
@@ -64,8 +59,8 @@ describe("UserDto.avatar：閘門（GET /api/auth/me）", () => {
   });
 });
 
-describe("UserDto.avatar：手組的產生點", () => {
-  it("帳密登入", async () => {
+describe("UserDto.avatar: hand-assembled generation points", () => {
+  it("password login", async () => {
     const { app, db } = await buildTestApp();
     const alice = await insertPasswordUser(db);
     const bob = await insertPasswordUser(db);
@@ -75,14 +70,14 @@ describe("UserDto.avatar：手組的產生點", () => {
     expect(a.json().avatar).toEqual(expected);
     const b = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: bob.email, password: PW } });
     expect(b.json().avatar).toBeNull();
-    // 顯示圖尚未補產的目前頭貼，手組的產生點也要帶 pending: true
+    // Current avatar with display image pending: the hand-assembled generation points must carry pending: true too
     const carol = await insertPasswordUser(db);
     const waiting = await seedAvatarRow(db, { userId: carol.id, originalSize: 800, displaySize: 0, isCurrent: true });
     const c = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: carol.email, password: PW } });
     expect(c.json().avatar).toEqual({ id: waiting, v: 1, pending: true });
   });
 
-  it("重設密碼成功的回應", async () => {
+  it("response of a successful password reset", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const alice = await insertPasswordUser(db);
@@ -94,7 +89,7 @@ describe("UserDto.avatar：手組的產生點", () => {
     expect(res.json().avatar).toEqual(expected);
   });
 
-  it("OIDC 待定連結：以密碼確認後的回應", async () => {
+  it("OIDC pending link: response after confirming with a password", async () => {
     const A = "https://idp-a.example";
     const t = await buildOidcApp({ providers: [{ key: "b", issuerUrl: A, displayName: "B" }] });
     const alice = await insertPasswordUser(t.db, { email: "alice@x.example", password: PW });
@@ -108,14 +103,14 @@ describe("UserDto.avatar：手組的產生點", () => {
     expect(res.json().user.avatar).toEqual(expected);
   });
 
-  it("註冊：新帳號 avatar 為 null", async () => {
+  it("registration: new account avatar is null", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "POST", url: "/api/auth/register", payload: { email: "carol@x.example", password: PW, displayName: "Carol" } });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json()).toHaveProperty("avatar", null);
   });
 
-  it("接受邀請：新帳號 avatar 為 null", async () => {
+  it("accepting an invite: new account avatar is null", async () => {
     const { app, db } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const issued = await app.inject({ method: "POST", url: "/api/admin/invites", cookies: await cookieOf(admin.id), payload: { expiresInDays: 1 } });
@@ -126,8 +121,8 @@ describe("UserDto.avatar：手組的產生點", () => {
   });
 });
 
-describe("UserDto.avatar：PATCH /api/auth/profile（RETURNING 的兩個分支）", () => {
-  it("只改 autoVersions（純 UPDATE 分支）：avatar 與 /me 相同", async () => {
+describe("UserDto.avatar: PATCH /api/auth/profile (the two RETURNING branches)", () => {
+  it("changing only autoVersions (plain UPDATE branch): avatar equals /me", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -139,7 +134,7 @@ describe("UserDto.avatar：PATCH /api/auth/profile（RETURNING 的兩個分支�
     expect(me.json().avatar).toEqual(a.json().avatar);
     const b = await app.inject({ method: "PATCH", url: "/api/auth/profile", cookies: await cookieOf(bob.id), payload: { autoVersions: false } });
     expect(b.json().avatar).toBeNull();
-    // 顯示圖尚未補產的目前頭貼：回應的 pending 要是 true（網頁據此決定要不要補產）
+    // Current avatar with display image pending: the response's pending must be true (the web uses it to decide whether to generate)
     const carol = await seedUser(db);
     const waiting = await seedAvatarRow(db, { userId: carol.id, originalSize: 800, displaySize: 0, isCurrent: true });
     const c = await app.inject({ method: "PATCH", url: "/api/auth/profile", cookies: await cookieOf(carol.id), payload: { autoVersions: false } });
@@ -147,7 +142,7 @@ describe("UserDto.avatar：PATCH /api/auth/profile（RETURNING 的兩個分支�
     expect(c.json().avatar).toEqual({ id: waiting, v: 1, pending: true });
   });
 
-  it("改 handle（改名交易分支）：avatar 非 null，沒有頭貼的人是 null", async () => {
+  it("changing handle (rename transaction branch): avatar non-null, null for people without an avatar", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);

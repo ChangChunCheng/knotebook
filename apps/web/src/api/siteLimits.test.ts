@@ -44,8 +44,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("站台限制 API hooks", () => {
-  it("GET /api/admin/limits；PATCH 成功後 cache 是回傳值，並失效 ['auth-config'] 與站台限制自己", async () => {
+describe("site limits API hooks", () => {
+  it("GET /api/admin/limits; after a successful PATCH the cache is the returned value and ['auth-config'] and the site limits key itself are invalidated", async () => {
     let saved = false;
     const calls = stubFetch({
       "GET /api/admin/limits": () => fakeResponse(200, saved ? dto(10, 10) : dto(30, null)),

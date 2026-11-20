@@ -24,30 +24,30 @@ describe("BackToListButton", () => {
     vi.unstubAllGlobals();
   });
 
-  it("手機：有「Back to notes」鈕，按下呼叫 backToList", () => {
+  it("phone: has a 'Back to notes' button, pressing it calls backToList", () => {
     const backToList = renderButton("phone");
     fireEvent.click(screen.getByRole("button", { name: "Back to notes" }));
     expect(backToList).toHaveBeenCalledTimes(1);
   });
 
-  it("浮動段、固定段：不渲染", () => {
+  it("floating tier and fixed tier: not rendered", () => {
     renderButton("overlay");
     expect(screen.queryByRole("button", { name: "Back to notes" })).toBeNull();
   });
 
-  it("固定段：不渲染", () => {
+  it("fixed tier: not rendered", () => {
     renderButton("docked");
     expect(screen.queryByRole("button", { name: "Back to notes" })).toBeNull();
   });
 
-  it("中文名稱", async () => {
+  it("Chinese label", async () => {
     await i18n.changeLanguage("zh-TW");
     renderButton("phone");
     expect(screen.getByRole("button", { name: "返回筆記清單" })).toBeInTheDocument();
   });
 });
 
-describe("BackToListButton 點擊範圍", () => {
+describe("BackToListButton hit area", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -55,7 +55,7 @@ describe("BackToListButton 點擊範圍", () => {
     vi.unstubAllGlobals();
   });
 
-  it("視覺 32px，粗指標下用 HEADER_ICON_HIT 擴到 40×44（不再是固定的 after:-inset-1.5）", () => {
+  it("visual 32px; with a coarse pointer HEADER_ICON_HIT expands it to 40x44 (not the fixed after:-inset-1.5)", () => {
     renderButton("phone");
     const button = screen.getByRole("button", { name: "Back to notes" });
     expect(button).toHaveClass("h-8", "w-8");

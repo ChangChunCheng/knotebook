@@ -1,12 +1,12 @@
 import type { TrashItemDto, TrashListDto } from "@knotebook/shared";
 import { DAY_MS } from "@/lib/trash-display";
 
-/** 與各測試檔的 session fixture 對齊（只用來比 `deletedBy.handle`）。 */
+/** Matches the session fixture in each test file (used only to compare `deletedBy.handle`). */
 export const TRASH_ME = { handle: "tester", displayName: "Tester" };
 
 /**
- * 垃圾桶項目（#181）。purgeAt／deletedAt 以呼叫當下的 Date.now() 推算（不用假時鐘：react-query 的 waitFor 與假時鐘相衝）。
- * `daysLeft` 預設 3（整數：顯示時的 now 稍晚，3 天 − ε 取 ceil 恆為 3）；`null` → `purgeAt: null`。`deletedBy` 預設 `TRASH_ME`、`group` 預設 null。
+ * Trash item (#181). purgeAt / deletedAt are derived from Date.now() at call time (no fake clock: react-query's waitFor clashes with fake clocks).
+ * `daysLeft` defaults to 3 (an integer: now is slightly later at display time, so ceil of 3 days minus epsilon is always 3); `null` -> `purgeAt: null`. `deletedBy` defaults to `TRASH_ME`, `group` to null.
  */
 export function trashItem(
   overrides: Partial<TrashItemDto> & { id: string; title: string },

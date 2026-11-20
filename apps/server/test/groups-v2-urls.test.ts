@@ -1,7 +1,4 @@
-/**
- * #175：NoteDto 新形、by-path 兩形的查找序（現行 → 轉址 → prev）、四種 404 逐位元組相同、
- * 另涵蓋大寫 group id、migration 後的舊形 legacy 網址。寫轉址的生產路徑只有移動——轉址列用 seedRedirect 直插。
- */
+/** Redirect rows are inserted with seedRedirect: the only production path that writes redirects is move. */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -14,9 +11,7 @@ import { buildTestApp } from "./helpers.js";
 import { cookieOf, seedGroup, seedNote, seedRedirect, seedRole, seedShare, seedUser, setMemberRole } from "./group-helpers.js";
 
 const NOT_FOUND = { error: { code: "not_found", message: "No note with that id." } };
-/** 內建一般成員（can_read＋can_edit）在群組筆記上的旗標。 */
 const MEMBER_PERMS = { read: true, edit: true, delete: false, manageShares: false, managePublicLink: false, changeSlug: false, moveToGroup: false };
-/** 只讀自訂角色（can_read）。 */
 const READER_PERMS = { read: true, edit: false, delete: false, manageShares: false, managePublicLink: false, changeSlug: false, moveToGroup: false };
 
 async function get(app: FastifyInstance, url: string, userId: string) {
@@ -34,8 +29,8 @@ async function scene(db: Db) {
   return { admin, member, reader, blind, outsider, g };
 }
 
-describe("#175 NoteDto 新形", () => {
-  it("GET /api/notes：群組筆記 ownerId/ownerHandle null、groupId 與 group 有值、permissions 依角色；個人筆記 owner 全真；鍵集合", async () => {
+describe("#175 NoteDto new shape", () => {
+  it("GET /api/notes: group notes have ownerId/ownerHandle null, groupId and group set, permissions from the role; personal notes have all owner permissions; key set", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const gn = await seedNote(db, { groupId: s.g.id }, { title: "GN" });
@@ -57,8 +52,8 @@ describe("#175 NoteDto 新形", () => {
   });
 });
 
-describe("#175 by-path 兩形", () => {
-  it("/g/：現行 slug 200；轉址（未過期）200 回目標；轉址已過期 404 且該列被刪；prev_slug 200；活網址勝轉址；轉址勝 prev", async () => {
+describe("#175 by-path shapes", () => {
+  it("/g/: live slug 200; unexpired redirect 200 to the target; expired redirect 404 and the row is deleted; prev_slug 200; live URL wins over redirect; redirect wins over prev", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const live = await seedNote(db, { groupId: s.g.id }, { slug: "live" });
@@ -67,8 +62,8 @@ describe("#175 by-path 兩形", () => {
     await seedNote(db, { groupId: s.g.id }, { slug: "prev-holder", prevSlug: "old-prev" });
     await seedRedirect(db, `/g/${s.g.id}/moved`, target.id);
     await seedRedirect(db, `/g/${s.g.id}/stale`, target.id, { expired: true });
-    await seedRedirect(db, `/g/${s.g.id}/live`, target.id); // 活網址同鍵
-    await seedRedirect(db, `/g/${s.g.id}/both`, target.id); // 轉址與 prev 同鍵：轉址勝（查找序）
+    await seedRedirect(db, `/g/${s.g.id}/live`, target.id); // same key as a live URL
+    await seedRedirect(db, `/g/${s.g.id}/both`, target.id); // redirect and prev share a key: redirect wins (lookup order)
     const base = `/api/notes/by-group-path/${s.g.id}`;
     expect((await get(app, `${base}/live`, s.member.id)).json().id).toBe(live.id);
     expect((await get(app, `${base}/moved`, s.member.id)).json()).toMatchObject({
@@ -82,28 +77,28 @@ describe("#175 by-path 兩形", () => {
     expect(other.id).not.toBe(target.id);
   });
 
-  it("/n/：同一套順序（精確 → 轉址 → prev）；轉址到我沒權限的筆記 → 404；轉址到群組筆記回 groupId（web 據此 replaceState 到 /g/）", async () => {
+  it("/n/: same order (exact -> redirect -> prev); redirect to a note I can't access -> 404; redirect to a group note returns groupId (the web uses it to replaceState to /g/)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const owner = await seedUser(db);
     const personal = await seedNote(db, { ownerId: owner.id }, { slug: "p", prevSlug: "p-old" });
     const gn = await seedNote(db, { groupId: s.g.id }, { slug: "gn" });
     await seedRedirect(db, `/n/${owner.handle}/went-to-group`, gn.id);
-    await seedRedirect(db, `/n/${owner.handle}/p-old`, gn.id); // 轉址勝 prev
+    await seedRedirect(db, `/n/${owner.handle}/p-old`, gn.id); // redirect wins over prev
     expect((await get(app, `/api/notes/by-path/${owner.handle}/p`, owner.id)).json().id).toBe(personal.id);
     expect((await get(app, `/api/notes/by-path/${owner.handle}/went-to-group`, s.member.id)).json()).toMatchObject({
       id: gn.id, groupId: s.g.id, ownerHandle: null, ownerId: null, group: { id: s.g.id, name: "Team" }, role: "editor", permissions: MEMBER_PERMS,
     });
-    // 轉址鍵用**正規化後**的 handle：大寫 handle 的網址也命中轉址
+    // Redirect keys use the normalized handle: a URL with an uppercase handle also hits the redirect.
     expect((await get(app, `/api/notes/by-path/${owner.handle.toUpperCase()}/went-to-group`, s.member.id)).json().id).toBe(gn.id);
     expect((await get(app, `/api/notes/by-path/${owner.handle}/p-old`, s.member.id)).json().id).toBe(gn.id);
-    // owner 不是群組成員：轉址解得到 id，但授權 none → 同一條 404
+    // Owner isn't a group member: the redirect resolves to the id but authorization is none -> the same 404.
     const denied = await get(app, `/api/notes/by-path/${owner.handle}/went-to-group`, owner.id);
     expect(denied.statusCode).toBe(404);
     expect(denied.json()).toEqual(NOT_FOUND);
   });
 
-  it("#291：舊名被別人取走後的 /n/<舊名>/<slug>——對方沒有該 slug 時舊轉址仍到原筆記；對方有同 slug 時精確命中對方的筆記", async () => {
+  it("#291: /n/<old name>/<slug> after the old name was taken by someone else - the old redirect still leads to the original note if the new owner has no such slug; if they do, the exact match hits their note", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const x = await seedUser(db);
@@ -115,21 +110,18 @@ describe("#175 by-path 兩形", () => {
     const patch = async (userId: string, handle: string) =>
       app.inject({ method: "PATCH", url: "/api/auth/profile", payload: { handle }, cookies: await cookieOf(userId) });
     expect((await patch(x.id, `${old}-new`)).statusCode).toBe(200);
-    // X 改名後、Y 取走前：舊路徑仍解到已搬進群組的筆記
     expect((await get(app, `/api/notes/by-path/${old}/moved`, s.member.id)).json().id).toBe(gn.id);
     expect((await patch(y.id, old)).statusCode).toBe(200);
-    // Y 沒有 moved：舊轉址仍到原筆記
     expect((await get(app, `/api/notes/by-path/${old}/moved`, s.member.id)).json().id).toBe(gn.id);
-    // Y 有同 slug：精確命中 Y 的筆記（遮蔽舊轉址）
     const yn = await seedNote(db, { ownerId: y.id }, { slug: "moved" });
     expect((await get(app, `/api/notes/by-path/${old}/moved`, y.id)).json().id).toBe(yn.id);
-    // 群組成員讀不到 Y 的筆記：404，不洩漏舊轉址
+    // Group member can't read Y's note: 404, doesn't leak the old redirect.
     const masked = await get(app, `/api/notes/by-path/${old}/moved`, s.member.id);
     expect(masked.statusCode).toBe(404);
     expect(masked.json()).toEqual(NOT_FOUND);
   });
 
-  it("四種 404 逐位元組相同：/g/<非 UUID>、群組不存在、非成員、成員但角色無閱讀旗標", async () => {
+  it("four 404s are byte-identical: /g/<non-UUID>, missing group, non-member, member whose role lacks the read flag", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     await seedNote(db, { groupId: s.g.id }, { slug: "x" });
@@ -144,7 +136,7 @@ describe("#175 by-path 兩形", () => {
     expect(bodies[0]!.json()).toEqual(NOT_FOUND);
   });
 
-  it("/g/<大寫 UUID>/<slug> 與小寫同樣 200；轉址鍵以小寫比對（大寫網址也命中轉址）", async () => {
+  it("/g/<uppercase UUID>/<slug> gives 200 like lowercase; redirect keys are matched in lowercase (an uppercase URL also hits the redirect)", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const n = await seedNote(db, { groupId: s.g.id }, { slug: "case" });
@@ -154,7 +146,7 @@ describe("#175 by-path 兩形", () => {
     expect((await get(app, `/api/notes/by-group-path/${upper}/old-case`, s.member.id)).json().id).toBe(n.id);
   });
 
-  it("migration 後群組筆記的舊形 /notes/<legacy_slug>——成員 200 且 groupId 有值；已不是成員的原 owner 404", async () => {
+  it("old-shape /notes/<legacy_slug> of a group note after migration: member 200 with groupId set; the former owner, no longer a member, 404", async () => {
     const { app, db } = await buildTestApp();
     const s = await scene(db);
     const formerOwner = await seedUser(db);
@@ -168,8 +160,8 @@ describe("#175 by-path 兩形", () => {
   });
 });
 
-describe("#175：授權與取列之間歸屬變了（移動；這裡以 SQL 模擬）", () => {
-  it(":ref——移進 owner 也是成員的群組 → 重讀後 200 且帶群組；移進 owner 不是成員的群組 → 404", async () => {
+describe("#175: ownership changes between authorization and row fetch (move, simulated with SQL here)", () => {
+  it(":ref - moved into a group the owner is also a member of -> 200 with the group after the re-read; moved into a group the owner is not in -> 404", async () => {
     const s = { hookNote: "", moveTo: "" };
     const built = await buildTestApp({
       groupTestHook: async (point, ctx) => {
@@ -192,8 +184,8 @@ describe("#175：授權與取列之間歸屬變了（移動；這裡以 SQL 模�
   });
 });
 
-describe("#175 recordRedirectsInTx（刪群組轉移的寫入 helper）", () => {
-  it("先清過期列、再 upsert：同鍵改指新筆記並續命；其他未過期列不動", async () => {
+describe("#175 recordRedirectsInTx (write helper for group-delete transfer)", () => {
+  it("clears expired rows first, then upserts: the same key is re-pointed to the new note and renewed; other unexpired rows untouched", async () => {
     const { db } = await buildTestApp();
     const u = await seedUser(db);
     const [a, b, c] = await Promise.all([seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id }), seedNote(db, { ownerId: u.id })]);
@@ -209,8 +201,8 @@ describe("#175 recordRedirectsInTx（刪群組轉移的寫入 helper）", () => 
   });
 });
 
-describe("#175：by-path「取列後、授權前」被真的移動（path-resolved）", () => {
-  it("/n/ 形——owner 自己開、取列後被移進他是成員的群組 → 200 且帶新群組（authorizeRow 的重讀段承重）", async () => {
+describe("#175: by-path really moved between row fetch and authorization (path-resolved)", () => {
+  it("/n/ shape - owner opens it, it is moved into a group they belong to after the row fetch -> 200 with the new group (the re-read in authorizeRow is load-bearing)", async () => {
     const s = { fire: undefined as undefined | (() => Promise<unknown>) };
     const built = await buildTestApp({
       groupTestHook: async point => {
@@ -238,7 +230,7 @@ describe("#175：by-path「取列後、授權前」被真的移動（path-resolv
     });
   });
 
-  it("/n/ 形——逐人分享的 editor 開、取列後 owner 把它移進他不在的群組 → 404（與不存在逐位元組相同）", async () => {
+  it("/n/ shape - a per-user editor opens it, the owner moves it into a group they're not in after the row fetch -> 404 (byte-identical to missing)", async () => {
     const s = { fire: undefined as undefined | (() => Promise<unknown>) };
     const built = await buildTestApp({
       groupTestHook: async point => {
@@ -254,7 +246,6 @@ describe("#175：by-path「取列後、授權前」被真的移動（path-resolv
     const g = await seedGroup(db, "OwnersOnly", [{ userId: owner.id, role: "member" }]);
     const n = await seedNote(db, { ownerId: owner.id }, { slug: "p" });
     await seedShare(db, n.id, ed.id, "editor");
-    // 前提：移動前 editor 開得到。
     expect((await get(app, `/api/notes/by-path/${owner.handle}/p`, ed.id)).json()).toMatchObject({ id: n.id, role: "editor", groupId: null });
     let moveStatus: number | undefined;
     s.fire = async () => {
@@ -269,7 +260,7 @@ describe("#175：by-path「取列後、授權前」被真的移動（path-resolv
   });
 });
 
-describe("#175：by-path /g/ 形「取列後、授權前」被移到別的群組（path-resolved；SQL 模擬——沒有群組間移動的生產路徑）", () => {
+describe("#175: by-path /g/ shape moved to another group between row fetch and authorization (path-resolved; simulated with SQL, no production path moves between groups)", () => {
   function hookApp(fire: { f?: () => Promise<unknown> }) {
     return buildTestApp({
       groupTestHook: async point => {
@@ -281,7 +272,7 @@ describe("#175：by-path /g/ 形「取列後、授權前」被移到別的群組
       },
     });
   }
-  it("/g/ 形——取列後被移到呼叫者也是成員的另一群組 → 200 帶新群組", async () => {
+  it("/g/ shape - moved after the row fetch to another group the caller also belongs to -> 200 with the new group", async () => {
     const fire: { f?: () => Promise<unknown> } = {};
     const { app, db } = await hookApp(fire);
     const u = await seedUser(db);
@@ -294,7 +285,7 @@ describe("#175：by-path /g/ 形「取列後、授權前」被移到別的群組
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: n.id, groupId: g2.id, group: { id: g2.id, name: "G2" }, role: "editor", permissions: MEMBER_PERMS });
   });
-  it("/g/ 形——取列後被移到呼叫者不在的群組 → 404（與不存在逐位元組相同）、不含新群組名", async () => {
+  it("/g/ shape - moved after the row fetch to a group the caller isn't in -> 404 (byte-identical to missing), without the new group name", async () => {
     const fire: { f?: () => Promise<unknown> } = {};
     const { app, db } = await hookApp(fire);
     const [u, other] = await Promise.all([seedUser(db), seedUser(db)]);

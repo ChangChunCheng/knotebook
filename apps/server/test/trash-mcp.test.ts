@@ -1,8 +1,4 @@
-/**
- * #181：既有 MCP 工具與垃圾桶。
- * 憑證一律讀寫搬移（`notes:read notes:write notes:move`）；讀 live doc 的工具要 collab，所以全檔用 `buildCollabTestApp`。
- * 造垃圾桶狀態打 `DELETE /api/notes/:id`、還原打 `POST /api/trash/restore`（cookie）。
- */
+// Tokens are always read + write + move (`notes:read notes:write notes:move`); tools that read the live doc need collab, so the whole file uses `buildCollabTestApp`.
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -40,7 +36,6 @@ async function restore(app: FastifyInstance, noteId: string, userId: string): Pr
   expect((res.json() as { restored: Array<{ id: string }> }).restored.map(n => n.id)).toEqual([noteId]);
 }
 
-/** 一段文字＋一張指向 `/api/uploads/<uploadId>` 的圖（同 `mcp-image.test.ts` 的造法）。 */
 async function imageNoteDoc(uploadId: string): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(testEditingRuntime, doc);
@@ -55,14 +50,13 @@ async function imageNoteDoc(uploadId: string): Promise<Y.Doc> {
   return doc;
 }
 
-/** 對 `noteId` 呼叫各支「單篇」工具的引數（`read_note_image` 的上傳固定為 `uploadId`）。 */
 function perNoteCalls(noteId: string, uploadId: string, groupId: string): Array<[string, Record<string, unknown>]> {
   return [
     ["read_note_outline", { note_id: noteId }],
     ["read_note_section", { note_id: noteId, section_id: "_top" }],
     ["read_note_image", { note_id: noteId, upload_id: uploadId }],
     ["edit_note", { note_id: noteId, op: "append", markdown: "MC1 append" }],
-    // rename 支另有一處單篇授權。#381：if_match 必帶；授權（垃圾桶＝not_found）排在指紋比對之前，所以任一合格式值都行。
+    // rename has one more single-note authorization. #381: if_match is required; authorization (trash = not_found) comes before the fingerprint comparison, so any well-formed value works.
     ["edit_note:rename", { note_id: noteId, op: "rename", title: "MC1 rename", if_match: "0123456789abcdef" }],
     ["move_note_to_group", { note_id: noteId, group_id: groupId }],
     ["copy_note", { note_id: noteId }],
@@ -70,8 +64,8 @@ function perNoteCalls(noteId: string, uploadId: string, groupId: string): Array<
   ];
 }
 
-describe("MC1 既有工具看不到垃圾桶筆記", () => {
-  it("list／search 不列；七支單篇工具（edit_note 含 append 與 rename）回 not_found，text 與隨機 uuid 相同；還原後又列得到、讀得到", async () => {
+describe("existing tools cannot see trashed notes", () => {
+  it("list/search do not list them; the seven single-note tools (edit_note including append and rename) return not_found, text identical to a random uuid; after restore they are listed and readable again", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "MC1", [{ userId: u.id, role: "admin" }]);
@@ -80,7 +74,7 @@ describe("MC1 既有工具看不到垃圾桶筆記", () => {
     const ut = await seedAttachment(ctx.db, ctx.uploadsDir, t.id, u.id, 12);
     const { token } = await seedTokenForUser(ctx.db, u.id, SCOPE);
 
-    // 前提：移入前讀得到（不是別的原因讓下面得 not_found）。
+    // Precondition: readable before the move (so the not_found below is not caused by something else).
     expect((await listIds(ctx.app, token)).sort()).toEqual([t.id, l.id].sort());
     expect((await searchIds(ctx.app, token, "mcone")).sort()).toEqual([t.id, l.id].sort());
     for (const name of ["read_note_outline", "read_note_section", "read_note_image", "create_transfer_token"]) {
@@ -105,7 +99,6 @@ describe("MC1 既有工具看不到垃圾桶筆記", () => {
       expect(miss.structuredContent?.code, `隨機 uuid ${name}`).toBe("not_found");
     }
     expect(got).toEqual(want);
-    // 上面的 move／copy 都沒成功：t 仍是個人筆記、沒有多出副本。
     const { rows } = await ctx.db.$client.query<{ n: number }>(`select count(*)::int n from notes`);
     expect(rows[0]!.n).toBe(2);
     expect((await ctx.db.$client.query<{ title: string }>(`select title from notes where id = $1`, [t.id])).rows[0]!.title).toBe("mcone-trash");
@@ -116,8 +109,8 @@ describe("MC1 既有工具看不到垃圾桶筆記", () => {
   });
 });
 
-describe("MC1b 跨篇附件（read-note-image 的第二次授權）", () => {
-  it("活筆記 l 引用垃圾桶筆記 t 的附件：移入前讀得到；移入後 not_found 且 text 與查無上傳相同；還原後又讀得到", async () => {
+describe("attachments across notes (second authorization of read-note-image)", () => {
+  it("live note l references an attachment of trashed note t: readable before the move; after the move not_found with text identical to a missing upload; readable again after restore", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const t = await seedNote(ctx.db, { ownerId: u.id });
@@ -146,8 +139,8 @@ describe("MC1b 跨篇附件（read-note-image 的第二次授權）", () => {
   });
 });
 
-describe("MC2 既有工具不會把筆記移進垃圾桶", () => {
-  it("讀寫搬移憑證：tools/list 沒有 delete_note／restore_note；edit_note（含 replace_all 清空）、copy_note（個人、群組）、create_note（群組）、move_note_to_group 之後垃圾桶筆記數不變", async () => {
+describe("existing tools do not move notes to trash", () => {
+  it("read-write-move token: tools/list has no delete_note/restore_note; after edit_note (including replace_all emptying), copy_note (personal, group), create_note (group) and move_note_to_group the trashed note count is unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "MC2", [{ userId: u.id, role: "admin" }]);
@@ -162,18 +155,18 @@ describe("MC2 既有工具不會把筆記移進垃圾桶", () => {
     expect(names).toEqual(expect.arrayContaining(["edit_note", "copy_note", "create_note", "move_note_to_group"]));
     expect(names).not.toContain("delete_note");
     expect(names).not.toContain("restore_note");
-    expect(names).not.toContain("delete_folder"); // 資料夾：同樣只在 notes:delete 時註冊
-    expect(names).toContain("list_trash"); // #181：讀取類，任何憑證都有
+    expect(names).not.toContain("delete_folder"); // folders: likewise registered only with notes:delete
+    expect(names).toContain("list_trash"); // #181: read-type, every token has it
     expect(await trashedIds()).toEqual([t.id]);
 
     const ok = async (name: string, args: Record<string, unknown>): Promise<Result> => {
       const r = await call(ctx.app, token, name, args);
-      expect(await trashedIds(), `${name} 之後`).toEqual([t.id]); // 先於成功與否：工具回錯也不能已經移入
+      expect(await trashedIds(), `${name} 之後`).toEqual([t.id]); // checked before success or not: even if the tool returns an error it must not have moved anything
       expect(r.isError, `${name} ${JSON.stringify(r.structuredContent)}`).toBeUndefined();
       return r;
     };
     const appended = await ok("edit_note", { note_id: l.id, op: "append", markdown: "MC2 一段" });
-    // 清空：空內容被拒成 empty_content（不是移入）；換成只剩一個字的整篇取代則成功。
+    // Emptying: empty content is rejected as empty_content (not a move); replacing the whole note with a single word succeeds.
     const emptied = await call(ctx.app, token, "edit_note", { note_id: l.id, op: "replace_all", markdown: "", if_match: appended.structuredContent!.fingerprint });
     expect([emptied.isError, emptied.structuredContent?.code]).toEqual([true, "empty_content"]);
     await ok("edit_note", { note_id: l.id, op: "replace_all", markdown: "x", if_match: appended.structuredContent!.fingerprint });
@@ -183,12 +176,11 @@ describe("MC2 既有工具不會把筆記移進垃圾桶", () => {
     await ok("move_note_to_group", { note_id: l.id, group_id: g.id });
 
     const { rows } = await ctx.db.$client.query<{ n: number }>(`select count(*)::int n from notes`);
-    expect(rows[0]!.n).toBe(5); // t、l、兩份副本、新建那篇
+    expect(rows[0]!.n).toBe(5); // t, l, two copies, the newly created one
     expect(await trashedIds()).toEqual([t.id]);
   });
 });
 
-/** 文件裡所有 wikilink 節點的 `targetNoteId`（文件順序）。 */
 function wikilinkTargets(doc: Y.Doc): string[] {
   const out: string[] = [];
   for (const n of doc.getXmlFragment(YDOC_FRAGMENT).createTreeWalker(x => x instanceof Y.XmlElement && x.nodeName === "wikilink")) {
@@ -197,8 +189,8 @@ function wikilinkTargets(doc: Y.Doc): string[] {
   return out;
 }
 
-describe("MC3 索引照寫的例外（known-limitations）：垃圾桶期間讀出再寫回，指向它的 wikilink 變一般連結", () => {
-  it("A 連到 B、C；B 在垃圾桶時以 read_note_section 讀 A、replace_section 原樣寫回 → 只剩 C 是 wikilink；還原 B 後不會變回", async () => {
+describe("indexing exception (known-limitations): read during trash then written back -> wikilinks pointing at it become ordinary links", () => {
+  it("A links to B and C; while B is in trash, read A with read_note_section and write it back unchanged with replace_section -> only C is still a wikilink; restoring B does not turn it back", async () => {
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);
     const a = await seedNote(ctx.db, { ownerId: u.id }, { title: "MC3 A" });
@@ -223,7 +215,7 @@ describe("MC3 索引照寫的例外（known-limitations）：垃圾桶期間讀�
     expect(wikilinkTargets(after)).toEqual([c.id]);
     const sec2 = ((await ok("read_note_outline", { note_id: a.id })).sections as Array<{ sectionId: string; heading: string }>).find(s => s.heading === "Sec")!;
     const md = ((await ok("read_note_section", { note_id: a.id, section_id: sec2.sectionId })).section as { markdown: string }).markdown;
-    expect(md).toContain(`(/notes/${b.id})`); // 連結本身還在，只是不再是 wikilink
+    expect(md).toContain(`(/notes/${b.id})`); // the link itself is still there, just no longer a wikilink
 
     await restore(ctx.app, b.id, u.id);
     expect(wikilinkTargets((await loadDoc(ctx.db, a.id))!)).toEqual([c.id]);

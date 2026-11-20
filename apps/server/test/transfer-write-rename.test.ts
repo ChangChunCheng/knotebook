@@ -1,6 +1,3 @@
-/**
- * bulk transfer（RN1–RN9）：改名與 `unchanged`／`renamed` 的扣桶規則。
- */
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { notes, transferBases } from "../src/db/schema.js";
@@ -26,8 +23,8 @@ const titleOf = async (ctx: CollabTestCtx, id: string) => (await ctx.db.select({
 const baseOf = async (ctx: CollabTestCtx, key: string) => (await ctx.db.select().from(transferBases).where(eq(transferBases.key, key)))[0]!;
 const one = () => new FixedWindowLimiter({ limit: 1, windowMs: 60_000 });
 
-describe("改名", () => {
-  it("RN1 只改 title → 200 renamed、不 mount（判內文動過沒用結構比對）、transferWrite 扣 1、applied_title_sha 寫入；RN2 同檔再送 → unchanged、不扣", async () => {
+describe("rename", () => {
+  it("title only -> 200 renamed, no mount (body change decided by structural comparison), transferWrite charged 1, applied_title_sha written; resending the same file -> unchanged, not charged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 2, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -39,12 +36,12 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("New title");
     expect((await baseOf(s.ctx, d.fm.base!)).appliedTitleSha).not.toBeNull();
     expect((await bulkPut(s.ctx.app, s.bulk.token, text)).json()).toMatchObject({ result: "unchanged", renamed: false });
-    // limit 2：RN1 扣 1、RN2 沒扣 → 還剩 1（另一次只改名仍成功），第三次 429
+    // limit 2: the first charged 1, the second (unchanged) did not -> 1 left (another rename-only still succeeds), the third is 429.
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d.text, "Third title"))).statusCode).toBe(200);
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d.text, "Fourth title"))).statusCode).toBe(429);
   });
 
-  it("RN3 內容＋改名 → 一次扣、renamed: true、result applied", async () => {
+  it("content + rename -> charged once, renamed: true, result applied", async () => {
     const transferWrite = one();
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -54,7 +51,7 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Both");
   });
 
-  it("RN4 ownership_changed（renameHook 在 UPDATE 前把筆記移進群組）→ 200、renamed: false＋renameFailed、不寫 applied_title_sha；移回後同檔重送會重試並 renamed", async () => {
+  it("ownership_changed (renameHook moves the note into a group before the UPDATE) -> 200, renamed: false + renameFailed, applied_title_sha not written; after moving back, resending the same file retries and renames", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ slugUpdateTestHook: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } });
     const g = await seedGroup(s.ctx.db, "G", [{ userId: s.u.id, role: "admin" }]);
@@ -71,7 +68,7 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Moved title");
   });
 
-  it("RN5a gone（合併記錄後、改名前移進垃圾桶）→ 200、renameFailed gone", async () => {
+  it("gone (moved to trash after the merge record, before the rename) -> 200, renameFailed gone", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ editingTestHooks: { afterRecord: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -81,7 +78,7 @@ describe("改名", () => {
     expect(r.json()).toMatchObject({ renamed: false, renameFailed: "gone" });
   });
 
-  it("RN5b 只改名、改名時已進垃圾桶 → 404", async () => {
+  it("rename only, already in trash at rename time -> 404", async () => {
     const hold: { act?: () => Promise<void> } = {};
     const s = await scene({ slugUpdateTestHook: async () => { if (hold.act) { const f = hold.act; hold.act = undefined; await f(); } } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -89,7 +86,7 @@ describe("改名", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d.text, "Gone only"))).statusCode).toBe(404);
   });
 
-  it("RN6 改名後把 title 改回原值再送（同一份 base）→ 改名（比 applied_title_sha，不是下載時的）", async () => {
+  it("after a rename, change the title back to its original and resend (same base) -> renames (compared with applied_title_sha, not the title at download)", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d.text, "Changed"))).json()).toMatchObject({ result: "renamed" });
@@ -98,7 +95,7 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Title");
   });
 
-  it("RN7 特殊字元的標題原樣重送 → 不觸發改名", async () => {
+  it("a title with special characters resent verbatim -> does not trigger a rename", async () => {
     for (const title of ['a"b', "back\\slash", "it's", "# hash", "key: value", "- dash", "emoji 😀"]) {
       const s = await scene({}, title);
       const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -106,19 +103,19 @@ describe("改名", () => {
     }
   });
 
-  it("RN8 not_mergeable 的筆記只改 title → renamed", async () => {
+  it("not_mergeable note with only the title changed -> renamed", async () => {
     const s = await scene({ transferTestHooks: { forceUnmergeable: () => true } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     expect((await bulkPut(s.ctx.app, s.bulk.token, renameIn(d.text, "Renamed unmergeable"))).json()).toMatchObject({ result: "renamed" });
   });
 
-  it("RN8b #393 之前下載、mergeable:false 的筆記只改標題 → 409 note_changed、沒改名（讀出格式變了，整篇匯出比對不再相等）", async () => {
+  it("mergeable:false note downloaded before #393 with only the title changed -> 409 note_changed, not renamed (read format changed, so the whole-export comparison no longer matches)", async () => {
     const s = await scene({ transferTestHooks: { forceUnmergeable: () => true } });
     const note = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Title" });
     await seedBlocks(s.ctx.db, note.id, [{ type: "paragraph", content: "2*3*4 and 5*6" }]);
     const d = await downloadNote(s.ctx.app, s.bulk.token, note.id);
-    // 造「舊格式匯出」的副本：#393 起讀出會跳脫 `*`；舊版匯出不跳脫。基底的 body_sha 換成舊版本文的雜湊（＝那時下載留下的基底），
-    // 檔案本文也是舊版本文（使用者手上的檔）。
+    // Build a copy of an "old-format export": since #393 reads escape `*`, older exports did not. The base's body_sha is replaced by the hash of the
+    // old-version body (the base left by a download back then), and the file body is also the old-version body (the user's file).
     const oldBody = d.body.split("\\*").join("*");
     expect(oldBody, "前提：現行匯出有跳脫").not.toBe(d.body);
     const row = await baseOf(s.ctx, d.fm.base!);
@@ -131,7 +128,7 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, note.id)).toBe("Title");
   });
 
-  it("RN9 transferWrite 滿時只改名 → 429、標題未變", async () => {
+  it("transferWrite full, rename only -> 429, title unchanged", async () => {
     const transferWrite = new FixedWindowLimiter({ limit: 0, windowMs: 60_000 });
     const s = await scene({ limiters: { transferWrite } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -139,7 +136,7 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Title");
   });
 
-  it("RN10 合併前別人做了同樣的內文修改 → 不合併、重來時判 note_changed → 409、沒改名", async () => {
+  it("someone else made the same body change before the merge -> no merge, on retry judged note_changed -> 409, not renamed", async () => {
     const ref = {} as { ctx: CollabTestCtx };
     let noteRef = "";
     let n = 0;
@@ -162,8 +159,8 @@ describe("改名", () => {
     expect(await titleOf(s.ctx, s.note.id)).toBe("Title");
   });
 
-  it("RN11 同檔同時兩發只改名 → 只改一次：一發 renamed、一發 unchanged", async () => {
-    // 第一發在改名 UPDATE 前停 300 ms：佇列內時第二發只能排隊等；若改名移到佇列外，第二發會在這段時間讀到同一份基底而再改一次。
+  it("the same file sent twice at once with rename only -> renamed once: one renamed, one unchanged", async () => {
+    // The first request stops 300 ms before the rename UPDATE: while in the queue the second must wait; if the rename moved outside the queue, the second would read the same base in that window and rename again.
     let first = true;
     const s = await scene({ slugUpdateTestHook: async () => { if (first) { first = false; await new Promise(r => setTimeout(r, 300)); } } });
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);

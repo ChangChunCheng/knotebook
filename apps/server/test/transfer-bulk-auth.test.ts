@@ -1,6 +1,3 @@
-/**
- * bulk transfer：`transferAuth.requireBulk("read")`。矩陣在單篇 GET 上全跑、DELETE 抽三案。
- */
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { BULK_TRANSFER_INVALID_MESSAGE, BULK_TRANSFER_PAT_MESSAGE, BULK_TRANSFER_REQUIRED_MESSAGE } from "../src/auth/transfer-auth.js";
@@ -23,30 +20,29 @@ async function scene(opts: { bearerMiss?: FixedWindowLimiter } = {}) {
 }
 const errOf = (r: { json(): unknown }) => (r.json() as { error: { code: string; message: string } }).error;
 
-describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
-  it("A10 唯讀母憑證的 bulk → 200（讀取只要 notes:read）", async () => {
+describe("requireBulk: matrix (GET /api/transfer/notes/:id)", () => {
+  it("bulk of a read-only parent credential -> 200 (reading needs only notes:read)", async () => {
     const s = await scene();
     expect((await bulkGet(s.ctx.app, s.url, s.bulk.token)).statusCode).toBe(200);
   });
 
-  it("A1 無 header、帶有效 session cookie → 401（不回退 cookie）、challenge 是 realm 形（不帶 error、不帶 resource_metadata）、不吃 bearerMiss", async () => {
+  it("no header but a valid session cookie -> 401 (no cookie fallback), challenge is realm-shaped (no error, no resource_metadata), does not charge bearerMiss", async () => {
     const s = await scene({ bearerMiss: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) });
     const cookies = await cookieOf(s.u.id);
     for (let i = 0; i < 3; i++) {
       const r = await bulkGet(s.ctx.app, s.url, undefined, { cookies });
       expect(r.statusCode, `#${i}`).toBe(401);
       expect(errOf(r), `#${i}`).toEqual({ code: "unauthorized", message: BULK_TRANSFER_REQUIRED_MESSAGE });
-      // docs/api.md：bulk 端點沒帶 Authorization 也回 challenge
+      // docs/api.md: bulk endpoints return a challenge even without an Authorization header.
       const ch = String(r.headers["www-authenticate"] ?? "");
       expect(ch, `#${i}`).toContain('realm="knotebook-transfer"');
       expect(ch, `#${i}`).not.toContain("error=");
       expect(ch, `#${i}`).not.toContain("resource_metadata");
     }
-    // 桶沒被吃：第一發無效 token 仍是 401 不是 429
     expect((await bulkGet(s.ctx.app, s.url, "knbt_nope")).statusCode).toBe(401);
   });
 
-  it("A2 Basic → 401「未登入」、challenge 不帶 error、吃 bearerMiss", async () => {
+  it("Basic -> 401 'not signed in', challenge without error, charges bearerMiss", async () => {
     const s = await scene({ bearerMiss: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) });
     const basic = () => s.ctx.app.inject({ method: "GET", url: s.url, headers: { authorization: "Basic eHg6eXk=" } });
     const first = await basic();
@@ -57,7 +53,7 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
     expect((await basic()).statusCode).toBe(429);
   });
 
-  it("A3 有效的 knb_ PAT → 401＋BULK_TRANSFER_PAT_MESSAGE；A4 knbt_ 亂碼 → 401＋BULK_TRANSFER_INVALID_MESSAGE（不是 #200 的 TRANSFER_INVALID_MESSAGE）、challenge 含 invalid_token；A11 body 是 JSON", async () => {
+  it("valid knb_ PAT -> 401 + BULK_TRANSFER_PAT_MESSAGE; knbt_ garbage -> 401 + BULK_TRANSFER_INVALID_MESSAGE (not #200's TRANSFER_INVALID_MESSAGE), challenge contains invalid_token; body is JSON", async () => {
     const s = await scene();
     const a3 = await bulkGet(s.ctx.app, s.url, s.pat.token);
     expect(a3.statusCode).toBe(401);
@@ -69,7 +65,7 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
     expect(a4.headers["content-type"]).toMatch(/^application\/json/);
   });
 
-  it("A5 過期 bulk、A6 母憑證被撤銷、A7 母憑證過期 → 401 同字", async () => {
+  it("expired bulk, revoked parent credential, expired parent credential -> 401 with identical text", async () => {
     const s = await scene();
     const msgs: unknown[] = [];
     const exp = await issueBulkDirect(s.ctx.db, s.pat.tokenId);
@@ -90,7 +86,7 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
     for (const m of msgs) expect(m).toEqual({ code: "unauthorized", message: BULK_TRANSFER_INVALID_MESSAGE });
   });
 
-  it("A8 使用者停權／需改密碼 → 401 同形", async () => {
+  it("user suspended / must change password -> 401 same shape", async () => {
     const s = await scene();
     const v = await seedUser(s.ctx.db, { disabled: true });
     const vp = await seedTokenForUser(s.ctx.db, v.id, "notes:read");
@@ -107,7 +103,7 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
     expect(errOf(r2)).toEqual(errOf(r1));
   });
 
-  it("A9 upload／download 權杖打 bulk 路由 → 403 forbidden", async () => {
+  it("upload/download tokens against bulk routes -> 403 forbidden", async () => {
     const s = await scene();
     for (const purpose of ["upload", "download"] as const) {
       const t = await issueDirect(s.ctx.db, s.pat.tokenId, s.note.id, purpose);
@@ -117,7 +113,7 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
     }
   });
 
-  it("A12 bearerMiss limit 1：連兩發 A4 → 第二發 429＋Retry-After ≥ 1 的整數、不帶 WWW-Authenticate", async () => {
+  it("bearerMiss limit 1: two garbage tokens in a row -> second is 429 + integer Retry-After >= 1, no WWW-Authenticate", async () => {
     const s = await scene({ bearerMiss: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) });
     expect((await bulkGet(s.ctx.app, s.url, "knbt_nope")).statusCode).toBe(401);
     const r = await bulkGet(s.ctx.app, s.url, "knbt_nope");
@@ -128,8 +124,8 @@ describe("requireBulk：A 矩陣（GET /api/transfer/notes/:id）", () => {
   });
 });
 
-describe("requireBulk：DELETE /api/transfer/token 抽三案", () => {
-  it("無 header → 401；PAT → 401 專屬訊息；download 權杖 → 403；有效 bulk → 204", async () => {
+describe("requireBulk: DELETE /api/transfer/token, three cases", () => {
+  it("no header -> 401; PAT -> 401 dedicated message; download token -> 403; valid bulk -> 204", async () => {
     const s = await scene();
     expect((await bulkDelete(s.ctx.app)).statusCode).toBe(401);
     const p = await bulkDelete(s.ctx.app, s.pat.token);

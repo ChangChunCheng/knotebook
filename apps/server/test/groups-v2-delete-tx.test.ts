@@ -1,7 +1,4 @@
-/**
- * #175 的交易本體（`groups/tx/delete-group.ts`）以 `db.transaction(tx => xInTx(tx, …))` 直呼——不經路由。
- * HTTP 功能面（body 驗證、授權、踢線、磁碟檔）在 `groups-v2-delete.test.ts`；交錯案在 `groups-v2-delete-race.test.ts`。
- */
+/** Drives the delete-group transaction functions directly, without the route. */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { and, eq, inArray, or } from "drizzle-orm";
@@ -36,7 +33,7 @@ async function redirectsOf(db: Db): Promise<Array<{ oldPath: string; noteId: str
 }
 
 describe("#175 transferGroupInTx", () => {
-  it("轉移：每篇 owner＝transferTo、group_id NULL、slug 保留或 -N、slug_is_custom 不變、prev_slug NULL、public_token NULL、public_slug NULL（轉移清公開連結）、legacy_slug 不變、updated_at 不動；轉址恰每篇一列 /g/<g 小寫>/<舊 slug>；群組／角色／成員消失；AI 紀錄／links／uploads／note_states 跟著 UUID；回傳 noteIds 與 memberIds", async () => {
+  it("transfer: each note becomes a personal note of transferTo (slug kept or -N, slug_is_custom unchanged, prev_slug/public_token/public_slug cleared, legacy_slug and updated_at unchanged); exactly one /g/<lowercase g>/<old slug> redirect per note; group, roles and members removed; AI records, links, uploads and note_states follow the UUID; returns noteIds and memberIds", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
@@ -70,7 +67,7 @@ describe("#175 transferGroupInTx", () => {
     });
     const { rows: legacyRows } = await pool.query("select legacy_slug from notes where id = $1", [n1.id]);
     expect(legacyRows).toEqual([{ legacy_slug: legacy }]);
-    // 只寫現行 slug：沒有 /g/<g>/old。
+    // Only the current slug gets a redirect, not prev_slug ('old').
     expect(await redirectsOf(db)).toEqual([
       { oldPath: `/g/${g.id.toLowerCase()}/plan`, noteId: n1.id },
       { oldPath: `/g/${g.id.toLowerCase()}/x`, noteId: n2.id },
@@ -85,14 +82,14 @@ describe("#175 transferGroupInTx", () => {
     expect(sorted(out.memberIds)).toEqual(sorted([a.id, b.id, c.id]));
   });
 
-  it("撞名鏈依 created_at, id 處理——較早的 a-2 保留、較晚的 a 得 a-3", async () => {
+  it("collision chain is processed by created_at, id: the earlier a-2 keeps its slug, the later a becomes a-3", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: b.id, role: "admin" }]);
     await seedNote(db, { ownerId: b.id }, { slug: "a" });
-    // 實體插入序 Q→P＝slug 序（a < a-2），與建立序（P 較早）相反——依 slug 序或實體序處理都會得 Q＝a-2、P＝a-2-2。
-    // id 也與建立序相反（q < p）：依 id 處理（鎖序是 id）同樣會錯。
+    // Physical insert order Q->P equals slug order (a < a-2) but is opposite to creation order (P is earlier); processing by slug or insert order would give Q=a-2, P=a-2-2.
+    // The ids are also opposite to creation order (q < p), so processing by id (the lock order) would be wrong too.
     const q = await seedNote(db, { groupId: g.id }, { id: "00000000-0000-4000-8000-000000000001", slug: "a" });
     const p = await seedNote(db, { groupId: g.id }, { id: "ffffffff-0000-4000-8000-000000000001", slug: "a-2" });
     await pool.query("update notes set created_at = now() - interval '1 hour' where id = $1", [p.id]);
@@ -109,13 +106,13 @@ describe("#175 transferGroupInTx", () => {
     expect(out.noteIds).toEqual([p.id, q.id]);
   });
 
-  it("created_at 只差 1 µs（同一毫秒內）仍依 created_at 處理——較早的 a-2 保留、較晚的 a 得 a-3", async () => {
+  it("created_at differing by 1 microsecond (same millisecond) is still processed by created_at: the earlier a-2 keeps its slug, the later a becomes a-3", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: b.id, role: "admin" }]);
     await seedNote(db, { ownerId: b.id }, { slug: "a" });
-    // id 與上一案同一組反序（q < p）：毫秒或秒精度會把兩篇排成同時、退回依 id，q 先處理就錯。
+    // Same reversed ids as the previous test (q < p): millisecond or second precision would tie the two and fall back to id, so q would be processed first, which is wrong.
     const q = await seedNote(db, { groupId: g.id }, { id: "00000000-0000-4000-8000-000000000001", slug: "a" });
     const p = await seedNote(db, { groupId: g.id }, { id: "ffffffff-0000-4000-8000-000000000001", slug: "a-2" });
     await pool.query("update notes set created_at = '2026-01-01 00:00:00.000100+00' where id = $1", [p.id]);
@@ -132,7 +129,7 @@ describe("#175 transferGroupInTx", () => {
     expect(out.noteIds).toEqual([p.id, q.id]);
   });
 
-  it("100 字元自訂 slug 在 transferTo 範圍撞名 → ≤60、-2 結尾、通過 validateSlug、slug_is_custom 仍 true；轉址鍵是 100 字元的舊 slug", async () => {
+  it("100-char custom slug colliding within the transferTo scope -> at most 60 chars, ends in -2, passes validateSlug, slug_is_custom stays true; the redirect key is the 100-char old slug", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const b = await seedUser(db);
@@ -151,7 +148,7 @@ describe("#175 transferGroupInTx", () => {
     expect(await redirectsOf(db)).toEqual([{ oldPath: `/g/${g.id}/${base}`, noteId: n.id }]);
   });
 
-  it("transferTo 不是內建管理員 → TxAbort 409 not_admin：非成員、一般成員、勾滿七旗標的自訂角色成員三形；交易 rollback：群組、筆記、成員原封不動", async () => {
+  it("transferTo that is not a built-in admin -> TxAbort 409 not_admin for a non-member, a plain member and a custom-role member with all seven flags; transaction rolls back and group, notes, members are untouched", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a, c, d, outsider] = await Promise.all([seedUser(db), seedUser(db), seedUser(db), seedUser(db)]);
@@ -184,7 +181,7 @@ describe("#175 transferGroupInTx", () => {
     expect(await redirectsOf(db)).toEqual([]);
   });
 
-  it("群組不存在 → TxAbort 404 not_found（GROUP_NOT_FOUND_MESSAGE）", async () => {
+  it("missing group -> TxAbort 404 not_found (GROUP_NOT_FOUND_MESSAGE)", async () => {
     const { db } = await buildTestApp();
     const b = await seedUser(db);
     const err = await db.transaction(tx => transferGroupInTx(tx, { groupId: randomUUID(), transferTo: b.id, by: b.id, fallbackFolderName: "Group", lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS })).then(
@@ -195,7 +192,7 @@ describe("#175 transferGroupInTx", () => {
     expect(err).toMatchObject({ status: 404, errCode: "not_found", message: GROUP_NOT_FOUND_MESSAGE });
   });
 
-  it("空群組：回 noteIds []、群組消失、轉址 0 列", async () => {
+  it("empty group: returns noteIds [], group removed, 0 redirects", async () => {
     const { db } = await buildTestApp();
     const [a, c] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: c.id, role: "member" }]);
@@ -210,7 +207,7 @@ describe("#175 transferGroupInTx", () => {
 });
 
 describe("#175 deleteGroupWithNotesInTx", () => {
-  it("全刪：L 內每篇與其 uploads 列／states／轉址／AI 紀錄／兩方向 links 消失；群組外的筆記（含 link 的另一端）仍在；回傳 uploadIds＝被刪的 uploads id、noteIds＝L、memberIds＝全體成員；群組／角色／成員消失", async () => {
+  it("delete all: every note in L is removed with its uploads rows, states, redirects, AI records and links in both directions; notes outside the group (including the other end of a link) survive; returns uploadIds of the deleted uploads, noteIds = L, memberIds = all members; group, roles and members removed", async () => {
     const { db, uploadsDir } = await buildTestApp();
     const [a, c] = await Promise.all([seedUser(db), seedUser(db)]);
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: c.id, role: "member" }]);
@@ -245,7 +242,7 @@ describe("#175 deleteGroupWithNotesInTx", () => {
     expect(await groupRows(db, other.id)).toEqual({ groups: 1, roles: 2, members: 1 });
   });
 
-  it("全刪：群組不存在 → TxAbort 404 not_found", async () => {
+  it("delete all: missing group -> TxAbort 404 not_found", async () => {
     const { db } = await buildTestApp();
     const err = await db.transaction(tx => deleteGroupWithNotesInTx(tx, { groupId: randomUUID(), lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS })).then(
       () => null,
@@ -255,7 +252,7 @@ describe("#175 deleteGroupWithNotesInTx", () => {
     expect(err).toMatchObject({ status: 404, errCode: "not_found", message: GROUP_NOT_FOUND_MESSAGE });
   });
 
-  it("全刪：空群組 → 回三個 []、群組消失", async () => {
+  it("delete all: empty group -> returns three empty arrays, group removed", async () => {
     const { db } = await buildTestApp();
     const g = await seedGroup(db, "G", []);
 
@@ -266,10 +263,10 @@ describe("#175 deleteGroupWithNotesInTx", () => {
   });
 });
 
-describe("#175 刪群組的測試縫", () => {
+describe("#175 delete-group test hooks", () => {
   /**
-   * 「鎖之後、取筆記之前」以另一條連線的 `FOR UPDATE NOWAIT` 判定：groups 列已被 `lockGroup` 鎖住 → 55P03；
-   * 該群組筆記尚未被 `FOR UPDATE` → 成功（autocommit，立即放鎖）。
+   * "After the group lock, before fetching notes" is probed from another connection with `FOR UPDATE NOWAIT`:
+   * groups row already locked by `lockGroup` -> 55P03; group notes not yet locked FOR UPDATE -> succeeds (autocommit, releases at once).
    */
   const probeLocks = async (pool: Db["$client"], groupId: string) => {
     const tryLock = (q: string) => pool.query(q, [groupId]).then(() => "free", (e: { code?: string }) => (e.code === "55P03" ? "locked" : `error:${e.code}`));
@@ -279,7 +276,7 @@ describe("#175 刪群組的測試縫", () => {
     };
   };
 
-  it("group-transfer-slug-candidate 每輪呼叫一次、ctx 帶 noteId 與本輪候選；group-delete-locked 在轉移的 transferTo 檢查之後、全刪的取 L 之前各呼叫一次；folder-structure-locked（資料夾結構鎖）接在它之後、鎖筆記之前", async () => {
+  it("group-transfer-slug-candidate fires once per round with noteId and the round's candidate; group-delete-locked fires once after the transferTo check (transfer) / before fetching L (delete all); folder-structure-locked follows it, before the notes are locked", async () => {
     const { db } = await buildTestApp();
     const pool = db.$client;
     const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
@@ -288,7 +285,7 @@ describe("#175 刪群組的測試縫", () => {
     await seedNote(db, { ownerId: b.id }, { slug: "y" });
     await seedNote(db, { ownerId: b.id }, { slug: "y-2" });
 
-    // not_admin 形：不呼叫 group-delete-locked（檢查在縫之前）。
+    // transferTo is a plain member (not_admin): the check runs before the seam, so no hook fires.
     const rejected: GroupRacePoint[] = [];
     await expect(
       db.transaction(tx => transferGroupInTx(tx, { groupId: g.id, transferTo: c.id, by: c.id, fallbackFolderName: "Group", lockTimeoutMs: DEFAULT_STORAGE_LOCK_TIMEOUT_MS }, async point => { rejected.push(point); })),

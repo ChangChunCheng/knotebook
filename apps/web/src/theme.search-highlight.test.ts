@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * 搜尋高亮底色 token（`--search-highlight`）的守門測試（比照 `theme.accent-vars.test.ts`：
- * 剝註解→定位塊→抽值）。值與 `index.css` 上方的對比量測註解綁在一起——改值要重跑
- * 對比腳本並更新註解。
+ * Guard for the search highlight background token (`--search-highlight`) (same technique as `theme.accent-vars.test.ts`:
+ * strip comments -> locate the block -> extract the value). The value is tied to the contrast measurement comment at the top of `index.css` - when changing
+ * the value, rerun the contrast script and update the comment.
  */
 
 const SRC = `${process.cwd()}/src`;
@@ -26,7 +26,7 @@ function blockBody(css: string, selector: RegExp, label: string): string {
 const norm = (value: string) => value.replace(/\s+/g, " ").trim();
 
 describe("--search-highlight token", () => {
-  it("SH1：淺／深色基底塊各宣告一次、值逐字、全檔只這兩次", () => {
+  it("declared once in each of the light and dark base blocks, values verbatim, and only these two in the whole file", () => {
     const css = readCssWithoutComments();
     const light = norm(blockBody(css, /:root\s*\{/, ":root"));
     const dark = norm(blockBody(css, /:root\.dark\s*\{/, ":root.dark"));
@@ -35,13 +35,13 @@ describe("--search-highlight token", () => {
     expect(css.match(/--search-highlight\s*:/g)).toHaveLength(2);
   });
 
-  it("SH2：@theme inline 把它接成 --color-search-highlight", () => {
+  it("@theme inline wires it as --color-search-highlight", () => {
     const css = readCssWithoutComments();
     const theme = norm(blockBody(css, /@theme inline\s*\{/, "@theme inline"));
     expect(theme).toContain("--color-search-highlight: var(--search-highlight);");
   });
 
-  it("SH3：SearchResults 的 mark 用 bg-search-highlight utility", () => {
+  it("the mark in SearchResults uses the bg-search-highlight utility", () => {
     const source = readFileSync(`${SRC}/components/sidebar/SearchResults.tsx`, "utf8");
     expect(source).toContain("bg-search-highlight");
   });

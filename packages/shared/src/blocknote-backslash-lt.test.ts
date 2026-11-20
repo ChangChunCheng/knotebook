@@ -1,9 +1,9 @@
-// 本 repo 修補 @blocknote/core，讓 `\<` 成為跳脫（patches/@blocknote__core@0.52.1.patch）；
-// 升級 BlockNote 後若這裡失敗，重新產生該 patch。
+// This repo patches @blocknote/core so that `\<` is an escape (patches/@blocknote__core@0.52.1.patch);
+// if this fails after upgrading BlockNote, regenerate that patch.
 import { markdownToHTML } from "@blocknote/core";
 import { describe, expect, it } from "vitest";
 
-describe("markdownToHTML：反斜線加 < 是字面 <", () => {
+describe("markdownToHTML: backslash + < is a literal <", () => {
   const rows: [string, string, string][] = [
     ["\\<b>x\\</b>", "<p>&lt;b&gt;x&lt;/b&gt;</p>", "escaped tags"],
     ["\\<!-- c -->", "<p>&lt;!-- c --&gt;</p>", "escaped comment"],

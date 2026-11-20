@@ -14,30 +14,20 @@ import { loadDoc, xmlOf } from "./copy-helpers.js";
 const PASSWORD = "correct-horse-battery";
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signTestSession({ userId, tv: 0 })}`;
 
-// m-2：`read.ts` 檔頭與 `loadNoteDoc` 內的註解都宣稱「`documents.get` 到 `forkFrom(live)`
-// 之間不得插入 `await`」，但那只是**註解在守**——沒有任何行為測試釘著這條不變量。
-//
-// 為什麼做不出誠實的行為測試：這條規則要防的是「讓出一次 microtask 就可能拿到已 unload
-// 的文件」（@hocuspocus/server 的 `unloadDocument` 會先 `documents.delete` 再
-// `document.destroy()`）。但真的呼叫 `Y.Doc.destroy()` 並**不會**清空它的內部 store——
-// `Y.encodeStateAsUpdate` 對一份已 destroy 的文件仍會安靜地回出它 destroy 之前的內容，不會
-// throw、也不會回空。要讓「插入一個 await、在中間把 live doc 換成已 destroy 的文件」這種
-// 行為測試變紅，得先讓一個假的「已 destroy 的文件」表現出真正的 `Y.Doc` 沒有的行為（例如
-// destroy 後真的變回空文件）——那樣測試在斷言的是我們捏造出來的假設，不是 `read.ts` 真正
-// 依賴的性質。這條不變量因此只能靠原始碼文字守衛：真正壞掉時的後果是安靜地回出一份**陳舊**
-// 快照與陳舊指紋（不會 500、不會 4xx），而 #137 的條件更新（if-match）正是把這個指紋當
-// 基準——一旦這裡混進 await 而沒人發現，#137 會把一份過期快照的指紋當成「這就是目前的內容」。
-//
-// 定位字串選 `"documents.get(noteId)"`／`"forkFrom(live)"`（皆為 read.ts 裡的唯一出現處，
-// import 那行只有裸的 `forkFrom`，檔頭註解只有裸的 `documents.get`，都不會誤命中）而非行號，
-// 理由與本檔其餘測試一致（symbol 名比行號抗漂移）。indexOf 若定位失敗會是 -1，讓 slice
-// 靜默拿到一段無意義甚至倒過來的字串而通過——所以先斷言兩個 marker 都真的找到。
-//
-// 守衛邊界：這只擋兩個 marker 之間出現 `await` 這個字面。把 await 挪到 `documents.get`
-// 之前（例如 `const live = await Promise.resolve(...documents.get(noteId));`），或改用
-// `.then()`／`queueMicrotask` 讓出而不寫 `await` 這個字，這裡都抓不到。
-describe("read.ts 原始碼守衛：documents.get 到 forkFrom(live)／encodeStateAsUpdate(live) 之間不得有 await", () => {
-  it("字面文字不含 await（loadNoteDoc 與 loadNoteState 兩處）", () => {
+// No behavioural test can pin read.ts's invariant that no `await` sits between `documents.get` and `forkFrom(live)`: a destroyed
+// Y.Doc still encodes its pre-destroy content (destroy() doesn't clear the store, and encodeStateAsUpdate neither throws nor
+// returns empty), so a test would have to fake a destroy behaviour real Y.Doc lacks and would assert our own invention.
+// Yielding a microtask there can return a doc that @hocuspocus/server's unloadDocument has already removed (it calls documents.delete, then document.destroy()).
+// The invariant is guarded by a source-text check. Breaking it silently returns a stale snapshot and fingerprint (no 500/4xx),
+// and #137's if-match conditional update takes that fingerprint as its baseline.
+// The start marker `"documents.get(noteId)"` occurs once in each of loadNoteState and loadNoteDoc (asserted below), and the end markers
+// `forkFrom(live)` and `encodeStateAsUpdate(live)` occur only at those sites (the import line has only a bare `forkFrom`, the header
+// comment only a bare `documents.get`); symbol names drift less than line numbers. indexOf
+// returns -1 on a miss, so the test asserts `documents.get(noteId)` was found twice and drops end-marker misses before taking the nearest end.
+// Boundary: this only catches the literal `await` between the markers, not one moved before `documents.get`
+// (`const live = await Promise.resolve(...documents.get(noteId));`) nor yielding via `.then()`/`queueMicrotask`.
+describe("read.ts source guard: no await between documents.get and forkFrom(live)/encodeStateAsUpdate(live)", () => {
+  it("literal text contains no await (loadNoteDoc and loadNoteState)", () => {
     const src = readFileSync(new URL("../src/notes/editing/read.ts", import.meta.url), "utf8");
     const starts: number[] = [];
     for (let i = src.indexOf("documents.get(noteId)"); i !== -1; i = src.indexOf("documents.get(noteId)", i + 1)) starts.push(i);
@@ -46,9 +36,8 @@ describe("read.ts 原始碼守衛：documents.get 到 forkFrom(live)／encodeSta
       const ends = ["forkFrom(live)", "encodeStateAsUpdate(live)"].map(t => src.indexOf(t, start)).filter(i => i !== -1);
       const end = Math.min(...ends);
       expect(end).toBeGreaterThan(start);
-      // 檔頭與行內註解本身就會提到「await」這個字（在講這條不變量），先濾掉整行都是 `//`
-      // 註解的行，才不會被註解自己的文字誤判成「含 await」；真的插進來的 `await` 程式碼
-      // 不是註解行，濾不掉。
+      // The header and inline comments themselves mention `await`, so whole-line `//` comment lines are filtered out first;
+      // a real inserted `await` is not a comment line and survives the filter.
       const between = src
         .slice(start, end)
         .split("\n")
@@ -60,7 +49,7 @@ describe("read.ts 原始碼守衛：documents.get 到 forkFrom(live)／encodeSta
 });
 
 describe("GET /api/notes/:id/content", () => {
-  it("owner／editor／viewer 200；none 404；無憑證 401 帶 challenge", async () => {
+  it("owner/editor/viewer 200; none 404; no credentials 401 with a challenge", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: "o@example.com", password: PASSWORD });
     const editor = await ctx.createUser({ email: "e@example.com", password: PASSWORD });
@@ -83,7 +72,7 @@ describe("GET /api/notes/:id/content", () => {
     expect(anon.headers["www-authenticate"]).toContain("resource_metadata=");
   });
 
-  it("owner 的 cookie 也能讀 200，且不使文件多載入", async () => {
+  it("owner's cookie also reads 200 without loading an extra document", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -97,15 +86,15 @@ describe("GET /api/notes/:id/content", () => {
     expect(ctx.collab.hocuspocus.documents.size).toBe(0);
   });
 
-  it("WS client 剛打的字讀得到；?section= 只回該段（鍵是 id）；heading 開頭 outline[0] 是 _top 0 block；未知 section 404 section_not_found", async () => {
+  it("text just typed by a WS client is readable; ?section= returns only that section (keyed by id); with a heading first, outline[0] is a zero-block _top; unknown section 404 section_not_found", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
     const session = await ctx.loginAs("a@example.com", PASSWORD);
-    // 兩個 heading 同階：更深的 heading 會被併進上一段（`sectionize` 的規則，note-sections.test.ts
-    // 「h2→h3→h2」那案釘住），用 `## B` 就只會有兩段，不是這個案子要驗的形狀。
+    // Two headings at the same level: a deeper heading is merged into the previous section (sectionize rule, pinned by
+    // note-sections.test.ts "h2->h3->h2"), so `## B` would give only two sections, not the shape under test.
     const client = await seedContent(ctx, session, note.id, "# A\n\n第一段\n\n# B\n\n第二段");
-    // 同步：provider 的編輯要先到 server 的 live doc（WS 往返），讀路徑才 fork 得到
+    // The provider's edit must reach the server's live doc (WS round trip) before the read path can fork it
     await waitFor("server 收到編輯", 5_000, () => docText(ctx.collab.hocuspocus.documents.get(note.id)!).includes("第二段"));
     const { token } = await seedTokenForUser(ctx.db, u.id);
     const res = await getContent(ctx.app, note.id, token);
@@ -115,12 +104,11 @@ describe("GET /api/notes/:id/content", () => {
     expect(body.outline[0]).toMatchObject({ sectionId: "_top", level: 0, heading: "", chars: 0 });
     expect(body.outline.map((o: { heading: string }) => o.heading)).toEqual(["", "A", "B"]);
     expect(body.fingerprint).toMatch(/^[0-9a-f]{16}$/);
-    // 大綱是對外 DTO（`NoteOutlineEntry`）：內部的 blockIds 不得外洩
+    // The outline is a public DTO (`NoteOutlineEntry`): internal blockIds must not leak
     expect(body.outline.every((o: Record<string, unknown>) => o.blockIds === undefined)).toBe(true);
-    // 每一列的 fingerprint 是**該段自己的**指紋，不是整篇 fingerprint 的複製（
-    // `fingerprint.ts` 檔頭明令禁止的退化：不符時退回整篇指紋）——三段內容互異，指紋
-    // 也必須互異；且沒有任何一列會恰好等於整篇 fingerprint（#137 的條件更新拿這個欄位
-    // 當基準，這裡沒守到就是編出來的假指紋）。
+    // Each row's fingerprint is that section's own, not a copy of the whole-note one (the degradation `fingerprint.ts` forbids:
+    // falling back to the whole-note fingerprint on mismatch): three different sections must give different fingerprints and none
+    // may equal the whole-note fingerprint (#137's conditional update uses it as the baseline).
     for (const o of body.outline) expect(o.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     expect(new Set(body.outline.map((o: { fingerprint: string }) => o.fingerprint)).size).toBe(3);
     expect(body.outline.every((o: { fingerprint: string }) => o.fingerprint !== body.fingerprint)).toBe(true);
@@ -130,17 +118,15 @@ describe("GET /api/notes/:id/content", () => {
     expect(sec.section.sectionId).toBeUndefined();
     expect(sec.section.markdown).toContain("第二段");
     expect(sec.section.markdown).not.toContain("第一段");
-    // 段落端點回的指紋要與大綱那一列的指紋是同一個值（不是另外重算出來的巧合相等）。
+    // The section endpoint's fingerprint must be the same value as the outline row's, not a coincidental recomputation.
     expect(sec.section.fingerprint).toBe(body.outline[2].fingerprint);
     expect(sec.outline).toBeUndefined();
-    // 段落形不帶整篇 outline，同樣不該帶整篇 fingerprint／假的 lastEdited——段落形回應的鍵只有
-    // `section`（見上）與 `lastEdited`。
     expect(sec.fingerprint).toBeUndefined();
-    // #137：`lastEdited` 已是真值，不能再斷言恆 null（這篇剛被人編輯過，落盤一落地就變人形落款
-    // ——「跑超過兩秒就紅」）。這裡守的仍是同一件事：段落形的頂層鍵**只有** section 與 lastEdited，
-    // 不得混進整篇的 fingerprint／outline。值的正確性由本案結尾（落盤已是確定事件）那段驗。
+    // Section-shaped responses carry no whole-note outline/fingerprint, and `lastEdited` is real (#137) so it can't be asserted null
+    // (the note was just edited and the human signature appears once persisted): the top-level keys are only `section` and
+    // `lastEdited`. The value itself is checked at the end of this case, where persisting is a settled event.
     expect(Object.keys(sec).sort()).toEqual(["lastEdited", "section"]);
-    // 零 block 的 `_top`（文件以 heading 開頭）：markdown 是空字串，不是 mount 正規化出來的 "\n"
+    // Zero-block `_top` (document starts with a heading): markdown is the empty string, not the "\n" that mount normalizes to
     const top = (await getContent(ctx.app, note.id, token, "_top")).json();
     expect(top.section).toMatchObject({ id: "_top", markdown: "", chars: 0 });
     const missing = await getContent(ctx.app, note.id, token, "nope");
@@ -148,18 +134,17 @@ describe("GET /api/notes/:id/content", () => {
     expect(missing.json().error.code).toBe("section_not_found");
     client.disconnect();
     await waitFor("落盤並卸載", 10_000, () => ctx.collab.hocuspocus.documents.size === 0);
-    // 落盤之後 last_edited_* 已是人形落款＝確定事件。段落形與整篇形都要回真值：
-    // byHandle 是那位編輯者、agentLabel 為 null（這篇沒有 AI 寫過）。
-    // ⚠ handle **不能硬寫成 `"a"`**（那是 email 的 local part）：`ctx.createUser` 不帶 handle，
-    // 該欄吃 DB default（`'user-' || substr(gen_random_uuid()::text, 1, 8)`）。取真值再比對，
-    // **不要退化成 `expect.any(String)`**——這一格守的正是「落款指向的是這位編輯者」。
+    // After persisting, last_edited_* is a human signature (a settled event): section and whole-note forms must both return real
+    // values: byHandle is that editor, agentLabel null (no AI wrote). The handle can't be hardcoded as `"a"` (the email local part):
+    // `ctx.createUser` passes no handle, so the column takes the DB default (`'user-' || substr(gen_random_uuid()::text, 1, 8)`).
+    // Compare against the real value, not `expect.any(String)`: this cell guards that the signature points at that editor.
     const ownerHandle = (await ctx.app.inject({ method: "GET", url: `/api/notes/${note.id}`, headers: bearer(token) })).json().ownerHandle;
     const settledSec = (await getContent(ctx.app, note.id, token, secId)).json();
     expect(settledSec.lastEdited).toMatchObject({ byHandle: ownerHandle, agentLabel: null });
     expect((await getContent(ctx.app, note.id, token)).json().lastEdited).toMatchObject({ byHandle: ownerHandle, agentLabel: null });
   });
 
-  it("沒人在線讀 DB 快照；從未開過的筆記回空文件形，連讀兩次指紋相同", async () => {
+  it("with nobody online the DB snapshot is read; a never-opened note returns an empty document shape; two reads give the same fingerprint", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -171,13 +156,13 @@ describe("GET /api/notes/:id/content", () => {
     const client = await seedContent(ctx, session, note.id, "hello");
     await waitFor("server 收到編輯", 5_000, () => docText(ctx.collab.hocuspocus.documents.get(note.id)!).includes("hello"));
     client.disconnect();
-    // 同步：斷線後 store（debounce 2000 ms）先跑、再 unload（hocuspocus 的 storeDocumentHooks →
-    // unloadDocument；repo 前例：collab/server.ts 的 destroy() 也是等 documents 排空）
+    // After disconnect the store (debounce 2000 ms) runs first, then unload (hocuspocus storeDocumentHooks -> unloadDocument;
+    // `destroy()` in collab/server.ts likewise waits for documents to drain)
     await waitFor("落盤並卸載", 10_000, () => ctx.collab.hocuspocus.documents.size === 0);
     expect((await getContent(ctx.app, note.id, token)).json().markdown).toContain("hello");
   });
 
-  it("讀取假綠守衛：連讀 20 次後 note_states 不變、無 backup 新列、documents.size 不變、notes.last_edited_* 四欄不變", async () => {
+  it("read false-green guard: after 20 consecutive reads note_states is unchanged, no new backup row, documents.size unchanged, the four notes.last_edited_* columns unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -210,11 +195,10 @@ describe("GET /api/notes/:id/content", () => {
     });
   });
 
-  // 讀路徑「零副作用」的核心：live doc 只被 fork，絕不交出本尊。只看 HTTP 回應驗不到這條
-  // ——實測（scratchpad 突變棚）把 `forkFrom(live).fork` 換成 `live` 本身，七個 HTTP 案例全綠：
-  // 對「結構良好且非空」的文件，mount 目前剛好不改動任何東西。所以在這裡直接對 `loadNoteDoc`
-  // 斷言身分與隔離，讓「交出本尊」這個突變一定會紅。
-  it("loadNoteDoc：有人在線回 fork（非 live 本尊、改它不影響 live）；沒人在線回 DB 快照 loaded=false", async () => {
+  // Core of the read path's zero side effects: the live doc is only forked, never handed out. HTTP responses can't show this: for a
+  // well-formed non-empty document mount currently changes nothing, so handing out `live` itself would still pass them. So identity
+  // and isolation are asserted directly on `loadNoteDoc`.
+  it("loadNoteDoc: with someone online returns a fork (not the live doc; editing it leaves live untouched); with nobody online returns the DB snapshot with loaded=false", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -226,10 +210,10 @@ describe("GET /api/notes/:id/content", () => {
     const forked = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, note.id);
     expect(forked.loaded).toBe(true);
     expect(forked.doc).not.toBe(live);
-    expect(docText(forked.doc)).toBe(liveText); // fork 的內容與 live 一致
+    expect(docText(forked.doc)).toBe(liveText);
     forked.doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [new Y.XmlElement("blockGroup")]);
-    expect(docText(forked.doc)).not.toBe(liveText); // 確認上一行真的改到了 fork
-    expect(docText(live)).toBe(liveText); // live 不受影響
+    expect(docText(forked.doc)).not.toBe(liveText); // precondition: the edit above really changed the fork
+    expect(docText(live)).toBe(liveText);
     client.disconnect();
     await waitFor("落盤並卸載", 10_000, () => ctx.collab.hocuspocus.documents.size === 0);
     const fromDb = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, note.id);
@@ -237,7 +221,7 @@ describe("GET /api/notes/:id/content", () => {
     expect(docText(fromDb.doc)).toBe(liveText);
   });
 
-  it("CONTENT_READ_LIMIT：limit 3 第 4 次 429；none 的 404 不消耗（陌生人 5×404 後讀自己的筆記仍 3×200 才 429）", async () => {
+  it("CONTENT_READ_LIMIT: with limit 3 the 4th read gets 429; a none 404 doesn't consume it (a stranger's 5x404, then reading own note still gives 3x200 before 429)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { contentRead: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) } });
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const stranger = await ctx.createUser({ email: "s@example.com", password: PASSWORD });
@@ -246,13 +230,13 @@ describe("GET /api/notes/:id/content", () => {
     const { token } = await seedTokenForUser(ctx.db, u.id);
     const { token: st } = await seedTokenForUser(ctx.db, stranger.id);
     for (let i = 0; i < 5; i += 1) expect((await getContent(ctx.app, note.id, st)).statusCode).toBe(404);
-    for (let i = 0; i < 3; i += 1) expect((await getContent(ctx.app, own.id, st)).statusCode).toBe(200); // 404 沒啃桶
+    for (let i = 0; i < 3; i += 1) expect((await getContent(ctx.app, own.id, st)).statusCode).toBe(200);
     expect((await getContent(ctx.app, own.id, st)).statusCode).toBe(429);
     for (let i = 0; i < 3; i += 1) expect((await getContent(ctx.app, note.id, token)).statusCode).toBe(200);
     expect((await getContent(ctx.app, note.id, token)).statusCode).toBe(429);
   });
 
-  it("section 含 NUL 或格式不合 → 400 invalid_body（不變量 S）；無 collab 的 app 不註冊此路由", async () => {
+  it("section with NUL or bad format -> 400 invalid_body (unstorable strings are rejected before SQL); an app without collab doesn't register this route", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
@@ -265,36 +249,36 @@ describe("GET /api/notes/:id/content", () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("invalid_body");
-    // SECTION_ID_RE 不收的字元（`.`）同樣 400——把「NUL 被擋」與「格式閘門本身存在」分開釘。
+    // A char SECTION_ID_RE rejects (`.`) is also 400: separates "NUL blocked" from "the format gate exists".
     const bad = await ctx.app.inject({ method: "GET", url: `/api/notes/${note.id}/content?section=a.b`, headers: bearer(token) });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error.code).toBe("invalid_body");
-    // 非 uuid 的 :id → 404（不是把它送進 resolveRole 的 SQL 而炸成 500）
+    // A non-uuid :id -> 404 (not sent into resolveRole's SQL to blow up as a 500)
     const notUuid = await ctx.app.inject({ method: "GET", url: "/api/notes/not-a-uuid/content", headers: bearer(token) });
     expect(notUuid.statusCode).toBe(404);
     expect(notUuid.json().error.code).toBe("not_found");
-    // 無 collab 的 app：路由不存在。若它有被註冊，preHandler 會先回 401（無憑證），
-    // 所以「404 而非 401」就是「沒註冊」的證據。
+    // Without collab the route doesn't exist: if it were registered the preHandler would answer 401 (no credentials) first,
+    // so 404-not-401 proves it isn't registered.
     const plain = await buildTestApp();
     const r2 = await plain.app.inject({ method: "GET", url: `/api/notes/${note.id}/content` });
     expect(r2.statusCode).toBe(404);
   });
 
-  it("#240 R1 Bearer GET /content 的大寫 id：debounce 窗內讀到 live 內容", async () => {
+  it("#240 Bearer GET /content with an uppercase id: reads live content inside the debounce window", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "r1@example.com", password: PASSWORD });
     const note = await ctx.createNote(u.id);
-    const { token } = await seedTokenForUser(ctx.db, u.id); // 前置都排在 seed 之前：seed 一回傳 debounce 窗就開始
+    const { token } = await seedTokenForUser(ctx.db, u.id); // all setup runs before seed: the debounce window starts as soon as seed returns
     const session = await ctx.loginAs("r1@example.com", PASSWORD);
     const MARK = `MARK-${randomUUID()}`;
     const client = await seedContent(ctx, session, note.id, `# Head\n\n${MARK}`);
     const seededAt = Date.now();
     const res = await getContent(ctx.app, note.id.toUpperCase(), token);
-    // 排最前：拿掉 hook 時讀的是 note_states，那裡還沒有 MARK。
+    // Ordered first: with the hook removed the read hits note_states, which has no MARK yet.
     expect(res.json().markdown).toContain(MARK);
     const stateHasMark = async () => { const d = await loadDoc(ctx.db, note.id); return d !== null && xmlOf(d).includes(MARK); };
-    expect(await stateHasMark()).toBe(false); // 讀發生在 debounce 窗內；變真＝這案失去鑑別力
-    console.log(`[R1] seed→斷言 ${Date.now() - seededAt} ms（store debounce 2000 ms）`);
+    expect(await stateHasMark()).toBe(false); // the read happens inside the debounce window; if this turns true the case loses its discriminating power
+    console.log(`[content] seed→斷言 ${Date.now() - seededAt} ms（store debounce 2000 ms）`);
     expect(res.statusCode).toBe(200);
     client.disconnect();
   });

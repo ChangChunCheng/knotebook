@@ -1,5 +1,4 @@
-// 套用版本與手動儲存（套用、手動儲存、沒有 WS 連線時 REST 套用、指紋的空版本案）。
-// 直接驅動 NoteWriteService（另建一個實例、自己的佇列）：REST 的映射在路由測試。
+// Drives NoteWriteService directly (a separate instance with its own queue): the REST mapping is covered in the route tests.
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
@@ -42,7 +41,6 @@ async function setup() {
 }
 type S = Awaited<ReturnType<typeof setup>>;
 
-/** 以 provider 側編輯器整篇換成 blocks（模擬瀏覽器），等 server 收到哨兵字串。 */
 async function setBlocks(s: S, client: TestClient, blocks: unknown[], sentinel: string): Promise<void> {
   const ed = await EditorSession.open(testEditingRuntime, client.doc);
   try {
@@ -54,7 +52,6 @@ async function setBlocks(s: S, client: TestClient, blocks: unknown[], sentinel: 
 }
 const ids = (d: Y.Doc) => topLevelBlocks(d.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
 
-/** v1＝「第一版」＋連到 other 的 wikilink；v2＝「第二版」沒有連結。回 v1、v2 的列與 other。 */
 async function twoVersions(s: S) {
   const other = await s.ctx.createNote(s.u.id, "Other");
   const client = await s.session.connect(s.note.id);
@@ -68,7 +65,7 @@ async function twoVersions(s: S) {
   return { client, other, v1: r1.row, v2: r2.row };
 }
 
-/** 沒有任何 WS 連線、文件也沒載入時，把 note_states 整份換成 markdown 寫出來的內容（server 端 EditorSession，不經 Hocuspocus）。 */
+/** With no WS connection and the document not loaded: replaces note_states wholesale with content written out from markdown (server-side EditorSession, not via Hocuspocus). */
 async function overwriteState(s: S, markdown: string): Promise<void> {
   const doc = new Y.Doc();
   const ed = await EditorSession.open(testEditingRuntime, doc);
@@ -87,8 +84,8 @@ async function storedText(s: S): Promise<string> {
   return docText(doc);
 }
 
-describe("套用", () => {
-  it("正常：內容＝快照（另一條連線看得到）、區塊 id 保留、基底更新、dirty=false、不增版本、不寫 note_ai_edits、落款是人、note_links 更新", async () => {
+describe("apply", () => {
+  it("normal: content = snapshot (visible on another connection), block ids kept, base updated, dirty=false, no new version, no note_ai_edits written, attributed to the person, note_links updated", async () => {
     const s = await setup();
     const { client, other, v1 } = await twoVersions(s);
     const v1doc = new Y.Doc();
@@ -109,10 +106,10 @@ describe("套用", () => {
     client.disconnect();
     second.disconnect();
     await s.unloaded();
-    expect(await versionsOf(s.ctx.db, s.note.id)).toHaveLength(2); // 卸載不切（#272）
+    expect(await versionsOf(s.ctx.db, s.note.id)).toHaveLength(2); // unload does not cut (#272)
   });
 
-  it("套用再改再切 → 新版 base_seq＝被套用的版號（「從 v1 接著改」）", async () => {
+  it("apply, edit again, then cut -> the new version's base_seq = the applied version number ('continue from v1')", async () => {
     const s = await setup();
     const { client, v1 } = await twoVersions(s);
     await s.apply(1, v1.id);
@@ -122,11 +119,11 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("dirty 且 discardUnsaved=false → version_unsaved_changes、內容不變；discardUnsaved=true → 套用", async () => {
+  it("dirty and discardUnsaved=false -> version_unsaved_changes, content unchanged; discardUnsaved=true -> applies", async () => {
     const s = await setup();
     const { client, v1, v2 } = await twoVersions(s);
     await setBlocks(s, client, [{ type: "paragraph", content: "未存的修改" }], "未存的修改");
-    // 優先序：dirty 文件上 versionId 對不上 → 仍是 version_mismatch（讀列在 isDirty 之前），不是 version_unsaved_changes。
+    // Priority: on a dirty document a mismatching versionId is still version_mismatch (the row is read before isDirty), not version_unsaved_changes.
     expect(await s.apply(1, v2.id)).toEqual({ ok: false, kind: "apply", code: "version_mismatch" });
     expect(await s.apply(1, v1.id)).toEqual({ ok: false, kind: "apply", code: "version_unsaved_changes" });
     expect(docText(s.live())).toContain("未存的修改");
@@ -135,7 +132,7 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("fork 與 merge 之間有人改字：discardUnsaved=true → 第一次重試成功；連續兩次不符 → 409 且內容不變", async () => {
+  it("someone edits text between fork and merge: discardUnsaved=true -> the first retry succeeds; two mismatches in a row -> 409 and content unchanged", async () => {
     const s = await setup();
     const { client, v1 } = await twoVersions(s);
     let n = 0;
@@ -147,7 +144,7 @@ describe("套用", () => {
     expect(n).toBe(2);
     expect(docText(s.live())).not.toContain("插隊一");
     expect(docText(s.live())).toContain("第一版");
-    // 重試那一輪的 out 寫回基底：指向 v1、套用後不 dirty。
+    // The retry round's out is written back to the base: points at v1, not dirty after applying.
     expect((await noteBase(s.ctx.db, s.note.id)).baseSeq).toBe(1);
     expect(await s.ctx.collab.versions.currentOf(s.note.id)).toMatchObject({ baseSeq: 1, dirty: false });
 
@@ -162,7 +159,7 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("discardUnsaved=false 且 fork 之後有人改字 → 第一次重試的 isDirty 就 409（只 merge 一次）", async () => {
+  it("discardUnsaved=false and someone edits text after the fork -> the first retry's isDirty already gives 409 (merges only once)", async () => {
     const s = await setup();
     const { client, v1 } = await twoVersions(s);
     const baseBefore = await noteBase(s.ctx.db, s.note.id);
@@ -173,7 +170,7 @@ describe("套用", () => {
     } });
     expect(await s.apply(1, v1.id)).toEqual({ ok: false, kind: "apply", code: "version_unsaved_changes" });
     expect(n).toBe(1);
-    // 內容沒被套（仍是插隊的那份）、基底不動（仍指向 v2）。
+    // Content was not applied (still the interleaved copy), base unchanged (still points at v2).
     expect(docText(s.live())).toContain("插隊");
     expect(docText(s.live())).not.toContain("第一版");
     expect(baseBefore.baseSeq).toBe(2);
@@ -181,7 +178,7 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("versionId 對不上 → version_mismatch；seq 不存在 → not_found", async () => {
+  it("versionId mismatch -> version_mismatch; seq does not exist -> not_found", async () => {
     const s = await setup();
     const { client, v2 } = await twoVersions(s);
     expect(await s.apply(1, v2.id)).toEqual({ ok: false, kind: "apply", code: "version_mismatch" });
@@ -189,11 +186,11 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("beforeDisconnect 失敗 → 內容已套、基底未更新、待切照清（#272 案 5）、不切版、applying 已清", async () => {
+  it("beforeDisconnect fails -> content applied, base not updated, pending still cleared (#272), no version cut, applying cleared", async () => {
     const s = await setup();
     const { client, v1 } = await twoVersions(s);
     client.disconnect();
-    await s.unloaded(); // 沒有 WS：套用的直連會在 disconnect 時 unload
+    await s.unloaded(); // With no WS the apply's direct connection unloads on disconnect.
     await markPending(s.ctx.db, { noteId: s.note.id, at: new Date(Date.now() - 1000), add: [{ user_id: s.u.id, agent_label: null }], ref: null, spaceKey: `u:${s.u.id}` });
     s.setHooks({ base: async () => { throw new Error("基底寫回失敗（測試）"); } });
     expect(await s.apply(1, v1.id)).toMatchObject({ ok: true });
@@ -208,7 +205,7 @@ describe("套用", () => {
     again.disconnect();
   });
 
-  it("排隊期間該版被刪 → 基底 NULL（0 列分支）、內容照套", async () => {
+  it("the version is deleted while queued -> base NULL (the 0-rows branch), content still applied", async () => {
     const s = await setup();
     const { client, v1 } = await twoVersions(s);
     s.setHooks({ merge: async () => {
@@ -220,7 +217,7 @@ describe("套用", () => {
     client.disconnect();
   });
 
-  it("沒有人開著的筆記（舊筆記、從未有 WS）套用 → version_base_seq＝套用的版號、版本數不變、卸載不切、內容落盤", async () => {
+  it("a note nobody has open (old note, never had a WS) is applied -> version_base_seq = the applied version number, version count unchanged, unload cuts nothing, content persisted", async () => {
     const s = await setup();
     await seedOldNote(s.ctx.db, s.note.id, "舊筆記第一版");
     const r1 = await s.save("一");
@@ -238,7 +235,7 @@ describe("套用", () => {
     expect(text).not.toContain("舊筆記第二版");
   });
 
-  it("沒有人開著的筆記、排隊期間該版被刪 → 基底清空（含 uuid）、待切清空、卸載不切（#272：原本守的「基底寫回先於 disconnect」順序對版本已無影響）", async () => {
+  it("a note nobody has open, the version is deleted while queued -> base cleared (including uuid), pending cleared, unload cuts nothing (#272: the old order 'base write-back before disconnect' no longer affects versions)", async () => {
     const s = await setup();
     await seedOldNote(s.ctx.db, s.note.id, "舊筆記第一版");
     const r1 = await s.save("一");
@@ -261,9 +258,9 @@ describe("套用", () => {
     expect(await storedText(s)).toContain("舊筆記第一版");
   });
 
-  it("空版本套用後 dirty=false（留一顆空段落，fpAfter＝真空指紋）", async () => {
+  it("after applying an empty version dirty=false (leaves one empty paragraph, fpAfter = vacuum fingerprint)", async () => {
     const s = await setup();
-    const empty = await s.save("空"); // 新筆記、沒有基底、真空：手動照建（作者補）
+    const empty = await s.save("空");
     const client = await s.session.connect(s.note.id);
     await setBlocks(s, client, [{ type: "paragraph", content: "後來的內容" }], "後來的內容");
     await s.save();
@@ -275,8 +272,8 @@ describe("套用", () => {
   });
 });
 
-describe("手動儲存（service 半段）", () => {
-  it("乾淨且有基底 → upgraded、總數不變；dirty → 新版；沒有基底的舊筆記（沒載入）→ 建一版；筆記已刪 → note-deleted", async () => {
+describe("manual save (service half)", () => {
+  it("clean with a base -> upgraded, total unchanged; dirty -> new version; an old note with no base (not loaded) -> creates a version; note deleted -> note-deleted", async () => {
     const s = await setup();
     const old = new Y.Doc();
     const ed = await EditorSession.open(testEditingRuntime, old);

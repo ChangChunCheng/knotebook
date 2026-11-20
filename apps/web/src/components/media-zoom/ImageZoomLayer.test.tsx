@@ -12,7 +12,7 @@ import { prefetchMediaLightbox } from "./lightbox-chunk";
 
 vi.mock("./lightbox-chunk", () => ({ loadMediaLightbox: vi.fn(), prefetchMediaLightbox: vi.fn() }));
 
-// DOM 照 BlockNote 的結構手造：.bn-block-outer > .bn-block > .bn-block-content[data-content-type=image] > 調寬框 > img。
+// DOM hand-built after BlockNote's structure: .bn-block-outer > .bn-block > .bn-block-content[data-content-type=image] > resize frame > img.
 const IMAGE = (id: string, extra = "") =>
   `<div class="bn-block-outer" data-id="${id}"><div class="bn-block"><div class="bn-block-content" data-content-type="image"><div class="bn-file-block-content-wrapper">
     <div class="bn-visual-media-wrapper">${extra}<img class="bn-visual-media" src="/api/uploads/x" alt="box.png" data-testid="${id}" /></div>
@@ -24,7 +24,7 @@ const BLOCKS = `
   <div class="bn-block-outer" data-id="lk"><div class="bn-block"><div class="bn-block-content" data-content-type="image"><div class="bn-visual-media-wrapper"><a href="https://example.com/a"><img class="bn-visual-media" src="/api/uploads/y" alt="linked" data-testid="linked" /></a></div></div></div></div>
   <div class="bn-block-column-list" data-node-type="columnList"><div class="bn-block-column" data-node-type="column">${IMAGE("imgc")}</div></div>`;
 
-/** jsdom 的 rect 全是 0：依 selector 墊幾何（其餘元素照舊回 0）。 */
+/** jsdom rects are all 0: pads geometry by selector (other elements still return 0). */
 function stubRects(rects: Array<[string, DOMRect]>) {
   return vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
     return rects.find(([selector]) => this.matches(selector))?.[1] ?? new DOMRect(0, 0, 0, 0);
@@ -39,7 +39,7 @@ function setLoaded(img: HTMLElement, loaded = true, size = { w: 800, h: 600 }) {
 
 function Host({ zoom, editable = true, html = BLOCKS }: { zoom: MediaZoomApi | null; editable?: boolean; html?: string }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
-  // 同一個元素才不會在 rerender 時重設 innerHTML（換掉 img，測試墊的載入狀態就跟著丟了）
+  // Same element so rerender does not reset innerHTML (replacing the img would lose the loaded state the test set up)
   const blocks = useMemo(() => <div dangerouslySetInnerHTML={{ __html: html }} />, [html]);
   return (
     <MediaZoomContext.Provider value={zoom}>
@@ -58,7 +58,7 @@ const hoverImg = (id = "img1") => {
 };
 const zoomBtn = () => screen.queryByLabelText("Zoom in");
 
-describe("#462 圖片放大鈕浮動層", () => {
+describe("#462 image zoom button floating layer", () => {
   let open: ReturnType<typeof vi.fn>;
   let zoom: MediaZoomApi;
   let spies: Array<{ mockRestore: () => void }> = [];
@@ -72,8 +72,8 @@ describe("#462 圖片放大鈕浮動層", () => {
     spies = [];
   });
 
-  it("滑鼠移到圖上 → 鈕在圖右上角內側 4px", () => {
-    // 欄 (100,50) 寬 800；圖 (300,100) 寬 400 高 300；鈕 20×24。
+  it("hovering an image puts the button 4px inside the image's top-right corner", () => {
+    // Column (100,50) width 800; image (300,100) width 400 height 300; button 20x24.
     spies.push(
       stubRects([
         ['[data-testid="col"]', new DOMRect(100, 50, 800, 2000)],
@@ -85,11 +85,11 @@ describe("#462 圖片放大鈕浮動層", () => {
     hoverImg();
     const layer = zoomBtn()!.parentElement!;
     expect(layer).toHaveAttribute("data-kb-zoom-layer");
-    expect(layer.style.top).toBe("54px"); // 圖上緣 100 − 欄上緣 50 + 4
-    expect(layer.style.left).toBe("576px"); // 圖右緣 700 − 欄左緣 100 − 鈕寬 20 − 4
+    expect(layer.style.top).toBe("54px"); // image top 100 - column top 50 + 4
+    expect(layer.style.left).toBe("576px"); // image right 700 - column left 100 - button width 20 - 4
   });
 
-  it("欄內 .kb-diff 預覽裡的圖：hover 沒有鈕、唯讀時不加 tabindex、點了不開", () => {
+  it("an image inside a .kb-diff preview in a column: hover shows no button, read-only adds no tabindex, clicking does not open", () => {
     const html = `<div class="kb-diff">${IMAGE("dimg")}</div>`;
     render(<Host zoom={zoom} html={html} editable={false} />);
     setLoaded(img("dimg"));
@@ -100,7 +100,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("滑鼠移到圖上就預取放大畫面（唯讀也一樣）；移到段落上不預取", () => {
+  it("hovering an image prefetches the zoom view (also when read-only); moving over a paragraph does not prefetch", () => {
     vi.mocked(prefetchMediaLightbox).mockClear();
     render(<Host zoom={zoom} editable={false} />);
     fireEvent.pointerOver(screen.getByText("Body"), { pointerType: "mouse" });
@@ -109,14 +109,14 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(prefetchMediaLightbox).toHaveBeenCalled();
   });
 
-  it("觸控的 pointer 不顯示鈕", () => {
+  it("a touch pointer does not show the button", () => {
     render(<Host zoom={zoom} />);
     setLoaded(img());
     fireEvent.pointerOver(img(), { pointerType: "touch" });
     expect(zoomBtn()).toBeNull();
   });
 
-  it("移到段落上、或 pointer 離開整個欄 → 收起", () => {
+  it("moving over a paragraph, or the pointer leaving the whole column, hides it", () => {
     render(<Host zoom={zoom} />);
     hoverImg();
     expect(zoomBtn()).not.toBeNull();
@@ -128,10 +128,10 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).toBeNull();
   });
 
-  it("壞圖或還沒載好 → hover 也沒有鈕；載好後在圖上派 load → 鈕出現", () => {
+  it("broken or not-yet-loaded image: hover shows no button; dispatching load on the image then shows it", () => {
     render(<Host zoom={zoom} />);
     setLoaded(img(), true);
-    setLoaded(img(), false); // naturalWidth 0、complete false
+    setLoaded(img(), false); // naturalWidth 0, complete false
     fireEvent.pointerOver(img(), { pointerType: "mouse" });
     expect(zoomBtn()).toBeNull();
     setLoaded(img(), true);
@@ -139,13 +139,13 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).not.toBeNull();
   });
 
-  it("只顯示檔名的檔案 block（沒有 img）→ 沒有鈕", () => {
+  it("a file block showing only a file name (no img): no button", () => {
     render(<Host zoom={zoom} />);
     fireEvent.pointerOver(screen.getByText("doc.pdf"), { pointerType: "mouse" });
     expect(zoomBtn()).toBeNull();
   });
 
-  it("點鈕 → open 一次，帶圖與 caption；origin 是鈕與圖", () => {
+  it("clicking the button calls open once with the image and caption; origin is the button and the image", () => {
     render(<Host zoom={zoom} />);
     hoverImg();
     const button = zoomBtn()!;
@@ -157,7 +157,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     );
   });
 
-  it("圖矮（高 60）→ 鈕放在圖外上方；高 300 → 內側", () => {
+  it("short image (height 60): the button sits above the image, outside it; height 300: inside", () => {
     const imgRect = [new DOMRect(300, 100, 400, 60)];
     spies.push(
       stubRects([
@@ -168,7 +168,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     );
     render(<Host zoom={zoom} />);
     hoverImg();
-    expect(zoomBtn()!.parentElement!.style.top).toBe("26px"); // 100 − 50 − 24（下緣貼圖的上緣）
+    expect(zoomBtn()!.parentElement!.style.top).toBe("26px"); // 100 - 50 - 24 (the button's bottom edge touches the image's top edge)
     spies.forEach((s) => s.mockRestore());
     spies = [
       stubRects([
@@ -183,7 +183,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()!.parentElement!.style.top).toBe("54px");
   });
 
-  it("矮圖的鈕在圖外上方：pointer 移到圖的 block 內容區（調寬框外）、block 外框或鈕本身，鈕都還在", () => {
+  it("a short image's button sits above it: the button stays when the pointer moves to the image block's content area (outside the resize frame), the block outer frame, or the button itself", () => {
     spies.push(
       stubRects([
         ['[data-testid="col"]', new DOMRect(100, 50, 800, 2000)],
@@ -202,7 +202,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).not.toBeNull();
   });
 
-  it("同一張圖被推動（尺寸不變）後再 pointerover → 鈕位置重算", () => {
+  it("after the same image is pushed (size unchanged), another pointerover recomputes the button position", () => {
     spies.push(
       stubRects([
         ['[data-testid="col"]', new DOMRect(100, 50, 800, 2000)],
@@ -223,7 +223,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()!.parentElement!.style.left).toBe("616px");
   });
 
-  it("圖載入失敗（error 事件、naturalWidth 歸 0）→ 鈕收起", () => {
+  it("image load failure (error event, naturalWidth back to 0) hides the button", () => {
     render(<Host zoom={zoom} />);
     hoverImg();
     expect(zoomBtn()).not.toBeNull();
@@ -232,7 +232,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).toBeNull();
   });
 
-  it("鈕有焦點時只擋收起：可以換成別張圖", () => {
+  it("while the button has focus it only blocks hiding: it can switch to another image", () => {
     render(<Host zoom={zoom} />);
     hoverImg();
     act(() => zoomBtn()!.focus());
@@ -244,7 +244,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(open.mock.calls.at(-1)![1].media).toBe(img("imgc"));
   });
 
-  it("鈕有焦點時整個浮動層卸載（Provider 拿掉）再裝回：不會卡在「有焦點」而擋住收起", () => {
+  it("when the whole floating layer unmounts while the button has focus (Provider removed) and mounts again, it does not stay stuck on \"has focus\" and block hiding", () => {
     const { rerender } = render(<Host zoom={zoom} />);
     hoverImg();
     act(() => zoomBtn()!.focus());
@@ -256,7 +256,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).toBeNull();
   });
 
-  it("真的 image block：showPreview=false 時沒有 img.bn-visual-media，hover 沒有鈕", async () => {
+  it("real image block: with showPreview=false there is no img.bn-visual-media and hover shows no button", async () => {
     function Real() {
       const [el, setEl] = useState<HTMLElement | null>(null);
       const editor = useCreateBlockNote({
@@ -283,15 +283,15 @@ describe("#462 圖片放大鈕浮動層", () => {
   describe("zoomButtonPlacement", () => {
     const col = new DOMRect(0, 0, 800, 800);
     const btn = { width: 20, height: 24 };
-    it("內側／外側的分界：4 + 鈕高 > 半高 − 15 − 4", () => {
-      // 半高 − 19 恰為 28（鈕高 24 + 4）→ 圖高 94：不算矮；高 92：矮。
+    it("boundary between inside and outside: 4 + button height > half height - 15 - 4", () => {
+      // half height - 19 is exactly 28 (button height 24 + 4): image height 94 is not short; 92 is short.
       expect(zoomButtonPlacement(new DOMRect(0, 100, 400, 94), col, btn).top).toBe(104);
       expect(zoomButtonPlacement(new DOMRect(0, 100, 400, 92), col, btn).top).toBe(76);
     });
   });
 
-  describe("唯讀", () => {
-    it("圖可聚焦；點圖、Enter、Space 各開一次（button null）；editable 改回 true → 屬性拿掉、點圖不開", () => {
+  describe("read-only", () => {
+    it("the image is focusable; click, Enter and Space each open once (button null); when editable returns to true the attribute is removed and clicking does not open", () => {
       const { rerender } = render(<Host zoom={zoom} editable={false} />);
       setLoaded(img());
       expect(img()).toHaveAttribute("tabindex", "0");
@@ -311,7 +311,7 @@ describe("#462 圖片放大鈕浮動層", () => {
       expect(open).toHaveBeenCalledTimes(3);
     });
 
-    it("尚未載好的圖也先標屬性，點下去不開", () => {
+    it("an image not yet loaded is also marked first, and clicking does not open", () => {
       render(<Host zoom={zoom} editable={false} />);
       setLoaded(img(), false);
       expect(img()).toHaveAttribute("tabindex", "0");
@@ -319,7 +319,7 @@ describe("#462 圖片放大鈕浮動層", () => {
       expect(open).not.toHaveBeenCalled();
     });
 
-    it("之後才插進來的圖也會被標上", async () => {
+    it("an image inserted later is marked too", async () => {
       render(<Host zoom={zoom} editable={false} />);
       const wrap = screen.getByTestId("col");
       const outer = document.createElement("div");
@@ -330,27 +330,27 @@ describe("#462 圖片放大鈕浮動層", () => {
       await waitFor(() => expect(screen.getByTestId("late")).toHaveAttribute("tabindex", "0"));
     });
 
-    it("圖包在連結裡 → 點圖不開", () => {
+    it("an image wrapped in a link: clicking the image does not open", () => {
       render(<Host zoom={zoom} editable={false} />);
       setLoaded(img("linked"));
       fireEvent.click(img("linked"));
       expect(open).not.toHaveBeenCalled();
     });
 
-    it("鈕對輔助科技隱藏、不進 Tab 順序", () => {
+    it("the button is hidden from assistive technology and not in the Tab order", () => {
       render(<Host zoom={zoom} editable={false} />);
       hoverImg();
       const button = screen.getByLabelText("Zoom in", { selector: "button" });
       expect(button).toHaveAttribute("tabindex", "-1");
       expect(button).toHaveAttribute("aria-hidden", "true");
-      // 滑鼠點這顆不可聚焦的鈕：origin.button 是 null，關掉後焦點回圖本身
+      // A mouse click on this unfocusable button: origin.button is null, and after closing focus returns to the image itself
       fireEvent.click(button);
       expect(open).toHaveBeenCalledTimes(1);
       expect(open.mock.calls[0]![1]).toEqual({ button: null, media: img() });
     });
   });
 
-  it("內容變動：鈕顯示中才每幀重量一次位置，沒有鈕時不重算", () => {
+  it("on content change: while the button is shown the position is re-measured once per frame; with no button nothing is recomputed", () => {
     let fireChange = () => {};
     const editor = {
       prosemirrorView: { state: { selection: {} } },
@@ -369,7 +369,7 @@ describe("#462 圖片放大鈕浮動層", () => {
         <MediaZoomContext.Provider value={zoom}>
           <div ref={setEl} className="relative" data-testid="col">
             {blocks}
-            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- 假編輯器只有 ImageZoomLayer 用到的三個成員 */}
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the fake editor has only the three members ImageZoomLayer uses */}
             <ImageZoomLayer container={el} editable editor={editor as any} />
           </div>
         </MediaZoomContext.Provider>
@@ -384,7 +384,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(raf, "鈕顯示中：排一次重算").toHaveBeenCalledTimes(1);
   });
 
-  it("放大開著（isOpen）時 pointerleave 不收鈕", () => {
+  it("pointerleave does not hide the button while zoom is open (isOpen)", () => {
     const { rerender } = render(<Host zoom={zoom} />);
     hoverImg();
     rerender(<Host zoom={{ open, isOpen: true }} />);
@@ -392,21 +392,19 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).not.toBeNull();
   });
 
-  it("放大剛關掉、焦點還沒還回來：指標在別的區塊也先不收；焦點回到鈕就留著，沒回來才追上指標", async () => {
+  it("zoom just closed and focus has not been returned yet: the pointer being over another block does not hide the button either; if focus returns to the button it stays, otherwise it catches up with the pointer", async () => {
     const { rerender } = render(<Host zoom={zoom} />);
     hoverImg();
     rerender(<Host zoom={{ open, isOpen: true }} />);
     rerender(<Host zoom={zoom} />);
-    // 關掉的同一個 task 裡指標底下是段落：鈕還在
     fireEvent.pointerOver(screen.getByText("Body"), { pointerType: "mouse" });
     expect(zoomBtn()).not.toBeNull();
-    // 焦點還回鈕（Radix 在下一個 task 做）：之後也不收
     act(() => zoomBtn()!.focus());
+    // Radix returns focus to the button in the next task (hence the setTimeout 0); the button still stays after that.
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
     expect(zoomBtn()).not.toBeNull();
     expect(zoomBtn()).toHaveFocus();
 
-    // 再開一次、關掉後焦點沒回到鈕：凍結結束就追上指標（段落 ⇒ 收起）
     act(() => zoomBtn()!.blur());
     hoverImg();
     rerender(<Host zoom={{ open, isOpen: true }} />);
@@ -417,7 +415,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).toBeNull();
   });
 
-  it("鈕有焦點時不收起；失焦且 pointer 不在圖上才收", () => {
+  it("does not hide while the button has focus; hides only when it has lost focus and the pointer is not over the image", () => {
     render(<Host zoom={zoom} />);
     hoverImg();
     act(() => zoomBtn()!.focus());
@@ -427,7 +425,7 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(zoomBtn()).toBeNull();
   });
 
-  it("沒有 Provider → 不渲染、圖沒有被加 tabindex", () => {
+  it("without a Provider: nothing renders and the image gets no tabindex", () => {
     render(<Host zoom={null} editable={false} />);
     hoverImg();
     expect(zoomBtn()).toBeNull();
@@ -436,13 +434,13 @@ describe("#462 圖片放大鈕浮動層", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("並排欄裡的圖一樣有鈕", () => {
+  it("an image inside a column also has the button", () => {
     render(<Host zoom={zoom} />);
     hoverImg("imgc");
     expect(zoomBtn()).not.toBeNull();
   });
 
-  it("CSS 守衛：拖放中放大鈕浮動層不接指標、且隱藏", () => {
+  it("CSS guard: during a drag-and-drop the zoom button layer takes no pointer and is hidden", () => {
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const rules = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((m) => ({ selector: m[1]!, body: m[2]! }));
     const find = (decl: RegExp) => rules.find((r) => r.selector.includes(".kb-dragging [data-kb-zoom-layer]") && decl.test(r.body));

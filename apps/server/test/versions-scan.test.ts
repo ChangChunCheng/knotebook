@@ -1,5 +1,4 @@
-// #272 待切與掃描器（案 7、10–18、20、22（markPending 的空間述詞）；
-// 服務直接建（fakeHost、不起 Hocuspocus）；待切一律以 `markPending` 寫入，不經 noteStored（尚未接線）。
+// The service is built directly (fakeHost, no Hocuspocus), so pending is always written with `markPending` rather than through noteStored.
 import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
@@ -15,8 +14,8 @@ import { seedGroup, seedNote, seedUser } from "./group-helpers.js";
 import { freshDb } from "./helpers.js";
 import { NO_PENDING, editPara, fakeHost, paraDoc, pendingOf, versionsOf } from "./version-helpers.js";
 
-// 案 14 的「指紋算不出來」：版本指紋本身刻意不丟例外（`version-fingerprint.ts` 檔頭 (3)），所以只對含哨兵字串的文件讓它丟錯；
-// 其他文件照原本的實作算（含本檔的 `vfp`）。
+// "Fingerprint cannot be computed": the version fingerprint itself deliberately never throws (see the header of `version-fingerprint.ts`), so it throws only for documents
+// containing the sentinel string; other documents are computed by the real implementation (including this file's `vfp`).
 vi.mock("../src/notes/version-fingerprint.js", async importOriginal => {
   const real = await importOriginal<typeof import("../src/notes/version-fingerprint.js")>();
   return {
@@ -48,21 +47,20 @@ async function setup(deps: Partial<VersionServiceDeps> = {}) {
   const svc = mk();
   const space = `u:${u.id}`;
   const me = { user_id: u.id, agent_label: null };
-  /** 沒載入的筆記：把 note_states 設成這份內容（掃描器以 `docFor` 讀它）。每篇只能呼叫一次（seedDoc 是 INSERT）。 */
+  /** Note not loaded: sets note_states to this content (the scanner reads it via `docFor`). Call once per note (seedDoc is an INSERT). */
   const store = async (noteId: string, texts: string[]) => {
     const d = paraDoc(texts);
     await seedDoc(db, noteId, d);
     return d;
   };
-  /** 寫一段待切（時刻 `when`、編輯者 `who`、無基底時的參考指紋 `ref`、空間鍵 `sp`）。 */
   const pend = (noteId: string, when: Date, who: Array<{ user_id: string; agent_label: string | null }> = [me], ref: string | null = null, sp = space) =>
     markPending(db, { noteId, at: when, add: who, ref, spaceKey: sp });
   const warnsWith = (needle: string) => warns.filter(w => w.msg.includes(needle)).length;
   return { db, u, note, host, warns, warnsWith, svc, mk, space, me, store, pend };
 }
 
-describe("markPending／clearPendingIfDue", () => {
-  it("案 7：沒有基底時 ref 只在待切開始寫、同段不覆寫；清掉再開一段才換；有基底時 ref 一律 NULL；編輯者先到先排、去重", async () => {
+describe("markPending / clearPendingIfDue", () => {
+  it("with no base ref is written only when pending starts and not overwritten within the same span; cleared and restarted -> replaced; with a base ref is always NULL; editors first come first served, deduplicated", async () => {
     const s = await setup();
     const claude = { user_id: s.u.id, agent_label: "Claude" };
     expect(await s.pend(s.note.id, at(0), [s.me], "ref-1")).toBe(1);
@@ -77,7 +75,7 @@ describe("markPending／clearPendingIfDue", () => {
     expect((await pendingOf(s.db, based.id)).ref).toBeNull();
   });
 
-  it("案 13：clearPendingIfDue 只清「仍到期」的那一段，不清較新的", async () => {
+  it("clearPendingIfDue clears only the span that is still due, not a newer one", async () => {
     const s = await setup();
     await s.pend(s.note.id, at(5 * MIN));
     expect(await clearPendingIfDue(s.db, s.note.id, at(5 * MIN - 1))).toBe(0);
@@ -86,7 +84,7 @@ describe("markPending／clearPendingIfDue", () => {
     expect(await pendingOf(s.db, s.note.id)).toEqual(NO_PENDING);
   });
 
-  it("案 22（空間述詞）：空間鍵對不上（搬家／轉移後才落地的舊落盤）→ 0 列；不是 u:／g: 形 → 0 列", async () => {
+  it("space predicate: space key does not match (an old persist landing after a move/transfer) -> 0 rows; not of the u:/g: shape -> 0 rows", async () => {
     const s = await setup();
     const g = await seedGroup(s.db, "G", [{ userId: s.u.id, role: "admin" }]);
     expect(await s.pend(s.note.id, at(0), [s.me], null, `g:${g.id}`)).toBe(0);
@@ -95,7 +93,7 @@ describe("markPending／clearPendingIfDue", () => {
     expect(await s.pend(s.note.id, at(0))).toBe(1);
   });
 
-  it("agent 名稱含雙引號、反斜線、emoji、CJK，同一人不同 agent → 去重逐字正確；切出的那一版 editors 與名單一致", async () => {
+  it("agent name containing double quotes, backslash, emoji, CJK; the same person with different agents -> deduplicated verbatim; the cut version's editors matches the list", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const list = [`Cl"aude \\ 🤖`, "助手（測試）", "a'b"].map(l => ({ user_id: s.u.id, agent_label: l }));
     await s.store(s.note.id, ["特殊字元名單"]);
@@ -107,8 +105,8 @@ describe("markPending／clearPendingIfDue", () => {
   });
 });
 
-describe("掃描器 scanDue", () => {
-  it("案 10：未到期不切；到期且 dirty → 1 版、editors＝待切編輯者、待切同交易清空", async () => {
+describe("scanner scanDue", () => {
+  it("not due -> no cut; due and dirty -> 1 version, editors = pending editors, pending cleared in the same transaction", async () => {
     const s = await setup({ autoWaitMs: 5 * MIN });
     const claude = { user_id: s.u.id, agent_label: "Claude" };
     await s.store(s.note.id, ["掃描切的內容"]);
@@ -120,7 +118,7 @@ describe("掃描器 scanDue", () => {
     expect(await pendingOf(s.db, s.note.id)).toEqual(NO_PENDING);
   });
 
-  it("案 11：改了又改回（內容＝參考指紋）→ 0 版、清待切", async () => {
+  it("changed and changed back (content = reference fingerprint) -> 0 versions, pending cleared", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const d = await s.store(s.note.id, ["原文"]);
     await s.pend(s.note.id, at(0), [s.me], vfp(d));
@@ -129,7 +127,7 @@ describe("掃描器 scanDue", () => {
     expect(await pendingOf(s.db, s.note.id)).toEqual(NO_PENDING);
   });
 
-  it("案 12：掃描查詢之後、交易之前又有新的落盤（afterMetaRead）→ not-due、0 版、新的待切保留；新的那段到期後照切", async () => {
+  it("a new persist after the scan query but before the transaction (afterMetaRead) -> not-due, 0 versions, the new pending kept; once the new span is due it is cut as usual", async () => {
     let inserted = false;
     const s = await setup();
     const svc = s.mk({
@@ -151,7 +149,7 @@ describe("掃描器 scanDue", () => {
     expect(await versionsOf(s.db, s.note.id)).toHaveLength(1);
   });
 
-  it("案 14：套用中 → 留著（套用結束後切）；自動關閉 → 清、0 版；指紋算不出來 → 清＋warn；筆記已刪 → 略過、不 warn", async () => {
+  it("applying -> kept (cut after apply ends); auto disabled -> cleared, 0 versions; fingerprint cannot be computed -> cleared + warn; note deleted -> skipped, no warn", async () => {
     const s = await setup({ autoWaitMs: 0 });
     await s.store(s.note.id, ["套用中"]);
     await s.pend(s.note.id, at(0));
@@ -190,7 +188,7 @@ describe("掃描器 scanDue", () => {
     expect(s.warns.length).toBe(before);
   });
 
-  it("案 15：載入中與未載入都切；新的服務實例（模擬重啟、記憶體全空）照切", async () => {
+  it("loaded and not loaded are both cut; a new service instance (simulated restart, memory empty) cuts as usual", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const live = paraDoc(["載入中"]);
     s.host.docs.set(s.note.id, live);
@@ -218,7 +216,7 @@ describe("掃描器 scanDue", () => {
     expect(await versionsOf(s.db, later.id)).toHaveLength(1);
   });
 
-  it("案 16：X 在掃描當下讀站台現值（改了立刻作用在已待切筆記）；site_settings 沒有列 → 預設 5 分鐘；deps.autoWaitMs 覆寫 DB；overrideAutoWaitMs 再優先", async () => {
+  it("X is read from the site's current value at scan time (a change acts at once on already-pending notes); no site_settings row -> default 5 minutes; deps.autoWaitMs overrides the DB; overrideAutoWaitMs takes priority over that", async () => {
     const s = await setup();
     await s.store(s.note.id, ["等多久"]);
     await s.pend(s.note.id, at(0));
@@ -246,7 +244,7 @@ describe("掃描器 scanDue", () => {
     expect(await versionsOf(s.db, n3.id)).toHaveLength(1);
   });
 
-  it("案 17：每輪至多 100 篇、先舊後新；並發兩次 scanDue 第二次回 0；stopScan 在篇與篇之間停、剩下的待切保留、之後恆回 0", async () => {
+  it("at most 100 notes per round, oldest first; two concurrent scanDue calls -> the second returns 0; stopScan stops between notes, the remaining pending is kept, and it returns 0 afterwards", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const ids: string[] = [];
     for (let i = 0; i <= VERSION_AUTO_SCAN_BATCH; i += 1) {
@@ -280,7 +278,7 @@ describe("掃描器 scanDue", () => {
     await expect(holder.svc.stopScan()).resolves.toBeUndefined();
   });
 
-  it("案 18：單篇一直丟錯 → 10 分鐘內只 warn 一次、不再進批次；到期重試再失敗再 warn 一次；成功後不再被選到", async () => {
+  it("a note that keeps throwing -> warns only once within 10 minutes and stays out of the batch; fails again on retry after expiry -> warns once more; once it succeeds it is no longer selected", async () => {
     let failing = true;
     const s = await setup();
     const good = await seedNote(s.db, { ownerId: s.u.id });
@@ -307,7 +305,7 @@ describe("掃描器 scanDue", () => {
     expect(s.warnsWith(FAIL)).toBe(2);
   });
 
-  it("文件已載入但版本狀態沒初始化（Map 沒條目）→ 每輪略過、待切保留、只 warn 一次；卸載後下一輪照切", async () => {
+  it("document loaded but version state not initialized (no Map entry) -> skipped every round, pending kept, warns only once; cut as usual in the next round after unload", async () => {
     const s = await setup({ autoWaitMs: 0 });
     await s.store(s.note.id, ["載入了但沒初始化"]);
     await s.pend(s.note.id, at(0));
@@ -322,12 +320,12 @@ describe("掃描器 scanDue", () => {
     expect(await versionsOf(s.db, s.note.id)).toHaveLength(1);
   });
 
-  it("真實形：noteLoaded 讀 DB 失敗留下 initialized:false 條目 → 每輪略過、待切保留、只 warn 一次；forget＋卸載後下一輪照切", async () => {
+  it("real shape: noteLoaded fails reading the DB and leaves an initialized:false entry -> skipped every round, pending kept, warns only once; after forget + unload the next round cuts as usual", async () => {
     const s = await setup({ autoWaitMs: 0 });
     await s.store(s.note.id, ["條目沒初始化"]);
     await s.pend(s.note.id, at(0));
     s.host.docs.set(s.note.id, paraDoc(["條目沒初始化"]));
-    // noteLoaded 讀 DB 失敗時 Map 裡留下的就是這種條目（entryFor 先建、沒走到 initialized:true）；以 noteChanged 建同一形。
+    // This is the shape left in the Map when noteLoaded's DB read fails (entryFor creates it first, never reaching initialized:true); noteChanged builds the same shape.
     s.svc.noteChanged(s.note.id, { userId: s.u.id, agentLabel: null });
     expect(s.svc.debugState(s.note.id)?.initialized).toBe(false);
     expect(await s.svc.scanDue(at(1))).toBe(1);
@@ -342,8 +340,8 @@ describe("掃描器 scanDue", () => {
   });
 });
 
-describe("交易內併待切編輯者（待切中手動儲存）", () => {
-  it("案 20：手動儲存 → editors＝待切 ∪ 記憶體緩衝 ∪ 存檔人（去重、先到先排）、同交易清待切；升級分支也清待切、升級列 editors 不變", async () => {
+describe("merging pending editors inside the transaction (manual save while pending)", () => {
+  it("manual save: editors = pending + in-memory buffer + the saver (deduplicated, first come first served), pending cleared in the same transaction; the upgrade branch also clears pending and leaves the upgraded row's editors unchanged", async () => {
     const s = await setup();
     const other = await seedUser(s.db);
     const doc = paraDoc(["a"]);
@@ -362,7 +360,7 @@ describe("交易內併待切編輯者（待切中手動儲存）", () => {
     expect(await pendingOf(s.db, s.note.id)).toEqual(NO_PENDING);
   });
 
-  it("沒人開著的筆記在待切中被手動儲存（暫時狀態）→ 待切編輯者併進新版、清待切；之後的掃描不再多切", async () => {
+  it("a note nobody has open is manually saved while pending (transient state) -> pending editors merge into the new version, pending cleared; later scans do not cut extra", async () => {
     const s = await setup({ autoWaitMs: 0 });
     const claude = { user_id: s.u.id, agent_label: "Claude" };
     await s.store(s.note.id, ["沒人開著時 AI 寫的"]);

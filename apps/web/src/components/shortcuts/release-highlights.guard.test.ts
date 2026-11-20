@@ -7,14 +7,14 @@ import { RELEASE_HIGHLIGHTS, visibleHighlightItems, type HighlightItem, type Rel
 import registrySource from "./release-highlights.ts?raw";
 
 /**
- * 「這一版新增」登記檔的守衛。發版準備會把 package 版本往上改；登記檔沒跟著改時這裡紅，
- * 舊版的「vX.Y.Z 新增」才不會一路沿用到下一版。檢查寫成純函式，用假資料證明每一條都會紅：
- * 真的登記檔的條目之後可能被清空，只對它跑的話字串那一條什麼都沒檢查到。
+ * Guard for the "What's new" registry. Release preparation raises the package version; this goes red when the registry did not follow, so last release's
+ * "vX.Y.Z new" does not carry on into the next version. The checks are pure functions, each proven to go red with fake data:
+ * the real registry's entries may be emptied later, and run only against it the string check would check nothing.
  */
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 
-/** `a` 是否 ≥ `b`（兩者都得是 X.Y.Z）。逐段比數字，不比字串：字串比會讓 0.9.0 大於 0.10.0。 */
+/** Whether `a` >= `b` (both must be X.Y.Z). Compares segment by segment as numbers, not as strings: string comparison would make 0.9.0 greater than 0.10.0. */
 function versionAtLeast(a: string, b: string): boolean {
   const pa = SEMVER.exec(a);
   const pb = SEMVER.exec(b);
@@ -60,17 +60,17 @@ const BUNDLES = [
   ["zh-TW", shortcutsZhTW],
 ] as const;
 
-describe("release-highlights 登記檔", () => {
-  it("真的登記檔：版本格式對、不低於 package 版本、每個條目的雙語字串都有", () => {
+describe("release-highlights registry", () => {
+  it("real registry: valid version format, not below the package version, every entry has bilingual strings", () => {
     expect(highlightProblems({ highlights: RELEASE_HIGHLIGHTS, packageVersion: webPackage.version, bundles: BUNDLES })).toEqual([]);
   });
 
-  it("條目 id 不重複", () => {
+  it("entry ids are unique", () => {
     const ids = RELEASE_HIGHLIGHTS.items.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("字串包裡沒有登記檔沒列的條目（守殘留字串）", () => {
+  it("the string bundle has no entries missing from the registry (guards leftover strings)", () => {
     const ids = RELEASE_HIGHLIGHTS.items.map((item) => item.id);
     for (const [lang, bundle] of BUNDLES) {
       const items = (get(bundle, "helpGuide.whatsNew.items") ?? {}) as Record<string, unknown>;
@@ -79,21 +79,21 @@ describe("release-highlights 登記檔", () => {
   });
 });
 
-describe("守衛本身（假資料）", () => {
+describe("the guard itself (fake data)", () => {
   const ok = (over: Partial<GuardInput>): string[] =>
     highlightProblems({ highlights: { version: "1.0.0", items: [] }, packageVersion: "1.0.0", bundles: BUNDLES, ...over });
 
-  it("版本等於 package 版本：通過", () => {
+  it("version equal to the package version: passes", () => {
     expect(ok({})).toEqual([]);
   });
 
-  it("版本不是 X.Y.Z：紅", () => {
+  it("version not X.Y.Z: red", () => {
     for (const version of ["1.0", "v1.0.0", "1.0.0-rc.1", "", "1.0.0 "]) {
       expect(ok({ highlights: { version, items: [] } }), version).toHaveLength(1);
     }
   });
 
-  it("版本低於 package 版本：紅（逐段比數字）", () => {
+  it("version below the package version: red (numbers compared per segment)", () => {
     expect(ok({ highlights: { version: "0.15.0", items: [] }, packageVersion: "0.16.0" })).toHaveLength(1);
     expect(ok({ highlights: { version: "0.9.0", items: [] }, packageVersion: "0.10.0" })).toHaveLength(1);
     expect(ok({ highlights: { version: "1.9.9", items: [] }, packageVersion: "2.0.0" })).toHaveLength(1);
@@ -101,7 +101,7 @@ describe("守衛本身（假資料）", () => {
     expect(ok({ highlights: { version: "0.16.0", items: [] }, packageVersion: "0.15.3" })).toEqual([]);
   });
 
-  it("條目缺一種語言的字串：紅", () => {
+  it("an entry missing a language's string: red", () => {
     const bundle = (title: string, desc: string | undefined): unknown => ({
       helpGuide: { whatsNew: { items: { sample: { title, desc } } } },
     });
@@ -116,7 +116,7 @@ describe("守衛本身（假資料）", () => {
     expect(ok({ highlights: { version: "1.0.0", items: [{ id: "missing" }] }, bundles: BUNDLES })).toHaveLength(4);
   });
 
-  it("adminOnly 不是布林：紅；省略、true、false：通過", () => {
+  it("adminOnly not a boolean: red; omitted, true, false: pass", () => {
     const bundle: unknown = { helpGuide: { whatsNew: { items: { sample: { title: "T", desc: "D" } } } } };
     const bundles = [
       ["en", bundle],
@@ -134,26 +134,26 @@ describe("守衛本身（假資料）", () => {
 describe("visibleHighlightItems", () => {
   const items: HighlightItem[] = [{ id: "a" }, { id: "b", adminOnly: true }, { id: "c", adminOnly: false }, { id: "d", adminOnly: true }];
 
-  it("一般使用者看不到 adminOnly 的條目，順序不變", () => {
+  it("an ordinary user does not see adminOnly entries, order unchanged", () => {
     expect(visibleHighlightItems(items, false).map((i) => i.id)).toEqual(["a", "c"]);
   });
 
-  it("站台管理員全部看得到", () => {
+  it("a site admin sees everything", () => {
     expect(visibleHighlightItems(items, true).map((i) => i.id)).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("空清單與全是 adminOnly：一般使用者得到空陣列", () => {
+  it("empty list and all adminOnly: an ordinary user gets an empty array", () => {
     expect(visibleHighlightItems([], false)).toEqual([]);
     expect(visibleHighlightItems([{ id: "x", adminOnly: true }], false)).toEqual([]);
   });
 
-  it("不改傳入的陣列", () => {
+  it("does not modify the passed array", () => {
     const copy = [...items];
     visibleHighlightItems(items, false);
     expect(items).toEqual(copy);
   });
 
-  it("真的登記檔：adminOnly 條目一般使用者看不到、管理員看得到，其餘兩邊都看得到", () => {
+  it("real registry: adminOnly entries are invisible to an ordinary user and visible to an admin, the rest to both", () => {
     const all = RELEASE_HIGHLIGHTS.items.map((i) => i.id);
     const adminOnlyIds = RELEASE_HIGHLIGHTS.items.filter((i) => i.adminOnly === true).map((i) => i.id);
     const everyoneIds = RELEASE_HIGHLIGHTS.items.filter((i) => i.adminOnly !== true).map((i) => i.id);
@@ -165,12 +165,12 @@ describe("visibleHighlightItems", () => {
   });
 });
 
-/** 說明視窗的 chunk 會讀登記檔，所以登記檔與說明視窗都不能把導覽的程式（站點表等）帶進同一個 chunk。 */
-describe("匯入守衛", () => {
+/** The help dialog's chunk reads the registry, so neither the registry nor the help dialog may pull the tour's code (site table etc.) into the same chunk. */
+describe("import guard", () => {
   const IMPORT_FROM = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["']([^"']+)["']/g;
   const importsOf = (source: string): string[] => [...source.matchAll(IMPORT_FROM)].map((m) => m[1]!);
 
-  /** 把 import 的路徑解成相對於 `src/`、沒有副檔名的路徑；套件名回 null。 */
+  /** Resolves an import path to a path relative to `src/` without extension; package names give null. */
   function resolveImport(fromFile: string, spec: string): string | null {
     let resolved: string;
     if (spec.startsWith("@/")) resolved = posix.normalize(spec.slice(2));
@@ -179,7 +179,7 @@ describe("匯入守衛", () => {
     return resolved.replace(/\/index$/, "").replace(/\.(tsx?|jsx?)$/, "");
   }
 
-  /** `sources` 的鍵是相對於 `src/` 的檔案路徑；回傳有 import 到 `isTarget` 為真的那些檔。 */
+  /** Keys of `sources` are file paths relative to `src/`; returns the files that import something for which `isTarget` is true. */
   function importers(sources: Record<string, string>, isTarget: (resolved: string) => boolean): string[] {
     return Object.entries(sources)
       .filter(([file, source]) =>
@@ -195,7 +195,7 @@ describe("匯入守衛", () => {
   const isRegistry = (resolved: string): boolean => resolved === REGISTRY;
   const isTourDir = (resolved: string): boolean => resolved === "components/tour" || resolved.startsWith("components/tour/");
 
-  /** glob 的鍵（相對於本檔）轉成相對於 `src/` 的路徑。 */
+  /** Converts a glob key (relative to this file) into a path relative to `src/`. */
   const fromSrc = (sources: Record<string, string>): Record<string, string> =>
     Object.fromEntries(Object.entries(sources).map(([key, source]) => [posix.join("components/shortcuts", key), source]));
 
@@ -210,7 +210,7 @@ describe("匯入守衛", () => {
     import.meta.glob(["./*.{ts,tsx}", "!./*.test.{ts,tsx}"], { query: "?raw", import: "default", eager: true }) as Record<string, string>,
   );
 
-  it("掃得到檔案（glob 沒落空）", () => {
+  it("the glob finds files (it did not come up empty)", () => {
     const tourFiles = Object.keys(tourSources);
     expect(tourFiles.filter((f) => f.startsWith("components/tour/")).length).toBeGreaterThan(5);
     expect(tourFiles).toContain("lib/tour-bridge.ts");
@@ -218,23 +218,23 @@ describe("匯入守衛", () => {
     expect(Object.keys(shortcutSources)).toContain("components/shortcuts/ShortcutsDialog.tsx");
   });
 
-  it("導覽程式（導覽目錄、lib/tour-*、collab/tour-*）沒有任何檔 import 登記檔", () => {
+  it("the tour code (tour directory, lib/tour-*, collab/tour-*) has no file importing the registry", () => {
     expect(importers(tourSources, isRegistry)).toEqual([]);
   });
 
-  it("登記檔本身沒有 import", () => {
+  it("the registry itself has no imports", () => {
     expect(importsOf(registrySource)).toEqual([]);
     expect(registrySource).not.toMatch(/^\s*(import|export\s+.*\s+from)\b/m);
   });
 
-  it("說明視窗目錄底下（非測試）沒有檔 import 導覽目錄", () => {
+  it("no non-test file under the help dialog directory imports the tour directory", () => {
     expect(importers(shortcutSources, isTourDir)).toEqual([]);
   });
 
-  describe("守衛本身（假資料）", () => {
+  describe("the guard itself (fake data)", () => {
     const from = (file: string, spec: string): Record<string, string> => ({ [file]: `import { x } from "${spec}";` });
 
-    it("各種寫法都解得到同一個目標", () => {
+    it("various spellings all resolve to the same target", () => {
       for (const spec of [
         "@/components/shortcuts/release-highlights",
         "../shortcuts/release-highlights",
@@ -249,7 +249,7 @@ describe("匯入守衛", () => {
       expect(importers(from("components/shortcuts/A.tsx", "../tour"), isTourDir)).toEqual(["components/shortcuts/A.tsx"]);
     });
 
-    it("不相干的 import 不算", () => {
+    it("unrelated imports do not count", () => {
       const src = {
         "components/tour/a.ts": 'import a from "react"; import b from "./stops"; import c from "@/lib/x"; import d from "../shortcuts/shortcut-list";',
       };
@@ -257,7 +257,7 @@ describe("匯入守衛", () => {
       expect(importers(from("components/shortcuts/A.tsx", "../tourist/x"), isTourDir)).toEqual([]);
     });
 
-    it("動態 import 與 re-export 也抓得到", () => {
+    it("dynamic import and re-export are also caught", () => {
       expect(importers({ "lib/tour-x.ts": 'const m = import("@/components/shortcuts/release-highlights");' }, isRegistry)).toEqual(["lib/tour-x.ts"]);
       expect(importers({ "lib/tour-x.ts": 'export * from "../components/shortcuts/release-highlights";' }, isRegistry)).toEqual(["lib/tour-x.ts"]);
     });

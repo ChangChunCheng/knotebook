@@ -52,9 +52,8 @@ function renderTitle(
   return queryClient;
 }
 
-/** PATCH 回應：server 回的是整份更新後的 NoteDto。預設沿用原 slug（多數案不關心網址）；
- * 要驗「title 變更→auto slug 重算→網址收斂」的案自行傳新 slug（真 server 對
- * slugIsCustom=false 必重算，stub 不自動模擬這件事）。 */
+/** PATCH response: the server returns the whole updated NoteDto. Keeps the original slug by default (most cases ignore the URL);
+ * cases covering a title change -> auto slug recompute pass a new slug (the real server always recomputes for slugIsCustom=false; the stub doesn't simulate it). */
 function patchOk(title: string, slug: string = NOTE.slug) {
   return fakeResponse({ ok: true, status: 200, json: () => Promise.resolve({ ...NOTE, title, slug }) });
 }
@@ -78,7 +77,6 @@ describe("TitleInput", () => {
     renderTitle();
     fireEvent.change(screen.getByLabelText("Note title"), { target: { value: "New title" } });
 
-    // 還沒到 800ms：什麼都不該送出。
     act(() => void vi.advanceTimersByTime(TITLE_DEBOUNCE_MS - 50));
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -91,7 +89,7 @@ describe("TitleInput", () => {
     expect(JSON.parse(String(init.body))).toEqual({ title: "New title" });
   });
 
-  it("只送最後一次——連續輸入不會每個字元都打一次 PATCH", async () => {
+  it("sends only the last value: continuous typing does not PATCH per keystroke", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk("abc")));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -110,7 +108,7 @@ describe("TitleInput", () => {
     });
   });
 
-  it("blur 立刻沖出待存的修改，不等計時器", async () => {
+  it("blur flushes the pending change immediately without waiting for the timer", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk("Blurred")));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -121,15 +119,13 @@ describe("TitleInput", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    // 沖出去之後計時器不該再補送一次。
     act(() => void vi.advanceTimersByTime(TITLE_DEBOUNCE_MS + 100));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("存檔成功後把回應寫回 ['note', note.id] 快取，且**不自己動網址**（收斂交 NotePage effect）", async () => {
-    // 「存檔後網址更新」的行為覆蓋**移轉**至 NotePage 的收斂 effect 測試（
-    // NotePage.test 的「以舊形 uuid ref 開頁…replace 成新形 canonical」＋閘門案承接；#179 起收斂走
-    // router navigate）。本檔沒掛 router：元件若改用 useNavigate 會直接 throw，這裡只守 window.history。
+  it("writes the response into the ['note', note.id] cache and leaves the URL alone (convergence belongs to the NotePage effect)", async () => {
+    // Coverage of the URL update after a save moved to the NotePage convergence-effect tests (NotePage.test.tsx); since #179 the
+    // convergence goes through router navigate. This file mounts no router: switching the component to useNavigate would throw, so only window.history is guarded here.
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(patchOk("Brand New", "brand-new"))),
@@ -141,11 +137,10 @@ describe("TitleInput", () => {
     fireEvent.blur(screen.getByLabelText("Note title"));
 
     await waitFor(() => expect(queryClient.getQueryData<NoteDto>(["note", NOTE.id])?.title).toBe("Brand New"));
-    // 單一寫網址點：本元件不動網址（不 replaceState、也不 navigate）——網址必須留在原地
     expect(window.location.pathname).toBe(before);
   });
 
-  it("標題沒有實際改變時不送 PATCH", async () => {
+  it("does not PATCH when the title did not actually change", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk(NOTE.title)));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -158,7 +153,7 @@ describe("TitleInput", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("清空標題後 blur → 不送 PATCH（server 端 min(1)），還原成原標題", async () => {
+  it("clearing the title then blur does not PATCH (server requires min(1)) and restores the original title", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk(NOTE.title)));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -172,7 +167,7 @@ describe("TitleInput", () => {
     expect(input).toHaveValue(NOTE.title);
   });
 
-  it("PATCH 失敗 → toast 顯示對應錯誤並還原輸入框", async () => {
+  it("PATCH failure shows a toast with the matching error and restores the input", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>
@@ -195,7 +190,7 @@ describe("TitleInput", () => {
     expect(input).toHaveValue(NOTE.title);
   });
 
-  /** 送出後停在飛行中的 PATCH：回傳「讓這次請求落地」的函式，讓測試能在往返期間插入輸入。 */
+  /** PATCH left in flight after submit: returns a function that lets the request land, so tests can type during the round trip. */
   function pendingPatch() {
     let settle!: (response: Response) => void;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => (settle = resolve)));
@@ -206,16 +201,16 @@ describe("TitleInput", () => {
     };
   }
 
-  it("PATCH 失敗 → 使用者在請求往返期間繼續打的字不被還原蓋掉", async () => {
+  it("PATCH failure: text typed during the round trip is not overwritten by the restore", async () => {
     const { fetchMock, settle } = pendingPatch();
 
     renderTitle();
     const input = screen.getByLabelText("Note title");
     fireEvent.change(input, { target: { value: "Nope" } });
-    fireEvent.blur(input); // 送出 "Nope"
+    fireEvent.blur(input);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    fireEvent.change(input, { target: { value: "Still typing" } }); // 請求還在路上時繼續打
+    fireEvent.change(input, { target: { value: "Still typing" } });
     settle(
       fakeResponse({
         ok: false,
@@ -228,7 +223,7 @@ describe("TitleInput", () => {
     expect(input).toHaveValue("Still typing");
   });
 
-  it("PATCH 成功 → 使用者在請求往返期間繼續打的字不被伺服器回應蓋掉", async () => {
+  it("PATCH success: text typed during the round trip is not overwritten by the server response", async () => {
     const { fetchMock, settle } = pendingPatch();
 
     const queryClient = renderTitle();
@@ -240,15 +235,14 @@ describe("TitleInput", () => {
     fireEvent.change(input, { target: { value: "Saved and more" } });
     settle(patchOk("Saved", "saved"));
 
-    // 完成訊號＝**快取回寫已發生**（本元件不動網址；快取寫入在回應處理的最後
-    // 一步，等到它＝整條成功路徑跑完），再斷輸入框沒被回音蓋掉——同步斷言會落在
-    // settle 的 microtask 鏈之前，變成恆真空轉（讀碼審抓到的形）。
+    // Completion signal is the cache write-back (the last step of response handling, so the whole success path has run);
+    // a synchronous assertion would run before the settle microtask chain and pass vacuously.
     await waitFor(() => expect(queryClient.getQueryData<NoteDto>(["note", NOTE.id])?.title).toBe("Saved"));
     expect(input).toHaveValue("Saved and more");
   });
 
-  // 換篇空窗：網址已換到別篇、畫面仍是這篇。空窗裡打的字不收，不然 blur／debounce 會存進這篇。
-  it("isNavigatingAway() 為真時不收輸入：值不變，blur 與 debounce 都不送 PATCH", async () => {
+  // Navigation gap: the URL already points at another note while this one is still on screen. Input typed in the gap is ignored, otherwise blur/debounce would save it into this note.
+  it("ignores input while isNavigatingAway() is true: value unchanged, neither blur nor debounce sends a PATCH", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk("Typed in the gap")));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -265,7 +259,7 @@ describe("TitleInput", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("空窗前已打的字照樣在 blur 時存進這篇（那是在這篇上打的）", async () => {
+  it("text typed before the gap is still saved to this note on blur (it was typed on this note)", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(patchOk("Typed before")));
     vi.stubGlobal("fetch", fetchMock);
     let away = false;
@@ -276,14 +270,14 @@ describe("TitleInput", () => {
     away = true;
     fireEvent.blur(input);
 
-    // 要在 debounce 到期前就送出——由 blur 沖出，不是靠計時器補送
+    // Sent before the debounce expires: blur flushes it, the timer does not.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: TITLE_DEBOUNCE_MS / 2 });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`/api/notes/${NOTE.id}`);
     expect(JSON.parse(String(init.body))).toEqual({ title: "Typed before" });
   });
 
-  it("readOnly（viewer）→ 顯示純文字，沒有輸入框", () => {
+  it("readOnly (viewer) renders plain text without an input", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new Error("should not fetch"))),
@@ -295,14 +289,14 @@ describe("TitleInput", () => {
     expect(screen.getByRole("heading", { name: NOTE.title })).toBeInTheDocument();
   });
 
-  // 收縮契約（class 斷言：jsdom 無版面，量不到 64px，只能守 class）。viewer 頁首的徽章文字最長，
-  // 標題不可掉回 min-w-0（會先被壓到幾乎 0 才輪到標籤截斷）。
-  it("readOnly 的 <h1> 帶 min-w-16 收縮下限（class 契約）", () => {
+  // Shrink contract, asserted on the class: jsdom has no layout, so 64px cannot be measured. The viewer header's badge text is the longest;
+  // the title must not fall back to min-w-0 (it would be squeezed to almost 0 before the label truncates).
+  it("readOnly <h1> carries the min-w-16 shrink floor (class contract)", () => {
     renderTitle({ readOnly: true });
     expect(screen.getByRole("heading", { name: NOTE.title })).toHaveClass("min-w-16");
   });
 
-  it("外部（別人改的）標題變動會同步到輸入框", async () => {
+  it("external title changes (made by someone else) sync into the input", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new Error("should not fetch"))),

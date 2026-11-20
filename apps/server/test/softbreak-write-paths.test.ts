@@ -1,9 +1,4 @@
-/**
- * #386：段落內換行經 markdown 寫入後，下一行開頭不得多一個空白——每條寫入路徑寫進含段落內換行的內容，讀出逐字比對：
- * REST 建立（`POST /api/notes` 帶 content）、REST `/edits` 四個寫內容的 op、MCP `create_note`、MCP `edit_note` 四個寫內容的 op、
- * 批次寫回（改段落、新增段落、原樣送回）、檔案寫回新增筆記。另驗修好前寫入、資料庫裡已帶空白的舊內容：讀出 → 原樣寫回不產生改動。
- * 寫入管線與讀出的單元層在 `unit/softbreak-386.test.ts`。
- */
+// The unit level of the write pipeline and read-out is in `unit/softbreak-386.test.ts`.
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildCollabTestApp } from "./helpers.js";
@@ -11,14 +6,12 @@ import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
 import { seedNote, seedUser } from "./group-helpers.js";
 import { bulkPut, callTool, downloadNote, editBody, issueBulkDirect, liveMarkdown, seedBlocks } from "./bulk-transfer-helpers.js";
 
-/** 三種段落內換行寫法：軟換行、`\` 換行、行尾兩空白。 */
 const FORMS = [
-  ["軟換行", "行一ABC\n行二DEF"],
-  ["\\ 換行", "行一ABC\\\n行二DEF"],
-  ["行尾兩空白", "行一ABC  \n行二DEF"],
-  ["CRLF 軟換行", "行一ABC\r\n行二DEF"],
+  ["soft line break", "行一ABC\n行二DEF"],
+  ["backslash line break", "行一ABC\\\n行二DEF"],
+  ["two trailing spaces", "行一ABC  \n行二DEF"],
+  ["CRLF soft line break", "行一ABC\r\n行二DEF"],
 ] as const;
-/** 讀出的形：`\` 換行、下一行開頭沒有空白。 */
 const READ = "行一ABC\\\n行二DEF";
 
 async function scene() {
@@ -38,14 +31,14 @@ const restEdit = (app: FastifyInstance, token: string, id: string, body: Record<
   app.inject({ method: "POST", url: `/api/notes/${id}/edits`, headers: bearer(token), payload: body });
 
 describe("#386 REST", () => {
-  it.each(FORMS)("POST /api/notes 帶 content（%s）→ 讀出 %j", async (_l, md) => {
+  it.each(FORMS)("POST /api/notes with content (%s) -> reads back %j", async (_l, md) => {
     const s = await scene();
     const r = await restCreate(s.ctx.app, s.pat.token, md);
     expect(r.statusCode).toBe(201);
     expect((await contentOf(s.ctx.app, r.json().id, s.pat.token)).markdown).toBe(`${READ}\n`);
   });
 
-  it("POST /edits：append、replace_all、replace_section、insert_after 寫進去的換行都不多空白", async () => {
+  it("POST /edits: line breaks written by append, replace_all, replace_section and insert_after gain no extra space", async () => {
     const s = await scene();
     const id = (await restCreate(s.ctx.app, s.pat.token, "# A\n\nold\n\n# B\n\nkeep")).json().id as string;
     expect((await restEdit(s.ctx.app, s.pat.token, id, { op: "append", markdown: "ap1\nap2" })).statusCode).toBe(201);
@@ -61,14 +54,13 @@ describe("#386 REST", () => {
     expect((await restEdit(s.ctx.app, s.pat.token, id, { op: "replace_all", markdown: "ra1  \nra2", if_match: c.fingerprint })).statusCode).toBe(201);
     c = await contentOf(s.ctx.app, id, s.pat.token);
     expect(c.markdown).toBe("ra1\\\nra2\n");
-    // CRLF：段落尾不留空白、換行後不多空白
     expect((await restEdit(s.ctx.app, s.pat.token, id, { op: "replace_all", markdown: "p\r\n\r\nc1\r\nc2\r\n", if_match: c.fingerprint })).statusCode).toBe(201);
     expect((await contentOf(s.ctx.app, id, s.pat.token)).markdown).toBe("p\n\nc1\\\nc2\n");
   });
 });
 
 describe("#386 MCP", () => {
-  it.each(FORMS)("create_note 帶 content（%s）→ 讀出 %j", async (_l, md) => {
+  it.each(FORMS)("create_note with content (%s) -> reads back %j", async (_l, md) => {
     const s = await scene();
     const r = await callTool(s.ctx.app, s.pat.token, "create_note", { title: "T", content: md });
     expect(r.isError).toBeUndefined();
@@ -76,7 +68,7 @@ describe("#386 MCP", () => {
     expect((await contentOf(s.ctx.app, id, s.pat.token)).markdown).toBe(`${READ}\n`);
   });
 
-  it("edit_note：append、replace_section、insert_after、replace_all 寫進去的換行都不多空白", async () => {
+  it("edit_note: line breaks written by append, replace_section, insert_after and replace_all gain no extra space", async () => {
     const s = await scene();
     const r0 = await callTool(s.ctx.app, s.pat.token, "create_note", { title: "T", content: "# A\n\nold\n\n# B\n\nkeep" });
     const id = (r0.structuredContent as { note: { id: string } }).note.id;
@@ -102,13 +94,13 @@ describe("#386 MCP", () => {
   });
 });
 
-describe("#386 實例：引言裡的粗體＋inline code＋換行，edit_note replace_section 讀出原樣寫回", () => {
-  it("讀出 → replace_section 寫回 → 再讀出逐字相同（三輪）", async () => {
+describe("#386 real case: bold + inline code + line break in a lead paragraph, edit_note replace_section writes the read-out back unchanged", () => {
+  it("read -> replace_section write back -> read again is identical (three rounds)", async () => {
     const s = await scene();
     const note = await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "Q" });
     const B = { bold: true };
     const C = { code: true };
-    // agent 寫 `**test 跟 lint 沒有 `soft_` 開關，是刻意的。**` 存成的形（粗體在 code 兩側斷開、粗體跨換行）＋修好前換行後多的那格空白
+    // The shape an agent writing `**test and lint have no `soft_` switch, on purpose.**` ends up stored as (bold broken on both sides of the code, bold spanning a newline), plus the extra space after the newline from before the fix.
     await seedBlocks(s.ctx.db, note.id, [
       { type: "heading", props: { level: 2 }, content: "說明" },
       {
@@ -141,7 +133,7 @@ describe("#386 實例：引言裡的粗體＋inline code＋換行，edit_note re
   });
 });
 
-describe("#386 批次寫回", () => {
+describe("#386 batch write-back", () => {
   async function bulkScene() {
     const s = await scene();
     const bulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "write" });
@@ -150,7 +142,7 @@ describe("#386 批次寫回", () => {
     return { ...s, bulk, note };
   }
 
-  it.each(FORMS)("檔案新增兩行段落（%s）→ applied、讀出逐字；改另一段再送 → 那段不動；原樣再送 → unchanged", async (_l, md) => {
+  it.each(FORMS)("file adds a two-line paragraph (%s) -> applied, read back verbatim; editing another paragraph and resending leaves that one untouched; resending as is -> unchanged", async (_l, md) => {
     const s = await bulkScene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, body => body.replace("原文。", `原文。\n\n${md}`)));
@@ -167,7 +159,7 @@ describe("#386 批次寫回", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, d3.text)).json()).toMatchObject({ result: "unchanged" });
   });
 
-  it("改兩行段落本身（換掉第一行）→ 寫回後下一行開頭沒有空白；反覆三輪都一樣", async () => {
+  it("editing the two-line paragraph itself (replacing the first line) -> no space at the start of the next line after write-back; same over three rounds", async () => {
     const s = await bulkScene();
     let d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, body => body.replace("原文。", "行一ABC\n行二DEF")));
@@ -179,7 +171,7 @@ describe("#386 批次寫回", () => {
     }
   });
 
-  it.each(FORMS)("沒有 id 的檔（新增筆記，%s）→ 201、讀出逐字", async (_l, md) => {
+  it.each(FORMS)("file without an id (new note, %s) -> 201, read back verbatim", async (_l, md) => {
     const s = await bulkScene();
     const r = await bulkPut(s.ctx.app, s.bulk.token, `---\nknotebook: 1\ntitle: "New"\n---\n${md}\n`);
     expect(r.statusCode).toBe(201);
@@ -187,7 +179,7 @@ describe("#386 批次寫回", () => {
   });
 });
 
-describe("#386 修好前寫入的舊內容（下一行開頭帶一格空白，不做資料修正）", () => {
+describe("#386 old content written before the fix (next line starts with one space; no data repair)", () => {
   async function oldScene() {
     const s = await scene();
     const bulk = await issueBulkDirect(s.ctx.db, s.pat.tokenId, { access: "write" });
@@ -200,7 +192,7 @@ describe("#386 修好前寫入的舊內容（下一行開頭帶一格空白，�
   }
   const OLD_READ = "行一ABC<br> 行二DEF";
 
-  it("讀出用行內 <br> 留住那格空白；批次原樣送回 unchanged；改另一段送回 → 舊段不動", async () => {
+  it("read-out keeps that space with an inline <br>; batch resend as is -> unchanged; editing another paragraph and resending leaves the old paragraph untouched", async () => {
     const s = await oldScene();
     expect((await contentOf(s.ctx.app, s.note.id, s.pat.token)).markdown).toBe(`起頭。\n\n${OLD_READ}\n`);
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
@@ -210,16 +202,16 @@ describe("#386 修好前寫入的舊內容（下一行開頭帶一格空白，�
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(`起頭改。\n\n${OLD_READ}\n`);
   });
 
-  it("批次：把舊段整段（含讀出的 <br>）改動又改回、連同相鄰段一起送 → 舊段的空白照留", async () => {
+  it("batch: the old paragraph (including the read-out <br>) is changed and changed back, sent together with its neighbour -> the old paragraph's space is kept", async () => {
     const s = await oldScene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
-    // 起頭與舊段相鄰、兩段都在改寫區裡：舊段的文字原樣、只是被一起重新解析
+    // The start is adjacent to the old paragraph and both are in the rewrite region: the old paragraph's text stays as is and is only re-parsed together.
     const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, body => body.replace(`起頭。\n\n${OLD_READ}`, `起頭改。\n\n${OLD_READ}`)));
     expect(r.json()).toMatchObject({ result: "applied" });
     expect(await liveMarkdown(s.ctx, s.note.id)).toBe(`起頭改。\n\n${OLD_READ}\n`);
   });
 
-  it("edit_note：讀出的整篇原樣 replace_all 寫回 → 內容與指紋不變", async () => {
+  it("edit_note: replace_all with the whole read-out as is -> content and fingerprint unchanged", async () => {
     const s = await oldScene();
     const c = await contentOf(s.ctx.app, s.note.id, s.pat.token);
     const r = await callTool(s.ctx.app, s.pat.token, "edit_note", { note_id: s.note.id, op: "replace_all", markdown: c.markdown, if_match: c.fingerprint });

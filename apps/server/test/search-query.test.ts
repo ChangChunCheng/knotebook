@@ -1,7 +1,3 @@
-/**
- * #93：查詢（M1 排序、M2 可見性、M4 字面比對、matches、S18 隔離等級與快照、非 ASCII／窗口、回填前只中標題）。函式層——MCP 輸出在
- * `test/mcp-search.test.ts`。
- */
 import { describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
@@ -20,8 +16,8 @@ const at = (db: Db, id: string, iso: string) => db.update(notes).set({ updatedAt
 const search = (db: Db, userId: string, query: string, limit = 20) => searchNotesForUser(db, { userId, query, limit });
 const idsOf = (r: Awaited<ReturnType<typeof search>>) => r.rows.map(x => x.id);
 
-describe("M1 排序與兩欄", () => {
-  it("標題完全相等＞前綴＞包含＞只中內文；同組 updatedAt desc；title_hit／body_hit 三種組合", async () => {
+describe("ranking and the two columns", () => {
+  it("title equal > prefix > contains > body only; updatedAt desc within a group; the three title_hit/body_hit combinations", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const exact = await seedIndexedNote(db, { ownerId: u.id }, "report", [{ id: "p", text: "nothing here" }]);
@@ -38,7 +34,7 @@ describe("M1 排序與兩欄", () => {
     expect(r.rows.map(x => [x.titleHit, x.bodyHit])).toEqual([[true, false], [true, false], [true, true], [false, true], [false, true]]);
   });
 
-  it("只中內文的同一組內以 updatedAt desc、再 id desc 決勝", async () => {
+  it("within the body-only group ties break by updatedAt desc, then id desc", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const a = await seedIndexedNote(db, { ownerId: u.id }, "a", [{ id: "p", text: "tie zeta" }]);
@@ -47,7 +43,7 @@ describe("M1 排序與兩欄", () => {
     expect(idsOf(await search(db, u.id, "zeta"))).toEqual([a.id, b.id].sort().reverse());
   });
 
-  it("limit：多取一列判 truncated；matches 只涵蓋前 limit 列", async () => {
+  it("limit: one extra row decides truncated; matches covers only the first limit rows", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const t = await seedIndexedNote(db, { ownerId: u.id }, "kappa title", [{ id: "p", text: "x" }]);
@@ -58,8 +54,8 @@ describe("M1 排序與兩欄", () => {
   });
 });
 
-describe("M2 可見性（索引列與權限無關，可見性只來自三支 union）", () => {
-  it("私人／分享／撤分享／群組成員／非成員／can_read=false／殘留分享列／個人筆記移入群組／成員被移出", async () => {
+describe("visibility (index rows are independent of permissions; visibility comes only from the three-way union)", () => {
+  it("private / shared / unshared / group member / non-member / can_read=false / residual share row / personal note moved into a group / member removed", async () => {
     const { db } = await freshDb();
     const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const Q = "secret-xyz";
@@ -85,7 +81,7 @@ describe("M2 可見性（索引列與權限無關，可見性只來自三支 uni
 
     const g2 = await seedGroup(db, "G2", [{ userId: a.id, role: "admin" }]);
     const g2n = await seedIndexedNote(db, { groupId: g2.id }, "g2", [{ id: "p", text: `g2 ${Q}` }]);
-    await db.insert(noteShares).values({ noteId: g2n.id, userId: c.id, role: "viewer" }); // 群組筆記上的殘留分享列
+    await db.insert(noteShares).values({ noteId: g2n.id, userId: c.id, role: "viewer" }); // residual share row on a group note
     expect(await check(c.id)).toEqual([]);
 
     const moved = await seedIndexedNote(db, { ownerId: a.id }, "m", [{ id: "p", text: `moved ${Q}` }]);
@@ -101,13 +97,13 @@ describe("M2 可見性（索引列與權限無關，可見性只來自三支 uni
     expect(await check(c.id)).toEqual([]);
   });
 
-  it("別人的筆記只中標題或只中內文都不出現；群組成員＋殘留分享列恰出現一次；can_read=false／退出群組後消失；陌生人兩句皆空", async () => {
+  it("others' notes matching only the title or only the body do not appear; group member with a residual share row appears exactly once; gone after can_read=false / leaving the group; a stranger gets both statements empty", async () => {
     const { db } = await freshDb();
     const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
     const Q = "leakprobe";
     await seedIndexedNote(db, { ownerId: a.id }, `title ${Q}`, [{ id: "p", text: "plain" }]);
     await seedIndexedNote(db, { ownerId: a.id }, "plain", [{ id: "p", text: `body ${Q}` }]);
-    // B 自己有一篇內文命中——結果非空，第二句（matches）一定會發，才驗得到它沒帶出別人的 id。
+    // B has a body hit of their own, so the result is non-empty and the second statement (matches) is always sent: the only way to verify it did not bring out others' ids.
     const own = await seedIndexedNote(db, { ownerId: b.id }, "mine", [{ id: "p", text: `own ${Q}` }]);
     let r = await search(db, b.id, Q);
     expect(idsOf(r)).toEqual([own.id]);
@@ -115,9 +111,9 @@ describe("M2 可見性（索引列與權限無關，可見性只來自三支 uni
 
     const g = await seedGroup(db, "G", [{ userId: a.id, role: "admin" }, { userId: b.id, role: "member" }]);
     const gn = await seedIndexedNote(db, { groupId: g.id }, `grp ${Q}`, [{ id: "p", text: `grp body ${Q}` }]);
-    await db.insert(noteShares).values({ noteId: gn.id, userId: b.id, role: "editor" }); // 殘留分享列：shared 支的 group_id IS NULL 排除
+    await db.insert(noteShares).values({ noteId: gn.id, userId: b.id, role: "editor" }); // residual share row: excluded by group_id IS NULL on the shared branch
     r = await search(db, b.id, Q);
-    expect(idsOf(r).sort()).toEqual([own.id, gn.id].sort()); // 恰一次，union all 沒有重複
+    expect(idsOf(r).sort()).toEqual([own.id, gn.id].sort()); // exactly once: union all has no duplicates
     await setMemberRole(db, g.id, b.id, await seedRole(db, g.id, "Blind", { canRead: false }));
     expect(idsOf(await search(db, b.id, Q))).toEqual([own.id]);
     await db.delete(groupMembers).where(and(eq(groupMembers.groupId, g.id), eq(groupMembers.userId, b.id)));
@@ -129,8 +125,8 @@ describe("M2 可見性（索引列與權限無關，可見性只來自三支 uni
   });
 });
 
-describe("M4 字面比對（SQL 層；NUL 在 MCP 的輸入 schema 擋下，見 mcp-notes.test.ts）", () => {
-  it("% 與 _ 在內文也是字面", async () => {
+describe("literal matching (SQL level; NUL is blocked by the MCP input schema, see mcp-notes.test.ts)", () => {
+  it("% and _ are literal in the body too", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const under = await seedIndexedNote(db, { ownerId: u.id }, "t1", [{ id: "p", text: "a_b" }]);
@@ -142,8 +138,8 @@ describe("M4 字面比對（SQL 層；NUL 在 MCP 的輸入 schema 擋下，見 
   });
 });
 
-describe("matches 第二句", () => {
-  it("每篇最多 3 個、按 ord；窗口欄位一致", async () => {
+describe("matches (second statement)", () => {
+  it("at most 3 per note, ordered by ord; window fields are consistent", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const blocks = [0, 1, 2, 3, 4].flatMap(i => [{ id: `h${i}`, type: "heading", text: `H${i}` }, { id: `p${i}`, text: `${"w".repeat(50)} zeta ${i}` }]);
@@ -157,7 +153,7 @@ describe("matches 第二句", () => {
       expect(x.heading).toMatch(/^H\d$/);
     }
   });
-  it("整頁都只中標題 → 不發第二句（matches 為空）", async () => {
+  it("whole page matches only the title -> the second statement is not sent (matches is empty)", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     await seedIndexedNote(db, { ownerId: u.id }, "omega title", [{ id: "p", text: "x" }]);
@@ -165,8 +161,8 @@ describe("matches 第二句", () => {
   });
 });
 
-describe("S18 隔離等級", () => {
-  it("runNoteSearchInTx 之後同一交易內 transaction_isolation＝repeatable read、read_only＝on", async () => {
+describe("isolation level", () => {
+  it("after runNoteSearchInTx the same transaction reports transaction_isolation = repeatable read and read_only = on", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const res = await db.transaction(async tx => {
@@ -176,7 +172,7 @@ describe("S18 隔離等級", () => {
     expect(res.rows[0]).toEqual({ iso: "repeatable read", ro: "on" });
   });
 
-  it("第二句釘在第一句的快照上：兩句之間另一條連線刪掉索引列，第二句仍看得到（READ COMMITTED 下會紅）", async () => {
+  it("the second statement is pinned to the first one's snapshot: another connection deletes the index rows between the two statements and the second still sees them (would go red under READ COMMITTED)", async () => {
     const { db, url } = await freshDb();
     const other = new pg.Pool({ connectionString: url, max: 1 });
     try {
@@ -209,17 +205,17 @@ describe("S18 隔離等級", () => {
         return out;
       });
       expect(res.rows.map(x => x.bodyHit)).toEqual([true]);
-      expect(res.matches.length).toBe(1); // REPEATABLE READ：刪除對第二句不可見
+      expect(res.matches.length).toBe(1); // REPEATABLE READ: the delete is invisible to the second statement
       const left = await db.execute<{ n: number }>(sql`select count(*)::int as n from note_search_sections where note_id = ${n.id}::uuid`);
-      expect(left.rows[0]!.n).toBe(0); // 刪除確實發生了
+      expect(left.rows[0]!.n).toBe(0);
     } finally {
       await other.end();
     }
   });
 });
 
-describe("非 ASCII 與窗口（libc locale）", () => {
-  it("CJK 子字串；西里爾字母大小寫不敏感；字面的反斜線與引號；emoji 包圍的命中窗口以 code point 計、沒有孤立代理", async () => {
+describe("non-ASCII and windows (libc locale)", () => {
+  it("CJK substring; Cyrillic is case-insensitive; literal backslash and quotes; hit windows around emoji count code points with no lone surrogates", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const cjk = await seedIndexedNote(db, { ownerId: u.id }, "無關", [{ id: "p", text: "這是全文搜尋的測試內容" }]);
@@ -242,8 +238,8 @@ describe("非 ASCII 與窗口（libc locale）", () => {
   });
 });
 
-describe("回填前只中標題（description 的 after-an-upgrade 句的守衛）", () => {
-  it("有 note_states、沒有索引 → 內文搜不到；回填後搜得到", async () => {
+describe("before backfill only the title matches (guard for the after-an-upgrade sentence in the description)", () => {
+  it("has note_states but no index -> the body is not searchable; searchable after backfill", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n = await seedNote(db, { ownerId: u.id }, { title: "plain" });
@@ -256,22 +252,18 @@ describe("回填前只中標題（description 的 after-an-upgrade 句的守衛�
   });
 });
 
-// ─── #93：bodyOnly 與 keyset 分頁 ───────────────────────────────────────────────
-
-/** 微秒精度直設 updated_at（`at()` 走 JS Date，只有毫秒）。 */
+/** Sets updated_at at microsecond precision (`at()` goes through a JS Date, which has only milliseconds). */
 const atUs = (db: Db, id: string, iso: string) => db.execute(sql`update notes set updated_at = ${iso}::timestamptz where id = ${id}::uuid`);
 type PageKey = { rank: number; updatedAtKey: string; id: string };
 const keyOf = (row: { rank: number; updatedAtKey?: string; id: string }): PageKey => {
   if (row.updatedAtKey === undefined) throw new Error("page 模式的列沒有 updatedAtKey");
   return { rank: row.rank, updatedAtKey: row.updatedAtKey, id: row.id };
 };
-/** 一頁：回這頁的 id 與下一個 key（沒有下一頁＝null）。 */
 async function onePage(db: Db, userId: string, query: string, limit: number, after: PageKey | null, bodyOnly?: boolean) {
   const r = await searchNotesForUser(db, { userId, query, limit, ...(bodyOnly !== undefined ? { bodyOnly } : {}), page: { after } });
   const page = r.rows.slice(0, limit);
   return { ids: page.map(x => x.id), next: r.rows.length > limit ? keyOf(page.at(-1)!) : null };
 }
-/** 從 after 一路翻到底（每頁取第 limit 列做下一個 key）。 */
 async function pageAll(db: Db, userId: string, query: string, limit: number, bodyOnly?: boolean, after: PageKey | null = null): Promise<string[]> {
   const out: string[] = [];
   for (let i = 0; i < 100; i += 1) {
@@ -284,8 +276,8 @@ async function pageAll(db: Db, userId: string, query: string, limit: number, bod
 }
 const P = [{ id: "p", text: "nothing here" }];
 
-describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
-  it("Q1 bodyOnly：只中標題／兩者／只中內文 → 回後兩篇、both 在前；不帶 → 三篇", async () => {
+describe("bodyOnly and keyset pagination (#93)", () => {
+  it("bodyOnly: title-only / both / body-only -> returns the last two, both first; without it -> three notes", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const t = await seedIndexedNote(db, { ownerId: u.id }, "zq1 title", P);
@@ -296,7 +288,7 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(new Set(idsOf(await search(db, u.id, "zq1")))).toEqual(new Set([t.id, both.id, body.id]));
   });
 
-  it("Q2 擠出問題：25 篇只中標題＋1 篇只中內文、limit 20、bodyOnly → 回那 1 篇", async () => {
+  it("crowding out: 25 title-only notes + 1 body-only note, limit 20, bodyOnly -> returns that 1 note", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     for (let i = 0; i < 25; i += 1) await seedIndexedNote(db, { ownerId: u.id }, `zq2 t${i}`, P);
@@ -305,7 +297,7 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(idsOf(r)).toEqual([body.id]);
   });
 
-  it("Q3 翻頁不重複不漏：3 篇同 rank 同微秒（id 決勝）＋較小 rank＋較大 rank", async () => {
+  it("paging without repeats or gaps: 3 notes with the same rank and microsecond (id breaks ties) + a lower rank + a higher rank", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     await seedIndexedNote(db, { ownerId: u.id }, "zq3", P); // rank 0
@@ -320,7 +312,7 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(new Set(paged).size).toBe(5);
   });
 
-  it("Q4 同毫秒不同微秒：兩頁各一篇、都拿得到", async () => {
+  it("same millisecond, different microseconds: two pages of one note each, both returned", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const a = await seedIndexedNote(db, { ownerId: u.id }, "plain a", [{ id: "p", text: "zq4" }]);
@@ -333,20 +325,20 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(await pageAll(db, u.id, "zq4", 1)).toEqual([a.id, b.id]);
   });
 
-  it("Q5 跨 rank 邊界（bodyOnly）：2 篇 both＋2 篇只中內文、limit 1 翻 4 頁 → 順序同一次取", async () => {
+  it("across a rank boundary (bodyOnly): 2 both + 2 body-only, limit 1 over 4 pages -> same order as a single fetch", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     await seedIndexedNote(db, { ownerId: u.id }, "zq5", [{ id: "p", text: "zq5" }]); // rank 0
     await seedIndexedNote(db, { ownerId: u.id }, "x zq5", [{ id: "p", text: "zq5" }]); // rank 2
     await seedIndexedNote(db, { ownerId: u.id }, "plain 1", [{ id: "p", text: "zq5" }]);
     await seedIndexedNote(db, { ownerId: u.id }, "plain 2", [{ id: "p", text: "zq5" }]);
-    await seedIndexedNote(db, { ownerId: u.id }, "zq5 title only", P); // bodyOnly 下不出現
+    await seedIndexedNote(db, { ownerId: u.id }, "zq5 title only", P);
     const all = await pageAll(db, u.id, "zq5", 50, true);
     expect(all.length).toBe(4);
     expect(await pageAll(db, u.id, "zq5", 1, true)).toEqual(all);
   });
 
-  it("Q6 與可見性交互：A 的游標給 B；翻頁間撤銷分享；owned／shared／grouped 同 updated_at 各一頁", async () => {
+  it("interaction with visibility: A's cursor given to B; share revoked between pages; owned/shared/grouped with the same updated_at one per page", async () => {
     const { db } = await freshDb();
     const [a, b] = await Promise.all([seedUser(db), seedUser(db)]);
     const body = [{ id: "p", text: "zq6" }];
@@ -357,12 +349,10 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     await atUs(db, aOwn.id, "2026-03-01T00:00:00.000003Z");
     await atUs(db, shared.id, "2026-03-01T00:00:00.000002Z");
     await atUs(db, bOld.id, "2026-03-01T00:00:00.000001Z");
-    // A 的第一頁游標拿給 B：只回 B 看得到、排在 key 之後的列，沒有錯誤。
     const aFirst = await onePage(db, a.id, "zq6", 1, null);
     expect(aFirst.ids).toEqual([aOwn.id]);
     expect(await pageAll(db, b.id, "zq6", 1, undefined, aFirst.next)).toEqual([shared.id, bOld.id]);
 
-    // B 自己翻：第一頁後撤銷還沒拿到的那篇的分享 → 後續頁不含它、其餘照常。
     const bNew = await seedIndexedNote(db, { ownerId: b.id }, "b new", body);
     await atUs(db, bNew.id, "2026-03-01T00:00:00.000009Z");
     const bFirst = await onePage(db, b.id, "zq6", 1, null);
@@ -370,7 +360,6 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     await db.delete(noteShares).where(and(eq(noteShares.noteId, shared.id), eq(noteShares.userId, b.id)));
     expect(await pageAll(db, b.id, "zq6", 1, undefined, bFirst.next)).toEqual([bOld.id]);
 
-    // owned／shared／grouped 三支各一篇、updated_at 相同 → 三頁各一篇、無重複。
     const { db: db2 } = await freshDb();
     const [x, y] = await Promise.all([seedUser(db2), seedUser(db2)]);
     const g = await seedGroup(db2, "G", [{ userId: x.id, role: "admin" }, { userId: y.id, role: "member" }]);
@@ -385,13 +374,13 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(paged.length).toBe(3);
   });
 
-  it("Q8 旁觀者：沒命中的最舊筆記從不出現；bodyOnly 下同 rank、較舊的只中標題筆記也不出現", async () => {
+  it("bystander: the oldest non-matching note never appears; under bodyOnly an older title-only note of the same rank does not appear either", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const both = await seedIndexedNote(db, { ownerId: u.id }, "x zq8 y", [{ id: "p", text: "zq8" }]); // rank 2
     const titleOnly = await seedIndexedNote(db, { ownerId: u.id }, "a zq8 b", P); // rank 2
     const bodyN = await seedIndexedNote(db, { ownerId: u.id }, "plain", [{ id: "p", text: "zq8" }]); // rank 3
-    const none = await seedIndexedNote(db, { ownerId: u.id }, "nothing", P); // 沒命中（CASE 落到 3）
+    const none = await seedIndexedNote(db, { ownerId: u.id }, "nothing", P);
     await atUs(db, both.id, "2026-05-01T00:00:00.000005Z");
     await atUs(db, titleOnly.id, "2026-05-01T00:00:00.000004Z");
     await atUs(db, bodyN.id, "2026-05-01T00:00:00.000003Z");
@@ -400,9 +389,9 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     expect(await pageAll(db, u.id, "zq8", 1, true)).toEqual([both.id, bodyN.id]);
   });
 
-  it("Q7 游標的錨點消失或變動：錨點進垃圾桶仍接得上；未拿到的被推到最新 → 漏；已拿到的改名變大 rank → 再出現一次", async () => {
+  it("cursor anchor disappears or changes: anchor in trash still resumes; a not-yet-received note pushed to newest is missed; a received note renamed to a larger rank appears again", async () => {
     const body = [{ id: "p", text: "zq7" }];
-    // 錨點進垃圾桶：keyset 只看值。
+    // Anchor in the trash: keyset looks only at values.
     const { db } = await freshDb();
     const u = await seedUser(db);
     const n3 = await seedIndexedNote(db, { ownerId: u.id }, "p3", body);
@@ -416,7 +405,7 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     await db.execute(sql`update notes set deleted_at = now() where id = ${n3.id}::uuid`);
     expect(await pageAll(db, u.id, "zq7", 1, undefined, first.next)).toEqual([n2.id, n1.id]);
 
-    // 還沒拿到的被推到最新 → 後續頁不會出現（已知會漏，文件寫明；web 不補）。
+    // A note not yet received is pushed to newest -> it does not appear on later pages (a known gap, documented; the web does not compensate).
     const { db: db2 } = await freshDb();
     const v = await seedUser(db2);
     const m3 = await seedIndexedNote(db2, { ownerId: v.id }, "m3", body);
@@ -430,7 +419,7 @@ describe("Q bodyOnly 與 keyset 分頁（#93）", () => {
     await atUs(db2, m1.id, "2026-06-02T00:00:00.000000Z");
     expect(await pageAll(db2, v.id, "zq7", 1, undefined, f2.next)).toEqual([m2.id]);
 
-    // 已拿到的改名、rank 變大（0 → 3）→ 在後續頁再出現一次（web 端以 id 去重）。
+    // A note already received is renamed and its rank grows (0 -> 3) -> it appears once more on later pages (the web dedupes by id).
     const { db: db3 } = await freshDb();
     const w = await seedUser(db3);
     const exact = await seedIndexedNote(db3, { ownerId: w.id }, "zq7", body); // rank 0

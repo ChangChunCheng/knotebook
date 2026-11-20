@@ -1,10 +1,7 @@
 /**
- * #132：同意頁的兩支站內端點。
- *
- * 這一族守的是：①`GET /api/oauth/request` **不消費**（頁面可重新整理）、不吃桶；
- * ②單次消費——allow 與 deny 都消費，連點兩下只建一個 code；③額度要扣掉會被這次授權
- * 取代的那一列（否則「20 支且其中一支是本 client」重新授權會吃 409）；④兩支都是
- * cookie 專用、站內錯誤形；⑤不變量 S：`req` 進 SQL 述詞前先過正規式。
+ * GET /api/oauth/request doesn't consume (the page can be refreshed) and isn't charged to the limiter; allow and deny both consume
+ * (a double click makes one code); the quota subtracts the row this authorization will replace (otherwise re-authorizing with 20 where
+ * one is this client's would 409); `req` goes through a regex before entering a SQL predicate, so strings Postgres can't store are rejected first.
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -15,7 +12,6 @@ const CHALLENGE = "a".repeat(43);
 const ISSUER = testConfig.publicUrl.origin;
 const RESOURCE = `${ISSUER}/api/mcp`;
 
-/** 註冊 client 並走完 authorize，回 pending request 的 id 與 client_id。 */
 async function startFlow(
   app: TestApp["app"],
   options: { redirectUri?: string; scope?: string; clientId?: string } = {}
@@ -49,7 +45,7 @@ function decide(app: TestApp["app"], cookie: string, body: object) {
   return app.inject({ method: "POST", url: "/api/oauth/decision", headers: { cookie }, payload: body });
 }
 
-/** #239：allow 一律要帶 `scope`。既有案送讀寫搬移，由 server 的 narrowerScope 夾回 pending（等價 #239 前的行為）。 */
+/** allow always carries `scope` (#239). Existing cases send read/write/move, which the server's narrowerScope clamps back to pending (same as before #239). */
 const RWM = "notes:read notes:write notes:move";
 const RWD = "notes:read notes:write notes:delete";
 const RWMD = "notes:read notes:write notes:move notes:delete";
@@ -57,7 +53,6 @@ const RWMD = "notes:read notes:write notes:move notes:delete";
 const getRequest = (app: TestApp["app"], cookie: string, req: string) =>
   app.inject({ method: "GET", url: `/api/oauth/request?req=${req}`, headers: { cookie } });
 
-/** 給某使用者塞一列某 client 的 oauth grant（同本檔既有插 api_tokens 的欄位組）。 */
 async function seedGrant(db: TestApp["db"], userId: string, clientId: string, scope: string, tag: string) {
   await db.insert(apiTokens).values({
     userId,
@@ -72,7 +67,7 @@ async function seedGrant(db: TestApp["db"], userId: string, clientId: string, sc
 }
 
 describe("GET /api/oauth/request", () => {
-  it("200 回四要素；不消費（可重新整理）", async () => {
+  it("200 returns the four fields; doesn't consume (refreshable)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -82,20 +77,20 @@ describe("GET /api/oauth/request", () => {
         expect(res.statusCode).toBe(200);
         expect(res.json()).toEqual({
           clientName: "Test client",
-          redirectHost: "127.0.0.1:5678", // 刻意含 port
+          redirectHost: "127.0.0.1:5678", // deliberately includes a port
           scope: "notes:read notes:write",
           scopes: ["notes:read", "notes:write"],
           replacesExisting: false,
           existingScope: null,
         });
       }
-      expect(await db.select().from(oauthRequests)).toHaveLength(1); // 沒被消費
+      expect(await db.select().from(oauthRequests)).toHaveLength(1); // not consumed
     } finally {
       await close();
     }
   });
 
-  it("未登入 → 401（cookie 專用）", async () => {
+  it("not logged in -> 401 (cookie only)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const { req } = await startFlow(app);
@@ -106,12 +101,12 @@ describe("GET /api/oauth/request", () => {
     }
   });
 
-  it("查無、已過期、缺 req、req 形狀不對 → 410 oauth_request_invalid（同形，不當 oracle）", async () => {
+  it("not found, expired, missing req, malformed req -> 410 oauth_request_invalid (same shape, not an oracle)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
-      // 不變量 S：`req` 進 SQL 述詞前先過正規式。**NUL 那兩發是承重案**——拿掉
-      // `REQUEST_ID_RE`，其他值只是查不到列而已，只有 NUL 會讓 PG 22021 冒成 500。
+      // Strings that Postgres can't store (NUL, lone surrogates) must be rejected before any SQL predicate: `req` goes through a regex first. **The two NUL requests are load-bearing**: without
+      // `REQUEST_ID_RE` other values merely find no row, only NUL makes PG raise 22021 and surface as a 500.
       for (const bad of ["nope", "", "\u0000", `a\u0000${"b".repeat(20)}`, "x".repeat(65), "A".repeat(22).replace("A", "!")]) {
         const res = await app.inject({
           method: "GET",
@@ -134,7 +129,7 @@ describe("GET /api/oauth/request", () => {
     }
   });
 
-  it("stored redirect_uri 已與註冊不符（client 改註冊）→ 404", async () => {
+  it("stored redirect_uri no longer matches the registration (client re-registered) -> 404", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -150,13 +145,13 @@ describe("GET /api/oauth/request", () => {
     }
   });
 
-  it("replacesExisting：呼叫者本人已有同 client 的 grant 時為 true；別人的不算", async () => {
+  it("replacesExisting: true when the caller already has a grant for the same client; someone else's doesn't count", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
       const other = await createUserAndLogin(db);
       const { clientId, req } = await startFlow(app);
-      // 別人的 grant：request 列沒有 user_id，這一格不可能洩漏他人狀態
+      // Someone else's grant: the request row has no user_id, so this cell can't leak other users' state
       await db.insert(apiTokens).values({
         userId: other.userId,
         kind: "oauth",
@@ -187,7 +182,7 @@ describe("GET /api/oauth/request", () => {
     }
   });
 
-  it("連打 40 次不 429（GET 不吃桶）", async () => {
+  it("40 requests in a row never 429 (GET isn't charged)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -203,14 +198,14 @@ describe("GET /api/oauth/request", () => {
 });
 
 describe("POST /api/oauth/decision", () => {
-  it("allow → 200 redirectTo 帶 code／state／iss，並建一列 oauth_codes", async () => {
+  it("allow -> 200 with redirectTo carrying code/state/iss, and creates one oauth_codes row", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
       const { clientId, req } = await startFlow(app, { scope: "notes:write" });
-      // register 幾秒前才把 last_used_at 設成 now()——先推回 10 天前，下面那條
-      // 「建 code 後更新 last_used_at」的 UPDATE 被拿掉時才分得出來。
-      const staleStamp = new Date(Date.now() - 10 * 86_400_000); // 須 < 機會性清理 ① 的 30 天，否則 client 會被清掉
+      // register set last_used_at to now() a few seconds ago: push it back 10 days first, otherwise removing the "update
+      // last_used_at after creating the code" UPDATE below couldn't be detected.
+      const staleStamp = new Date(Date.now() - 10 * 86_400_000); // must be < the idle-client delete's 30 days, else the client would be purged
       await db.update(oauthClients).set({ lastUsedAt: staleStamp }).where(sql`${oauthClients.clientId} = ${clientId}`);
       const res = await decide(app, cookie, { req, decision: "allow", scope: RWM });
       expect(res.statusCode).toBe(200);
@@ -223,7 +218,7 @@ describe("POST /api/oauth/decision", () => {
 
       const rows = await db.select().from(oauthCodes);
       expect(rows).toHaveLength(1);
-      // 明文不落庫（DB 只有 sha256）；其餘欄位從 pending request 抄過來
+      // plaintext isn't stored (the DB has only the sha256); other fields are copied from the pending request
       expect(rows[0]!.codeHash).not.toBe(code);
       expect(rows[0]!.codeHash).toMatch(/^[0-9a-f]{64}$/);
       expect(rows[0]!.userId).toBe(userId);
@@ -235,7 +230,7 @@ describe("POST /api/oauth/decision", () => {
       expect(ttl).toBeGreaterThan(9 * 60_000);
       expect(ttl).toBeLessThanOrEqual(10 * 60_000);
 
-      // 建 code 時連帶更新 client 的 last_used_at（機會性清理 ① 的依據）
+      // creating the code also updates the client's last_used_at (the idle-client delete's criterion)
       const [client] = await db.select().from(oauthClients);
       expect(client!.lastUsedAt.getTime()).toBeGreaterThan(staleStamp.getTime());
       expect(Date.now() - client!.lastUsedAt.getTime()).toBeLessThan(5_000);
@@ -244,7 +239,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("state 缺席時 redirectTo 不帶 state；單值 scope 的 DTO 形狀", async () => {
+  it("no state -> redirectTo carries no state; DTO shape for a single-value scope", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -277,7 +272,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("deny → 200 redirectTo 帶 access_denied，且同樣消費 pending request", async () => {
+  it("deny -> 200 redirectTo carries access_denied, and also consumes the pending request", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -297,7 +292,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("I6：同一個 req 兩次 allow → 第二次 410，且只建一個 code", async () => {
+  it("same req allowed twice -> second 410, and only one code created", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -312,7 +307,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("body 形狀錯 → 400 invalid_body；req 形狀不對 → 410（不變量 S）", async () => {
+  it("wrong body shape -> 400 invalid_body; wrong req shape -> 410 (unstorable strings rejected before SQL)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -321,9 +316,9 @@ describe("POST /api/oauth/decision", () => {
         expect(res.statusCode, JSON.stringify(body)).toBe(400);
         expect(res.json().error.code).toBe("invalid_body");
       }
-      // 同上：NUL 那兩發是唯一分得出「有守衛」與「沒守衛但查不到」的案
+      // Same as above: the NUL requests are what tell "guarded" from "unguarded but nothing found"
       for (const req of ["\u0000", `a\u0000${"b".repeat(20)}`, "nope", "x".repeat(65)]) {
-        // 補合法 scope：不補會先被 body 驗證擋成 400，不變量 S 的守衛就測不到了
+        // Add a valid scope: without it body validation rejects with 400 first and the guard against unstorable strings wouldn't be reached
         const res = await decide(app, cookie, { req, decision: "allow", scope: RWM });
         expect(res.statusCode, JSON.stringify(req)).toBe(410);
         expect(res.headers["content-type"], JSON.stringify(req)).toContain("application/json");
@@ -334,7 +329,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("未登入 → 401；mustChangePassword → 403 且不消費", async () => {
+  it("not logged in -> 401; mustChangePassword -> 403 and doesn't consume", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { req } = await startFlow(app);
@@ -345,13 +340,13 @@ describe("POST /api/oauth/decision", () => {
       const res = await decide(app, locked.cookie, { req, decision: "allow", scope: RWM });
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe("forbidden");
-      expect(await db.select().from(oauthRequests)).toHaveLength(1); // 沒被白吃掉
+      expect(await db.select().from(oauthRequests)).toHaveLength(1); // not wasted
     } finally {
       await close();
     }
   });
 
-  it("I1：20 支計入額度的 grant 時 409；其中一支屬本 client 時放行", async () => {
+  it("quota: 20 counted grants -> 409; when one belongs to this client it passes", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
@@ -378,23 +373,23 @@ describe("POST /api/oauth/decision", () => {
       });
 
       const ok = await decide(app, cookie, { req, decision: "allow", scope: RWM });
-      expect(ok.statusCode).toBe(200); // 扣掉會被這次授權取代的那一列
+      expect(ok.statusCode).toBe(200); // the row this authorization replaces is subtracted
 
-      // 換一個新 client：同樣 20 支，這次沒得扣 → 409
+      // A new client: also 20, nothing to subtract this time -> 409
       const other = await startFlow(app);
       const limited = await decide(app, cookie, { req: other.req, decision: "allow", scope: RWM });
       expect(limited.statusCode).toBe(409);
       expect(limited.json().error.code).toBe("token_limit");
-      // 409 那一發仍然消費了 pending request（I6 在額度檢查之前）
+      // The 409 request still consumed the pending request (the single-use check runs before the quota check)
       expect((await decide(app, cookie, { req: other.req, decision: "allow", scope: RWM })).statusCode).toBe(410);
     } finally {
       await close();
     }
   });
 
-  // I1 額度的「有效」定義守衛：oauth grant 一律計入，**access 過期也算**
-  // （refresh 不到期）。把述詞寫成「未過期才計」的話這一案會變 200。
-  it("20 支 oauth grant 全部 access 過期，對新 client 授權仍 409", async () => {
+  // Guards the definition of "counted" for the quota: oauth grants always count, **even when access has expired** (refresh never
+  // expires). If the predicate counted only unexpired ones this case would be 200.
+  it("20 oauth grants all with expired access: authorizing a new client still gets 409", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
@@ -415,7 +410,7 @@ describe("POST /api/oauth/decision", () => {
           accessExpiresAt: sql`now() - interval '1 hour'`,
         });
       }
-      const { req } = await startFlow(app); // 全新的第 21 個 client
+      const { req } = await startFlow(app); // a brand new 21st client
       const res = await decide(app, cookie, { req, decision: "allow", scope: RWM });
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe("token_limit");
@@ -424,7 +419,7 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("消費後 client 已被改註冊（stored redirect_uri 不符）→ 404", async () => {
+  it("client re-registered after consumption (stored redirect_uri mismatch) -> 404", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -441,12 +436,12 @@ describe("POST /api/oauth/decision", () => {
     }
   });
 
-  it("decision 的機會性清理排在消費之前：pending request 跨過 24h 邊界的殭屍 client → 410 不是 500", async () => {
+  it("decision's opportunistic cleanup runs before consumption: a pending request whose zombie client crossed the 24 h boundary -> 410, not 500", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
       const { clientId, req } = await startFlow(app);
-      // 把 client 推回 25 小時前：它沒有 grant／code，機會性清理 ② 會清掉它（CASCADE 帶走 request）
+      // Push the client back 25 hours: it has no grant/code, so the zombie delete removes it (CASCADE takes the request)
       await db
         .update(oauthClients)
         .set({ createdAt: sql`now() - interval '25 hours'` })
@@ -459,8 +454,8 @@ describe("POST /api/oauth/decision", () => {
   });
 });
 
-describe("#239 decision scope", () => {
-  it("(a) allow 缺 scope → 400，pending 仍在（GET request 仍 200）", async () => {
+describe("decision scope (#239)", () => {
+  it("allow without scope -> 400, pending still there (GET request still 200)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -475,9 +470,9 @@ describe("#239 decision scope", () => {
     }
   });
 
-  // 「不在落庫形內」那一半：別名與缺 write 的組合一律 400，不正規化、不消費（#181 起是五形）。
+  // The "not a stored shape" half: aliases and combinations missing write are always 400, neither normalized nor consumed (five shapes since #181).
   it.each(["notes:write", "notes:read notes:move", "notes:move", "notes:read notes:delete"])(
-    "(a') allow 帶非落庫形 scope=%s → 400，pending 仍在；同一 req 帶合法 scope 仍可 allow",
+    "allow with a non-stored scope=%s -> 400, pending still there; the same req with a valid scope can still be allowed",
     async scope => {
       const { app, db, close } = await buildTestApp();
       try {
@@ -495,17 +490,17 @@ describe("#239 decision scope", () => {
   );
 
   it.each([
-    [RWM, "notes:read notes:write", "notes:read notes:write"], // (b)
-    ["notes:write", RWM, "notes:read notes:write"], // (c) 夾回 pending
-    [RWM, "notes:read", "notes:read"], // (d)
-    // #181 OD：授予＝要求 ∩ 勾選（格上的交集，不是鏈上取小）。
-    [RWM, RWD, "notes:read notes:write"], // move 與 delete 互不包含 → 只剩讀寫
+    [RWM, "notes:read notes:write", "notes:read notes:write"],
+    ["notes:write", RWM, "notes:read notes:write"], // clamped back to pending
+    [RWM, "notes:read", "notes:read"],
+    // Grant = requested intersected with ticked (an intersection on the lattice, not the smaller on a chain) (#181).
+    [RWM, RWD, "notes:read notes:write"], // move and delete don't include each other -> only read/write remains
     [RWMD, RWMD, RWMD],
-    [RWD, RWMD, RWD], // 不超過要求
+    [RWD, RWMD, RWD], // not more than requested
     [RWMD, "notes:read", "notes:read"],
-    [RWD, "notes:read notes:write", "notes:read notes:write"], // 同意頁取消「刪除」、保留「編輯」
-    [RWMD, RWM, RWM], // 取消「刪除」、保留「搬移」
-  ])("pending=%s、body=%s → code.scope=%s", async (requested, body, granted) => {
+    [RWD, "notes:read notes:write", "notes:read notes:write"], // the consent page un-ticks delete and keeps edit
+    [RWMD, RWM, RWM], // un-ticks delete, keeps move
+  ])("pending=%s, body=%s -> code.scope=%s", async (requested, body, granted) => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -519,7 +514,7 @@ describe("#239 decision scope", () => {
     }
   });
 
-  it("(e) deny 不帶 scope → 200、redirectTo 含 error=access_denied", async () => {
+  it("deny without scope -> 200, redirectTo contains error=access_denied", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -532,7 +527,7 @@ describe("#239 decision scope", () => {
     }
   });
 
-  it("(e') deny 帶垃圾 scope → 照常 200 access_denied（deny 忽略 scope）", async () => {
+  it("deny with a garbage scope -> still 200 access_denied (deny ignores scope)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -547,16 +542,16 @@ describe("#239 decision scope", () => {
   });
 });
 
-describe("#239 existingScope", () => {
-  it("無既有列 → null／false；本人同 client 讀寫列 → 讀寫／true；別人的同 client 列、本人別 client 的列都不算", async () => {
+describe("existingScope (#239)", () => {
+  it("no existing row -> null/false; this user's read/write row for the same client -> read/write/true; another user's row for the same client and this user's row for another client don't count", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const me = await createUserAndLogin(db);
       const other = await createUserAndLogin(db);
       const { clientId, req } = await startFlow(app, { scope: RWM });
       const { clientId: otherClient } = await startFlow(app, { scope: RWM });
-      await seedGrant(db, other.userId, clientId, RWM, "o1"); // 別人的、同 client
-      await seedGrant(db, me.userId, otherClient, RWM, "m1"); // 本人的、別 client
+      await seedGrant(db, other.userId, clientId, RWM, "o1"); // someone else's, same client
+      await seedGrant(db, me.userId, otherClient, RWM, "m1"); // this user's, another client
       expect((await getRequest(app, me.cookie, req)).json()).toMatchObject({ existingScope: null, replacesExisting: false });
       await seedGrant(db, me.userId, clientId, "notes:read notes:write", "m2");
       expect((await getRequest(app, me.cookie, req)).json()).toMatchObject({
@@ -568,8 +563,8 @@ describe("#239 existingScope", () => {
     }
   });
 
-  // #181：existingScope 原樣回五形之一；它只是同意頁的預設勾選，decision 照「要求 ∩ 勾選」授予、不看它。
-  it("既有讀寫刪除列、本次要求讀寫搬移 → existingScope 是讀寫刪除；allow 讀寫搬移 → code 是讀寫搬移", async () => {
+  // existingScope returns one of the five shapes unchanged; it is only the consent page's default ticks, and decision grants "requested intersected with ticked" without looking at it (#181).
+  it("existing read/write/delete row, now requesting read/write/move -> existingScope is read/write/delete; allow with read/write/move -> code is read/write/move", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const me = await createUserAndLogin(db);

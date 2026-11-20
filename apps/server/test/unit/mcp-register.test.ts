@@ -1,12 +1,12 @@
 /**
- * #240／#241 U-F1：看**實際註冊**的東西，不看 export。
- * 用只收集 `(name, config)` 的假 `registerTool` 呼叫真的 `registerMcpTools`，十二種 ctx
- * （＝authKind × scope × canRead 的全組合：讀寫搬移刪除、讀寫刪除、讀寫搬移、讀寫、唯讀 token，session，各有／無 collab+editing；
- * #239 加讀寫搬移，#181 加兩個含 notes:delete 的形）：
- * ① 每個 inputSchema 都是 strict 的 ZodObject（含 `catchall` 必須是 ZodNever——否則 `unknownKeys` 不生效）；
- * ② 帶 `note_id` 的欄位與 `NOTE_ID` 同源（收斂點）；
- * ③ 名字陣列逐字（含順序）——新增工具時這裡會紅，逼人補名字常數；①② 對每支註冊物自動生效。
- * ⚠ ① 判 `_def.typeName` 而不是 `instanceof z.ZodObject`：兩份 zod 實例會讓 instanceof 全判 false。
+ * #240/#241: look at what is **actually registered**, not at exports.
+ * Calls the real `registerMcpTools` with a fake `registerTool` that only collects `(name, config)`, over twelve ctx shapes
+ * (all combinations of authKind x scope x canRead: read-write-move-delete, read-write-delete, read-write-move, read-write, read-only token, session, each with and without collab+editing;
+ * #239 added read-write-move, #181 added the two shapes containing notes:delete):
+ * (1) every inputSchema is a strict ZodObject (and `catchall` must be ZodNever, otherwise `unknownKeys` has no effect);
+ * (2) fields carrying `note_id` come from the same source as `NOTE_ID` (the convergence point);
+ * (3) the name array verbatim (including order): adding a tool turns this red, forcing the name constants to be updated; (1) and (2) apply automatically to every registered tool.
+ * (1) checks `_def.typeName` rather than `instanceof z.ZodObject`: with two zod instances `instanceof` would be false for everything.
  */
 import { describe, expect, it } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -29,8 +29,8 @@ function collect(ctx: Partial<McpToolCtx>): Collected[] {
 }
 
 /**
- * 同 `mcp-write-schemas.test.ts` 的判法（剝掉 description 後 `_def` 逐一 `toEqual`）；note_id 恆為必填，無 ZodOptional 分支。
- * 「同源」的鑑別力來自 `NOTE_ID` 的 refine／transform 是函式——`toEqual` 對函式比參考，同結構、不同源的另一份會紅。
+ * Same judgement as `mcp-write-schemas.test.ts` (strip description, then `toEqual` on `_def`); note_id is always required, so there is no ZodOptional branch.
+ * The "same source" check works because the refine/transform of `NOTE_ID` are functions: `toEqual` compares functions by reference, so a different copy with the same structure fails.
  */
 function expectSameSchema(field: z.ZodTypeAny, base: z.ZodTypeAny): void {
   const { description: _f, ...fieldRest } = field._def as Record<string, unknown>;
@@ -39,7 +39,7 @@ function expectSameSchema(field: z.ZodTypeAny, base: z.ZodTypeAny): void {
 }
 
 const LIVE = { collab: {} as never, editing: {} as never };
-// #239：讀寫 token 不再註冊 move_note_to_group（要 notes:move）；讀寫搬移 token 與 session 才有。
+// #239: read-write tokens no longer register move_note_to_group (needs notes:move); read-write-move tokens and sessions do.
 export const RWM_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "open_notes_as_files", "list_trash", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "read_note_image"];
 export const RW_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "copy_note", "create_transfer_token", "open_notes_as_files", "list_trash", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "read_note_image"];
 export const RO_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "create_transfer_token", "open_notes_as_files", "list_trash", "list_folders", "read_note_image"];
@@ -48,40 +48,40 @@ export const RO_NO_COLLAB = ["list_notes", "search_notes", "create_transfer_toke
 export const SESSION_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "list_trash", "delete_note", "restore_note", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "delete_folder", "read_note_image"];
 export const RWM_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "list_trash", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "read_note_image"];
 export const RW_NO_COLLAB = ["list_notes", "search_notes", "create_note", "copy_note", "create_transfer_token", "list_trash", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "read_note_image"];
-// bulk transfer：open_notes_as_files 只在 token 路徑且有 collab＋editing 時註冊（閘門內），緊接 create_transfer_token 之後。
-// #181：delete_note／restore_note 只在 notes:delete（且有 write）時註冊，緊接 list_trash 之後、read_note_image 之前；與 move 互相獨立。
-// 資料夾：list_folders 任何憑證、任何部署形態都註冊，在 restore_note 之後、read_note_image 之前。
-// 資料夾：create_folder／rename_folder／move_folder 只在 notes:write 時註冊（collab 閘門外），緊接 list_folders 之後。
-// 資料夾：move_note_to_folder 同一個 notes:write 區塊，緊接 move_folder 之後。
-// 資料夾：delete_folder 只在 notes:delete（且有 write）時註冊，緊接 move_note_to_folder 之後、read_note_image 之前。
+// bulk transfer: open_notes_as_files is registered only on the token path with collab + editing (inside the gate), right after create_transfer_token.
+// #181: delete_note/restore_note are registered only with notes:delete (and write), right after list_trash and before read_note_image; independent of move.
+// Folders: list_folders is registered for any credential and deployment shape, after restore_note and before read_note_image.
+// Folders: create_folder/rename_folder/move_folder are registered only with notes:write (outside the collab gate), right after list_folders.
+// Folders: move_note_to_folder is in the same notes:write block, right after move_folder.
+// Folders: delete_folder is registered only with notes:delete (and write), right after move_note_to_folder and before read_note_image.
 export const RWD_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "copy_note", "create_transfer_token", "open_notes_as_files", "list_trash", "delete_note", "restore_note", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "delete_folder", "read_note_image"];
 export const RWMD_TOKEN = ["list_notes", "search_notes", "read_note_outline", "read_note_section", "edit_note", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "open_notes_as_files", "list_trash", "delete_note", "restore_note", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "delete_folder", "read_note_image"];
 export const RWD_NO_COLLAB = ["list_notes", "search_notes", "create_note", "copy_note", "create_transfer_token", "list_trash", "delete_note", "restore_note", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "delete_folder", "read_note_image"];
 export const RWMD_NO_COLLAB = ["list_notes", "search_notes", "create_note", "move_note_to_group", "copy_note", "create_transfer_token", "list_trash", "delete_note", "restore_note", "list_folders", "create_folder", "rename_folder", "move_folder", "move_note_to_folder", "delete_folder", "read_note_image"];
 
 const CASES: Array<[string, Partial<McpToolCtx>, string[]]> = [
-  ["讀寫搬移刪除 token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:move notes:delete" as never }, RWMD_TOKEN],
-  ["讀寫刪除 token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:delete" as never }, RWD_TOKEN],
-  ["讀寫搬移刪除 token、無 collab", { authKind: "token", tokenScope: "notes:read notes:write notes:move notes:delete" as never }, RWMD_NO_COLLAB],
-  ["讀寫刪除 token、無 collab", { authKind: "token", tokenScope: "notes:read notes:write notes:delete" as never }, RWD_NO_COLLAB],
-  ["讀寫搬移 token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:move" as never }, RWM_TOKEN],
-  ["讀寫 token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write" as never }, RW_TOKEN],
-  ["唯讀 token", { ...LIVE, authKind: "token", tokenScope: "notes:read" as never }, RO_TOKEN],
+  ["read-write-move-delete token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:move notes:delete" as never }, RWMD_TOKEN],
+  ["read-write-delete token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:delete" as never }, RWD_TOKEN],
+  ["read-write-move-delete token, no collab", { authKind: "token", tokenScope: "notes:read notes:write notes:move notes:delete" as never }, RWMD_NO_COLLAB],
+  ["read-write-delete token, no collab", { authKind: "token", tokenScope: "notes:read notes:write notes:delete" as never }, RWD_NO_COLLAB],
+  ["read-write-move token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write notes:move" as never }, RWM_TOKEN],
+  ["read-write token", { ...LIVE, authKind: "token", tokenScope: "notes:read notes:write" as never }, RW_TOKEN],
+  ["read-only token", { ...LIVE, authKind: "token", tokenScope: "notes:read" as never }, RO_TOKEN],
   ["session", { ...LIVE, authKind: "session", tokenScope: null }, SESSION],
-  ["讀寫搬移 token、無 collab", { authKind: "token", tokenScope: "notes:read notes:write notes:move" as never }, RWM_NO_COLLAB],
-  ["讀寫 token、無 collab", { authKind: "token", tokenScope: "notes:read notes:write" as never }, RW_NO_COLLAB],
-  ["唯讀 token、無 collab", { authKind: "token", tokenScope: "notes:read" as never }, RO_NO_COLLAB],
-  ["session、無 collab", { authKind: "session", tokenScope: null }, SESSION_NO_COLLAB],
+  ["read-write-move token, no collab", { authKind: "token", tokenScope: "notes:read notes:write notes:move" as never }, RWM_NO_COLLAB],
+  ["read-write token, no collab", { authKind: "token", tokenScope: "notes:read notes:write" as never }, RW_NO_COLLAB],
+  ["read-only token, no collab", { authKind: "token", tokenScope: "notes:read" as never }, RO_NO_COLLAB],
+  ["session, no collab", { authKind: "session", tokenScope: null }, SESSION_NO_COLLAB],
 ];
 
-describe("#240／#241 U-F1：實際註冊的 inputSchema", () => {
+describe("#240/#241: inputSchema as actually registered", () => {
   for (const [label, ctx, names] of CASES) {
-    it(`${label}：每支 strict ZodObject、note_id 與 NOTE_ID 同源、名字逐字`, () => {
+    it(`${label}: every one is a strict ZodObject, note_id comes from the same source as NOTE_ID, names verbatim`, () => {
       const got = collect(ctx);
       for (const g of got) {
         const def = (g.inputSchema as { _def?: { typeName?: string; unknownKeys?: string; catchall?: { _def?: { typeName?: string } } } } | undefined)?._def;
-        // ① 排最前：這是這支測試首要守的東西。
-        // catchall 不是 ZodNever 時 zod 3 不套 unknownKeys（`.strict().catchall(z.unknown())` 照收未知鍵），所以一起斷。
+        // Checked first: it is the main thing this test guards.
+        // When catchall isn't ZodNever zod 3 doesn't apply unknownKeys (`.strict().catchall(z.unknown())` still accepts unknown keys), so assert both together.
         expect({ name: g.name, typeName: def?.typeName, unknownKeys: def?.unknownKeys, catchall: def?.catchall?._def?.typeName }).toEqual({
           name: g.name,
           typeName: "ZodObject",

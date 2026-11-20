@@ -3,14 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { ADMIN, createNote, editorLocator, loginAs, noteIdFromUrl, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 整個 block 被選取（圖片、程式碼區塊）時的外框，與「點空白處」的關係：
+ * The outline of a fully selected block (image, code block) and how it relates to clicking blank space:
  *
- * 62-1 點圖片 → 出現選取外框；點文章欄左側的內距 → 外框消失、選取變成游標（編輯器仍有焦點）。
- * 62-2 程式碼區塊整塊被選取 → 外框；點欄外的空地（捲動容器內、文章欄之外）→ 外框消失。
- * 62-3 點編輯器以外的地方（筆記標題框）→ 編輯器失焦，外框不再畫（選取仍在，但畫面上看不到）。
- * 62-4 點最後一個 block 之下的空白仍把游標放在文件結尾。
- *
- * 外框是否「畫出來」量瀏覽器算出的 outline（computed style），不看 class 名稱。
+ * Whether the outline is drawn is measured from the browser's computed outline (computed style), never from class names.
  */
 
 const RUN = Date.now();
@@ -55,16 +50,15 @@ async function uploadPng(page: Page): Promise<string> {
   return ((await res.json()) as { url: string }).url;
 }
 
-/** 目前被選取的 block（ProseMirror-selectednode）內容的外框寬度（px）；沒有被選取的 block 回 null。 */
 async function frameWidth(page: Page): Promise<number | null> {
   return page.evaluate(() => {
     const node = document.querySelector<HTMLElement>('[data-testid="note-editor"] .ProseMirror-selectednode');
     if (!node) return null;
     const content = node.classList.contains("bn-block-content") ? node : node.querySelector<HTMLElement>(".bn-block-content");
-    // 程式碼區塊的第一個子節點是語言下拉的容器，外框畫在後面的 pre 上：取所有子節點中最粗的。
+    // A code block's first child is the language dropdown's container and the outline is drawn on the pre after it: take the thickest among all children.
     const widths = Array.from(content?.children ?? []).map((inner) => {
       const cs = getComputedStyle(inner);
-      // 失焦時外框顏色是透明（外框仍在、看不見）。
+      // When blurred the outline color is transparent (the outline is still there, just invisible).
       const invisible = cs.outlineStyle === "none" || cs.outlineColor === "rgba(0, 0, 0, 0)" || cs.outlineColor === "transparent";
       return invisible ? 0 : parseFloat(cs.outlineWidth);
     });
@@ -98,7 +92,7 @@ async function setup(page: Page, label: string): Promise<void> {
   await expect(editor.locator('[data-content-type="codeBlock"]')).toHaveCount(1);
 }
 
-test("62-1 點圖片出現選取外框；點文章欄左側的內距 → 外框消失、變成游標且編輯器仍有焦點", async ({ page }) => {
+test("62-1 clicking an image shows the selection outline; clicking the padding left of the article column removes it, turns into a caret and the editor keeps focus", async ({ page }) => {
   test.setTimeout(90_000);
   await setup(page, "image");
   const editor = editorLocator(page);
@@ -114,14 +108,14 @@ test("62-1 點圖片出現選取外框；點文章欄左側的內距 → 外框�
   await expect(editor).toBeFocused();
 });
 
-test("62-2 程式碼區塊整塊被選取時有外框；點欄外的空地 → 外框消失", async ({ page }) => {
+test("62-2 a code block selected as a whole has the outline; clicking the empty ground outside the column removes it", async ({ page }) => {
   test.setTimeout(90_000);
   await setup(page, "code");
   const editor = editorLocator(page);
   const block = editor.locator('[data-content-type="codeBlock"]');
   const box = (await block.boundingBox())!;
-  // 程式碼區塊沒有「點一下就整塊選取」的滑鼠路徑（點進去就是文字游標）：以編輯器自己的 NodeSelection 命令選取整塊，
-  // 外框與「點空白」的行為跟圖片同一條路。
+  // A code block has no mouse path that selects the whole block with one click (clicking in gives a text caret): select the whole block with the editor's own NodeSelection command;
+  // the outline and the click-blank behaviour then follow the same path as an image.
   await editor.evaluate((el) => {
     const ed = (el as Element & { editor?: { view: { posAtDOM(n: Node, o: number): number }; commands: { setNodeSelection(pos: number): boolean } } }).editor!;
     const content = el.querySelector('[data-content-type="codeBlock"]')!;
@@ -131,7 +125,7 @@ test("62-2 程式碼區塊整塊被選取時有外框；點欄外的空地 → �
   await expect.poll(() => selectionKind(page)).toBe("node");
   await expect.poll(() => frameWidth(page)).toBeGreaterThan(0);
 
-  // 文章欄是置中的、寬度有上限：欄的左邊還有一段捲動容器內的空地。
+  // The article column is centered with a maximum width: to the left of the column there is still some empty ground inside the scroll container.
   const column = (await page.getByTestId("article-column").boundingBox())!;
   const xOutside = column.x - 30;
   await page.mouse.click(xOutside, box.y + 40);
@@ -139,7 +133,7 @@ test("62-2 程式碼區塊整塊被選取時有外框；點欄外的空地 → �
   expect(await frameWidth(page)).toBeNull();
 });
 
-test("62-3 編輯器失焦（點筆記標題框）→ 選取外框不再畫；點回圖片又出現", async ({ page }) => {
+test("62-3 editor blurred (clicking the note title box): the selection outline is no longer drawn; clicking back on the image brings it back", async ({ page }) => {
   test.setTimeout(90_000);
   await setup(page, "blur");
   const editor = editorLocator(page);
@@ -153,7 +147,7 @@ test("62-3 編輯器失焦（點筆記標題框）→ 選取外框不再畫；�
   await expect.poll(() => frameWidth(page)).toBeGreaterThan(0);
 });
 
-test("62-4 點最後一個 block 之下的空白，游標仍在文件結尾", async ({ page }) => {
+test("62-4 clicking the blank space below the last block still puts the caret at the end of the document", async ({ page }) => {
   test.setTimeout(90_000);
   await setup(page, "below");
   const editor = editorLocator(page);

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog"
 
 type ContentProps = React.ComponentProps<typeof DialogContent>;
 
-/** 受控 Dialog：關閉時卸載內容，`onOpenChange` 只記錄 Radix 要求的狀態；`probe` 用來模擬「對話框外的元素」。 */
+/** Controlled Dialog: unmounts its content when closed; `onOpenChange` only records the state Radix asks for; `probe` simulates an element outside the dialog. */
 function Harness(props: ContentProps) {
   const [open, setOpen] = useState(true);
   return (
@@ -26,14 +26,14 @@ function Harness(props: ContentProps) {
 const dialogEl = () => screen.queryByRole("dialog");
 
 describe("DialogContent dismissOnOutside", () => {
-  it("預設（未傳）：點外面 → 關閉（基準：證明這個 jsdom 觸發方式 Radix 真的處理）", async () => {
+  it("default (not passed): clicking outside closes it (baseline: proves Radix really handles this way of triggering the event in jsdom)", async () => {
     render(<Harness />);
     expect(dialogEl()).not.toBeNull();
     await clickOutside();
     expect(dialogEl()).toBeNull();
   });
 
-  it("dismissOnOutside={false}：同樣的點外面操作 → 不關閉、輸入內容仍在（基準案證明事件確實會讓對話框關）", async () => {
+  it("dismissOnOutside={false}: the same outside click does not close it and the typed input stays (the baseline case shows the event does close the dialog)", async () => {
     render(<Harness dismissOnOutside={false} />);
     const field = screen.getByLabelText("field");
     fireEvent.change(field, { target: { value: "keep me" } });
@@ -42,21 +42,21 @@ describe("DialogContent dismissOnOutside", () => {
     expect(screen.getByLabelText("field")).toHaveValue("keep me");
   });
 
-  it("dismissOnOutside={false}：Esc 照常關閉", async () => {
+  it("dismissOnOutside={false}: Esc still closes", async () => {
     render(<Harness dismissOnOutside={false} />);
     await settle();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     await waitFor(() => expect(dialogEl()).toBeNull());
   });
 
-  it("dismissOnOutside={false}：右上 X 照常關閉", async () => {
+  it("dismissOnOutside={false}: the top-right X still closes", async () => {
     render(<Harness dismissOnOutside={false} />);
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(dialogEl()).toBeNull());
   });
 
-  it("呼叫端的 onInteractOutside 仍被呼叫（守衛開／關兩種都是）", async () => {
+  it("the caller's onInteractOutside is still called (with the guard on or off)", async () => {
     for (const dismissOnOutside of [true, false]) {
       const onInteractOutside = vi.fn();
       const { unmount } = render(<Harness dismissOnOutside={dismissOnOutside} onInteractOutside={onInteractOutside} />);
@@ -66,13 +66,13 @@ describe("DialogContent dismissOnOutside", () => {
     }
   });
 
-  it("呼叫端自己的 preventDefault 在預設（dismissOnOutside 未傳）下仍有效", async () => {
+  it("the caller's own preventDefault still works by default (dismissOnOutside not passed)", async () => {
     render(<Harness onInteractOutside={(e) => e.preventDefault()} />);
     await clickOutside();
     expect(dialogEl()).not.toBeNull();
   });
 
-  it("呼叫端的 onPointerDownOutside 仍被呼叫（與守衛並存）", async () => {
+  it("the caller's onPointerDownOutside is still called (alongside the guard)", async () => {
     const onPointerDownOutside = vi.fn();
     render(<Harness dismissOnOutside={false} onPointerDownOutside={onPointerDownOutside} />);
     await clickOutside();
@@ -81,8 +81,8 @@ describe("DialogContent dismissOnOutside", () => {
   });
 });
 
-describe("DialogContent size（#247）", () => {
-  it("預設 size：恰一顆內建 Close（行為零變的基準）", async () => {
+describe("DialogContent size (#247)", () => {
+  it("default size: one built-in Close (baseline for unchanged behavior)", async () => {
     render(<Harness />);
     await settle();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
@@ -91,7 +91,7 @@ describe("DialogContent size（#247）", () => {
     expect(dialog).not.toHaveClass("grid-rows-[minmax(0,1fr)]");
   });
 
-  it("內建 Close：視覺 16px，粗指標下點擊範圍擴到 44（after 向外各 14px）", async () => {
+  it("built-in Close: 16px visually, with the hit area extended to 44 on coarse pointers (14px outward on each side via after)", async () => {
     render(<Harness />);
     await settle();
     const close = screen.getByRole("button", { name: "Close" });
@@ -105,13 +105,13 @@ describe("DialogContent size（#247）", () => {
     }
   });
 
-  it('size="panel"：不渲染內建 Close（由 ManagementShell 自己放一顆）', async () => {
+  it('size="panel": does not render the built-in Close (ManagementShell places its own)', async () => {
     render(<Harness size="panel" />);
     await settle();
     expect(screen.queryAllByRole("button", { name: "Close" })).toHaveLength(0);
   });
 
-  it('size="panel"：透明外框、窄視窗寬高＋md: clamp', async () => {
+  it('size="panel": transparent frame, narrow-window width and height plus the md: clamp', async () => {
     render(<Harness size="panel" />);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveClass(
@@ -128,13 +128,13 @@ describe("DialogContent size（#247）", () => {
       "grid-cols-[minmax(0,1fr)]",
       "grid-rows-[minmax(0,1fr)]",
     );
-    // twMerge 要把 base 的 bg-popover／shadow-lg／w-full 蓋掉
+    // twMerge must override base's bg-popover / shadow-lg / w-full.
     expect(dialog).not.toHaveClass("bg-popover");
     expect(dialog).not.toHaveClass("shadow-lg");
     expect(dialog).not.toHaveClass("w-full");
   });
 
-  it('size="panel"：手機是貼底、幾乎滿高的 sheet（滿寬、不位移、上圓角、上方留縫、跟著鍵盤）；高度不再用 vh', async () => {
+  it('size="panel": on a phone it is a bottom-anchored, nearly full-height sheet (full width, no offset, rounded top, a gap above, follows the keyboard); height no longer uses vh', async () => {
     render(<Harness size="panel" />);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveClass(
@@ -153,27 +153,27 @@ describe("DialogContent size（#247）", () => {
     );
     expect(dialog.className).not.toMatch(/max-sm:rounded-t-2xl/);
     expect(dialog.className).not.toMatch(/max-sm:inset-0|max-sm:h-dvh|max-sm:rounded-none/);
-    // iOS Safari 的 vh 是工具列收起時的高度：高度類一律 dvh（寬度的 vw 不受影響）。
+    // iOS Safari's vh is the height with the toolbar collapsed: height classes always use dvh (width's vw is unaffected).
     expect(dialog.className).not.toMatch(/\d+vh\b/);
   });
 });
 
-describe("DialogContent 容器不畫焦點環", () => {
-  // Radix 把焦點放在 Content 本身（程式聚焦或沒有可 tab 元素的後備）時，Chrome 預設 :focus-visible outline 會圈住整個面板；
-  // 統一在共用基底擋掉，各 size 都要有。
-  it.each(["default", "panel"] as const)("size=%s：Content 有 outline-none", (size) => {
+describe("DialogContent container draws no focus ring", () => {
+  // When Radix puts focus on Content itself (focused programmatically, or as the fallback when nothing is tabbable), Chrome's default :focus-visible outline would ring the whole panel;
+  // the shared base suppresses it, and every size needs that.
+  it.each(["default", "panel"] as const)("size=%s: Content has outline-none", (size) => {
     render(<Harness size={size} />);
     expect(screen.getByRole("dialog")).toHaveClass("outline-none");
   });
 
-  it("未傳 size（預設）：Content 有 outline-none", () => {
+  it("size not passed (default): Content has outline-none", () => {
     render(<Harness />);
     expect(screen.getByRole("dialog")).toHaveClass("outline-none");
   });
 });
 
-describe("DialogContent 手機底部 sheet", () => {
-  it("預設 size：手機貼底、可捲、上圓角、底部留 safe area；進出場用 kb-sheet", () => {
+describe("DialogContent phone bottom sheet", () => {
+  it("default size: on phones anchored to the bottom, scrollable, rounded top, bottom safe area; enter/exit use kb-sheet", () => {
     render(<Harness />);
     expect(screen.getByRole("dialog")).toHaveClass(
       "max-sm:inset-x-0",
@@ -191,18 +191,18 @@ describe("DialogContent 手機底部 sheet", () => {
     );
   });
 
-  it("className 的 max-w 覆寫在手機不讓 sheet 縮窄（max-sm:max-w-none 與 max-w-lg 並存）", () => {
+  it("a className max-w override does not narrow the sheet on phones (max-sm:max-w-none coexists with max-w-lg)", () => {
     render(<Harness className="max-w-lg" />);
     expect(screen.getByRole("dialog")).toHaveClass("max-w-lg", "max-sm:max-w-none");
   });
 
-  it('size="panel" 的 sheet 不帶預設尺寸的那些（高度上限、內距）：它是幾乎滿高、高度固定的', () => {
+  it('the size="panel" sheet omits the classes of the default size (height cap, padding): it is nearly full height with a fixed height', () => {
     render(<Harness size="panel" />);
     const dialog = screen.getByRole("dialog");
     expect(dialog.className).not.toMatch(/max-sm:max-h-|max-sm:pb-\[max\(1\.5rem/);
   });
 
-  it("sheet 的背景遮罩手機有淡出（預設與 panel 都有）", () => {
+  it("the sheet's backdrop fades out on phones (both default and panel)", () => {
     render(<Harness />);
     expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
     cleanup();
@@ -210,7 +210,7 @@ describe("DialogContent 手機底部 sheet", () => {
     expect(document.querySelector(".kb-sheet-overlay")).not.toBeNull();
   });
 
-  describe("螢幕鍵盤", () => {
+  describe("on-screen keyboard", () => {
     class FakeViewport extends EventTarget {
       height = 800;
       offsetTop = 0;
@@ -247,7 +247,7 @@ describe("DialogContent 手機底部 sheet", () => {
       else delete (window as { visualViewport?: unknown }).visualViewport;
     });
 
-    it("--kb-inset 與 --kb-visible-h 跟著視覺視窗：沒有鍵盤時是 0 與整個視窗高，升起後變動；雙指放大時移除", () => {
+    it("--kb-inset and --kb-visible-h follow the visual viewport: 0 and the full window height with no keyboard, changing when it rises; removed on pinch zoom", () => {
       viewport.height = 1000;
       render(<Harness />);
       const dialog = screen.getByRole("dialog");
@@ -270,7 +270,7 @@ describe("DialogContent 手機底部 sheet", () => {
       expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("");
     });
 
-    it.each([0, 200, 344])("版面視窗 844、視覺高 500、offsetTop %i（含平移到底、鍵盤高度為 0）：sheet 頂端不高過視覺視窗頂端、底邊貼視覺視窗底邊", (offsetTop) => {
+    it.each([0, 200, 344])("layout viewport 844, visual height 500, offsetTop %i (including panned to the end with keyboard height 0): the sheet top is not above the visual viewport top and its bottom edge sits on the visual viewport bottom", (offsetTop) => {
       vi.stubGlobal("innerHeight", 844);
       viewport.height = 500;
       viewport.offsetTop = offsetTop;
@@ -284,7 +284,7 @@ describe("DialogContent 手機底部 sheet", () => {
       expect(sheetBottom - 0.9 * visible).toBeGreaterThanOrEqual(offsetTop);
     });
 
-    it("呼叫端傳的 style 到得了內容元素，與動態寫入的變數並存", () => {
+    it("a style passed by the caller reaches the content element and coexists with the dynamically written variables", () => {
       viewport.height = 500;
       render(<Harness style={{ color: "rgb(1, 2, 3)" }} />);
       const dialog = screen.getByRole("dialog");
@@ -292,7 +292,7 @@ describe("DialogContent 手機底部 sheet", () => {
       expect(dialog.style.getPropertyValue("--kb-visible-h")).toBe("500px");
     });
 
-    it.each([0, 200, 344])("iOS 平移視覺視窗（offsetTop %i）：sheet 頂端不會高過視覺視窗頂端", (offsetTop) => {
+    it.each([0, 200, 344])("iOS panning the visual viewport (offsetTop %i): the sheet top is never above the visual viewport top", (offsetTop) => {
       viewport.height = 500;
       viewport.offsetTop = offsetTop;
       render(<Harness />);
@@ -300,12 +300,12 @@ describe("DialogContent 手機底部 sheet", () => {
       const inset = parseFloat(style.getPropertyValue("--kb-inset"));
       const visible = parseFloat(style.getPropertyValue("--kb-visible-h"));
       expect(visible).toBe(500);
-      // 版面視窗高 1000：sheet 底＝1000 - inset，高度上限＝0.9 × visible。
+      // Layout viewport height 1000: sheet bottom = 1000 - inset, height cap = 0.9 x visible.
       const sheetTop = 1000 - inset - 0.9 * visible;
       expect(sheetTop).toBeGreaterThanOrEqual(offsetTop);
     });
 
-    it("只在開著時訂閱：關閉的對話框不掛 visualViewport 監聽，開著的有、卸載後移除", () => {
+    it("subscribes only while open: a closed dialog has no visualViewport listener, an open one has it, and it is removed on unmount", () => {
       const { rerender, unmount } = render(
         <Dialog open={false}>
           <DialogContent>
@@ -328,7 +328,7 @@ describe("DialogContent 手機底部 sheet", () => {
       expect(viewport.listeners).toBe(0);
     });
 
-    it('size="panel"：同樣跟著鍵盤（手機的面板也是貼底的 sheet）', () => {
+    it('size="panel" also follows the keyboard (a phone panel is a bottom sheet too)', () => {
       viewport.height = 500;
       render(<Harness size="panel" />);
       expect(screen.getByRole("dialog").style.getPropertyValue("--kb-inset")).toBe("500px");

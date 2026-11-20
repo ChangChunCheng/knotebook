@@ -1,6 +1,6 @@
 /**
- * #386：讀出 → 寫回往返的其餘破口——收合清單／收合標題的文字（I-1）、有顏色的粗斜體邊緣空白（I-2）、
- * 換行後與區塊開頭的區塊標記、跳脫規則的邊界（M-a／M-b）、表格欄寬（M-e）。共用的寫入／讀出路徑同 `softbreak-386.test.ts`。
+ * #386: the remaining holes of the read -> write-back round trip: text of collapsed lists/headings, edge whitespace of colored bold/italic,
+ * block markers after a line break and at the start of a block, boundaries of the escaping rules, and table column widths. The write/read path is shared with `softbreak-386.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -28,7 +28,7 @@ async function docWith(blocks: unknown[]): Promise<Y.Doc> {
   const doc = new Y.Doc();
   const s = await EditorSession.open(rt, doc);
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
     s.editor.replaceBlocks(s.editor.document, blocks as any);
   } finally {
     s.close();
@@ -49,10 +49,10 @@ async function readMd(doc: Y.Doc): Promise<string> {
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 }
-/** 每個 block 的行內內容：逐字附上樣式（空白字元的樣式不比——移出樣式外的空白不再帶樣式）。 */
+/** The inline content of each block: character by character with its styles (styles of whitespace aren't compared: whitespace moved outside a style no longer carries it). */
 const glyphs = (blocks: Blk[]): string[][] =>
   blocks.map(b => (Array.isArray(b.content) ? (b.content as Inline[]) : []).flatMap(c => [...(c.text ?? "")].map(ch => (/[ \t]/.test(ch) ? ch : `${ch}:${JSON.stringify(c.styles ?? {})}`))));
-/** 讀出 → 寫回 → 讀出 → 寫回。 */
+/** read -> write back -> read -> write back. */
 async function loop(blocks: unknown[]) {
   const d0 = await docWith(blocks);
   const md1 = await readMd(d0);
@@ -64,25 +64,25 @@ async function loop(blocks: unknown[]) {
 const T = (text: string, styles: Record<string, unknown> = {}) => ({ type: "text", text, styles });
 const P = (...content: unknown[]) => ({ type: "paragraph", content });
 
-describe("I-1 收合清單、收合標題的文字也跳脫", () => {
-  it("收合清單項目 `**x** and `c`` → 寫回仍是字面（不變粗體、不變 code）", async () => {
+describe("text of collapsed lists and collapsed headings is escaped too", () => {
+  it("collapsed list item `**x** and `c`` -> stays literal after write-back (not bold, not code)", async () => {
     const r = await loop([{ type: "toggleListItem", content: [T("**x** and `c`")] }]);
     expect(r.md2).toBe(r.md1);
     expect(glyphs(r.b1)).toEqual(glyphs(r.b0));
   });
-  it("收合標題 `**x**` → 寫回仍是字面", async () => {
+  it("collapsed heading `**x**` -> stays literal after write-back", async () => {
     const r = await loop([{ type: "heading", props: { level: 2, isToggleable: true }, content: [T("**x**")] }]);
     expect(r.md2).toBe(r.md1);
     expect(glyphs(r.b1)).toEqual(glyphs(r.b0));
   });
 });
 
-describe("I-2 有顏色的粗斜體，邊緣空白也移到標記外面", () => {
+describe("edge whitespace of colored bold/italic also moves outside the markers", () => {
   it.each([
-    ["紅色粗體開頭空白", [P(T("x"), T(" a", { bold: true, textColor: "red" }))]],
-    ["底色斜體兩頭空白", [P(T("x"), T(" a ", { italic: true, backgroundColor: "yellow" }), T("y"))]],
-    ["換行後接紅色粗體開頭空白", [P(T("L1\n"), T(" b", { bold: true, textColor: "red" }))]],
-  ])("%s → 讀出沒有 `** a**`／`* a*`，往返字與樣式不變", async (_l, blocks) => {
+    ["red bold with leading whitespace", [P(T("x"), T(" a", { bold: true, textColor: "red" }))]],
+    ["background italic with whitespace on both ends", [P(T("x"), T(" a ", { italic: true, backgroundColor: "yellow" }), T("y"))]],
+    ["red bold with leading whitespace after a line break", [P(T("L1\n"), T(" b", { bold: true, textColor: "red" }))]],
+  ])("%s -> the read-out has no `** a**`/`* a*`, the round trip keeps characters and styles", async (_l, blocks) => {
     const r = await loop(blocks);
     expect(r.md1).not.toMatch(/\*\* |\* a/);
     expect(r.md2).toBe(r.md1);
@@ -91,33 +91,33 @@ describe("I-2 有顏色的粗斜體，邊緣空白也移到標記外面", () => 
   });
 });
 
-describe("I-4a 換行後那一行以區塊標記開頭 → 寫成 <br>，不斷段", () => {
+describe("a line after a line break that starts with a block marker -> written as <br>, doesn't split the paragraph", () => {
   it.each([
     ["- b"], ["+ b"], ["1. b"], ["2) b"], ["# b"], ["> b"], ["---"], ["==="], ["| x |"], [":-|-"], ["(注意)"],
-  ])("段落 a⏎%s", async next => {
+  ])("paragraph a, line break, %s", async next => {
     const r = await loop([P(T(`a\n${next}`))]);
     expect(r.md1).toContain("a<br>");
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it.each([["- b"], ["# b"], ["> b"]])("引言 a⏎%s", async next => {
+  it.each([["- b"], ["# b"], ["> b"]])("quote a, line break, %s", async next => {
     const r = await loop([{ type: "quote", content: [T(`a\n${next}`)] }]);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("段落 a⏎<div>x</div>：字面標籤的 < 跳脫，換行與文字都照原樣寫回（#379）", async () => {
+  it("paragraph a, line break, <div>x</div>: the < of a literal tag is escaped, and the line break and text are written back as they were (#379)", async () => {
     const r = await loop([P(T("a\n<div>x</div>"))]);
     expect(r.md1).toContain("a<br>\\<div>x\\</div>");
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("換行後接一般文字（非標點開頭）照舊是 \\ 換行", async () => {
+  it("a line break followed by ordinary text (not starting with punctuation) stays a backslash line break", async () => {
     const doc = await docWith([P(T("a\nb 2024 年"))]);
     expect(await readMd(doc)).toBe("a\\\nb 2024 年\n");
   });
 });
 
-describe("I-4b 區塊開頭的標記字元跳脫", () => {
+describe("escaping marker characters at the start of a block", () => {
   it.each([
     ["# x", "\\# x\n"],
     ["###### x", "\\###### x\n"],
@@ -129,134 +129,134 @@ describe("I-4b 區塊開頭的標記字元跳脫", () => {
     ["12) x", "12\\) x\n"],
     ["---", "\\---\n"],
     ["- - -", "\\- - -\n"],
-  ])("段落開頭 %j → 讀出 %j，寫回仍是同一段文字", async (text, expected) => {
+  ])("paragraph starting with %j -> read as %j, written back as the same text", async (text, expected) => {
     const r = await loop([P(T(text))]);
     expect(r.md1).toBe(expected);
     expect(r.b1).toEqual(r.b0);
   });
-  it.each([["-1 度"], ["#tag"], ["1.5 倍"], ["+1"], ["2024. 年"]])("parser 不認的 %j 不跳脫", async text => {
+  it.each([["-1 度"], ["#tag"], ["1.5 倍"], ["+1"], ["2024. 年"]])("%j that the parser doesn't recognize is not escaped", async text => {
     const r = await loop([P(T(text))]);
     if (text === "2024. 年") {
-      // 數字＋`.`＋空白是編號清單：要跳
+      // digits + `.` + space is a numbered list: it must be escaped
       expect(r.md1).toBe("2024\\. 年\n");
     } else {
       expect(r.md1).toBe(`${text}\n`);
     }
     expect(r.b1).toEqual(r.b0);
   });
-  it("段落第一段文字後接空白開頭的粗體（`-` ＋ 粗體 ` x`）也跳", async () => {
+  it("a paragraph whose first text is followed by bold starting with a space (`-` + bold ` x`) is escaped too", async () => {
     const r = await loop([P(T("-"), T(" x", { bold: true }))]);
     expect(r.md1).toBe("\\- **x**\n");
     expect(glyphs(r.b1)).toEqual(glyphs(r.b0));
   });
-  it.each([["x #"], ["x ##"], ["a # b #"]])("標題結尾 %j 的 # 不被剝", async text => {
+  it.each([["x #"], ["x ##"], ["a # b #"]])("a trailing # of heading %j is not stripped", async text => {
     const r = await loop([{ type: "heading", props: { level: 2 }, content: [T(text)] }]);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it.each([["> x"], ["- x"], ["# x"], ["1. x"]])("引言文字開頭 %j 不被剝、不變巢狀", async text => {
+  it.each([["> x"], ["- x"], ["# x"], ["1. x"]])("leading %j of quote text is not stripped and doesn't become nested", async text => {
     const r = await loop([{ type: "quote", content: [T(text)] }]);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("清單項目、標題開頭的 # 不跳（那裡只當行內文字）", async () => {
+  it("a leading # in list items and headings is not escaped (it's only inline text there)", async () => {
     const doc = await docWith([{ type: "bulletListItem", content: [T("# x")] }, { type: "heading", props: { level: 3 }, content: [T("- x")] }]);
     expect(await readMd(doc)).toBe("* # x\n\n### - x\n");
   });
 });
 
-/** 行內文字（去掉開頭的空白：段落開頭的空白寫回本來就會掉，見 known-limitations）。 */
+/** Inline text (leading whitespace removed: leading whitespace of a paragraph is dropped on write-back anyway, see known-limitations). */
 const lead = (bs: Blk[]): string => (Array.isArray(bs[0]?.content) ? (bs[0]!.content as Inline[]).map(c => c.text ?? "").join("") : "").replace(/^\s+/, "");
 
-describe("前導空白之後的區塊標記也跳", () => {
-  it.each([[" # x"], ["  - x"], [" ---"], ["   1. x"], [" # x"], ["\t+ x"], [" > x"]])("段落 %j → 寫回仍是一段、字不變（開頭空白除外）", async text => {
+describe("block markers after leading whitespace are escaped too", () => {
+  it.each([[" # x"], ["  - x"], [" ---"], ["   1. x"], [" # x"], ["\t+ x"], [" > x"]])("paragraph %j -> still one paragraph after write-back, same characters (except the leading whitespace)", async text => {
     const r = await loop([P(T("lead")), P(T(text))]);
     expect(r.b1.map(b => b.type)).toEqual(["paragraph", "paragraph"]);
     expect(lead(r.b1.slice(1))).toBe(text.replace(/^\s+/, ""));
-    // 開頭空白在第一次寫回時掉了（known-limitations），之後就穩定
+    // leading whitespace is dropped on the first write-back (known-limitations), and stable afterwards
     expect(r.b2).toEqual(r.b1);
   });
-  it.each([[" # x"], ["  - x"], [" ---"], ["   1. x"]])("第一段（整份開頭會被剝空白）%j → 寫回仍是段落", async text => {
+  it.each([[" # x"], ["  - x"], [" ---"], ["   1. x"]])("first paragraph (leading whitespace of the whole document gets stripped) %j -> still a paragraph after write-back", async text => {
     const r = await loop([P(T(text))]);
     expect(r.b1.map(b => b.type)).toEqual(["paragraph"]);
     expect(lead(r.b1)).toBe(text.replace(/^\s+/, ""));
   });
-  it("引言文字 \" - x\" → 寫回仍是引言、不變巢狀清單", async () => {
+  it("quote text ' - x' -> still a quote after write-back, not a nested list", async () => {
     const r = await loop([{ type: "quote", content: [T(" - x")] }]);
     expect(r.b1.map(b => b.type)).toEqual(["quote"]);
     expect(lead(r.b1)).toBe("- x");
   });
 });
 
-describe("清單項目底下的子段落也套用區塊開頭跳脫", () => {
-  it.each([["- c"], ["# c"], ["> c"], ["1. c"]])("收合清單項目 t 的子段落 %j → 寫回子段落文字不變", async text => {
+describe("child paragraphs under a list item get the block-start escaping too", () => {
+  it.each([["- c"], ["# c"], ["> c"], ["1. c"]])("child paragraph %j of collapsed list item t -> text unchanged after write-back", async text => {
     const r = await loop([{ type: "toggleListItem", content: [T("t")], children: [P(T(text))] }]);
     const kids = r.b1[0]!.children ?? [];
     expect(kids.map(b => b.type)).toEqual(["paragraph"]);
     expect(lead(kids)).toBe(text);
   });
-  it("項目符號清單底下的子段落 \"- c\" → 不變巢狀清單", async () => {
+  it("child paragraph '- c' under a bullet list -> not a nested list", async () => {
     const r = await loop([{ type: "bulletListItem", content: [T("t")], children: [P(T("- c"))] }]);
     const all = [...r.b1, ...r.b1.flatMap(b => b.children ?? [])];
     expect(all.filter(b => b.type === "bulletListItem")).toHaveLength(1);
     expect(all.some(b => b.type === "paragraph" && lead([b]) === "- c")).toBe(true);
   });
-  it("項目自己的文字開頭的 - 不跳（只當行內文字）", async () => {
+  it("a leading - in the item's own text is not escaped (it's only inline text)", async () => {
     expect(await readMd(await docWith([{ type: "toggleListItem", content: [T("- t")] }]))).toBe("* - t\n");
   });
 });
 
-describe("段落開頭／結尾的換行", () => {
+describe("line breaks at the start/end of a paragraph", () => {
   it.each([
-    ["開頭", "\nx", "<br>x"],
-    ["結尾", "a\n", "a<br>"],
-    ["只有換行", "\n", "<br>"],
-    ["兩頭", "\na\n", "<br>a<br>"],
-    ["結尾兩個", "a\n\n", "a\\\n<br>"],
-  ])("%s %j → 讀出 %j、寫回相同", async (_l, text, expected) => {
+    ["at the start", "\nx", "<br>x"],
+    ["at the end", "a\n", "a<br>"],
+    ["only a line break", "\n", "<br>"],
+    ["both ends", "\na\n", "<br>a<br>"],
+    ["two at the end", "a\n\n", "a\\\n<br>"],
+  ])("%s %j -> read as %j, written back the same", async (_l, text, expected) => {
     const r = await loop([P(T(text)), P(T("z"))]);
     expect(r.md1).toBe(`${expected}\n\nz\n`);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("整篇只有一個「只有換行」的段落 → 寫回不是 empty_content", async () => {
+  it("a document whose only content is a paragraph with just a line break -> write-back is not empty_content", async () => {
     const r = await loop([P(T("\n"))]);
     expect(r.md1).toBe("<br>\n");
     expect(r.b1).toEqual(r.b0);
   });
 });
 
-describe("M-a 跳脫規則的邊界", () => {
+describe("boundaries of the escaping rules", () => {
   it.each([
-    ["兩個反斜線", [P(T("a\\\\b"))]],
-    ["反斜線結尾接粗體", [P(T("a\\"), T("b", { bold: true }))]],
-    ["波浪號結尾接刪除線", [P(T("a~"), T("b", { strike: true }))]],
-  ])("%s → 往返 blocks 相同", async (_l, blocks) => {
+    ["two backslashes", [P(T("a\\\\b"))]],
+    ["backslash at the end followed by bold", [P(T("a\\"), T("b", { bold: true }))]],
+    ["tilde at the end followed by strikethrough", [P(T("a~"), T("b", { strike: true }))]],
+  ])("%s -> the round-trip blocks are equal", async (_l, blocks) => {
     const r = await loop(blocks);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("表格儲存格 `a\\|b` → 往返相同", async () => {
+  it("table cell with an escaped pipe -> round trip is the same", async () => {
     const table = { type: "table", content: { type: "tableContent", rows: [{ cells: ["h"] }, { cells: ["a\\|b"] }] } };
     const r = await loop([table]);
     expect(r.b1).toEqual(r.b0);
     expect(r.md2).toBe(r.md1);
   });
-  it("「約 ~3 個」讀出不變（單一 ~ 不跳）", async () => {
+  it("a single ~ in prose reads out unchanged (a single ~ is not escaped)", async () => {
     expect(await readMd(await docWith([P(T("約 ~3 個"))]))).toBe("約 ~3 個\n");
   });
 });
 
-describe("M-b `_` 的字中判準與 parser 相同（\\w：英數字與 `_`）", () => {
-  it("a__b、snake_case、x_1 讀出不變，往返相同", async () => {
+describe("the in-word test for `_` matches the parser's (word characters: alphanumerics and `_`)", () => {
+  it("a__b, snake_case, x_1 read out unchanged and round-trip the same", async () => {
     const r = await loop([P(T("a__b snake_case x_1"))]);
     expect(r.md1).toBe("a__b snake_case x_1\n");
     expect(r.b1).toEqual(r.b0);
   });
 });
 
-describe("M-e 含 <br> 的儲存格那一列與其他列等寬", () => {
-  it("表格每一列的長度相同", async () => {
+describe("the row of a cell containing <br> is as wide as the other rows", () => {
+  it("every table row has the same length", async () => {
     const table = { type: "table", content: { type: "tableContent", rows: [{ cells: ["head", "h2"] }, { cells: ["a\nb", "x"] }, { cells: ["c", "y"] }] } };
     const md = await readMd(await docWith([table]));
     const lines = md.trimEnd().split("\n");

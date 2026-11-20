@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm"; // `sql` 只給 note_links 故障那案的觸發器用（一律樣板，不串字串）
+import { eq, sql } from "drizzle-orm";
 import * as Y from "yjs";
 import { SESSION_COOKIE, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { docClock } from "../src/collab/store.js";
@@ -13,9 +13,9 @@ import { bearer, docText, getContent, seedContent, seedTokenForUser, waitFor } f
 const PASSWORD = "correct-horse-battery";
 type Setup = Awaited<ReturnType<typeof setup>>;
 
-// ⚠ 兩個 heading **同級**（`# A` / `# B`）。寫成 `## B` 的話 `sectionize()` 會把 B 併進 A 段
-// （開新段條件 `level <= current.level` 不成立），`outline[2]` 變 undefined、且「最後一顆 block」
-// 不再是「別的段落」——底下兩條併發守衛會靜默變成測別的東西。見 Global Constraints 的 heading 條。
+// The two headings are at the same level (`# A` / `# B`). With `## B`, `sectionize()` merges B into A's section (the new-section
+// condition `level <= current.level` fails), `outline[2]` becomes undefined and the "last block" is no longer another section, so
+// the two concurrency guards below would silently test something else.
 async function setup(md: string | null = "# A\n\n第一段\n\n# B\n\n第二段", opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
   const ctx = await buildCollabTestApp(opts);
   const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
@@ -28,8 +28,8 @@ async function setup(md: string | null = "# A\n\n第一段\n\n# B\n\n第二段",
     ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: bearer(t), payload: body });
   const rows = () => ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, note.id));
   const stateBytes = async () => Buffer.from((await ctx.db.select().from(noteStates).where(eq(noteStates.noteId, note.id)))[0]?.ydoc ?? Buffer.alloc(0));
-  // #137：每個拒絕情境都要斷言三件事，第三件就是 `last_edited_*` 不變——與
-  // `stateBytes` 並列，同一顆 debounce 打穿兩者（取基線前必須先讓落盤成為確定事件，見各案註解）。
+  // Each rejection case asserts three things; the third is that `last_edited_*` is unchanged, alongside `stateBytes`: one
+  // debounce hits both (persisting must be a settled event before taking the baseline, see the cases).
   const lastEdited = async () =>
     (await ctx.db.select({ at: notes.lastEditedAt, by: notes.lastEditedBy, tokenId: notes.lastEditedTokenId, label: notes.lastEditedAgentLabel })
       .from(notes).where(eq(notes.id, note.id)))[0]!;
@@ -38,17 +38,12 @@ async function setup(md: string | null = "# A\n\n第一段\n\n# B\n\n第二段",
 const ids = (doc: Y.Doc) => topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
 const cookieFor = async (userId: string) => `${SESSION_COOKIE}=${await signTestSession({ userId, tv: 0 })}`;
 /**
- * provider 側用 server 的 EditorSession 對 client.doc 做一次編輯（模擬人在瀏覽器打字），
- * **並等到 server 的 live doc 真的收到才回傳**。
- *
- * 兩件事都不可省（Global Constraints）：
- * (1) `try { … } finally { s.close() }`——`testEditingRuntime` 是**模組層單例**，同一個 worker 內
- *     所有整合測試共用。回呼一 throw 就永久洩漏一個 in-flight 名額；重建旗標一旦被設起
- *     （每 50 次 mount，本檔輕鬆超過），後面每個 `acquire()` 都永遠不會 settle，整支測試檔
- *     以**無訊息逾時**收場（`session.ts` 白紙黑字寫了這條）。
- * (2) `waitFor` 觀察的是 **server 上的 doc**，不是 client.doc——改動要經 WebSocket 才會到
- *     server，函式回傳當下 server 還沒收到。少了這一步，「transact 內重算指紋擋住併發覆蓋」
- *     這條最重要的守衛就是靠競態在驗，會偶爾假綠。
+ * Both steps are required: (1) `try { ... } finally { s.close() }`: `testEditingRuntime` is a module-level singleton shared by all
+ * integration tests in a worker; a throw would leak an in-flight slot permanently, and once the rebuild flag is set (every 50 mounts,
+ * easily exceeded in this file) every later `acquire()` never settles and the file ends in a silent timeout (`session.ts` says so).
+ * (2) `waitFor` watches the server's doc, not client.doc: the change reaches the server over WebSocket, so it hasn't arrived when
+ * the function returns; without it the key guard "fingerprint recomputed inside transact blocks concurrent overwrite" would
+ * rely on a race and sometimes pass falsely.
  */
 async function humanEdit(ctx: Setup["ctx"], noteId: string, client: Setup["client"], sentinel: string, fn: (ed: EditorSession["editor"]) => void) {
   const s = await EditorSession.open(testEditingRuntime, client.doc);
@@ -61,17 +56,17 @@ async function humanEdit(ctx: Setup["ctx"], noteId: string, client: Setup["clien
     docText(ctx.collab.hocuspocus.documents.get(noteId)!).includes(sentinel)
   );
 }
-/** `client.disconnect()` 之後、要讀 note_states／notes 或斷言 documents.size 之前的唯一等法。 */
+/** Waits after `client.disconnect()` before reading note_states/notes or asserting documents.size. */
 const settled = (ctx: Setup["ctx"]) => waitFor("落盤並卸載", 10_000, () => ctx.collab.hocuspocus.documents.size === 0);
 
-describe("POST /api/notes/:id/edits：五 op", () => {
-  it("replace_section：內容換、段外 id 不變、provider 即時收到、記錄一列、note_states 已新、回覆指紋==之後讀到的、agentLabel 快照", async () => {
+describe("POST /api/notes/:id/edits: the five ops", () => {
+  it("replace_section: content replaced, ids outside the section unchanged, provider receives it live, one record, note_states updated, reply fingerprint equals the one read afterwards, agentLabel snapshot", async () => {
     const { note, client, content, post, rows, stateBytes } = await setup();
     const before = await content();
     const idsBefore = ids(client.doc);
-    const sec = before.outline[2]; // ＝ B 段（outline[0]=_top、[1]=A、[2]=B；兩個 heading 同級才成立）
-    // ⚠ 寫回去的 heading 也要**同級**（`# B2`）：寫成 `## B2` 的話新內容合併後會併進 A 段，
-    // 這一案就不再是在測 replace_section 的語意了。
+    const sec = before.outline[2]; // section B (outline[0]=_top, [1]=A, [2]=B; holds only because both headings are at the same level)
+    // The heading written back must also be same-level (`# B2`): with `## B2` the new content would merge into A's section
+    // and this case would no longer test replace_section's semantics.
     const res = await post({ op: "replace_section", section_id: sec.sectionId, markdown: "# B2\n\n新的第二段", if_match: sec.fingerprint });
     expect(res.statusCode).toBe(201);
     expect(res.json().unboundWikilinks).toBe(0);
@@ -83,14 +78,14 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect(r[0]!.afterBlockIds.length).toBeGreaterThan(0);
     expect((r[0]!.beforeBlocks as unknown[]).length).toBe(2);
     expect((await content()).fingerprint).toBe(res.json().fingerprint);
-    // 落盤的是 Yjs 的二進位更新——直接對 `Buffer.toString()` 做子字串比對不可靠（長度前綴位元組
-    // 會被 UTF-8 解碼器吃掉相鄰的中日韓位元組），所以解回 Y.Doc 再看內文（同「fork 側 409」那案）。
+    // Persisted data is a Yjs binary update: substring matching on `Buffer.toString()` is unreliable (at length-prefix bytes the UTF-8
+    // decoder eats adjacent CJK bytes), so decode back to a Y.Doc and look at the text (same as the fork-side 409 case).
     const persisted = new Y.Doc();
     Y.applyUpdate(persisted, await stateBytes());
     expect(docText(persisted)).toContain("新的第二段");
   });
 
-  it("replace_all／insert_after／append／delete_section 語意；沒人在線寫入後 documents.size 回 0；append 免 if_match", async () => {
+  it("replace_all/insert_after/append/delete_section semantics; with nobody online documents.size returns to 0 after writing; append needs no if_match", async () => {
     const { ctx, client, content, post } = await setup();
     client.disconnect();
     await settled(ctx);
@@ -114,7 +109,7 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect(ctx.collab.hocuspocus.documents.size).toBe(0);
   });
 
-  it("從未開過的空筆記：讀 → 用讀到的 if_match 寫 → 成功 → 回覆指紋 == 再讀的指紋", async () => {
+  it("never-opened empty note: read, write with the if_match just read, succeeds, and the reply fingerprint equals the next read's", async () => {
     const { content, post } = await setup(null);
     const first = await content();
     expect(first.outline).toEqual([expect.objectContaining({ sectionId: "_top", chars: 0 })]);
@@ -123,7 +118,7 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect((await content()).fingerprint).toBe(res.json().fingerprint);
   });
 
-  it("_top：insert_after _top 插在第一個 heading 前；零 block _top 的 replace_section 同；delete_section 零 block _top → 400 empty_section", async () => {
+  it("_top: insert_after _top inserts before the first heading; replace_section on a zero-block _top likewise; delete_section on a zero-block _top -> 400 empty_section", async () => {
     const { content, post } = await setup("# A\n\n內文");
     let c = await content();
     const top = c.outline[0];
@@ -132,15 +127,15 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect((await post({ op: "insert_after", section_id: "_top", markdown: "前言", if_match: top.fingerprint })).statusCode).toBe(201);
     c = await content();
     expect(c.markdown.indexOf("前言")).toBeLessThan(c.markdown.indexOf("# A"));
-    // 種子寫成 `# A 標題`（不是 `# A`）：`seedContent` 的哨兵是最後一行的可見文字，單字元的
-    // ASCII 哨兵（`"A"`）會被 block id 的隨機字元命中，等於沒等。下面的 `indexOf("# A")` 仍成立。
+    // Seed is `# A title` (not `# A`): seedContent's sentinel is the last line's visible text, and a one-char ASCII sentinel
+    // (`"A"`) would be hit by random block-id characters, waiting for nothing. `indexOf("# A")` below still holds.
     const h = await setup("# A 標題");
     const topEmpty = (await h.content()).outline[0];
     expect((await h.post({ op: "replace_section", section_id: "_top", markdown: "前言二", if_match: topEmpty.fingerprint })).statusCode).toBe(201);
     expect((await h.content()).markdown.indexOf("前言二")).toBeLessThan((await h.content()).markdown.indexOf("# A"));
   });
 
-  it("無 heading 筆記 delete_section _top → 只剩一個空 paragraph、記錄 after 空、anchor ③ 指向它", async () => {
+  it("delete_section _top on a note with no heading -> only one empty paragraph left, the record's after is empty, the anchor points to it", async () => {
     const flat = await setup("只有一段");
     const t = (await flat.content()).outline[0];
     expect((await flat.post({ op: "delete_section", section_id: "_top", if_match: t.fingerprint })).statusCode).toBe(201);
@@ -154,7 +149,7 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect(row!.anchor).toEqual({ block_id: ids(flat.client.doc)[0], position: "before" });
   });
 
-  it("真空文件：replace_section／insert_after _top／append → 結果同 replace_all；delete_section → 400", async () => {
+  it("truly empty document: replace_section/insert_after _top/append give the same result as replace_all; delete_section -> 400", async () => {
     for (const body of [
       { op: "replace_section", section_id: "_top", markdown: "X" },
       { op: "insert_after", section_id: "_top", markdown: "X" },
@@ -162,9 +157,9 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     ]) {
       const e = await setup(null);
       const c0 = await e.content();
-      // ⚠ `append` 的 `if_match` 比對的是**整篇**指紋（`targetIds === null`），另外兩支比對的是
-      // `_top` 這一段的指紋。真空文件下這兩個值不相等（整篇＝各段指紋串起來再 hash），三支共用
-      // 同一個值會讓 append 拿到 409——那是輸入寫錯，不是行為錯，所以按 op 取對應的那一個。
+      // `append`'s `if_match` is compared against the whole-note fingerprint (`targetIds === null`), the other two against the
+      // `_top` section's. On a truly empty document the two differ (whole-note = section fingerprints concatenated then hashed);
+      // sharing one value would give append a 409, a wrong input rather than wrong behaviour, so pick the right one per op.
       const fp = body.op === "append" ? c0.fingerprint : c0.outline[0].fingerprint;
       expect((await e.post({ ...body, if_match: fp })).statusCode, body.op).toBe(201);
       const c = await e.content();
@@ -176,7 +171,7 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect((await d.post({ op: "delete_section", section_id: "_top", if_match: (await d.content()).outline[0].fingerprint })).json().error.code).toBe("empty_section");
   });
 
-  it("cookie 寫入 → 記錄 token_id／agent_label 皆 NULL", async () => {
+  it("cookie write -> record has token_id and agent_label both NULL", async () => {
     const { ctx, u, note, content, rows } = await setup();
     const c = await content();
     const res = await ctx.app.inject({ method: "POST", url: `/api/notes/${note.id}/edits`, headers: { cookie: await cookieFor(u.id) }, payload: { op: "append", markdown: "by cookie" } });
@@ -186,7 +181,7 @@ describe("POST /api/notes/:id/edits：五 op", () => {
     expect(row).toMatchObject({ tokenId: null, agentLabel: null, userId: u.id });
   });
 
-  it("#240 Bearer POST /edits 的大寫 id：append 寫進小寫那份 live doc", async () => {
+  it("#240 Bearer POST /edits with an uppercase id: append writes into the lowercase live doc", async () => {
     const s = await setup("# Head\n\n人寫的一行");
     const Y_TEXT = `Y-${Date.now()}`;
     const res = await s.ctx.app.inject({
@@ -200,8 +195,8 @@ describe("POST /api/notes/:id/edits：五 op", () => {
   });
 });
 
-describe("並排", () => {
-  it("文件只剩一列時 append 不會把列換掉（isEmptyDoc 不把列當空文件）", async () => {
+describe("side by side", () => {
+  it("append doesn't replace the columns when the document has only one columns row (isEmptyDoc doesn't treat a columns row as empty)", async () => {
     const s = await setup(null);
     await humanEdit(s.ctx, s.note.id, s.client, "右欄文字", ed => ed.replaceBlocks(ed.document, [
       { id: "r", type: "columnList", children: [
@@ -220,33 +215,32 @@ describe("並排", () => {
   });
 });
 
-describe("if_match 與併發", () => {
-  it("整篇不符 409 且 current 是新內容；段落不符 409；別段被人改該段仍成功", async () => {
+describe("if_match and concurrency", () => {
+  it("whole-note mismatch 409 with current showing the new content; section mismatch 409; another section edited by a human still succeeds", async () => {
     const { ctx, note, client, content, post } = await setup();
     const c = await content();
     const stale = await post({ op: "replace_all", markdown: "x", if_match: "0000000000000000" });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe("fingerprint_mismatch");
-    // #372：訊息逐字（英文、指向 current）。
     expect(stale.json().error.message).toBe("The content changed since you read it, so nothing was written. The response's current field has the content as it is now.");
     expect(stale.json().current.fingerprint).toBe(c.fingerprint);
     const a = c.outline[1];
     expect((await post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\nx", if_match: "0000000000000000" })).statusCode).toBe(409);
-    // `document.at(-1)` ＝ 第二段，**在 B 段**（fixture 的兩個 heading 同級才成立；若寫成 `## B`
-    // 它會落在 A 段裡，這一行就會把「別段被人改」變成「同段被人改」，下一行的期待要從 201 變 409——
-    // 也就是把最重要的守衛之一測反了）。
+    // `document.at(-1)` is the second paragraph, in section B (needs same-level headings in the fixture; with `## B` it would land
+    // in A, turning "another section edited" into "same section edited", the expected 201 would become 409 and this key guard
+    // would be tested backwards).
     await humanEdit(ctx, note.id, client, "第二段（人改）", ed => ed.updateBlock(ed.document.at(-1)!.id, { content: "第二段（人改）" }));
     expect((await post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\nAI 改的", if_match: a.fingerprint })).statusCode).toBe(201);
     expect((await content()).markdown).toContain("人改");
     expect((await content()).markdown).toContain("AI 改的");
   });
 
-  it("fork 後合併前 provider 打同段字 → transact 內 409；(a) 落盤含併發編輯且不含 AI block id (c) 紀錄空 (d) provider 斷線後 documents.size 回 0", async () => {
-    // ⚠ hook 必須等到 server 收到那筆併發編輯才回傳（humanEdit 內建 waitFor）——否則合併的
-    // transact 在編輯抵達之前就跑完，指紋核對根本沒看到併發，這一案會靠時序偶爾綠。
-    // hook 要用到 `setup()` 的結果，而 hook 又必須在 `setup()` 之前就交給 app——所以先傳一個空物件
-    // 進去（同一個參照一路到 `applyDeps.testHooks`），再把 `beforeMerge` 掛上去。`deps.testHooks
-    // ?.beforeMerge` 是**呼叫時**才讀，所以掛在 setup 之後仍然生效。
+  it("provider types in the same section between fork and merge -> 409 inside transact; persisted doc has the concurrent edit and no AI block id; record empty; documents.size returns to 0 after the provider disconnects", async () => {
+    // The hook must return only after the server received the concurrent edit (humanEdit has a built-in waitFor), otherwise the
+    // merge transact finishes before the edit arrives, the fingerprint check never sees the concurrency and the case passes only by
+    // timing. The hook needs `setup()`'s result yet must be handed to the app before `setup()`: pass an empty object (same reference
+    // all the way to `applyDeps.testHooks`) and attach `beforeMerge` afterwards; `deps.testHooks?.beforeMerge` is read at call time,
+    // so attaching after setup works.
     const hooks: EditingTestHooks = {};
     const s = await setup(undefined, { editingTestHooks: hooks });
     hooks.beforeMerge = async () => {
@@ -260,8 +254,9 @@ describe("if_match 與併發", () => {
     expect(res.json().error.code).toBe("fingerprint_mismatch");
     expect(res.json().current.markdown).toContain("併發");
     expect(await s.rows()).toHaveLength(0);
-    // 轉換搬進 worker 之後：活文件已不是 worker 的基底 → 合併前就重來（不開直連，`mergeAtBase` 的預先比對），重來時 worker 在新狀態上
-    // 比指紋 → 409。這條路徑不開直連、不落盤；併發編輯照協作的一般落盤寫進 DB——用戶端斷線、落盤完成後再看。
+    // The live doc is no longer the worker's base: retry before merging (no direct connection; `mergeAtBase`'s pre-comparison),
+    // and on the retry the worker compares fingerprints on the new state -> 409. This path opens no direct connection and persists
+    // nothing; the concurrent edit is persisted by ordinary collab persistence, so check after the client disconnects and persisting completes.
     s.client.disconnect();
     await settled(s.ctx);
     expect(s.ctx.collab.hocuspocus.documents.size).toBe(0);
@@ -271,13 +266,13 @@ describe("if_match 與併發", () => {
     expect(docText(persisted)).not.toContain("AI 版");
     const svAfter = new Set(Y.decodeStateVector(Y.encodeStateVector(persisted)).keys());
     for (const k of svAfter) expect(svBefore.has(k) || k === s.client.doc.clientID).toBe(true);
-    // #137 的 (b)：AI 沒寫進去，落款就不是 AI 的。
+    // The AI wrote nothing, so the signature must not be the AI's.
     expect(await s.lastEdited()).toMatchObject({ tokenId: null, label: null });
   });
 
-  it("fork 後合併前 provider 打別段 → 兩邊都在", async () => {
-    // 同上（含「先傳空 hooks 物件、setup 之後才掛 beforeMerge」的理由）：`at(-1)` ＝ 第二段，
-    // 在 B 段（AI 打的是 A 段）。fixture 的 heading 同級是這一案成立的前提。
+  it("provider types in another section between fork and merge -> both edits present", async () => {
+    // Same as above (including why an empty hooks object is passed first and `beforeMerge` attached after setup): `at(-1)` is
+    // the second paragraph, in section B (the AI edits A). Same-level headings in the fixture are what make this case hold.
     const hooks: EditingTestHooks = {};
     const s = await setup(undefined, { editingTestHooks: hooks });
     hooks.beforeMerge = async () => {
@@ -290,7 +285,7 @@ describe("if_match 與併發", () => {
     expect(md).toContain("第二段（併發）");
   });
 
-  it("併發：同段恰一發成功（replace_section 落敗＝404、insert_after 落敗＝409）；不同段都 201；佇列逾時 503 server_busy 且什麼都沒寫", async () => {
+  it("concurrency: exactly one of the same-section requests succeeds (replace_section loser 404, insert_after loser 409); different sections both 201; queue timeout 503 server_busy and nothing written", async () => {
     const s = await setup();
     const c = await s.content();
     const a = c.outline[1];
@@ -298,12 +293,12 @@ describe("if_match 與併發", () => {
       s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\n一", if_match: a.fingerprint }),
       s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\n二", if_match: a.fingerprint }),
     ]);
-    // ⚠ 落敗那一發是 **404 `section_not_found`**，不是 409：佇列讓兩發串行，第二發是在第一發
-    // 合併完之後才 fork 的，而 `replace_section` 連 heading block 一起換掉＝該段的 sectionId
-    // （＝heading 的 block id）已經不存在了。守的東西不變（恰好一發成功、落敗那發什麼都沒寫），
-    // 只是碼不同；「段落還在但指紋變了 → 409」由下面第二組（insert_after）驗。
+    // The loser gets 404 `section_not_found`, not 409: the queue serializes the two, the second forks after the first merged, and
+    // `replace_section` replaces the heading block too, so the section's sectionId (the heading's block id) no longer exists. What is
+    // guarded is the same (exactly one succeeds, the loser writes nothing), only the code differs; "section still present but
+    // fingerprint changed -> 409" is covered by the insert_after group below.
     expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 404]);
-    expect(await s.rows()).toHaveLength(1); // 落敗那一發沒有留下任何紀錄
+    expect(await s.rows()).toHaveLength(1); // the losing request leaves no record
     const c2 = await s.content();
     const a2 = c2.outline[1];
     const b2 = c2.outline[2];
@@ -312,8 +307,8 @@ describe("if_match 與併發", () => {
       s.post({ op: "replace_section", section_id: b2.sectionId, markdown: "# B\n\n四", if_match: b2.fingerprint }),
     ]);
     expect([r3.statusCode, r4.statusCode]).toEqual([201, 201]);
-    // 同段、但 sectionId 仍在（`insert_after` 不動 heading）→ 落敗那發是 409 `fingerprint_mismatch`：
-    // 第一發插進去的 block 併入該段，該段指紋因此改變，第二發帶的舊指紋核對不過。
+    // Same section but the sectionId still exists (`insert_after` doesn't touch the heading): the loser gets 409 `fingerprint_mismatch`:
+    // the first request's inserted block joins the section and changes its fingerprint, so the second's old fingerprint no longer matches.
     const cIns = await s.content();
     const aIns = cIns.outline[1];
     const [ri1, ri2] = await Promise.all([
@@ -322,25 +317,25 @@ describe("if_match 與併發", () => {
     ]);
     expect([ri1.statusCode, ri2.statusCode].sort()).toEqual([201, 409]);
     expect([ri1, ri2].find(r => r.statusCode === 409)!.json().error.code).toBe("fingerprint_mismatch");
-    // 503：把佇列等待壓到 0（editingTestHooks.beforeMerge 卡住第一個請求）
+    // 503: queue wait forced to 0 (editingTestHooks.beforeMerge holds the first request)
     let release!: () => void;
     let entered = false;
     const blocked = new Promise<void>(r => {
       release = r;
     });
     const t = await setup(undefined, { editingTestHooks: { beforeMerge: () => { entered = true; return blocked; } }, editingQueueWaitMs: 50 });
-    // ⚠ 同拒絕案共用案：**取基線前先讓落盤成為確定事件**（Global Constraints 的基線條）。這一段的
-    // 兩個請求都停在合併之前——`p1` 被 hook 卡住、`r5` 撞佇列逾時——所以**沒有任何立即落盤去取代
-    // `seedContent` 那顆待送的 debounced store**（429 那案安全，正是因為它前面有一次成功寫入）。
-    // 不斷線的話：基線取在 `note_states` 還沒有列的時候，等 mount 與 waitFor 拖過兩秒，種子的
-    // store 落地，`bytes` 的相等斷言就假紅。斷線＋卸載後這一段不會再有任何落盤，相等是確定事件。
+    // Shared with the rejection cases: persisting must be a settled event before taking the baseline. Both requests here stop before
+    // merging (`p1` held by the hook, `r5` hitting the queue timeout), so nothing persists immediately to replace `seedContent`'s
+    // pending debounced store (the 429 case is safe because a successful write precedes it). Without disconnecting, the baseline
+    // is taken while `note_states` has no row, and if mount and waitFor drag past two seconds the seed's store lands and the
+    // `bytes` equality fails falsely. After disconnect + unload nothing persists here again, so equality is deterministic.
     t.client.disconnect();
     await settled(t.ctx);
     const c3 = await t.content();
     const bytes = await t.stateBytes();
     const p1 = t.post({ op: "append", markdown: "一" });
-    // 第一個請求要先跑完 resolveRole／visibleNoteTitles／loadNoteDoc／mount 才會走到 beforeMerge，
-    // 固定次數的 setImmediate 輪詢等不到——等旗標，才能確定佇列真的被占住、第二個請求才會撞逾時。
+    // The first request must finish resolveRole/visibleNoteTitles/loadNoteDoc/mount before reaching beforeMerge, so polling a fixed
+    // number of setImmediate ticks can't wait for it; wait on the flag so the queue is really held and the second request times out.
     await waitFor("第一個請求已占住佇列", 5_000, () => entered);
     const r5 = await t.post({ op: "append", markdown: "二" });
     expect(r5.statusCode).toBe(503);
@@ -353,36 +348,34 @@ describe("if_match 與併發", () => {
   });
 });
 
-describe("拒絕案假綠守衛", () => {
-  // 清單是「每一個拒絕情境都要斷言：note_states.ydoc 位元組相同、note_ai_edits 零列」。
-  // 這一案是那份清單的共用實作——新增任何拒絕碼都要加進 `cases`，不要另開一個沒有守衛的 it。
-  // ⚠ `unsupported_block` 的**白名單分支**整合層到不了：headless schema ＝ `defaultBlockSpecs`
-  // 全集＋mermaid／codeBlock（見 shared 的 `createHeadlessNoteSchema`），BlockNote 的 markdown/HTML
-  // parser 產得出來的 type 一定在白名單裡。白名單那條分支由
-  // `test/unit/editing-markdown.test.ts` 的「未知型別整筆拒絕」以收窄的假 schema 驗（刪掉
-  // `markdown.ts` 的 `walk` 檢查 → 那一案必須紅）。這個碼的另外兩條分支到得了、在下面的 `cases` 裡：
-  // core parse 丟例外（同 mcp-write-guards）與帶事件處理屬性的 HTML（語法檢查）。
-  // 並排的兩碼 `unsupported_columns`／`unsupported_size` 也在 `cases` 裡。
-  it("403 viewer、empty_content、empty_section、too_many_blocks、unsupported_block／columns／size、NUL、未知欄位、fork 側 409、413 content_too_large → note_states 位元組相同、記錄零列", async () => {
+describe("false-green guard for rejection cases", () => {
+  // Every rejection case must assert: note_states.ydoc bytes unchanged and zero note_ai_edits rows. This case is the shared
+  // implementation of that list: add any new rejection code to `cases` rather than a separate guard-less `it`.
+  // The whitelist branch of `unsupported_block` is unreachable at integration level: the headless schema is the full
+  // `defaultBlockSpecs` plus mermaid/codeBlock (see shared's `createHeadlessNoteSchema`), so every type BlockNote's markdown/HTML
+  // parser produces is in the whitelist; that branch is covered by `test/unit/editing-markdown.test.ts` with a narrowed fake schema.
+  // The other two branches are reachable and are in `cases` below: core parse throwing (as in mcp-write-guards) and HTML with an
+  // event-handler attribute (syntax check). The side-by-side codes `unsupported_columns`/`unsupported_size` are in `cases` too.
+  it("403 viewer, empty_content, empty_section, too_many_blocks, unsupported_block/columns/size, NUL, unknown field, fork-side 409, 413 content_too_large -> note_states bytes unchanged, zero records", async () => {
     const s = await setup();
     const viewer = await s.ctx.createUser({ email: "v@example.com", password: PASSWORD });
     await s.ctx.share(s.note.id, viewer.id, "viewer");
     const { token: vt } = await seedTokenForUser(s.ctx.db, viewer.id);
-    // ⚠ **取基線之前必須先讓落盤成為確定事件**（Global Constraints 的基線條）——這一行不是多餘的
-    // 收尾動作，是這一案唯一能成立的前提。不斷線就取基線的話：此刻 `note_states` 還沒有列
-    //（`stateBytes()` 回空緩衝區），而 `seedContent` 那批人為編輯掛著一顆 2 秒 debounce 的 store；
-    // 底下十幾個 case ＋ 一次內容讀取 ＋ 413 跑超過兩秒，那顆 store 就會在中途落地、表裡出現種子
-    // 內容，結尾的位元組相等斷言變成時序假紅。斷線＋卸載之後**沒有任何在線 client 會再排 store**，
-    // 而底下每一個請求都停在合併之前（拒絕案的定義）＝不會開直連、不會落盤，所以基線與結尾必然相等。
-    // 之後的讀取走 DB 快照（`loadNoteDoc` 沒有 live doc 就解 `note_states`），內容與斷線前逐位元組相同。
+    // The baseline must be taken only after persisting is a settled event; this line is not a redundant cleanup, it's what makes the
+    // case valid. Without disconnecting, `note_states` has no row yet (`stateBytes()` returns an empty buffer) while `seedContent`'s
+    // edits hang a 2 s debounced store; the dozen cases below plus one content read plus the 413 run longer than two seconds, so the
+    // store would land midway, seed content would appear in the table and the final bytes-equal assertion would fail by timing.
+    // After disconnect + unload no online client queues another store, and every request below stops before merging (the definition
+    // of a rejection case): no direct connection, nothing persisted, so baseline and end are necessarily equal.
+    // Later reads use the DB snapshot (`loadNoteDoc` decodes `note_states` with no live doc), byte-identical in content to before the disconnect.
     s.client.disconnect();
     await settled(s.ctx);
     const before = await s.stateBytes();
-    // #137：第三件事。可以用嚴格的「四欄全等」，前提正是上面那兩行斷線＋卸載——
-    // 之後四欄已是人形落款且**不會再有任何 store**（底下每個請求都停在合併之前），所以「不變」
-    // 是確定事件而非賭時序。⚠ 拿掉那兩行斷線，這一行會跟著變成隨機紅（同一顆 debounce 的兩個面）。
+    // A strict all-four-columns-equal check works because of the disconnect + unload above: the four columns are already a human
+    // signature and no store will happen again (every request stops before merging), so "unchanged" is deterministic, not a bet on
+    // timing. Remove the disconnect and this line becomes randomly red (two faces of the same debounce).
     const lastBefore = await s.lastEdited();
-    const topFp = (await s.content()).outline[0].fingerprint; // 文件以 heading 開頭 → _top 零 block
+    const topFp = (await s.content()).outline[0].fingerprint; // the document starts with a heading, so _top has zero blocks
     const NUL = String.fromCharCode(0);
     const cases: Array<[Record<string, unknown>, number, string, string?]> = [
       [{ op: "append", markdown: "x" }, 403, "forbidden", vt],
@@ -421,16 +414,15 @@ describe("拒絕案假綠守衛", () => {
     expect(await s.lastEdited()).toEqual(lastBefore);
   });
 
-  it("429 也是拒絕案：EDIT_LIMIT 耗盡後的請求 → note_states 位元組相同、記錄零列", async () => {
-    // 429 也屬於拒絕案的假綠守衛，但它需要自己的桶，所以獨立一案。
-    // 守的是「限流在任何 mount／直連之前就擋下來」：日後有人把 consume 搬到合併之後，
-    // 位元組與零列這兩條會紅。
+  it("429 is also a rejection case: a request after EDIT_LIMIT is exhausted -> note_states bytes unchanged, zero records", async () => {
+    // 429 also needs the false-green guard but has its own limiter, hence a separate case. Guards that the rate limit blocks before
+    // any mount/direct connection: if consume later moves after merging, the bytes and zero-rows assertions fail.
     const s = await setup(undefined, { limiters: { edit: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) } });
     expect((await s.post({ op: "append", markdown: "第一次" })).statusCode).toBe(201);
     const before = await s.stateBytes();
-    // #137：這一案也能用嚴格的「四欄全等」，理由是上面那次成功的 append——合併的 disconnect()
-    // 是立即 store，**會取代該批待送的 debounced store**，所以之後沒有別的寫入者
-    // 會再動這四欄。基線因此是確定事件，不是「大概來得及」。
+    // The strict four-column-equal check works here too: the successful append above merges with `disconnect()` as an immediate
+    // store that replaces the pending debounced store, so no other writer touches the four columns afterwards. The baseline is a
+    // settled event, not "probably in time".
     const lastBefore = await s.lastEdited();
     const rowsBefore = (await s.rows()).length;
     const r = await s.post({ op: "append", markdown: "第二次" });
@@ -442,10 +434,9 @@ describe("拒絕案假綠守衛", () => {
     expect((await s.content()).markdown).not.toContain("第二次");
   });
 
-  // ⚠ #137：這一案**刻意不補** `last_edited_*` 不變的斷言——它不是拒絕案：內容**已經合併落盤**
-  // 了（`expect(content).toContain("內容在")` 正是這個意思），落款本來就該更新。誤加「不變」會把
-  // 正確行為測成錯的。
-  it("記錄插入失敗（beforeRecord throw）→ 500、內容仍在、記錄零列", async () => {
+  // Deliberately no `last_edited_*`-unchanged assertion here: this isn't a rejection case, the content is already merged and
+  // persisted (`expect(content).toContain(...)`), so the signature should update; adding "unchanged" would test correct behaviour as wrong.
+  it("record insert failure (beforeRecord throws) -> 500, content still present, zero records", async () => {
     const s = await setup(undefined, { editingTestHooks: { beforeRecord: async () => { throw new Error("boom"); } } });
     const c = await s.content();
     const r = await s.post({ op: "replace_all", markdown: "內容在", if_match: c.fingerprint });
@@ -455,11 +446,11 @@ describe("拒絕案假綠守衛", () => {
   });
 });
 
-describe("寫入順序：先紀錄後連結", () => {
-  // ⚠ 與上面 `beforeRecord throw` 那案不同：那案守的是「先落盤（merge）後紀錄」。本案守的是
-  // `record`（insertEditRecord）→ `links`（updateNoteLinks）的順序：afterRecord 縫在兩者之間，
-  // 此刻 note_ai_edits 已有這筆、note_links 尚未更新；放行後才出現。
-  it("afterRecord 縫：紀錄已寫、note_links 尚未更新；放行後 note_links 更新", async () => {
+describe("write order: record before links", () => {
+  // Different from the beforeRecord-throw case above, which guards "persist (merge) before record": this guards the `record`
+  // (insertEditRecord) -> `links` (updateNoteLinks) order: the afterRecord hook sits between them, where note_ai_edits already
+  // has the row and note_links isn't updated yet; it appears after release.
+  it("afterRecord hook: record written, note_links not yet updated; after release note_links is updated", async () => {
     let seen: { edits: number; links: number } | null = null;
     let sctx: Setup | null = null;
     const s = await setup(undefined, {
@@ -483,8 +474,8 @@ describe("寫入順序：先紀錄後連結", () => {
   });
 });
 
-describe("限流", () => {
-  it("EDIT_LIMIT limit 3 第 4 次 429；viewer 4 次全 403（角色檢查後才消耗）", async () => {
+describe("rate limits", () => {
+  it("EDIT_LIMIT limit 3: 4th request 429; a viewer's 4 requests all 403 (charged only after the role check)", async () => {
     const s = await setup(undefined, { limiters: { edit: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) } });
     const viewer = await s.ctx.createUser({ email: "v@example.com", password: PASSWORD });
     await s.ctx.share(s.note.id, viewer.id, "viewer");
@@ -494,7 +485,7 @@ describe("限流", () => {
     expect((await s.post({ op: "append", markdown: "x" })).statusCode).toBe(429);
   });
 
-  it("token 的 TOKEN_WRITE_LIMIT：viewer 的 403 也消耗（preHandler 扣點）", async () => {
+  it("token TOKEN_WRITE_LIMIT: a viewer's 403 also consumes (charged in preHandler)", async () => {
     const s = await setup(undefined, { limiters: { tokenWrite: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) } });
     const viewer = await s.ctx.createUser({ email: "v@example.com", password: PASSWORD });
     await s.ctx.share(s.note.id, viewer.id, "viewer");
@@ -505,26 +496,25 @@ describe("限流", () => {
   });
 });
 
-describe("note_links 與媒體", () => {
-  it("AI 寫入含 [[…]] 的段落 → 目標的 backlinks 立即含來源；unboundWikilinks 計數", async () => {
+describe("note_links and media", () => {
+  it("AI write of a paragraph with [[...]] -> target's backlinks include the source immediately; unboundWikilinks counted", async () => {
     const s = await setup();
     const target = await s.ctx.createNote(s.u.id, "目標筆記");
     const c = await s.content();
     const r = await s.post({ op: "append", markdown: "看 [[目標筆記]] 與 [[不存在]]", if_match: c.fingerprint });
     expect(r.statusCode).toBe(201);
     expect(r.json().unboundWikilinks).toBe(1);
-    // ⚠ `/backlinks` 是 **cookie-only**（`app.authenticate`，不在 #107 的 Bearer 允許清單上）
-    // ——用 Bearer 會拿到 401、`body.backlinks` 是 undefined。這裡改用 session cookie。
+    // `/backlinks` is cookie-only (`app.authenticate`, not on #107's Bearer allowlist): Bearer would give 401 and an undefined
+    // `body.backlinks`, so a session cookie is used.
     const back = await s.ctx.app.inject({ method: "GET", url: `/api/notes/${target.id}/backlinks`, headers: { cookie: await cookieFor(s.u.id) } });
     expect(back.json().backlinks.map((b: { id: string }) => b.id)).toContain(s.note.id);
   });
 
-  it("note_links 的 clock 取自 applyUpdate 之前的 live doc（＝寫入前的 docClock，且 < 寫入後）", async () => {
-    // 這一案守的是 CAS 正確性的唯一依據：`mergeDiff` 在 `Y.applyUpdate` **之前**讀 `docClock`。
-    // 把那行挪到 applyUpdate 之後，兩個既有的 backlinks 案仍然全綠——因為 writeNoteLinks 的 CAS 用
-    // 的是 `links_clock <= $clock`，更大的 clock 一樣寫得進去。失效是**靜默**的：AI 拿一個比它實際
-    // 看到的狀態更新的 clock 去佔位，瀏覽器後續（clock 較小）的索引更新被判成 no-op，該筆記的
-    // wikilink 索引永久落後且完全無聲。所以直接查那個欄位本身。
+  it("note_links clock comes from the live doc before applyUpdate (the pre-write docClock, and < the post-write one)", async () => {
+    // CAS correctness depends on this: `mergeAtBase` reads `docClock` before `Y.applyUpdate`. Moving that line after applyUpdate
+    // leaves the two backlinks cases in this file green, since writeNoteLinks's CAS is `links_clock <= $clock` and a larger clock is still
+    // accepted. The failure is silent: the AI claims a clock newer than the state it saw, the browser's later (smaller-clock) index
+    // updates are judged no-ops, and the note's wikilink index lags permanently and silently. So query the column itself.
     const s = await setup();
     await s.ctx.createNote(s.u.id, "目標筆記");
     const live = () => s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
@@ -533,18 +523,17 @@ describe("note_links 與媒體", () => {
     expect((await s.post({ op: "append", markdown: "看 [[目標筆記]]", if_match: c.fingerprint })).statusCode).toBe(201);
     const clockAfter = docClock(live());
     const [row] = await s.ctx.db.select({ linksClock: notes.linksClock }).from(notes).where(eq(notes.id, s.note.id));
-    expect(row!.linksClock).toBe(clockBefore); // 挪到 applyUpdate 之後 → 這行紅
-    expect(row!.linksClock).toBeLessThan(clockAfter); // 且合併確實推進了 doc clock（守衛本身沒有空轉）
-    expect(clockBefore).toBeGreaterThan(0); // seed 過的筆記，不是拿 0 跟 0 比
+    expect(row!.linksClock).toBe(clockBefore); // moving it after applyUpdate makes this line fail
+    expect(row!.linksClock).toBeLessThan(clockAfter); // and the merge really advanced the doc clock (the guard isn't idle)
+    expect(clockBefore).toBeGreaterThan(0); // a seeded note, not 0 compared with 0
   });
 
-  it("note_links 寫入失敗（DB 故障）→ 仍回 201、紀錄已寫、只是索引落後（不得把成功的寫入變成 500）", async () => {
-    // `updateNoteLinks` 跑在**內容已落盤、note_ai_edits 也已寫**之後。
-    // `writeNoteLinks` 對「忙碌」是**回值**（"busy"）不是拋出，所以它真的 throw 就代表 DB 故障——
-    // 讓那個例外逃出去會把一次**完全成功**的寫入回成 500，而外部 AI 對 500 幾乎一定重試，於是
-    // 同一筆編輯被套用兩次、`note_ai_edits` 多一列。這條鏈上其他每個失敗形都有明確語意
-    //（記錄插入失敗＝內容在紀錄沒有、回 500），唯獨這個沒有——降級成 warn，索引落後而已。
-    // 造故障的手法沿用 repo 前例：一律用 `sql` 樣板，不串字串。
+  it("note_links write failure (DB fault) -> still 201, record written, only the index lags (a successful write must not become 500)", async () => {
+    // `updateNoteLinks` runs after the content is persisted and note_ai_edits written. `writeNoteLinks` returns "busy" as a value
+    // rather than throwing, so a real throw means a DB fault: letting it escape would turn a fully successful write into a 500,
+    // which an external AI almost always retries, applying the same edit twice and adding a note_ai_edits row. Every other failure
+    // on this chain has explicit semantics (record insert failure = content present, no record, 500); this one is downgraded to a
+    // warn, the index just lags. The fault is created the repo's usual way: the `sql` template, never string concatenation.
     const s = await setup();
     const target = await s.ctx.createNote(s.u.id, "目標筆記");
     await s.ctx.db.execute(sql`create or replace function knb_links_boom() returns trigger as $$ begin raise exception 'boom'; end $$ language plpgsql`);
@@ -552,34 +541,34 @@ describe("note_links 與媒體", () => {
     try {
       const c = await s.content();
       const r = await s.post({ op: "append", markdown: "看 [[目標筆記]]", if_match: c.fingerprint });
-      expect(r.statusCode).toBe(201); // 拿掉 updateNoteLinks 外面的 try/catch → 這行變 500，紅
-      expect(await s.rows()).toHaveLength(1); // 紀錄已經寫了：回 500 會讓 AI 重試而重複這一列
-      expect((await s.content()).markdown).toContain("目標筆記"); // 內容也已經落盤
+      expect(r.statusCode).toBe(201); // removing the try/catch around updateNoteLinks makes this 500 and fail
+      expect(await s.rows()).toHaveLength(1); // the record is already written: a 500 would make the AI retry and duplicate this row
+      expect((await s.content()).markdown).toContain("目標筆記"); // the content is persisted too
     } finally {
       await s.ctx.db.execute(sql`drop trigger knb_links_boom_trg on note_links`);
     }
-    // 代價只有索引落後（known-limitations 第 9 條）：backlinks 這次沒建起來。
-    // ⚠ `/backlinks` 是 **cookie-only**（`app.authenticate`，不在 #107 的 Bearer 允許清單上）
-    // ——用 Bearer 會拿到 401、`body.backlinks` 是 undefined。這裡改用 session cookie。
+    // The only cost is a lagging index (documented in docs/known-limitations.md): backlinks weren't built this time.
+    // `/backlinks` is cookie-only (`app.authenticate`, not on #107's Bearer allowlist): Bearer would give 401 and an undefined
+    // `body.backlinks`, so a session cookie is used.
     const back = await s.ctx.app.inject({ method: "GET", url: `/api/notes/${target.id}/backlinks`, headers: { cookie: await cookieFor(s.u.id) } });
     expect(back.json().backlinks).toHaveLength(0);
   });
 
-  it("含上傳圖片的筆記 read → replace_section 寫回 → 圖片 url 不變", async () => {
-    // ⚠ 尾巴的 `圖說` 那一行**不是裝飾，不要刪**：`seedContent` 的哨兵取「最後一行的可見文字」，
-    // 而 `![pic](…)` 會被解析成 image block（Y 文件裡存的是 `url` 之類的**屬性**），那串 markdown
-    // 語法永遠不會出現在 `docText()` 的 XML 字串裡——沒有這行圖說，這一案會跑滿 5 秒逾時，
-    // 而最省事的「修法」（放寬或縮短 seedContent 的等待）會靜默拆掉另外約 25 個案子的前提。
+  it("note with an uploaded image: read, write back with replace_section, image url unchanged", async () => {
+    // The trailing caption line is not decoration, don't delete it: seedContent's sentinel is the last line's visible text, and
+    // `![pic](...)` is parsed into an image block (the Y doc stores `url` as an attribute) whose markdown syntax never appears in
+    // docText()'s XML string; without the caption this case runs into its 5 s timeout, and the easy fix (loosening or shortening
+    // seedContent's wait) would silently break the premise of about 25 other cases.
     const s = await setup("# A\n\n![pic](/api/uploads/abc123)\n\n圖說");
     const c = await s.content();
     expect(c.markdown).toContain("/api/uploads/abc123");
     const a = c.outline[1];
     const sec = (await getContent(s.ctx.app, s.note.id, s.token, a.sectionId)).json().section;
     expect((await s.post({ op: "replace_section", section_id: a.sectionId, markdown: sec.markdown + "\n\n補一句", if_match: a.fingerprint })).statusCode).toBe(201);
-    // ⚠ 底下兩條斷言看的是 client.doc，合併結果要經 WebSocket 才會回到 client——`post()` 回傳
-    // 當下 client 還沒收到。沒有這行 `waitFor`，「沒被消毒成 about:blank」那條唯一真正的守衛
-    // 只在時序恰好之下才驗得到東西（同檔開頭 `humanEdit` 的理由(2)）；上面那條 url 斷言則因為
-    // 種子裡本來就有這段 url 而恆真，測不出這裡有等。
+    // The two assertions below look at client.doc, and the merge result reaches the client over WebSocket: when `post()` returns
+    // the client hasn't got it. Without this `waitFor`, the "not sanitized to about:blank" assertion would only test something
+    // when the timing happens to line up (same reason as (2) of `humanEdit`); the url assertion above is always true because the seed already contains
+    // that url, and can't detect the missing wait.
     await waitFor("provider 收到", 3_000, () => docText(s.client.doc).includes("補一句"));
     expect(docText(s.client.doc)).toContain("/api/uploads/abc123");
     expect(docText(s.client.doc)).not.toContain("about:blank");

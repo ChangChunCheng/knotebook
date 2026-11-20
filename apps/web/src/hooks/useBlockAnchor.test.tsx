@@ -6,8 +6,6 @@ import "@/i18n";
 import { BlockAnchorContext, type BlockAnchorApi } from "./block-anchor-context";
 import { useWikilinkActivate } from "@/components/wikilink/useWikilinkClick";
 
-// W8。Host 照真實掛載：member 用**真的 useCollab**＋假 provider，root 在 doc 存在時才有這篇的區塊。
-
 interface FakeProvider {
   emit(event: string, payload: unknown): void;
 }
@@ -48,9 +46,10 @@ let api!: BlockAnchorApi;
 const commits: Array<{ noteId: string | undefined; synced: boolean; docNull: boolean; syncedFor: string | null }> = [];
 
 /**
- * NotePage 的形：同一個實例、noteId 由解析層給（轉場中 undefined）；錨點走**正式的** `useMemberBlockAnchor`（NotePage 呼叫的同一支）。
- * 區塊只在**這一篇同步之後**才出現——真實頁面上 B 的 Y.Doc 在 provider 同步前是空的，BlockNote 沒有任何區塊可渲染
- * （先前「doc 有了就渲染」讓殘值 commit 也找得到區塊，跨篇案分不出對錯）。
+ * NotePage shape: one instance, noteId supplied by the resolver (undefined during transitions); the anchor goes through the real
+ * `useMemberBlockAnchor` (the one NotePage calls). Blocks appear only after THIS note has synced: on a real page B's Y.Doc is empty
+ * until the provider syncs, so BlockNote has no blocks to render (rendering as soon as the doc exists would let a stale commit find
+ * the block too, and the cross-note case could not tell right from wrong).
  */
 function MemberHost({ noteId, rootKey = 0, presenting = false }: { noteId: string | undefined; rootKey?: number; presenting?: boolean }) {
   navigate = useNavigate();
@@ -59,7 +58,6 @@ function MemberHost({ noteId, rootKey = 0, presenting = false }: { noteId: strin
   api = useMemberBlockAnchor({ noteId, collab: { synced, syncedFor }, root, presenting });
   commits.push({ noteId, synced, docNull: doc === null, syncedFor });
   const contentLoaded = doc !== null && noteId !== undefined && syncedFor === noteId;
-  // NotePage 的形：BlockAnchorContext 由頁面提供給 wikilink 的共用點擊（useWikilinkActivate）。
   return (
     <BlockAnchorContext.Provider value={api}>
       <div key={rootKey} ref={setRoot} data-testid="root">
@@ -76,14 +74,12 @@ function MemberHost({ noteId, rootKey = 0, presenting = false }: { noteId: strin
   );
 }
 
-/** 把 wikilink 的共用點擊語意（真的 useWikilinkActivate，讀 BlockAnchorContext）露給測試。 */
 let activate!: ReturnType<typeof useWikilinkActivate>;
 function Activator() {
   activate = useWikilinkActivate();
   return null;
 }
 
-/** 公開頁的形：noteKey＝公開 ref 的識別字串；ready＝doc 解碼完成。 */
 function PublicHost({ refKey, loaded }: { refKey: string; loaded: boolean }) {
   navigate = useNavigate();
   const [root, setRoot] = useState<HTMLElement | null>(null);
@@ -103,12 +99,12 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.restoreAllMocks(); // pageLikeRoot 的 getBoundingClientRect spy
+  vi.restoreAllMocks(); // pageLikeRoot's getBoundingClientRect spy
   vi.useRealTimers();
 });
 
-describe("#269 blockIdFromHash／scrollToBlock", () => {
-  it("只認 #b-<BLOCK_ANCHOR_RE>；#/slide、空、壞 id → null", () => {
+describe("#269 blockIdFromHash / scrollToBlock", () => {
+  it("accepts only #b-<BLOCK_ANCHOR_RE>; #/slide, empty and malformed ids -> null", () => {
     expect(blockIdFromHash("#b-ok_1")).toBe("ok_1");
     expect(blockIdFromHash("#/slide-1")).toBeNull();
     expect(blockIdFromHash("")).toBeNull();
@@ -116,8 +112,9 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
   });
 
   /**
-   * 頁面的形：捲動容器（root）＞文章欄 wrapper（`relative`）＞編輯器根（`.ProseMirror`）＞區塊。getBoundingClientRect 以 stub 給：
-   * 浮層在 (0,0) 時量到的原點 (40, 10)、目標區塊 (300, 30, 500×24) ⇒ 浮層該放在 top 260、left 20、500×24。
+   * Page shape: scroll container (root) > article column wrapper (`relative`) > editor root (`.ProseMirror`) > blocks.
+   * getBoundingClientRect is stubbed: the origin measured with the overlay at (0,0) is (40, 10), the target block is (300, 30, 500x24)
+   * => the overlay should sit at top 260, left 20, 500x24.
    */
   function pageLikeRoot(): { root: HTMLElement; column: HTMLElement; target: HTMLElement } {
     const root = document.createElement("div");
@@ -137,14 +134,14 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
   }
   const overlaysIn = (root: HTMLElement) => root.querySelectorAll(`.${ANCHOR_FLASH_CLASS}`);
 
-  it("找得到：捲＋高亮浮層蓋住該區塊（座標由 rect 換算）、掛在 ProseMirror 管轄外的文章欄、區塊本身不改屬性；巢狀區塊也找得到", () => {
+  it("found: scrolls and the highlight overlay covers the block (coordinates converted from rects), mounted in the article column outside ProseMirror's control, block attributes untouched; nested blocks are found too", () => {
     const { root, column, target } = pageLikeRoot();
     scrollToBlock(root, "deep");
     expect(scrolls).toEqual(["n:deep"]);
     const overlays = overlaysIn(root);
     expect(overlays).toHaveLength(1);
     const overlay = overlays[0] as HTMLElement;
-    expect(overlay.parentElement).toBe(column); // 不是 root、也不在 .ProseMirror 裡（編輯器根本身 positioned 也要跳過）
+    expect(overlay.parentElement).toBe(column); // not root, and not inside .ProseMirror (a positioned editor root must be skipped too)
     expect(overlay.closest(".ProseMirror")).toBeNull();
     expect(overlay.getAttribute(ANCHOR_FLASH_ATTR)).toBe("deep");
     expect(overlay.getAttribute("aria-hidden")).toBe("true");
@@ -155,11 +152,11 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
       width: "500px",
       height: "24px",
     });
-    expect(target.attributes).toHaveLength(3); // class、data-id、data-note——ProseMirror 管的節點不被改
+    expect(target.attributes).toHaveLength(3); // class, data-id, data-note - nodes managed by ProseMirror are not modified
     root.remove();
   });
 
-  it("浮層：動畫結束（animationend）就移除", () => {
+  it("overlay: removed on animationend", () => {
     const { root } = pageLikeRoot();
     scrollToBlock(root, "deep");
     overlaysIn(root)[0]!.dispatchEvent(new Event("animationend"));
@@ -167,7 +164,7 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
     root.remove();
   });
 
-  it("浮層：沒有 animationend（prefers-reduced-motion 不動畫）時 2 s 後移除；取消（卸載／下一個請求）立即移除", () => {
+  it("overlay: with no animationend (prefers-reduced-motion does not animate) removed after 2 s; cancelling (unmount / next request) removes it immediately", () => {
     vi.useFakeTimers();
     const { root } = pageLikeRoot();
     scrollToBlock(root, "deep");
@@ -182,7 +179,7 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
     root.remove();
   });
 
-  it("一開始找不到：MutationObserver 等到出現才捲；2 s 內都沒出現 → 不捲、不丟錯", async () => {
+  it("not found at first: MutationObserver waits for it to appear, then scrolls; not appearing within 2 s -> no scroll, no error", async () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     scrollToBlock(root, "late");
@@ -204,13 +201,13 @@ describe("#269 blockIdFromHash／scrollToBlock", () => {
     root2.appendChild(tooLate);
     await Promise.resolve();
     await Promise.resolve();
-    expect(scrolls).toEqual(["n:late"]); // 等待上限過了才出現的區塊不捲（observer 已停）
+    expect(scrolls).toEqual(["n:late"]); // a block that appears after the wait limit is not scrolled to (the observer has stopped)
     root.remove();
   });
 });
 
-describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
-  it("A → /notes/B#b-x（經過 undefined、收斂 REPLACE 在 B 同步之前）：殘值 commit 與 A 的舊 provider 遲到的 synced 都不消耗；B 在等待上限之後才同步，仍恰捲一次", async () => {
+describe("#269 useBlockAnchor (member: real useCollab)", () => {
+  it("A -> /notes/B#b-x (through undefined, converging REPLACE before B syncs): neither the stale commit nor the late synced from A's old provider consumes it; B syncs only after the wait limit and still scrolls exactly once", async () => {
     const { rerender } = render(
       <MemoryRouter initialEntries={["/notes/A"]}>
         <MemberHost noteId={A} />
@@ -229,16 +226,17 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
         <MemberHost noteId={B} />
       </MemoryRouter>,
     );
-    act(() => void navigate("/n/h/b#b-x", { replace: true })); // 收斂 REPLACE（保留 hash）
+    act(() => void navigate("/n/h/b#b-x", { replace: true })); // converging REPLACE (keeps the hash)
     expect(commits.some((c) => c.noteId === B && c.synced && c.docNull)).toBe(true);
     expect(scrolls).toEqual([]);
-    act(() => providerAt(0).emit("synced", { state: true })); // A 的舊 provider 遲到的 synced：synced 變 true、syncedFor 仍 null
-    // 這一發是**假 provider 製造的分辨條件**：假 provider 的 destroy 不清監聽器，所以被拆掉的 A 仍能送出 "synced"；
-    // useCollab 的 `setSynced(true)` 沒有 `disposed` 守衛（`setSyncedFor` 有）⇒ `synced` 為真、`syncedFor` 仍是 null。看 synced 的實作在這裡
-    // 就消耗、B 的區塊還沒渲染、MutationObserver 2 s 後放棄 ⇒ scrolls 為空；看 syncedFor 的實作等到 syncedFor === B 才消耗 ⇒ 恰捲一次。
-    // 產品上到不了這一步：真的 `HocuspocusProvider.destroy()` 會 removeAllListeners（useCollab 的 cleanup 同步呼叫它）。只走殘值 commit 那條路
-    // 時兩者等價（pending 設定與 synced 歸零在同一次批次更新）——`syncedFor` 在產品上是防禦性條件。
-    // 真計時器：等超過 ANCHOR_WAIT_MS 才讓 B 同步。
+    act(() => providerAt(0).emit("synced", { state: true })); // late synced from A's old provider: synced becomes true, syncedFor stays null
+    // The fake provider creates the distinguishing condition: its destroy does not clear listeners, so the torn-down A can still emit "synced";
+    // useCollab's `setSynced(true)` has no `disposed` guard (`setSyncedFor` has one) => `synced` is true while `syncedFor` is still null. An
+    // implementation reading `synced` consumes here, B's blocks are not rendered yet, and MutationObserver gives up after 2 s => scrolls is empty;
+    // one reading `syncedFor` waits until syncedFor === B and consumes then => exactly one scroll.
+    // Production cannot reach this: the real `HocuspocusProvider.destroy()` calls removeAllListeners (useCollab's cleanup calls it synchronously).
+    // Via the stale-commit path alone the two are equivalent (pending is set and synced reset in the same batched update): `syncedFor` is a defensive condition in production.
+    // Real timers: wait past ANCHOR_WAIT_MS before letting B sync.
     await act(async () => {
       await new Promise((r) => setTimeout(r, ANCHOR_WAIT_MS + 300));
     });
@@ -247,7 +245,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(scrolls).toEqual([`${B}:x`]);
   }, 10_000);
 
-  it("新分頁／冷開 /notes/B#b-x（REPLACE 在 synced 之前）恰捲一次；之後無關 REPLACE、modal 開關（query 變化）不再捲", () => {
+  it("new tab / cold open /notes/B#b-x (REPLACE before synced) scrolls exactly once; later unrelated REPLACEs and modal toggles (query changes) do not scroll again", () => {
     render(
       <MemoryRouter initialEntries={["/notes/B#b-x"]}>
         <MemberHost noteId={B} />
@@ -262,7 +260,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(scrolls).toEqual([`${B}:x`]);
   });
 
-  it("捲完之後捲動容器換掉（NoteEditor 重掛 ⇒ onScrollRoot 回報新元素）：不再捲（待處理錨點消耗後已清掉）", () => {
+  it("after scrolling, the scroll container is swapped (NoteEditor remount => onScrollRoot reports a new element): no scroll (the pending anchor was cleared once consumed)", () => {
     const tree = (rootKey: number) => (
       <MemoryRouter initialEntries={["/notes/B#b-x"]}>
         <MemberHost noteId={B} rootKey={rootKey} />
@@ -271,11 +269,11 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     const { rerender } = render(tree(0));
     act(() => providerAt(0).emit("synced", { state: true }));
     expect(scrolls).toEqual([`${B}:x`]);
-    rerender(tree(1)); // key 換了 ⇒ 舊 div 卸載、新 div 掛上，ref callback 依序回報 null 與新元素
+    rerender(tree(1)); // key changed => old div unmounts, new div mounts; the ref callback reports null then the new element in order
     expect(scrolls).toEqual([`${B}:x`]);
   });
 
-  it("同一錨點捲走後再點（requestAnchor）會再捲；requestAnchor 的區塊在本篇；2 s 內連續要求只留最後一個高亮浮層", () => {
+  it("the same anchor can be scrolled to again via requestAnchor after scrolling away; requestAnchor's block is in this note; repeated requests within 2 s leave only the last highlight overlay", () => {
     const { getByTestId } = render(
       <MemoryRouter initialEntries={["/notes/B#b-x"]}>
         <MemberHost noteId={B} />
@@ -289,7 +287,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(Array.from(overlays, (o) => o.getAttribute(ANCHOR_FLASH_ATTR))).toEqual(["nested"]);
   });
 
-  it("noteId 為 undefined 時 requestAnchor 不設定（不消耗、不拋錯）", () => {
+  it("requestAnchor sets nothing when noteId is undefined (nothing consumed, no throw)", () => {
     render(
       <MemoryRouter initialEntries={["/notes/x#b-x"]}>
         <MemberHost noteId={undefined} />
@@ -299,7 +297,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(scrolls).toEqual([]);
   });
 
-  it("#/slide hash 不處理", () => {
+  it("#/slide hash is not handled", () => {
     render(
       <MemoryRouter initialEntries={["/notes/B#/slide-1"]}>
         <MemberHost noteId={B} />
@@ -309,7 +307,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(scrolls).toEqual([]);
   });
 
-  it("簡報播放中（presenting）冷開 /notes/B?present#b-x：同步後也不捲", () => {
+  it("presenting: cold open /notes/B?present#b-x does not scroll after sync either", () => {
     render(
       <MemoryRouter initialEntries={["/notes/B?present#b-x"]}>
         <MemberHost noteId={B} presenting />
@@ -319,7 +317,7 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
     expect(scrolls).toEqual([]);
   });
 
-  it("同篇錨點點擊（真的 useWikilinkActivate，目標 id 大寫）經 currentNoteId 判同篇 ⇒ 捲到該區塊", () => {
+  it("same-note anchor click (real useWikilinkActivate, uppercase target id) is judged same-note via currentNoteId => scrolls to that block", () => {
     render(
       <MemoryRouter initialEntries={[`/notes/${B}`]}>
         <MemberHost noteId={B} />
@@ -332,8 +330,8 @@ describe("#269 W8 useBlockAnchor（member：真的 useCollab）", () => {
   });
 });
 
-describe("#269 W8 useBlockAnchor（公開頁）", () => {
-  it("/p/h/a → /p/h/b#b-x（同一個實例）：b 的 doc 到了恰捲一次", () => {
+describe("#269 useBlockAnchor (public page)", () => {
+  it("/p/h/a -> /p/h/b#b-x (same instance): scrolls exactly once when b's doc arrives", () => {
     const tree = (refKey: string, loaded: boolean) => (
       <MemoryRouter initialEntries={["/p/h/a"]}>
         <PublicHost refKey={refKey} loaded={loaded} />
@@ -347,7 +345,7 @@ describe("#269 W8 useBlockAnchor（公開頁）", () => {
     expect(scrolls).toEqual(["path:h/b:x"]);
   });
 
-  it("簡報播放中（ignoreInitialAnchor）冷開 …?present#b-x：不設定、不捲", () => {
+  it("presenting (ignoreInitialAnchor): cold open ...?present#b-x sets nothing and does not scroll", () => {
     function PresentingHost() {
       const [root, setRoot] = useState<HTMLElement | null>(null);
       useBlockAnchor({ noteKey: "path:h/b", ready: true, root, ignoreInitialAnchor: true, currentNoteId: null });

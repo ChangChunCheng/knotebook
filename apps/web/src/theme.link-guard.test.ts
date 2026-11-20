@@ -2,23 +2,23 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * 筆記內容裡連結樣式的結構守門（issue #153，比照 `theme.block-selection-guard.test.ts`）。
+ * Structural guard for link styling inside note content (issue #153, same technique as `theme.block-selection-guard.test.ts`).
  *
- * 這一族的失效**全都是靜默的**，jsdom／單元測試／肉眼 review 都看不到：
- * - 少了 `.bn-editor` 祖先錨 ⇒ 選擇器掉回 (0,1,0)，BlockNote 的 CSS 在 NotePage
- *   lazy chunk、載入必晚於 `index.css`，同 specificity 我們必輸。
- * - 顏色寫成 `--primary` ⇒ 這個 repo 的 `--primary` 是**中性高對比**（淺色近黑），
- *   連結看起來跟正文一樣，等於這條 issue 沒修。
- * - 底線被拿掉 ⇒ 連結只靠顏色區分（WCAG 1.4.1）。
- * - 圖示的 `mask-image` 被換成寫死顏色的 `background-image` ⇒ 六個主題色 × 明暗
- *   一共十二種情況裡，圖示與文字顏色就開始各走各的。
- * - **圖示整個不見**：`content: ""` 的 inline-block 沒有 `width`/`height` 就是一個
- *   0×0 的盒子，拿掉 `display: inline-block` 亦然——兩種都不會報錯、也不會讓任何
- *   其他測試變紅（刪掉那兩行尺寸，本檔原本 6/6 照綠）。
- * - **`--color-brand` 被宣告在 `:root` 以外**（例如有人在 `.dark` 裡補一行）⇒ 深色
- *   模式下編輯器內的 `.bn-root.dark` 會再次奪回它，主題色又退回 indigo，也就是
- *   靜默復原 #153 繞過的那個 bug。`theme.accent-vars.test.ts` 的 (d) 只要求它在
- *   `@theme inline` 裡出現過，擋不住多一處宣告。
+ * Failures in this family are silent, and invisible to jsdom / unit tests / eyeball review:
+ * - Without the `.bn-editor` ancestor anchor => the selector falls back to (0,1,0), and BlockNote's CSS in the NotePage
+ *   lazy chunk always loads after `index.css`, so at equal specificity we lose.
+ * - Colour written as `--primary` => in this repo `--primary` is **neutral high-contrast** (near-black in light),
+ *   so links look like body text and the issue isn't fixed.
+ * - Underline removed => links are told apart by colour alone (WCAG 1.4.1).
+ * - The icon's `mask-image` replaced by a hard-coded-colour `background-image` => across six accents x light/dark
+ *   twelve cases, the icon and the text colour start to diverge.
+ * - **The icon disappears entirely**: an inline-block with `content: ""` and no `width`/`height` is a
+ *   0x0 box, and so is removing `display: inline-block` - neither reports an error or turns any
+ *   other test red.
+ * - **`--color-brand` declared outside `:root`** (e.g. someone adds a line inside `.dark`) => in dark
+ *   mode the editor's `.bn-root.dark` takes it back again and the accent falls back to indigo, i.e.
+ *   silently restoring the bug #153 worked around. The accent-vars test only requires it to appear in
+ *   `@theme inline` and can't block an extra declaration.
  */
 
 function readIndexCssWithoutComments(): string {
@@ -26,8 +26,8 @@ function readIndexCssWithoutComments(): string {
 }
 
 /**
- * 從 `pattern` 命中處起，用花括號配對切出整個區塊的**內容**（比照
- * `theme.scrollbar-guard.test.ts` 的同名 helper）。找不到就回空字串，由呼叫端斷言。
+ * Cuts out the **contents** of the whole block from where `pattern` matches, by brace matching (same-named helper as in
+ * `theme.scrollbar-guard.test.ts`). Returns an empty string when not found; the caller asserts.
  */
 function extractBlock(css: string, pattern: RegExp): string {
   const match = pattern.exec(css);
@@ -43,13 +43,12 @@ function extractBlock(css: string, pattern: RegExp): string {
   return css.slice(from, i);
 }
 
-/** `index.css` 裡所有提到 link inline content 型別的規則。 */
 function linkRules(): Array<{ selectors: string[]; body: string }> {
   const css = readIndexCssWithoutComments();
   return [...css.matchAll(/([^{}]*data-inline-content-type[^{}]*)\{([^}]*)\}/g)]
     .map((m) => ({
-      // ⚠ 逗號清單必拆開逐一判（repo 慣例，見 `theme.scrollbar-guard.test.ts` 的註解）：
-      // 整串 `test()` 會被「合法選擇器 ＋ 沒錨點的選擇器併成一條」的形同時騙過。
+      // Comma lists must be split and judged one by one (repo convention, see the comment in `theme.scrollbar-guard.test.ts`):
+      // a whole-string `test()` would be fooled by the shape "a valid selector + an unanchored selector merged into one rule".
       selectors: m[1]!
         .split(",")
         .map((s) => s.trim())
@@ -62,16 +61,16 @@ function linkRules(): Array<{ selectors: string[]; body: string }> {
 const baseRule = () => linkRules().filter((r) => r.selectors.every((s) => !s.includes("::after")));
 const afterRule = () => linkRules().filter((r) => r.selectors.every((s) => s.includes("::after")));
 
-describe("筆記內連結的樣式（issue #153）", () => {
-  it("恰好兩條規則：本體一條、開新分頁圖示（::after）一條，且沒有混合 ::after 與本體的規則", () => {
-    // 混合形（`a, a::after { … }`）會讓下面每一條斷言的語意變糊——本體與偽元素該設的
-    // 屬性不同集合。先擋掉。
+describe("link styling inside notes (issue #153)", () => {
+  it("exactly two rules: one for the link itself, one for the new-tab icon (::after), with no rule mixing ::after and the link itself", () => {
+    // A mixed shape (`a, a::after { ... }`) blurs the meaning of every assertion below - the link itself and the pseudo-element should set
+    // different sets of properties. Block it first.
     expect(linkRules(), "index.css 找不到 link inline content 的樣式規則").toHaveLength(2);
     expect(baseRule(), "應有且只有一條連結本體的規則").toHaveLength(1);
     expect(afterRule(), "應有且只有一條 ::after 圖示的規則").toHaveLength(1);
   });
 
-  it("每個選擇器都以 .bn-editor 為錨（specificity 要贏晚載入的 BlockNote CSS）", () => {
+  it("every selector is anchored at .bn-editor (specificity must beat the later-loaded BlockNote CSS)", () => {
     for (const rule of linkRules()) {
       for (const selector of rule.selectors) {
         expect(selector, `少了 .bn-editor 錨點：${selector}`).toMatch(/^\.bn-editor\s/);
@@ -79,79 +78,79 @@ describe("筆記內連結的樣式（issue #153）", () => {
     }
   });
 
-  it("用 data-inline-content-type=\"link\" 而不是裸 a（別命中編輯器 chrome 裡的連結）", () => {
+  it("uses data-inline-content-type=\"link\" instead of a bare a (don't hit links inside the editor chrome)", () => {
     for (const rule of linkRules()) {
       for (const selector of rule.selectors) {
         expect(selector, `選擇器要用 link mark 的 data 屬性：${selector}`).toMatch(
           /\[data-inline-content-type\s*=\s*"link"\]/,
         );
-        // 裸 `a` 會一路命中浮層／工具列／自訂 block 裡的 anchor。
+        // A bare `a` would hit anchors in floating layers / toolbars / custom blocks all the way down.
         expect(selector, `選擇器不得含裸 a：${selector}`).not.toMatch(/(?:^|[\s>+~])a(?=[\s>+~:.[]|$)/);
       }
     }
   });
 
-  it("本體：主題色 --brand ＋ 實線底線（不得只靠顏色區分連結）", () => {
+  it("link itself: theme colour --brand + a solid underline (links must not be told apart by colour alone)", () => {
     const { body } = baseRule()[0]!;
     expect(body, "顏色要走 var(--color-brand)").toContain("var(--color-brand)");
-    // `--primary` 在這個 repo 是中性高對比（淺色近黑）——拿它當連結色等於沒改。
+    // `--primary` is neutral high-contrast in this repo (near-black in light) - using it as the link colour changes nothing.
     expect(body, "不得用 --color-primary（中性色，看起來跟正文一樣）").not.toContain("var(--color-primary)");
     expect(body, "顏色不得寫字面值（就不跟使用者選的主題色走了）").not.toMatch(/#[0-9a-f]{3,8}|oklch\(|rgb\(/i);
     expect(body, "底線是 WCAG 1.4.1 的載體，不得拿掉").toMatch(/text-decoration(?:-line)?:\s*[^;]*underline/);
     expect(body).not.toMatch(/text-decoration(?:-line)?:\s*none/);
   });
 
-  it("圖示：CSS mask ＋ currentColor（自動跟主題色走），不引入 icon 套件／不寫死顏色", () => {
+  it("icon: CSS mask + currentColor (follows the theme colour automatically), no icon package, no hard-coded colour", () => {
     const { body } = afterRule()[0]!;
     expect(body, "偽元素要有 content").toMatch(/content:\s*""/);
     expect(body, "圖形走 mask-image ＋ 內嵌 SVG data URI").toMatch(/mask-image:\s*url\("data:image\/svg\+xml,/);
-    // 顏色由 background-color 提供、取 currentColor ⇒ 跟著本體那條的 --brand 走，
-    // 不必為六色 × 明暗各寫一份 data URI。
+    // The colour comes from background-color taking currentColor => it follows the link itself's --brand, with no need
+    // for a data URI per six accents x light/dark.
     expect(body, "顏色要取 currentColor").toMatch(/background-color:\s*currentColor/);
-    // `background-image` 那條路會把顏色編進 SVG，主題一換圖示就對不上。
+    // The `background-image` route would encode the colour into the SVG, and the icon would no longer match after a theme change.
     expect(body, "不得改用 background-image（顏色會被編進 SVG）").not.toContain("background-image:");
     expect(body, "圖示不得寫字面色").not.toMatch(/(?:background-)?color:\s*(?:#[0-9a-f]{3,8}|oklch\(|rgb\()/i);
-    // ⚠ 刻意**不**在這裡釘 `pointer-events: none`：headed 實測（Chrome 152）加與不加，
-    // hover／點擊／拖曳選取三者行為完全相同（唯一差異是 `caretRangeFromPoint` 的回傳，
-    // 而上游的 `handleClick` 回 true，那個差異在使用者操作上到不了），所以這個 repo 沒有
-    // 那條規則，也不該用測試把一個量不到效果的宣稱固定下來。量測明細在 index.css 註解。
+    // Deliberately **not** pinning `pointer-events: none` here: in a headed run (Chrome 152) with and without it,
+    // hover / click / drag-select behave identically (the only difference is the return value of `caretRangeFromPoint`,
+    // and upstream's `handleClick` returns true, so that difference can't reach user actions), so this repo has no
+    // such rule and shouldn't use a test to pin a claim whose effect can't be measured. The measurement details are in the index.css comment.
   });
 
-  it("圖示要真的畫得出來、也要真的有留白：inline-block ＋ 尺寸與兩側 margin 皆非零", () => {
+  it("the icon actually renders and has spacing: inline-block + size and both side margins all non-zero", () => {
     const { body } = afterRule()[0]!;
-    // `content: ""` 的替代內容是空的，所以盒子大小完全由 width/height 決定——兩者任一
-    // 缺席（或被寫成 0）圖示就**完全不見**，而其他每一條斷言都還是綠的。
+    // The replaced content of `content: ""` is empty, so the box size is decided entirely by width/height - if either
+    // is absent (or written as 0) the icon **disappears entirely** while every other assertion stays green.
     expect(body, "圖示盒子要 inline-block（inline 的 width/height 無效）").toMatch(
       /display:\s*inline-block/,
     );
-    // 一律判 `parseFloat(…) > 0`：一次關掉 `0`／`0px`／`0.0em`／`-0px`，以及 `auto`／
-    // `max-content`／`initial` 這些 `parseFloat` 給 `NaN` 的形（`auto` 在這裡渲染出來與
-    // `0.0em` 逐像素相同，是這條真正要擋的東西）。**取最後一個命中**——CSS 取最後一條，
-    // 只看第一個的話在區塊尾端補 `width: 0` 就全綠。
+    // Always judge `parseFloat(...) > 0`: this rejects `0` / `0px` / `0.0em` / `-0px` and also the shapes `auto` /
+    // `max-content` / `initial` for which `parseFloat` gives `NaN` (`auto` renders here pixel-for-pixel the same as
+    // `0.0em`, which is what this really needs to block). **Take the last match** - CSS takes the last one,
+    // and looking only at the first would pass green if `width: 0` were appended at the end of the block.
     const declaration = (prop: string) =>
       [...body.matchAll(new RegExp(`(?:^|[;{])\\s*${prop}:\\s*([^;]+)`, "g"))].at(-1)?.[1]?.trim();
 
-    // 尺寸與兩側留白都**只擋「缺席或非正值」，不釘具體數值**——值是視覺判斷，釘死只會
-    // 在合理微調時製造假紅。
+    // Size and both side margins only block "absent or non-positive" and don't pin concrete values - the values are a visual judgement, and pinning them would only
+    // produce false reds on reasonable tweaks.
     for (const prop of ["width", "height", "margin-inline-start", "margin-inline-end"] as const) {
       const value = declaration(prop);
       expect(value, `圖示缺 ${prop}`).toBeDefined();
       expect(parseFloat(value!), `圖示的 ${prop} 不是正值：${value}`).toBeGreaterThan(0);
     }
-    // 簡寫會整組覆蓋上面那兩個 longhand（尾端補一條 `margin-inline: 0` 即可繞過）。
+    // A shorthand overrides the two longhands above as a group (appending a `margin-inline: 0` at the end would bypass them).
     expect(body, "這個區塊不得用 margin／margin-inline 簡寫（會覆蓋兩側 longhand）").not.toMatch(
       /(?:^|[;{])\s*margin(?:-inline)?:/,
     );
   });
 
-  it("`--color-brand:` 只准宣告在 `@theme inline` 內——那是深色模式主題色繞法的前提", () => {
-    // `.bn-root` 在深色模式下帶著 `dark` class；#154 之前它會命中 `index.css` 的裸 `.dark`
-    // 基底塊而把 `--brand` 重設回 indigo（#154 已把基底塊錨到 `:root.dark`，守衛是
-    // `theme.accent-vars.test.ts` (h)；這條是第二道防線）。連結與 wikilink 都走 `--color-brand`（只宣告在
-    // `@theme inline`，Tailwind 編譯成 `:root,:host` 一處，在那裡算完值再繼承）來繞過
-    // 它。⚠ 只要有人在 `.dark`／`[data-accent]`／任何其他
-    // 選擇器裡再宣告一次 `--color-brand:`，那個繞法就靜默失效、bug 原樣回來，而
-    // `theme.accent-vars.test.ts` 的 (d) 只檢查它在 `@theme inline` 裡出現過，擋不住。
+  it("`--color-brand:` may be declared only inside `@theme inline` - that is the precondition of the dark-mode accent workaround", () => {
+    // In dark mode `.bn-root` carries the `dark` class; before #154 it matched the bare `.dark`
+    // base block in `index.css` and reset `--brand` back to indigo (#154 anchored the base block to `:root.dark`; the guard is
+    // `theme.accent-vars.test.ts`, and this is the second line of defence). Links and wikilinks both go through `--color-brand` (declared only in
+    // `@theme inline`, which Tailwind compiles to a single `:root,:host` place where the value is computed and then inherited) to work around
+    // it. If someone declares `--color-brand:` again in `.dark` / `[data-accent]` / any other
+    // selector, that workaround silently stops working and the bug comes back as before, and
+    // `theme.accent-vars.test.ts` only checks that it appears in `@theme inline`, so it can't block this.
     const css = readIndexCssWithoutComments();
     const themeInline = extractBlock(css, /@theme\s+inline\s*\{/);
     expect(themeInline, "index.css 找不到 @theme inline 區塊").toContain("--color-brand:");
@@ -166,15 +165,15 @@ describe("筆記內連結的樣式（issue #153）", () => {
     ).toEqual([]);
   });
 
-  it("圖示只掛在 http(s) 連結上——wikilink 與 mailto:／tel: 這類都不得有 ::after 圖示", () => {
+  it("the icon is attached only to http(s) links - wikilinks and mailto: / tel: etc. must have no ::after icon", () => {
     const css = readIndexCssWithoutComments();
     const wikilinkAfter = [...css.matchAll(/([^{}]*data-inline-content-type\s*=\s*"wikilink"[^{}]*)\{/g)]
       .map((m) => m[1]!.trim())
       .filter((s) => s.includes("::after"));
     expect(wikilinkAfter, "wikilink 是同分頁導航的 <a>（#269），掛開新分頁圖示就是說謊").toEqual([]);
-    // 反面：::after 那條的**每個**選擇器都要同時帶 link 型別與 href 前綴限定。少了型別
-    // 限定會命中 wikilink；少了前綴限定會命中 `mailto:`／`tel:`／`sms:`（那些是 link mark
-    // 但不開在分頁裡），「開新分頁」就成了錯標。前綴只准是下面這份白名單（#156 的判準）。
+    // Reverse: **each** selector of the ::after rule must carry both the link type and an href prefix restriction. Without the type
+    // restriction it would hit wikilinks; without the prefix restriction it would hit `mailto:` / `tel:` / `sms:` (link marks
+    // that don't open in a tab), and "opens in a new tab" becomes a mislabel. The prefixes may only be the allowlist below (the #156 criterion).
     const ALLOWED_PREFIXES = [
       String.raw`[href^="http:" i]`,
       String.raw`[href^="https:" i]`,
@@ -191,7 +190,7 @@ describe("筆記內連結的樣式（issue #153）", () => {
       expect(hrefParts, `::after 選擇器要恰好一個 href 前綴限定：${selector}`).toHaveLength(1);
       expect(ALLOWED_PREFIXES, `::after 選擇器的 href 限定不在 #156 的白名單裡：${selector}`).toContain(hrefParts[0]);
     }
-    // 白名單每一項都要有人蓋到（少一條＝那種寫法的外連沒有圖示，#156 原貌）。
+    // Every allowlist entry must be covered by some selector (one fewer = external links written that way get no icon, the original #156 shape).
     for (const prefix of ALLOWED_PREFIXES) {
       expect(
         afterRule()[0]!.selectors.some((s) => s.includes(prefix)),
@@ -200,7 +199,7 @@ describe("筆記內連結的樣式（issue #153）", () => {
     }
   });
 
-  it("#269：wikilink 的 <a href>（即使是同站絕對網址）不命中任何 ::after 圖示選擇器", () => {
+  it("#269: a wikilink's <a href> (even a same-site absolute URL) doesn't hit any ::after icon selector", () => {
     document.body.innerHTML =
       '<div class="bn-editor"><span data-inline-content-type="wikilink"><a href="https://kb.example.com/notes/x">t</a></span></div>';
     const a = document.querySelector("a")!;
@@ -210,10 +209,9 @@ describe("筆記內連結的樣式（issue #153）", () => {
     document.body.innerHTML = "";
   });
 
-  describe("#156：圖示判準要與瀏覽器的 URL 剖析一致（選擇器拿去真的比對 href）", () => {
-    // 站在一個 http 頁面上（明文 http 部署也是這個形；https 頁面見下方 SAME_SCHEME 的說明）。
+  describe("#156: the icon criterion must agree with the browser's URL parsing (the selectors are actually matched against href)", () => {
+    // Plain-http deployments look the same; for https pages see the same-scheme http:foo case below.
     const PAGE = "http://knotebook.local/n/some-note";
-    // 一律從 index.css 現行的選擇器拿（去掉 `.bn-editor ` 祖先與 `::after`），不自抄一份。
     const iconMatches = (href: string) => {
       const a = document.createElement("a");
       a.setAttribute("data-inline-content-type", "link");
@@ -227,7 +225,6 @@ describe("筆記內連結的樣式（issue #153）", () => {
       return (url.protocol === "http:" || url.protocol === "https:") && url.origin !== new URL(PAGE).origin;
     };
 
-    // 會開到**另一個 http(s) 來源**的寫法：一律要有圖示。
     const EXTERNAL = [
       "https://x.com",
       "http://x.com/a?b#c",
@@ -241,14 +238,14 @@ describe("筆記內連結的樣式（issue #153）", () => {
       String.raw`\/evil.com`,
       String.raw`https:\\x.com`,
       String.raw`HTTPS:/\x.com`,
-      "https:x.com", // 跨協定（頁面是 http）：剖析器忽略任意個斜線，主機是 x.com
+      "https:x.com", // cross-scheme (page is http): the parser ignores any number of slashes, the host is x.com
     ];
-    it.each(EXTERNAL)("外連 %s → 有圖示", (href) => {
+    it.each(EXTERNAL)("external link %s -> has icon", (href) => {
       expect(resolvesToAnotherHttpOrigin(href), `測資前提：${href} 應解析成另一個 http(s) 來源`).toBe(true);
       expect(iconMatches(href), `${href} 是外連卻沒有開新分頁圖示`).toBe(true);
     });
 
-    // 不開在分頁裡的協定（交給協定處理程式）與站內連結：一律沒有圖示。大小寫變體也要擋。
+    // Case variants must be blocked too.
     const NO_ICON = [
       "mailto:a@b.com",
       "MAILTO:a@b.com",
@@ -256,36 +253,35 @@ describe("筆記內連結的樣式（issue #153）", () => {
       "sms:+886912345678",
       "callto:someone",
       "xmpp:a@b.com",
-      "httpfoo:x", // 別的協定，只是名字以 http 開頭
+      "httpfoo:x", // another scheme that merely starts with http
       "/n/other-note",
       "other-note",
       "#heading",
       "?q=1",
     ];
-    it.each(NO_ICON)("非外連 %s → 沒有圖示", (href) => {
+    it.each(NO_ICON)("non-external %s -> no icon", (href) => {
       expect(resolvesToAnotherHttpOrigin(href), `測資前提：${href} 不應解析成另一個 http(s) 來源`).toBe(false);
       expect(iconMatches(href), `${href} 不開到別的網站卻掛了開新分頁圖示`).toBe(false);
     });
 
-    it("同協定的 `http:foo` 是站內相對路徑：有圖示也不是錯標（target=_blank，確實開新分頁）", () => {
-      // 剖析器：協定與頁面相同、後面不是 `//` ⇒ 相對路徑。圖示宣稱的是「開新分頁」，
-      // 這仍成立；這格只是把「判準刻意比 `http:` 而非 `http://`」的後果釘成明文。
+    it("same-scheme `http:foo` is a same-site relative path: an icon isn't a mislabel either (target=_blank, it really opens a new tab)", () => {
+      // Parser: same scheme as the page and not followed by `//` => a relative path. The icon claims "opens a new tab",
+      // which still holds; this case just records in plain text the consequence of the criterion deliberately comparing `http:` rather than `http://`.
       expect(new URL("http:foo", PAGE).origin).toBe(new URL(PAGE).origin);
       expect(iconMatches("http:foo")).toBe(true);
     });
 
-    it("已知蓋不到（只會少標、不會錯標；舉例非窮舉）：開頭空白／控制字元、網址任何位置夾 tab 或換行", () => {
-      // 字面前綴比不到、剖析器卻會剝掉（tab／換行在**任何位置**都被整個刪除）。寫成測試是為了：
-      // 哪天真的蓋到了，這格會紅，提醒去更新 `docs/known-limitations.md` 與 index.css 註解裡的
-      // 「仍蓋不到」說明。
+    it("known not covered (can only under-mark, never mislabel; examples, not exhaustive): leading whitespace / control characters, a tab or newline anywhere in the URL", () => {
+      // A literal prefix can't match, but the parser strips them (a tab / newline is removed entirely at **any position**). It's written as a test so that
+      // if one day they are covered, this case goes red, reminding to update the "still not covered" notes in `docs/known-limitations.md` and the index.css comment.
       for (const href of [
         " https://x.com",
         "\thttps://x.com",
         "ht\ttps://x.com",
         "https\n://x.com",
-        "/\t/x.com", // 剝掉 tab 後是 `//x.com`（protocol-relative）
+        "/\t/x.com", // with the tab stripped it is `//x.com` (protocol-relative)
         "/\n/x.com",
-        // 反例提醒：`https:/\n/x.com` **有**圖示（字面前綴 `https:` 就已命中），所以不在這份清單裡。
+        // Counter-example reminder: `https:/\n/x.com` **has** the icon (the literal prefix `https:` already matches), so it isn't in this list.
       ]) {
         expect(resolvesToAnotherHttpOrigin(href), `測資前提：${JSON.stringify(href)} 是外連`).toBe(true);
         expect(iconMatches(href), `${JSON.stringify(href)} 現在有圖示了——更新已知限制`).toBe(false);

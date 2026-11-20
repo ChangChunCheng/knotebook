@@ -45,7 +45,6 @@ function fakeResponse(status: number, body?: unknown): Response {
   } as unknown as Response;
 }
 
-/** 記錄每次呼叫的 method/url/body，依表分派回應；未列的 throw（慣例）。 */
 function stubFetch(routes: Record<string, () => Response>) {
   const calls: Array<{ method: string; url: string; body: unknown }> = [];
   vi.stubGlobal(
@@ -69,7 +68,7 @@ function wrapper(queryClient: QueryClient) {
 describe("api/groups", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("useGroups 打 GET /api/groups，key 是 ['groups']", async () => {
+  it("useGroups GETs /api/groups; key is ['groups']", async () => {
     stubFetch({ "GET /api/groups": () => fakeResponse(200, [GROUP]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { result } = renderHook(() => useGroups(), { wrapper: wrapper(queryClient) });
@@ -77,7 +76,7 @@ describe("api/groups", () => {
     expect(queryClient.getQueryData(GROUPS_QUERY_KEY)).toEqual([GROUP]);
   });
 
-  it("useGroupMembers 打 GET /api/groups/:id/members；enabled:false 時不打", async () => {
+  it("useGroupMembers GETs /api/groups/:id/members; no GET when enabled:false", async () => {
     const calls = stubFetch({ [`GET /api/groups/${GROUP.id}/members`]: () => fakeResponse(200, [MEMBER]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const disabled = renderHook(() => useGroupMembers(GROUP.id, { enabled: false }), { wrapper: wrapper(queryClient) });
@@ -89,18 +88,17 @@ describe("api/groups", () => {
     expect(queryClient.getQueryData(groupMembersKey(GROUP.id))).toEqual([MEMBER]);
   });
 
-  it("#175 useGroupRoles 打 GET /api/groups/:id/roles，key 是 ['groups', id, 'roles']（在 ['groups'] 前綴下，群組 mutation 的失效一併涵蓋）", async () => {
+  it("#175 useGroupRoles GETs /api/groups/:id/roles; key is ['groups', id, 'roles'] (under the ['groups'] prefix, so group mutation invalidation covers it)", async () => {
     const calls = stubFetch({ [`GET /api/groups/${GROUP.id}/roles`]: () => fakeResponse(200, [ADMIN_ROLE, MEMBER_ROLE]) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { result } = renderHook(() => useGroupRoles(GROUP.id), { wrapper: wrapper(queryClient) });
     await waitFor(() => expect(result.current.data).toEqual([ADMIN_ROLE, MEMBER_ROLE]));
     expect(calls).toEqual([{ method: "GET", url: `/api/groups/${GROUP.id}/roles`, body: undefined }]);
     expect(queryClient.getQueryData(["groups", GROUP.id, "roles"])).toEqual([ADMIN_ROLE, MEMBER_ROLE]);
-    // 前綴比對：`['groups']` 的失效會命中這把 key
     expect(queryClient.getQueryCache().findAll({ queryKey: GROUPS_QUERY_KEY }).map((q) => q.queryKey)).toContainEqual(["groups", GROUP.id, "roles"]);
   });
 
-  it("useCreateGroup：POST {name}，成功後 invalidate ['groups'] 與 ['notes']", async () => {
+  it("useCreateGroup: POST {name}, on success invalidates ['groups'] and ['notes']", async () => {
     const calls = stubFetch({ "POST /api/groups": () => fakeResponse(201, GROUP) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -111,7 +109,7 @@ describe("api/groups", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["notes"] });
   });
 
-  it("經 useInvalidateGroupsAndNotes 的 hook 也失效 ['trash']（角色變了，誰看得到群組垃圾桶也變）", async () => {
+  it("hooks via useInvalidateGroupsAndNotes also invalidate ['trash'] (a role change alters who can see the group trash)", async () => {
     stubFetch({ "POST /api/groups": () => fakeResponse(201, GROUP) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -120,7 +118,7 @@ describe("api/groups", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["trash"] });
   });
 
-  it("重新取得讀取權時最愛要回來：經 useInvalidateGroupsAndNotes 的 hook 與 useUpdateRole 都失效 ['favorites']", async () => {
+  it("regaining read access must bring favorites back: hooks via useInvalidateGroupsAndNotes and useUpdateRole invalidate ['favorites']", async () => {
     stubFetch({
       "POST /api/groups": () => fakeResponse(201, GROUP),
       [`PATCH /api/groups/${GROUP.id}/roles/r-new`]: () => fakeResponse(200, customRole({ id: "r-new" })),
@@ -141,7 +139,7 @@ describe("api/groups", () => {
     expect(favoritesCalls(spyRole)).toBe(1);
   });
 
-  it("useRenameGroup：PATCH /api/groups/:id {name}；useDeleteGroup：DELETE /api/groups/:id 帶 {mode}；兩者都 invalidate 兩把 key", async () => {
+  it("useRenameGroup: PATCH /api/groups/:id {name}; useDeleteGroup: DELETE /api/groups/:id with {mode}; both invalidate the two keys", async () => {
     const calls = stubFetch({
       [`PATCH /api/groups/${GROUP.id}`]: () => fakeResponse(200, { ...GROUP, name: "新名" }),
       [`DELETE /api/groups/${GROUP.id}`]: () => fakeResponse(204),
@@ -158,7 +156,7 @@ describe("api/groups", () => {
     expect(invalidate.mock.calls.filter(([arg]) => JSON.stringify(arg?.queryKey) === '["notes"]')).toHaveLength(2);
   });
 
-  it("useRenameGroup 另外 invalidate 單篇筆記三把 key ['note']、['note-by-path']、['note-by-group-path']（開著的那篇要拿到新群組名）", async () => {
+  it("useRenameGroup also invalidates the three single-note keys ['note'], ['note-by-path'], ['note-by-group-path'] (the open note needs the new group name)", async () => {
     stubFetch({ [`PATCH /api/groups/${GROUP.id}`]: () => fakeResponse(200, { ...GROUP, name: "新名" }) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -168,7 +166,7 @@ describe("api/groups", () => {
     expect(keys).toEqual(expect.arrayContaining(['["note"]', '["note-by-path"]', '["note-by-group-path"]', '["groups"]', '["notes"]']));
   });
 
-  it("useDeleteGroup 的失效集合與順序：note 三把（['note']、['note-by-path']、['note-by-group-path']）先於 ['groups']／['notes']；含 ['public-link']（轉移清 token）；不含 ['shares']（v2 兩模式都不產生逐人分享）", async () => {
+  it("useDeleteGroup invalidation set and order: the three note keys (['note'], ['note-by-path'], ['note-by-group-path']) before ['groups']/['notes']; includes ['public-link'] (a transfer clears the token); excludes ['shares'] (neither mode produces per-person shares)", async () => {
     stubFetch({ [`DELETE /api/groups/${GROUP.id}`]: () => fakeResponse(204) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -186,7 +184,7 @@ describe("api/groups", () => {
     expect(keys).not.toContain('["shares"]');
   });
 
-  it("useDeleteGroup（轉移給自己）：開著的 ['note', id] 與 active 的 ['public-link', id] 都在 mutateAsync resolve 之後才重抓完——mutateAsync 不等它們；放行後 note 變個人形、public-link 變 {token:null, slug:null}", async () => {
+  it("useDeleteGroup (transfer to self): the open ['note', id] and active ['public-link', id] refetches finish only after mutateAsync resolves - mutateAsync doesn't wait for them; once released the note becomes personal form and public-link becomes {token:null, slug:null}", async () => {
     const NOTE_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
     const groupNote = { id: NOTE_ID, title: "x", groupId: GROUP.id, group: { id: GROUP.id, name: GROUP.name }, role: "editor" };
     const personalNote = { ...groupNote, groupId: null, group: null, role: "owner" };
@@ -206,7 +204,7 @@ describe("api/groups", () => {
         if (url === `/api/notes/${NOTE_ID}`) return Promise.resolve(fakeResponse(200, transferred ? personalNote : groupNote));
         if (url === `/api/notes/${NOTE_ID}/public-link`) {
           if (!transferred) return Promise.resolve(fakeResponse(200, linkBefore));
-          // 轉移後的重抓懸著：mutateAsync 若在等它，下面的斷言會逾時
+          // Refetch after the transfer is left hanging: if mutateAsync were waiting for it, the assertions below would time out
           return new Promise<Response>((resolve) => {
             gate.release = () => resolve(fakeResponse(200, linkAfter));
           });
@@ -222,8 +220,7 @@ describe("api/groups", () => {
     await waitFor(() => expect(result.current.note.data).toMatchObject({ group: { id: GROUP.id } }));
     await waitFor(() => expect(result.current.link.data).toEqual(linkBefore));
 
-    // v2 與 v1 相反：v1 要先等 shares 落定才失效 note（mutateAsync 在其後 resolve）；v2 不 await 任何失效，
-    // public-link 重抓還懸著時 mutateAsync 就已經 resolve，回饋不被開著的查詢拖慢。
+    // Invalidations aren't awaited: mutateAsync resolves while the public-link refetch is still pending, so feedback isn't slowed by open queries.
     await result.current.del.mutateAsync({ id: GROUP.id, body: { mode: "transfer", transferTo: MEMBER.userId } });
     await waitFor(() => expect(gate.release).toBeDefined());
     expect(result.current.link.data).toEqual(linkBefore);
@@ -233,7 +230,7 @@ describe("api/groups", () => {
     await waitFor(() => expect(result.current.link.data).toEqual(linkAfter));
   });
 
-  it("useDeleteGroup 帶 transfer body：{mode:'transfer', transferTo}", async () => {
+  it("useDeleteGroup with a transfer body: {mode:'transfer', transferTo}", async () => {
     const calls = stubFetch({ [`DELETE /api/groups/${GROUP.id}`]: () => fakeResponse(204) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { result } = renderHook(() => useDeleteGroup(), { wrapper: wrapper(queryClient) });
@@ -241,7 +238,7 @@ describe("api/groups", () => {
     expect(calls[0]).toEqual({ method: "DELETE", url: `/api/groups/${GROUP.id}`, body: { mode: "transfer", transferTo: MEMBER.userId } });
   });
 
-  it("#175 useSetMemberRole 另外失效單篇筆記三把 key：改到自己的角色時，開著那篇群組筆記的 permissions 要重抓", async () => {
+  it("#175 useSetMemberRole also invalidates the three single-note keys: changing your own role re-fetches permissions of the open group note", async () => {
     stubFetch({
       [`PATCH /api/groups/${GROUP.id}/members/${MEMBER.userId}`]: () => fakeResponse(200, { ...MEMBER, roleId: ADMIN_ROLE.id, builtin: "admin" }),
     });
@@ -253,7 +250,7 @@ describe("api/groups", () => {
     expect(keys).toEqual(expect.arrayContaining(['["note"]', '["note-by-path"]', '["note-by-group-path"]', '["groups"]', '["notes"]']));
   });
 
-  it("成員三支：PUT {email,roleId?}／PATCH :userId {roleId}／DELETE :userId，成功後 invalidate ['groups'] 與 ['notes']", async () => {
+  it("three member calls: PUT {email,roleId?} / PATCH :userId {roleId} / DELETE :userId; on success invalidate ['groups'] and ['notes']", async () => {
     const promoted: GroupMemberDto = { ...MEMBER, roleId: ADMIN_ROLE.id, builtin: "admin" };
     const calls = stubFetch({
       [`PUT /api/groups/${GROUP.id}/members`]: () => fakeResponse(200, MEMBER),
@@ -264,11 +261,11 @@ describe("api/groups", () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const add = renderHook(() => useAddMember(GROUP.id), { wrapper: wrapper(queryClient) });
     await expect(add.result.current.mutateAsync({ email: MEMBER.email })).resolves.toEqual(MEMBER);
-    // roleId 未給就不送鍵——server body `.strict()`，這裡釘住不送多餘鍵（server 預設內建一般成員）
+    // Omit the key when roleId isn't given: the server body is `.strict()`, so no extra keys are sent (the server defaults to the built-in ordinary member)
     expect(calls[0].body).toEqual({ email: MEMBER.email });
     const addWithRole = renderHook(() => useAddMember(GROUP.id), { wrapper: wrapper(queryClient) });
     await expect(addWithRole.result.current.mutateAsync({ email: MEMBER.email, roleId: ADMIN_ROLE.id })).resolves.toEqual(MEMBER);
-    // roleId 有給就照樣送出（不是被固定省略掉）；鍵名是 roleId，不是 v1 的 role（server 對 role 鍵回 400）
+    // A given roleId is sent as is (not always omitted); the key is roleId, not the old `role` (the server answers 400 to a `role` key)
     expect(calls[1].body).toEqual({ email: MEMBER.email, roleId: ADMIN_ROLE.id });
     const setRole = renderHook(() => useSetMemberRole(GROUP.id), { wrapper: wrapper(queryClient) });
     await expect(setRole.result.current.mutateAsync({ userId: MEMBER.userId, roleId: ADMIN_ROLE.id })).resolves.toEqual(promoted);
@@ -276,12 +273,12 @@ describe("api/groups", () => {
     const remove = renderHook(() => useRemoveMember(GROUP.id), { wrapper: wrapper(queryClient) });
     await expect(remove.result.current.mutateAsync(MEMBER.userId)).resolves.toBeUndefined();
     expect(calls[3]).toEqual({ method: "DELETE", url: `/api/groups/${GROUP.id}/members/${MEMBER.userId}`, body: undefined });
-    // ['groups'] 是 ['groups', id, 'members'] 的前綴，一次 invalidate 同時涵蓋成員名單
+    // ['groups'] is a prefix of ['groups', id, 'members'], so one invalidation also covers the member list
     expect(invalidate.mock.calls.filter(([arg]) => JSON.stringify(arg?.queryKey) === '["groups"]')).toHaveLength(4);
     expect(invalidate.mock.calls.filter(([arg]) => JSON.stringify(arg?.queryKey) === '["notes"]')).toHaveLength(4);
   });
 
-  it("useCreateNote 帶 groupId 時 body 含 groupId；不帶時 body 是 {}", async () => {
+  it("useCreateNote includes groupId in the body when given; body is {} otherwise", async () => {
     const note = { id: "n1", title: "x" };
     const calls = stubFetch({ "POST /api/notes": () => fakeResponse(201, note) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -292,7 +289,7 @@ describe("api/groups", () => {
     expect(calls[1].body).toEqual({});
   });
 
-  it("#175 useCreateRole：POST /roles、body 恰為 {name, permissions}；只失效 ['groups']、['notes']、['trash']、['folders']、['favorites']，不碰單篇筆記 key", async () => {
+  it("#175 useCreateRole: POST /roles, body is {name, permissions}; invalidates ['groups'], ['notes'], ['trash'], ['folders'], ['favorites'] and not single-note keys", async () => {
     const role = customRole({ id: "r-new", name: "Editor" });
     const calls = stubFetch({ [`POST /api/groups/${GROUP.id}/roles`]: () => fakeResponse(201, role) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -304,7 +301,7 @@ describe("api/groups", () => {
     expect([...keys].sort()).toEqual(['["favorites"]', '["folders"]', '["groups"]', '["notes"]', '["trash"]']);
   });
 
-  it("#175 useUpdateRole：PATCH /roles/:roleId、只給 permissions 時 body 恰為 {permissions}；失效八把 key（含 ['trash']、['folders']、['favorites']）", async () => {
+  it("#175 useUpdateRole: PATCH /roles/:roleId, body is {permissions} when only permissions given; invalidates eight keys (including ['trash'], ['folders'], ['favorites'])", async () => {
     const role = customRole({ id: "r-new", permissions: { ...customRole().permissions, edit: true } });
     const calls = stubFetch({ [`PATCH /api/groups/${GROUP.id}/roles/r-new`]: () => fakeResponse(200, role) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -314,14 +311,14 @@ describe("api/groups", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe("PATCH");
     expect(calls[0].url).toBe(`/api/groups/${GROUP.id}/roles/r-new`);
-    // 沒有 roleId、沒有 name 鍵（server body .strict()）
+    // No roleId and no name key (the server body is .strict())
     expect(Object.keys(calls[0].body as object)).toEqual(["permissions"]);
     expect(calls[0].body).toEqual({ permissions: { ...FLAGS, edit: true } });
     const keys = invalidate.mock.calls.map(([arg]) => JSON.stringify(arg?.queryKey));
     expect([...keys].sort()).toEqual(['["favorites"]', '["folders"]', '["groups"]', '["note"]', '["note-by-group-path"]', '["note-by-path"]', '["notes"]', '["trash"]']);
   });
 
-  it("#175 useDeleteRole：DELETE /roles/:roleId、無 body；失效同 useUpdateRole", async () => {
+  it("#175 useDeleteRole: DELETE /roles/:roleId, no body; same invalidations as useUpdateRole", async () => {
     const calls = stubFetch({ [`DELETE /api/groups/${GROUP.id}/roles/r-new`]: () => fakeResponse(204) });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -332,7 +329,7 @@ describe("api/groups", () => {
     expect([...keys].sort()).toEqual(['["favorites"]', '["folders"]', '["groups"]', '["note"]', '["note-by-group-path"]', '["note-by-path"]', '["notes"]', '["trash"]']);
   });
 
-  it("資料夾：useDeleteGroup／useRemoveMember／useUpdateRole 成功後各失效 ['folders']", async () => {
+  it("folders: useDeleteGroup / useRemoveMember / useUpdateRole each invalidate ['folders'] on success", async () => {
     stubFetch({
       [`DELETE /api/groups/${GROUP.id}`]: () => fakeResponse(204),
       [`DELETE /api/groups/${GROUP.id}/members/${MEMBER.userId}`]: () => fakeResponse(204),

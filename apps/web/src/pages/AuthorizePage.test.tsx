@@ -9,8 +9,8 @@ import { Toaster } from "@/components/ui/toast";
 import { AppRoutes } from "@/App";
 import { expectCardControls44 } from "@/test/card-controls";
 
-// 同 ChangePasswordPage.test.tsx 的約定：mock 全域 fetch，走真正的 AppRoutes——驗的是
-// 「route 有沒有接對」（掛在 RequireAuth 底下）而不只是元件單獨渲染。
+// Same convention as ChangePasswordPage.test.tsx: mock global fetch and go through the real AppRoutes - what is verified is that the route
+// is wired correctly (mounted under RequireAuth), not just the component rendered alone.
 
 const USER: UserDto = {
   id: "u1",
@@ -33,16 +33,16 @@ const REQUEST: OauthRequestDto = {
   existingScope: null,
 };
 
-/** 落點探針：只要 location 逐字（同 App.test.tsx 的慣例）。 */
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="app-location">{`${location.pathname}${location.search}`}</div>;
 }
 
-// ⚠ 刻意**不**在 harness 設 `retry: false`：410／404 案守的是 hook 自己的 `retry: false`
-// ——在這裡蓋掉，hook 那行拿掉也全綠（正式站會多重試三次才顯示錯誤）。守法是**計次**：錯誤畫面
-// 出現時 `/api/oauth/request` 恰被打一次（重試三次的話錯誤要等第四次失敗才出現，此時已是 4 次）。
-// 不靠等待上限：react-query 預設退避 1+2+4≈7 秒，塞得進全域 asyncUtilTimeout，只看「多久出現」守不住。
+// Deliberately NOT setting `retry: false` in the harness: the 410/404 cases guard the hook's own `retry: false` - overriding it here
+// would keep the suite green even with that line removed (production would retry three more times before showing the error).
+// The guard is counting: when the error screen appears, `/api/oauth/request` has been called exactly once (with three retries the error
+// appears only after the fourth failure, i.e. 4 calls). It does not rely on a wait limit: react-query's default backoff of 1+2+4 = ~7 s
+// fits within the global asyncUtilTimeout, so "how long until it appears" cannot guard it.
 function renderAt(path: string, me: () => Response = () => okMe()) {
   const client = new QueryClient();
   meHandler = me;
@@ -62,7 +62,6 @@ function renderAt(path: string, me: () => Response = () => okMe()) {
 type Handler = () => Response | Promise<Response>;
 
 const okMe = (): Response => ({ ok: true, status: 200, json: async () => USER }) as unknown as Response;
-/** `/api/auth/me` 的回應由 renderAt 的第二參數決定（預設登入中）；request／decision 由每案指定。 */
 let meHandler: () => Response = okMe;
 
 function mockFetch(requestHandler: Handler, decisionHandler?: Handler) {
@@ -95,20 +94,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   meHandler = okMe;
-  // toast 跨案清空由 test/setup.ts 的全域 afterEach 負責（「decision 回 410」的 toast 與「410 → 錯誤頁」
-  // 的頁內文案同字，沒清的話後者會撈到上一案的 toast 而假綠）。
+  // Toast cleanup between cases is done by the global afterEach in test/setup.ts (the "decision returns 410" toast and the in-page text of
+  // "410 -> error page" are the same string, and without clearing, the latter would find the previous case's toast and pass falsely).
 });
 
 describe("AuthorizePage", () => {
-  it("顯示四要素：名稱、redirect host、scope 人話、登入身分、loopback 警語", async () => {
+  it("shows the name, redirect host, plain-language scope, signed-in identity and the loopback warning", async () => {
     vi.stubGlobal("fetch", mockFetch(okRequest));
     renderAt("/authorize?req=abc");
 
-    // ⚠ 名稱與後綴是**兩個節點**（bidi 隔離的必要條件），testing-library 的 getNodeText
-    // 只串接直接子文字節點，所以沒有任何節點同時含兩者——必須分開斷言。
-    // 名稱節點的 textContent 必須**恰好**是名稱（regex 錨定）：後綴若被合併進同一個
-    // isolate span，子字串比對仍會過，但 U+202E 就能把後綴一起反轉。
-    // 本檔第一次載入 AuthorizePage lazy chunk
+    // The name and the suffix are two nodes (needed for bidi isolation), and testing-library's getNodeText only joins direct child
+    // text nodes, so no node contains both: assert them separately.
+    // The name node's textContent must be exactly the name (regex anchored): if the suffix were merged into the same isolate span, a
+    // substring match would still pass, but U+202E could reverse the suffix along with it.
     expect(await screen.findByTestId("authorize-client-name")).toHaveTextContent(/^Claude Code$/);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Claude Code wants to access your Knotebook");
     expect(screen.getByText(/self-reported/)).toBeInTheDocument();
@@ -121,15 +119,15 @@ describe("AuthorizePage", () => {
     expect(screen.queryByText(/replace the previous authorization/)).not.toBeInTheDocument();
   });
 
-  it("卡片頁例外：Allow、Deny 是 44px（h-11）；勾選框與「Not you?」文字鈕不放大", async () => {
+  it("card page exception: Allow and Deny are 44px (h-11); the checkbox and the \"Not you?\" text button are not enlarged", async () => {
     vi.stubGlobal("fetch", mockFetch(okRequest));
     renderAt("/authorize?req=abc");
     await screen.findByRole("button", { name: "Allow" });
     expect(expectCardControls44(undefined, "button.underline")).toBe(2);
   });
 
-  // route 掛哪一層要有守衛。兩案分別殺「移到 RequireAuth 外」與「移到 ChangePasswordGate 外」。
-  it("未登入 → /login?next=%2Fauthorize%3Freq%3Dabc（含 query，#131 才接得回來）", async () => {
+  // Which layer the route sits under must be guarded: one case covers moving it out of RequireAuth, the other out of ChangePasswordGate.
+  it("not signed in -> /login?next=%2Fauthorize%3Freq%3Dabc (query included, so #131 can return)", async () => {
     vi.stubGlobal("fetch", mockFetch(okRequest));
     renderAt("/authorize?req=abc", () => errorResponse(401, "unauthorized"));
     await waitFor(() => {
@@ -137,7 +135,7 @@ describe("AuthorizePage", () => {
     });
   });
 
-  it("mustChangePassword → 先去 /change-password，看不到同意頁", async () => {
+  it("mustChangePassword -> goes to /change-password first, the consent page is not visible", async () => {
     vi.stubGlobal("fetch", mockFetch(okRequest));
     renderAt(
       "/authorize?req=abc",
@@ -149,7 +147,7 @@ describe("AuthorizePage", () => {
     expect(screen.queryByRole("button", { name: "Allow" })).not.toBeInTheDocument();
   });
 
-  it("client 名稱以 dir=ltr 與 bidi isolate 渲染", async () => {
+  it("client name is rendered with dir=ltr and a bidi isolate", async () => {
     vi.stubGlobal("fetch", mockFetch(okRequest));
     renderAt("/authorize?req=abc");
     const name = await screen.findByTestId("authorize-client-name");
@@ -157,7 +155,7 @@ describe("AuthorizePage", () => {
     expect(name.className).toContain("unicode-bidi:isolate");
   });
 
-  it("replacesExisting 時多一行取代提示；唯讀 scope 只列一條", async () => {
+  it("replacesExisting adds a line about replacing; a read-only scope lists a single entry", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch(
@@ -181,7 +179,7 @@ describe("AuthorizePage", () => {
     expect(screen.queryByText("Create and edit notes")).not.toBeInTheDocument();
   });
 
-  it("允許 → POST decision 帶 allow＋勾選的 scope 並跳到 redirectTo", async () => {
+  it("Allow -> POST decision with allow + the checked scopes, then navigates to redirectTo", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     const fetchMock = mockFetch(okRequest, () => redirectResponse("http://127.0.0.1:5678/cb?code=x"));
@@ -199,7 +197,7 @@ describe("AuthorizePage", () => {
     });
   });
 
-  it("拒絕 → POST decision 帶 deny 並跳轉", async () => {
+  it("Deny -> POST decision with deny, then navigates", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     const fetchMock = mockFetch(okRequest, () => redirectResponse("http://127.0.0.1:5678/cb?error=access_denied"));
@@ -212,21 +210,21 @@ describe("AuthorizePage", () => {
     expect(JSON.parse(decisionCall[1]!.body as string)).toEqual({ req: "abc", decision: "deny" });
   });
 
-  it("decision 回 409 token_limit → 顯示「撤銷後從應用程式重新發起」的 toast，不跳轉", async () => {
+  it("decision returns 409 token_limit -> toast saying to revoke first and start again from the application; no navigation", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     vi.stubGlobal("fetch", mockFetch(okRequest, () => errorResponse(409, "token_limit")));
     renderAt("/authorize?req=abc");
 
     fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
-    // 專屬片段：`denyHint` 也含 "start again from the application"，用它斷言會匹配到
-    // 一直都在的那段而不是 toast
+    // A dedicated fragment: `denyHint` also contains "start again from the application", so asserting on it would match
+    // the text that is always present instead of the toast.
     expect(await screen.findByText(/Token limit reached/)).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't load this authorization request/)).not.toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it("decision 回 410 → 「已使用或已過期」的 toast（不是載入失敗的通用文案）", async () => {
+  it("decision returns 410 -> 'already used or expired' toast (not the generic load-failure text)", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     vi.stubGlobal("fetch", mockFetch(okRequest, () => errorResponse(410, "oauth_request_invalid")));
@@ -237,7 +235,7 @@ describe("AuthorizePage", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it("送出成功後兩個按鈕都鎖住（導頁還在飛的空窗期）", async () => {
+  it("after a successful submit both buttons are locked (the window while the navigation is still in flight)", async () => {
     vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
     vi.stubGlobal("fetch", mockFetch(okRequest, () => redirectResponse("http://127.0.0.1:5678/cb?code=x")));
     renderAt("/authorize?req=abc");
@@ -247,7 +245,7 @@ describe("AuthorizePage", () => {
     expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
   });
 
-  it("缺 req → 顯示錯誤且沒有按鈕，也不打 request 端點", async () => {
+  it("missing req -> shows an error and no buttons, and does not call the request endpoint", async () => {
     const fetchMock = mockFetch(() => {
       throw new Error("should not fetch request");
     });
@@ -258,7 +256,7 @@ describe("AuthorizePage", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/oauth/request"))).toBe(false);
   });
 
-  it("`?req=`（空字串）視同缺席：不打端點", async () => {
+  it("`?req=` (empty string) counts as missing: the endpoint is not called", async () => {
     const fetchMock = mockFetch(() => {
       throw new Error("should not fetch request");
     });
@@ -268,18 +266,18 @@ describe("AuthorizePage", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/oauth/request"))).toBe(false);
   });
 
-  it("410 → 顯示「請從應用程式重新發起」且沒有按鈕；不重試（恰打一次）", async () => {
+  it("410 -> shows 'start again from the application' and no buttons; no retry (called exactly once)", async () => {
     const fetchMock = mockFetch(() => errorResponse(410, "oauth_request_invalid"));
     vi.stubGlobal("fetch", fetchMock);
     const requestCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/oauth/request")).length;
     renderAt("/authorize?req=abc");
     expect(await screen.findByText(/already been used or has expired/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow" })).not.toBeInTheDocument();
-    // hook 的 `retry: false` 守門（見 renderAt 上方註解）：重試的話錯誤出現時已打 4 次。
+    // Guard for the hook's `retry: false` (see the comment above renderAt): with retries the error would show only after 4 calls.
     expect(requestCalls()).toBe(1);
   });
 
-  it("404 → 通用錯誤且沒有按鈕；不重試（恰打一次）", async () => {
+  it("404 -> generic error and no buttons; no retry (called exactly once)", async () => {
     const fetchMock = mockFetch(() => errorResponse(404, "not_found"));
     vi.stubGlobal("fetch", fetchMock);
     const requestCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/oauth/request")).length;
@@ -290,8 +288,8 @@ describe("AuthorizePage", () => {
   });
 });
 
-// #239：逐項勾選、預設勾選、連動、比既有權限窄的提示。
-describe("AuthorizePage #239 逐項勾選", () => {
+// #239: per-item checkboxes, default checks, linkage, and the hint that the grant is narrower than the existing one.
+describe("AuthorizePage #239 per-item checkboxes", () => {
   const RWM = "notes:read notes:write notes:move" as const;
   const RW = "notes:read notes:write" as const;
   const EDIT = "Create and edit notes";
@@ -299,14 +297,13 @@ describe("AuthorizePage #239 逐項勾選", () => {
   const requestWith = (patch: Partial<OauthRequestDto>) => (): Response =>
     ({ ok: true, status: 200, json: async () => ({ ...REQUEST, ...patch }) }) as unknown as Response;
   const THREE = { scope: RWM, scopes: ["notes:read", "notes:write", "notes:move"] };
-  /** 等 decision 送出後取它的 body。 */
   async function decisionBody(fetchMock: ReturnType<typeof mockFetch>): Promise<unknown> {
     const isDecision = ([url]: [RequestInfo | URL, RequestInit?]) => String(url).startsWith("/api/oauth/decision");
     await waitFor(() => expect(fetchMock.mock.calls.some(isDecision)).toBe(true));
     return JSON.parse(fetchMock.mock.calls.find(isDecision)![1]!.body as string);
   }
 
-  it("(a) 第一次授權（existingScope null）、要求三項 → 標題是 scopesTitleChoose，兩框都不勾", async () => {
+  it("first authorization (existingScope null), three items requested -> title is scopesTitleChoose, both boxes unchecked", async () => {
     vi.stubGlobal("fetch", mockFetch(requestWith({ ...THREE, existingScope: null, replacesExisting: false })));
     renderAt("/authorize?req=abc");
     expect(await screen.findByText(i18n.t("authorize.scopesTitleChoose"))).toBeInTheDocument();
@@ -316,7 +313,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(screen.queryByText("Currently granted")).not.toBeInTheDocument();
   });
 
-  it("a11y：兩框在以標題命名的 group 裡；搬移框以 aria-describedby 帶後果說明", async () => {
+  it("a11y: both boxes are in a group named by the title; the move box carries the consequence text via aria-describedby", async () => {
     vi.stubGlobal("fetch", mockFetch(requestWith({ ...THREE, existingScope: null, replacesExisting: false })));
     renderAt("/authorize?req=abc");
     const group = await screen.findByRole("group", { name: i18n.t("authorize.scopesTitleChoose") });
@@ -326,7 +323,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     );
   });
 
-  it("(b) 既有讀寫、要求三項 → 編輯預設勾、搬移不勾，「Currently granted」恰一處且在編輯那列", async () => {
+  it("existing read-write, three items requested -> edit checked by default, move unchecked, \"Currently granted\" appears once and on the edit row", async () => {
     vi.stubGlobal("fetch", mockFetch(requestWith({ ...THREE, existingScope: RW, replacesExisting: true })));
     renderAt("/authorize?req=abc");
     const edit = await screen.findByRole("checkbox", { name: EDIT });
@@ -338,7 +335,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(screen.queryByText(i18n.t("authorize.replacesWithLess"))).not.toBeInTheDocument();
   });
 
-  it("(c) 既有讀寫搬移、只要求讀寫 → 編輯勾、沒有搬移框、出現 replacesWithLess；Allow 送讀寫（不超過要求）", async () => {
+  it("existing read-write-move, only read-write requested -> edit checked, no move box, replacesWithLess shown; Allow sends read-write (not more than requested)", async () => {
     vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
     const fetchMock = mockFetch(
       requestWith({ scope: RW, scopes: ["notes:read", "notes:write"], existingScope: RWM, replacesExisting: true }),
@@ -354,7 +351,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RW });
   });
 
-  it("(d) 勾編輯→勾搬移→取消編輯 → 搬移 disabled 且清掉；Allow 送 notes:read", async () => {
+  it("check edit -> check move -> uncheck edit -> move is disabled and cleared; Allow sends notes:read", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
     const fetchMock = mockFetch(
@@ -365,7 +362,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     renderAt("/authorize?req=abc");
     const edit = await screen.findByRole("checkbox", { name: EDIT });
     const move = screen.getByRole("checkbox", { name: MOVE });
-    expect(move).toBeDisabled(); // 未勾編輯時搬移不可選
+    expect(move).toBeDisabled(); // move cannot be selected while edit is unchecked
     fireEvent.click(edit);
     expect(move).toBeEnabled();
     fireEvent.click(move);
@@ -379,7 +376,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(JSON.parse(decisionCall[1]!.body as string)).toEqual({ req: "abc", decision: "allow", scope: "notes:read" });
   });
 
-  it("勾兩框 → Allow 送第三形", async () => {
+  it("checking both boxes -> Allow sends the third scope form", async () => {
     vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
     const fetchMock = mockFetch(
       requestWith({ ...THREE, existingScope: null, replacesExisting: false }),
@@ -397,7 +394,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(JSON.parse(decisionCall[1]!.body as string)).toEqual({ req: "abc", decision: "allow", scope: RWM });
   });
 
-  it("(e) 既有讀寫、只要求唯讀 → 沒有勾選框、出現 replacesWithLessReadOnly、標題是 scopesTitle；Allow 送唯讀", async () => {
+  it("existing read-write, only read-only requested -> no checkboxes, replacesWithLessReadOnly shown, title is scopesTitle; Allow sends read-only", async () => {
     vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
     const fetchMock = mockFetch(
       requestWith({ scope: "notes:read", scopes: ["notes:read"], existingScope: RW, replacesExisting: true }),
@@ -414,7 +411,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: "notes:read" });
   });
 
-  it("視窗重新取得焦點／重新連線不重抓 request（勾選初值與「Currently granted」標示來自同一份快照）", async () => {
+  it("window refocus / reconnect does not refetch the request (the initial checks and the \"Currently granted\" marker come from the same snapshot)", async () => {
     const fetchMock = mockFetch(requestWith({ ...THREE, existingScope: RW, replacesExisting: true }));
     vi.stubGlobal("fetch", fetchMock);
     const requestCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/oauth/request")).length;
@@ -436,7 +433,7 @@ describe("AuthorizePage #239 逐項勾選", () => {
     }
   });
 
-  it("未知 scope 不渲染成「Read all of your notes」", async () => {
+  it("an unknown scope is not rendered as \"Read all of your notes\"", async () => {
     vi.stubGlobal("fetch", mockFetch(requestWith({ scope: "notes:read", scopes: ["notes:read", "notes:admin"] })));
     renderAt("/authorize?req=abc");
     expect(await screen.findAllByText("Read all of your notes")).toHaveLength(1);
@@ -444,8 +441,8 @@ describe("AuthorizePage #239 逐項勾選", () => {
   });
 });
 
-// #181：第三框「刪除」——client 沒要求不渲染、預設不勾、取消編輯一起清、既有權限取交集。
-describe("AuthorizePage #181 刪除勾選", () => {
+// #181: third box "delete": not rendered when the client did not request it, unchecked by default, cleared together when edit is unchecked, intersected with the existing grant.
+describe("AuthorizePage #181 delete checkbox", () => {
   const R = "notes:read" as const;
   const RW = "notes:read notes:write" as const;
   const RWM = "notes:read notes:write notes:move" as const;
@@ -454,7 +451,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
   const EDIT = "Create and edit notes";
   const MOVE = "Move to groups (can't be undone)";
   const DELETE = "Move to trash (can be restored)";
-  // 刪除框的常駐說明＝基本說明＋「需同時勾選編輯」一句（比照搬移說明的結尾）。兩語系逐字釘。
+  // The delete box's persistent description = the basic description + the sentence "requires edit to be checked too" (same ending as the move description). Pinned verbatim in both locales.
   const DELETE_HINT_EN =
     "Can't delete notes permanently, but notes left in the trash can still be deleted permanently later, by the site's trash setting or by someone in the web app. Requires \"Create and edit notes\".";
   const DELETE_HINT_ZH =
@@ -476,14 +473,14 @@ describe("AuthorizePage #181 刪除勾選", () => {
     return JSON.parse(fetchMock.mock.calls.find(isDecision)![1]!.body as string);
   }
 
-  it("AP-D1：client 沒要求 notes:delete → 沒有刪除勾選框", async () => {
+  it("client did not request notes:delete -> no delete checkbox", async () => {
     setup({ ...ASK_RWM, existingScope: null });
     expect(await screen.findByRole("checkbox", { name: EDIT })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: MOVE })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: DELETE })).toBeNull();
   });
 
-  it("AP-D2：要求四項、第一次授權 → 三框不勾；刪除在勾編輯前 disabled、帶後果說明；勾編輯＋刪除 → Allow 送 RWD", async () => {
+  it("four items requested, first authorization -> three boxes unchecked; delete is disabled until edit is checked and carries the consequence text; checking edit + delete -> Allow sends RWD", async () => {
     const fetchMock = setup({ ...ASK_ALL, existingScope: null });
     const edit = await screen.findByRole("checkbox", { name: EDIT });
     const move = screen.getByRole("checkbox", { name: MOVE });
@@ -501,7 +498,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RWD });
   });
 
-  it("AP-D3：既有 RWD、要求 RWM → 只勾編輯、沒有刪除框、出現 replacesWithLess；Allow 送 RW", async () => {
+  it("existing RWD, RWM requested -> only edit checked, no delete box, replacesWithLess shown; Allow sends RW", async () => {
     const fetchMock = setup({ ...ASK_RWM, existingScope: RWD, replacesExisting: true });
     expect(await screen.findByRole("checkbox", { name: EDIT })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: MOVE })).not.toBeChecked();
@@ -511,7 +508,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RW });
   });
 
-  it("AP-D4：既有 RWMD、要求四項 → 三框全勾、三處 Currently granted、沒有 replacesWithLess", async () => {
+  it("existing RWMD, four items requested -> all three boxes checked, three \"Currently granted\" markers, no replacesWithLess", async () => {
     setup({ ...ASK_ALL, existingScope: RWMD, replacesExisting: true });
     const del = await screen.findByRole("checkbox", { name: DELETE });
     expect(screen.getByRole("checkbox", { name: EDIT })).toBeChecked();
@@ -523,7 +520,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
     expect(screen.queryByText(i18n.t("authorize.replacesWithLess"))).not.toBeInTheDocument();
   });
 
-  it("AP-D5：三框全勾後取消編輯 → 搬移、刪除都清掉且 disabled；Allow 送 R", async () => {
+  it("after checking all three boxes, unchecking edit -> move and delete are cleared and disabled; Allow sends R", async () => {
     const fetchMock = setup({ ...ASK_ALL, existingScope: null });
     const edit = await screen.findByRole("checkbox", { name: EDIT });
     const move = screen.getByRole("checkbox", { name: MOVE });
@@ -542,7 +539,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: R });
   });
 
-  it("AP-D6：既有 RWM、要求 RWD（格上不可比）→ 只勾編輯、刪除不勾、Currently granted 只在編輯列、出現 replacesWithLess；勾刪除 → Allow 送 RWD", async () => {
+  it("existing RWM, RWD requested (not comparable per box) -> only edit checked, delete unchecked, \"Currently granted\" only on the edit row, replacesWithLess shown; checking delete -> Allow sends RWD", async () => {
     const fetchMock = setup({ scope: RWD, scopes: ["notes:read", "notes:write", "notes:delete"], existingScope: RWM, replacesExisting: true });
     const del = await screen.findByRole("checkbox", { name: DELETE });
     expect(screen.getByRole("checkbox", { name: EDIT })).toBeChecked();
@@ -555,7 +552,7 @@ describe("AuthorizePage #181 刪除勾選", () => {
     expect(await decisionBody(fetchMock)).toEqual({ req: "abc", decision: "allow", scope: RWD });
   });
 
-  it("AP-D7（zh-TW）：刪除框的常駐說明以「需同時勾選「建立與修改筆記」。」收尾，並是框的可及描述", async () => {
+  it("(zh-TW) the delete box's persistent description ends with 「需同時勾選「建立與修改筆記」。」 and is the box's accessible description", async () => {
     await i18n.changeLanguage("zh-TW");
     setup({ ...ASK_ALL, existingScope: null });
     const del = await screen.findByRole("checkbox", { name: "移到垃圾桶（可還原）" });

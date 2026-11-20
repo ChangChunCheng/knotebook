@@ -8,10 +8,10 @@ import { GENERIC } from "./helpers/provider-icon.js";
 import type { Db } from "../src/db/index.js";
 import type { CollabHooks } from "../src/collab/hooks.js";
 
-// verifyPassword／hashPassword 被包成 vi.fn(actual)：預設行為與真實實作一致，只有
-// 個別測試（HashBusyError 那幾條）用 mockRejectedValueOnce 覆寫下一次呼叫，其餘測試
-// 不受影響。這比用 setHashConcurrency + 真併發競態去逼出 HashBusyError 穩定，不依賴
-// 時序（vi.mock 呼叫會被 vitest 靜態 hoist 到本檔最頂端，早於下面這行 import 執行）。
+// verifyPassword/hashPassword are wrapped as vi.fn(actual): default behaviour is identical to the real implementation, only individual tests
+// (the HashBusyError ones) override the next call with mockRejectedValueOnce, leaving the others unaffected. More stable than forcing HashBusyError
+// with setHashConcurrency + a real concurrency race, and independent of timing (vitest statically hoists vi.mock calls to the very top of the file,
+// before the import below).
 vi.mock("../src/auth/password.js", async () => {
   const actual = await vi.importActual<typeof import("../src/auth/password.js")>("../src/auth/password.js");
   return { ...actual, verifyPassword: vi.fn(actual.verifyPassword), hashPassword: vi.fn(actual.hashPassword) };
@@ -20,8 +20,8 @@ vi.mock("../src/auth/password.js", async () => {
 import { verifyPassword, hashPassword, HashBusyError, DUMMY_HASH } from "../src/auth/password.js";
 import { DEFAULT_NOTE_MAX_BYTES } from "../src/notes/note-size.js";
 
-// mockClear 只清呼叫紀錄（不清 mockRejectedValueOnce 以外的實作，那些本來就是
-// vi.fn(actual...) 包出來的預設轉發），確保每個測試看到的呼叫次數只計自己那份。
+// mockClear only clears call records (implementations other than mockRejectedValueOnce stay: they are vi.fn(actual...)'s default forwarding),
+// so each test's call counts only include its own calls.
 afterEach(() => {
   vi.mocked(verifyPassword).mockClear();
   vi.mocked(hashPassword).mockClear();
@@ -64,14 +64,14 @@ function loginPayload(email: string, password: string) {
 }
 
 describe("GET /api/auth/config", () => {
-  it("免認證可打；沒有 provider → { providers: [], registration: { enabled: true, providerIds: [] } }（預設開）", async () => {
+  it("no auth needed; no provider -> { providers: [], registration: { enabled: true, providerIds: [] } } (default on)", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ providers: [], registration: { enabled: true, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: true, noteMaxBytes: DEFAULT_NOTE_MAX_BYTES, maxUploadBytes: MAX_UPLOAD_BYTES });
   });
 
-  it("只列啟用中的 provider、依 sort_order 排；不含 issuer／client id／secret", async () => {
+  it("lists only enabled providers, ordered by sort_order; no issuer/client id/secret", async () => {
     const { app, db } = await buildTestApp();
     const b = await seedAuthProvider(db, { issuerUrl: "https://b.example", displayName: "B", sortOrder: 2 });
     const a = await seedAuthProvider(db, { issuerUrl: "https://a.example", displayName: "A", sortOrder: 1 });
@@ -81,20 +81,20 @@ describe("GET /api/auth/config", () => {
     expect(res.body).not.toMatch(/a\.example|test-client|"ct"/);
   });
 
-  it("noteMaxBytes＝設定的 NOTE_MAX_BYTES（網頁編輯器的筆記大小上限檢查用）", async () => {
+  it("noteMaxBytes = the configured NOTE_MAX_BYTES (used by the web editor's note size check)", async () => {
     const { app } = await buildTestApp({ config: { ...testConfig, limitEnv: { noteMaxBytes: 123_456 } } });
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
     expect(res.json().noteMaxBytes).toBe(123_456);
   });
 
-  it("registration_enabled=false → registration.enabled false", async () => {
+  it("registration_enabled=false -> registration.enabled false", async () => {
     const { app, db } = await buildTestApp();
     await db.update(siteSettings).set({ registrationEnabled: false });
     const res = await app.inject({ method: "GET", url: "/api/auth/config" });
     expect(res.json()).toEqual({ providers: [], registration: { enabled: false, providerIds: [] }, passwordLogin: { enabled: true }, autoVersionsEnabled: true, noteMaxBytes: DEFAULT_NOTE_MAX_BYTES, maxUploadBytes: MAX_UPLOAD_BYTES });
   });
 
-  it("site_settings 讀不到列 → registration.enabled false＋error log", async () => {
+  it("site_settings row unreadable -> registration.enabled false + error log", async () => {
     const logged: unknown[][] = [];
     const { app, db } = await buildTestApp(
       {},
@@ -117,7 +117,7 @@ describe("GET /api/auth/config", () => {
     expect(logged.some((a) => a.some((x) => typeof x === "string" && x.includes("帳密登入視同開啟")))).toBe(true);
   });
 
-  /** C1／C2 共用：a（sort 2，開）、b（sort 1，開）、c（sort 3，關）、d（停用、開）。 */
+  /** Shared by the two cases below: a (sort 2, on), b (sort 1, on), c (sort 3, off), d (disabled, on). */
   async function seedAutoCreateMix(db: Db) {
     const a = await seedAuthProvider(db, { issuerUrl: "https://a.example", displayName: "A", sortOrder: 2, autoCreateEnabled: true });
     const b = await seedAuthProvider(db, { issuerUrl: "https://b.example", displayName: "B", sortOrder: 1, autoCreateEnabled: true });
@@ -126,7 +126,7 @@ describe("GET /api/auth/config", () => {
     return { a, b, c, d };
   }
 
-  it("C1 providerIds＝啟用中且開了自動建帳的服務、依顯示順序；停用但開關開的不列；與 registration.enabled 無關", async () => {
+  it("providerIds = enabled providers with auto-create on, in display order; disabled ones with the switch on are not listed; independent of registration.enabled", async () => {
     const { app, db } = await buildTestApp();
     const { a, b, c } = await seedAutoCreateMix(db);
     await db.update(siteSettings).set({ registrationEnabled: false });
@@ -137,7 +137,7 @@ describe("GET /api/auth/config", () => {
     for (const p of body.providers) expect(Object.keys(p).sort()).toEqual(["displayName", "icon", "id"]);
   });
 
-  it("C2 site_settings 讀不到列 → providerIds []；providers 照列", async () => {
+  it("site_settings row unreadable -> providerIds []; providers still listed", async () => {
     const { app, db } = await buildTestApp();
     const { a, b, c } = await seedAutoCreateMix(db);
     await db.delete(siteSettings);
@@ -149,7 +149,7 @@ describe("GET /api/auth/config", () => {
 });
 
 describe("POST /api/auth/login", () => {
-  it("正確帳密 → 200 + session cookie，且該 cookie 打 me 回傳正確內容", async () => {
+  it("correct credentials -> 200 + session cookie, and that cookie calling me returns the right content", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "alice@example.com", displayName: "Alice", isAdmin: false });
 
@@ -187,7 +187,7 @@ describe("POST /api/auth/login", () => {
     });
   });
 
-  it("Mixed-Case 輸入登入既有小寫帳號 → 200（讀取端 lower() 對稱比對）", async () => {
+  it("login with Mixed-Case input to an existing lowercase account -> 200 (the read side compares symmetrically with lower())", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "alice-mixed@example.com", displayName: "Alice", isAdmin: false });
 
@@ -200,7 +200,7 @@ describe("POST /api/auth/login", () => {
     expect(res.json()).toMatchObject({ id: u.id, email: u.email });
   });
 
-  it("密碼錯 5 次 → 第 6 次前置 429 too_many_attempts，回應含正數 retryAfterMs", async () => {
+  it("wrong password 5 times -> the 6th gets a pre-check 429 too_many_attempts, response has a positive retryAfterMs", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "bob@example.com" });
 
@@ -216,7 +216,7 @@ describe("POST /api/auth/login", () => {
     expect(blocked.json().retryAfterMs).toBeGreaterThan(0);
   });
 
-  it("不存在的帳號連續失敗 5 次 → 第 6 次也 429 too_many_attempts", async () => {
+  it("nonexistent account failing 5 times in a row -> the 6th is also 429 too_many_attempts", async () => {
     const { app } = await buildTestApp();
 
     for (let i = 0; i < 5; i++) {
@@ -229,7 +229,7 @@ describe("POST /api/auth/login", () => {
     expect(blocked.json()).toMatchObject({ error: { code: "too_many_attempts" } });
   });
 
-  it("401 回應體：不存在帳號 與 存在帳號密碼錯誤，逐 byte 一致（同 code、同 message，避免帳號存在 oracle）；不存在帳號底層真的跑了一次 dummy verify（DUMMY_HASH）", async () => {
+  it("401 response body: nonexistent account and existing account with wrong password are byte-for-byte identical (same code, same message, no account-existence oracle); for the nonexistent account a dummy verify (DUMMY_HASH) really ran underneath", async () => {
     const { app: appExisting, db } = await buildTestApp();
     await insertUser(db, { email: "carol@example.com" });
     const resExistingWrong = await appExisting.inject({
@@ -239,8 +239,8 @@ describe("POST /api/auth/login", () => {
     });
     expect(resExistingWrong.statusCode).toBe(401);
 
-    // 只隔離接下來「不存在帳號」那次呼叫的 verifyPassword 呼叫紀錄——上面存在帳號的
-    // 分支已經驗證完 status code，不需要保留它的呼叫紀錄。
+    // Isolate only the verifyPassword call record of the next "nonexistent account" call - the existing-account branch above already
+    // verified its status code, its call record isn't needed.
     vi.mocked(verifyPassword).mockClear();
 
     const { app: appMissing } = await buildTestApp();
@@ -251,22 +251,22 @@ describe("POST /api/auth/login", () => {
     });
     expect(resMissing.statusCode).toBe(401);
 
-    // 頭號安全性質：帳號不存在時不能短路直接回 401，必須真的跑一次 dummy verify
-    // （用 DUMMY_HASH），否則耗時差異會變成帳號是否存在的 timing oracle。
+    // Top security property: a nonexistent account must not short-circuit to 401; a dummy verify (with DUMMY_HASH) must really run,
+    // otherwise the timing difference becomes a timing oracle for account existence.
     expect(vi.mocked(verifyPassword)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(verifyPassword).mock.calls[0]?.[0]).toBe(DUMMY_HASH);
 
     expect(JSON.stringify(resMissing.json())).toBe(JSON.stringify(resExistingWrong.json()));
   });
 
-  it("OIDC-only user（passwordHash null）登入 → 401 invalid_credentials，與一般密碼錯誤回應一致；底層真的跑了一次 dummy verify（DUMMY_HASH）", async () => {
+  it("OIDC-only user (passwordHash null) login -> 401 invalid_credentials, same response as a normal wrong password; a dummy verify (DUMMY_HASH) really ran underneath", async () => {
     const { app: appOidc, db } = await buildTestApp();
     await insertUser(db, { email: "oidc@example.com", password: null });
     const resOidc = await appOidc.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("oidc@example.com", "any-password-at-all") });
     expect(resOidc.statusCode).toBe(401);
 
-    // 在打第二個（存在帳號、真密碼錯誤）請求之前先斷言，確保這裡量到的呼叫次數/參數
-    // 只屬於上面 OIDC-only 那次呼叫。
+    // Assert before the second (existing account, real wrong password) request, so the call count/arguments measured here
+    // belong only to the OIDC-only call above.
     expect(vi.mocked(verifyPassword)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(verifyPassword).mock.calls[0]?.[0]).toBe(DUMMY_HASH);
 
@@ -278,7 +278,7 @@ describe("POST /api/auth/login", () => {
     expect(JSON.stringify(resOidc.json())).toBe(JSON.stringify(resWrong.json()));
   });
 
-  it("停用帳號：正確密碼 → 403 account_disabled；錯誤密碼 → 401（先驗密碼再檢查 disabled，不是 403 蓋過 401）", async () => {
+  it("disabled account: correct password -> 403 account_disabled; wrong password -> 401 (password verified before the disabled check, 403 doesn't override 401)", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "evan@example.com", disabledAt: new Date() });
 
@@ -291,7 +291,7 @@ describe("POST /api/auth/login", () => {
     expect(resWrong.json()).toMatchObject({ error: { code: "invalid_credentials" } });
   });
 
-  it("已登入取得的舊 cookie，帳號事後被停用（DB 直接設 disabledAt）→ me 401（gate 視為 revoked）", async () => {
+  it("an old cookie obtained at login, account disabled afterwards (disabledAt set directly in the DB) -> me 401 (the gate treats it as revoked)", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "frank@example.com" });
 
@@ -305,7 +305,7 @@ describe("POST /api/auth/login", () => {
     expect(meRes.statusCode).toBe(401);
   });
 
-  it("HashBusyError（verifyPassword 併發超限）→ 429 server_busy", async () => {
+  it("HashBusyError (verifyPassword concurrency exceeded) -> 429 server_busy", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "busy@example.com" });
 
@@ -316,9 +316,9 @@ describe("POST /api/auth/login", () => {
     expect(res.json()).toMatchObject({ error: { code: "server_busy" } });
   });
 
-  it("預設不採信 X-Forwarded-For：每發換一個假 IP 也繞不過 IP 軌（issue #13）", async () => {
-    // 帳號軌用「每次都不同的帳號」讓它永遠不觸發，單獨觀察 IP 軌。若 XFF 被採信，
-    // 五發各自落在不同 IP、IP 軌永遠是 1，第六發就不會 429——那正是這條 issue 的漏洞。
+  it("X-Forwarded-For is not trusted by default: a fake IP per request doesn't get around the IP track (issue #13)", async () => {
+    // The account track uses a different account every time so it never triggers, isolating the IP track. If XFF were trusted, the five requests
+    // would land on different IPs, the IP track would stay at 1 and the sixth wouldn't be 429 - the very hole of that issue.
     const { app } = await buildTestApp();
 
     for (let i = 0; i < 5; i += 1) {
@@ -341,7 +341,7 @@ describe("POST /api/auth/login", () => {
     expect(blocked.json()).toMatchObject({ error: { code: "too_many_attempts" } });
   });
 
-  it("TRUST_PROXY 明確打開後才採信 X-Forwarded-For（反代拓撲的正常行為）", async () => {
+  it("X-Forwarded-For is trusted only after TRUST_PROXY is explicitly enabled (normal behaviour behind a reverse proxy)", async () => {
     const { app } = await buildTestApp({ config: { ...testConfig, trustProxy: true } });
 
     for (let i = 0; i < 5; i += 1) {
@@ -354,7 +354,7 @@ describe("POST /api/auth/login", () => {
       expect(res.statusCode).toBe(401);
     }
 
-    // 每一發都是不同的 request.ip ⇒ IP 軌各自只有 1 次失敗，第六發照樣走到密碼驗證。
+    // Every request has a different request.ip => the IP track has only 1 failure each, so the sixth still reaches password verification.
     const next = await app.inject({
       method: "POST",
       url: "/api/auth/login",
@@ -364,14 +364,12 @@ describe("POST /api/auth/login", () => {
     expect(next.statusCode).toBe(401);
   });
 
-  it("recordSuccess 只清帳號計數、不清 IP 計數：登入成功後帳號計數歸零，換一個乾淨 IP 可再失敗 4 次仍不 429", async () => {
-    // 用 x-forwarded-for 控制 request.ip。issue #13 之後 `trustProxy` 預設是 false，
-    // 這裡必須**明講**要信任代理才拿得到「換 IP」這個能力（正是這條 issue 的重點：
-    // 採信 XFF 是部署者的選擇，不是預設）。先在 IP A
-    // 上對同一帳號失敗 4 次、成功 1 次，再換到全新的 IP B 失敗 4 次——若 recordSuccess
-    // 真的只清了帳號計數（不影響 IP 計數），帳號計數在 IP B 這批次會是 0+4=4（仍 <5，
-    // 不 429）；若 recordSuccess 沒有正確接線／沒有真的清帳號計數，帳號計數會累積成
-    // 4（IP A）+4（IP B）=8，一定會在這批次中途就被帳號臂擋下。
+  it("recordSuccess only clears the account counter, not the IP counter: after a successful login the account counter is zero, and from a clean IP 4 more failures still don't give 429", async () => {
+    // x-forwarded-for controls request.ip. Since issue #13 `trustProxy` defaults to false, so this must **explicitly** trust the proxy to get the ability
+    // to "change IP" (trusting XFF is the deployer's choice, not a default - the point of that issue). 4 failures for the same account from IP A and 1 success,
+    // then 4 failures from a brand-new IP B: if recordSuccess really cleared only the account counter (not the IP counter), the account counter in the IP B batch
+    // is 0+4=4 (still <5, no 429); if recordSuccess wasn't wired/didn't clear the account counter, it would accumulate to 4 (IP A)+4 (IP B)=8
+    // and the account arm would certainly block midway through this batch.
     const { app, db } = await buildTestApp({ config: { ...testConfig, trustProxy: true } });
     await insertUser(db, { email: "karen@example.com" });
 
@@ -406,8 +404,8 @@ describe("POST /api/auth/login", () => {
     }
   });
 
-  it("throttle 帳號鍵吃正規化值：Mixed-Case 變體自 IP A 累積 5 敗後，換大小寫自 IP B 仍 429（未正規化實作下 IP B 兩軸皆 0 → 落到查詢 → 401，紅）", async () => {
-    // 同上：要讓 IP A／IP B 真的是兩個不同的 request.ip，得先信任代理（issue #13）。
+  it("throttle account key uses the normalized value: after 5 failures of a Mixed-Case variant from IP A, switching case from IP B is still 429 (without normalization both IP B axes are 0 -> falls through to lookup -> 401, red)", async () => {
+    // Same as above: IP A/IP B must really be two different request.ip values, which needs trusting the proxy first (issue #13).
     const { app } = await buildTestApp({ config: { ...testConfig, trustProxy: true } });
     const variants = [
       "AliCE@example.com",
@@ -438,7 +436,7 @@ describe("POST /api/auth/login", () => {
 });
 
 describe("POST /api/auth/logout", () => {
-  it("清除 cookie（value 為空、maxAge 0）→ 204；之後不帶 cookie 打 me → 401", async () => {
+  it("clearing the cookie (empty value, maxAge 0) -> 204; calling me afterwards without the cookie -> 401", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "grace@example.com" });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("grace@example.com", VALID_PASSWORD) });
@@ -450,17 +448,16 @@ describe("POST /api/auth/logout", () => {
     expect(cleared).toBeDefined();
     expect(cleared?.value).toBe("");
     expect(cleared?.maxAge).toBe(0);
-    // path 必須跟簽發時一致（"/"）——瀏覽器用「name+path（+domain）」比對是否為同一顆
-    // cookie 才會真的覆蓋掉它；path 對不上，這個 Set-Cookie 只會新增一顆空 cookie，
-    // 原本那顆帶著 session token 的 cookie 完全沒被清掉。
+    // The path must match the one used when issuing ("/"): browsers match name+path (+domain) to decide it is the same cookie and overwrite it;
+    // a mismatched path only adds an empty cookie, leaving the original session-token cookie untouched.
     expect(cleared?.path).toBe("/");
 
-    // 模擬瀏覽器已依 Set-Cookie 清除本地 cookie：後續請求不帶 cookie。
+    // Simulate the browser having cleared the local cookie per Set-Cookie: later requests send no cookie.
     const meRes = await app.inject({ method: "GET", url: "/api/auth/me" });
     expect(meRes.statusCode).toBe(401);
   });
 
-  it("免認證亦可打（未登入直接打 logout）→ 204", async () => {
+  it("callable without auth (logout while not signed in) -> 204", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "POST", url: "/api/auth/logout" });
     expect(res.statusCode).toBe(204);
@@ -468,7 +465,7 @@ describe("POST /api/auth/logout", () => {
 });
 
 describe("GET /api/auth/me", () => {
-  it("未登入 → 401", async () => {
+  it("not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/auth/me" });
     expect(res.statusCode).toBe(401);
@@ -476,7 +473,7 @@ describe("GET /api/auth/me", () => {
 });
 
 describe("POST /api/auth/password", () => {
-  it("未登入 → 401", async () => {
+  it("not signed in -> 401", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -486,7 +483,7 @@ describe("POST /api/auth/password", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("舊密碼錯 → 401 invalid_credentials（不變更 DB）", async () => {
+  it("wrong old password -> 401 invalid_credentials (DB not changed)", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "henry@example.com" });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("henry@example.com", VALID_PASSWORD) });
@@ -505,7 +502,7 @@ describe("POST /api/auth/password", () => {
     expect(row.tokenVersion).toBe(0);
   });
 
-  it("新密碼 <12 字元 → 400 password_too_short", async () => {
+  it("new password < 12 characters -> 400 password_too_short", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "ivy@example.com" });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("ivy@example.com", VALID_PASSWORD) });
@@ -521,7 +518,7 @@ describe("POST /api/auth/password", () => {
     expect(res.json()).toMatchObject({ error: { code: "password_too_short" } });
   });
 
-  it("成功改密碼：本 request 新 cookie 打 me → 200；舊 cookie（改密碼前）→ 401；舊密碼登入 401、新密碼登入 200", async () => {
+  it("successful password change: the new cookie from this request -> me 200; the old cookie (before the change) -> 401; login with the old password 401, with the new password 200", async () => {
     const { app, db } = await buildTestApp();
     await insertUser(db, { email: "jack@example.com" });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("jack@example.com", VALID_PASSWORD) });
@@ -539,23 +536,22 @@ describe("POST /api/auth/password", () => {
     expect(newCookie).toBeDefined();
     expect(newCookie!.value).not.toBe(oldCookie);
 
-    // (a) 本 request 拿到的新 cookie → me 200，本人沒被自己觸發的 tokenVersion bump 登出
+    // The new cookie from this request -> me 200: the user isn't logged out by their own tokenVersion bump
     const meNew = await app.inject({ method: "GET", url: "/api/auth/me", cookies: { [SESSION_COOKIE]: newCookie!.value } });
     expect(meNew.statusCode).toBe(200);
     expect(meNew.json()).toMatchObject({ email: "jack@example.com" });
 
-    // (b) 舊 cookie（改密碼前簽發，tv 已被 bump）→ 401，模擬他裝置 session 被踢
+    // The old cookie (issued before the change, tv has been bumped) -> 401: simulates other devices' sessions being kicked
     const meOld = await app.inject({ method: "GET", url: "/api/auth/me", cookies: { [SESSION_COOKIE]: oldCookie } });
     expect(meOld.statusCode).toBe(401);
 
-    // (c) 舊密碼登入 401、新密碼登入 200
     const loginOld = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("jack@example.com", VALID_PASSWORD) });
     expect(loginOld.statusCode).toBe(401);
     const loginNew = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("jack@example.com", NEW_VALID_PASSWORD) });
     expect(loginNew.statusCode).toBe(200);
   });
 
-  it("成功改密碼 → collabHooks.onUserRevoked(userId) 被呼叫一次（接縫：即時協作連線撤銷）", async () => {
+  it("successful password change -> collabHooks.onUserRevoked(userId) called once (test hook: revocation of live collaboration connections)", async () => {
     const onUserRevoked = vi.fn();
     const collabHooks: CollabHooks = {
       onShareChanged: vi.fn(),
@@ -582,10 +578,10 @@ describe("POST /api/auth/password", () => {
     expect(onUserRevoked).toHaveBeenCalledWith(u.id);
   });
 
-  it("OIDC-only user（passwordHash null）打改密碼 → 401 invalid_credentials（釘住 dummy verify 分支，而非 500 或誤判成功）", async () => {
+  it("OIDC-only user (passwordHash null) changing password -> 401 invalid_credentials (pins the dummy verify branch, not a 500 or a false success)", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "mia@example.com", password: null });
-    // OIDC-only 使用者無法透過密碼登入拿 cookie，直接簽一把合法 session 模擬其已登入狀態。
+    // An OIDC-only user can't get a cookie via password login, so a valid session is signed directly to simulate being logged in.
     const cookie = await signTestSession({ userId: u.id, tv: u.tokenVersion });
 
     const res = await app.inject({
@@ -598,7 +594,7 @@ describe("POST /api/auth/password", () => {
     expect(res.json()).toMatchObject({ error: { code: "invalid_credentials" } });
   });
 
-  it("成功改密碼 → mustChangePassword 由 true 清為 false（後續 me 反映）；tokenVersion 照常 +1", async () => {
+  it("successful password change -> mustChangePassword goes from true to false (reflected in a later me); tokenVersion still +1", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "olga@example.com", mustChangePassword: true });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("olga@example.com", VALID_PASSWORD) });
@@ -623,7 +619,7 @@ describe("POST /api/auth/password", () => {
     expect(row.mustChangePassword).toBe(false);
   });
 
-  it("hashPassword 拋出 HashBusyError（雜湊新密碼時併發超限）→ 429 server_busy（不落地 DB 變更）", async () => {
+  it("hashPassword throws HashBusyError (concurrency exceeded while hashing the new password) -> 429 server_busy (no DB change persisted)", async () => {
     const { app, db } = await buildTestApp();
     const u = await insertUser(db, { email: "nina@example.com" });
     const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: loginPayload("nina@example.com", VALID_PASSWORD) });

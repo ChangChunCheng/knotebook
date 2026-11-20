@@ -5,7 +5,7 @@ import {
   PresenceRegistry, presenceClientId, presenceTargetForRead, presenceTargetForWrite,
 } from "../../src/notes/editing/presence.js";
 
-/** 只實作 registry 真正用到的表面：documents.get(name) → { awareness:{states,meta,emit}, getXmlFragment }。 */
+/** Implements only the surface the registry really uses: documents.get(name) -> { awareness:{states,meta,emit}, getXmlFragment }. */
 function fakeHocuspocus() {
   const documents = new Map<string, ReturnType<typeof makeDoc>>();
   function makeDoc() {
@@ -15,8 +15,8 @@ function fakeHocuspocus() {
     return {
       awareness: { states, meta, emit: (name: string, args: unknown[]) => { emitted.push([name, ...args]); } },
       emitted,
-      // 空 fragment：cursorFor 找不到文字節點 → 不送 cursor。本檔只驗 registry 的機械行為，
-      // 「游標落在哪一顆」由 test/note-presence.test.ts 在真 Yjs 結構上驗。
+      // Empty fragment: cursorFor finds no text node -> no cursor is sent. This file only checks the registry's mechanics; where the cursor
+      // lands is checked on a real Yjs structure in test/note-presence.test.ts.
       getXmlFragment: () => ({ get: () => undefined, length: 0 }),
     };
   }
@@ -30,7 +30,7 @@ describe("PresenceRegistry", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("clientId 是 uint32 且對 (noteId, tokenId) 穩定；capacity 預設 500", () => {
+  it("clientId is a uint32 and stable for (noteId, tokenId); capacity defaults to 500", () => {
     const a = presenceClientId("n1", "t1");
     expect(a).toBe(presenceClientId("n1", "t1"));
     expect(Number.isInteger(a)).toBe(true);
@@ -41,26 +41,25 @@ describe("PresenceRegistry", () => {
     expect(new PresenceRegistry(undefined).capacity).toBe(500);
   });
 
-  it("目標推導：讀取三形；寫入吃**編輯後**的 afterBlockIds（replace_all → 文件開頭、delete_section → 文件開頭、其餘 → 剛寫下的第一顆）", () => {
+  it("target derivation: three read forms; writes use the afterBlockIds from after the edit (replace_all -> document start, delete_section -> document start, others -> the first block just written)", () => {
     expect(presenceTargetForRead(undefined)).toEqual({ kind: "doc-start" });
     expect(presenceTargetForRead("_top")).toEqual({ kind: "section", sectionId: "_top" });
     expect(presenceTargetForRead("sec-1")).toEqual({ kind: "section", sectionId: "sec-1" });
-    // ⚠ 第二個參數是 `ApplyResult.afterBlockIds`＝**編輯後**新寫下的 block id（文件順序）。
-    //    絕不是請求帶進來的 section_id：那是 heading 的 block id，replace_section／delete_section
-    //    會把 heading 一起換掉，編輯完成後它已不存在。
+    // The second argument is `ApplyResult.afterBlockIds`, the ids of blocks newly written by the edit (document order), not the request's
+    // section_id: that is the heading's block id, and replace_section/delete_section replace the heading too, so it no longer exists after the edit.
     expect(presenceTargetForWrite("replace_all", ["r1", "r2"])).toEqual({ kind: "doc-start" });
     expect(presenceTargetForWrite("replace_section", ["s1", "s2"])).toEqual({ kind: "block", blockId: "s1" });
     expect(presenceTargetForWrite("insert_after", ["i1"])).toEqual({ kind: "block", blockId: "i1" });
     expect(presenceTargetForWrite("append", ["p1", "p2"])).toEqual({ kind: "block", blockId: "p1" });
-    // delete_section 的 afterIds 恆為空（`prepareEdit` 的 delete 分支從不指派 afterIds）——
-    // 被刪的那一段已經不存在，明確走文件開頭。
+    // delete_section's afterIds are always empty (the delete branch of `prepareEdit` never assigns afterIds): the deleted section no longer
+    // exists, so it explicitly goes to the document start.
     expect(presenceTargetForWrite("delete_section", [])).toEqual({ kind: "doc-start" });
-    // 防禦：任何 op 拿到空陣列都退文件開頭，不得丟 undefined 進 blockId
+    // Defensive: any op given an empty array falls back to the document start, never passing undefined into blockId
     expect(presenceTargetForWrite("append", [])).toEqual({ kind: "doc-start" });
   });
 
-  it("touch：文件已載入才 seed（states+meta+emit added）；clock 從 1 起；未載入 no-op；hocuspocus 缺席全 no-op", () => {
-    // n2:t2 在本檔只出現這一案，所以「從 1 起」可以用絕對值釘住
+  it("touch: seeds only when the document is loaded (states+meta+emit added); clock starts at 1; not loaded is a no-op; with no hocuspocus everything is a no-op", () => {
+    // The clock map is process-wide; the key pair (n2, t2) is only touched in this case, so "starts at 1" can be asserted as an absolute value
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("n2", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("n2", "t2");
@@ -68,14 +67,14 @@ describe("PresenceRegistry", () => {
     expect(doc.awareness.states.get(id)).toMatchObject({ user: { name: user.name, color: user.color } });
     expect(clockOf(doc, id)).toBe(1);
     expect(doc.emitted.at(-1)).toEqual(["update", { added: [id], updated: [], removed: [] }, "ai-presence"]);
-    reg.touch("nx", "t2", user, { kind: "doc-start" }); // 文件未載入 → 不建 entry
+    reg.touch("nx", "t2", user, { kind: "doc-start" });
     expect(reg.size).toBe(1);
     const none = new PresenceRegistry(undefined);
     none.touch("n2", "t2", user, { kind: "doc-start" });
     expect(none.size).toBe(0);
   });
 
-  it("heartbeat 每 10 s clock+1、emit updated；每 beat 重取 documents.get（unload 後不碰舊物件）", () => {
+  it("heartbeat every 10 s: clock+1, emit updated; documents.get is re-fetched every beat (after unload the old object is not touched)", () => {
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("n3", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("n3", "t3");
@@ -84,15 +83,14 @@ describe("PresenceRegistry", () => {
     vi.advanceTimersByTime(10_000);
     expect(clockOf(doc, id)).toBe(c0 + 1);
     expect(doc.emitted.at(-1)).toEqual(["update", { added: [], updated: [id], removed: [] }, "ai-presence"]);
-    // reload：換成全新的 Document 物件，下一個 beat 必須打在新物件上
     const c1 = clockOf(doc, id);
     h.documents.delete("n3"); const fresh = h.makeDoc(); h.documents.set("n3", fresh);
     vi.advanceTimersByTime(10_000);
-    expect(clockOf(doc, id)).toBe(c1);        // 舊物件不再被寫
-    expect(clockOf(fresh, id)).toBe(c1 + 1);  // 新物件接手，clock 連續
+    expect(clockOf(doc, id)).toBe(c1);
+    expect(clockOf(fresh, id)).toBe(c1 + 1);
   });
 
-  it("閒置 120 s → stop（states.delete、clock+1、emit removed）；stop 後 re-touch clock 繼續（不重設）", () => {
+  it("idle 120 s -> stop (states.delete, clock+1, emit removed); after stop a re-touch continues the clock (no reset)", () => {
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("n4", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("n4", "t4");
@@ -106,7 +104,7 @@ describe("PresenceRegistry", () => {
     expect(reg.size).toBe(1);
   });
 
-  it("第 (capacity+1) 筆逐出最舊 heartbeat 的 entry（狀態清掉、計時器清掉）；stopAll 清光", () => {
+  it("the (capacity+1)th entry evicts the entry with the oldest heartbeat (state cleared, timer cleared); stopAll clears everything", () => {
     const h = fakeHocuspocus();
     const reg = new PresenceRegistry(h as never, { capacity: 2 });
     for (const n of ["a5", "b5", "c5"]) {
@@ -115,30 +113,29 @@ describe("PresenceRegistry", () => {
       vi.advanceTimersByTime(1);
     }
     expect(reg.size).toBe(2);
-    expect(h.documents.get("a5")!.awareness.states.size).toBe(0); // 最舊的被逐出、狀態清掉
+    expect(h.documents.get("a5")!.awareness.states.size).toBe(0);
     reg.stopAll();
     expect(reg.size).toBe(0);
     const before = h.documents.get("b5")!.emitted.length;
     vi.advanceTimersByTime(60_000);
-    expect(h.documents.get("b5")!.emitted.length).toBe(before);   // 計時器真的被清掉了
+    expect(h.documents.get("b5")!.emitted.length).toBe(before);
   });
 
-  it("每次 touch／每個 heartbeat 送出的 state 都與前一拍**深度不等**（beat 單調遞增）——名牌才會亮", () => {
-    // ⚠ 這一案是「名牌看得見」這條交付的**唯一**單元守衛。awareness 的 change 事件只在
-    //    !equalityDeep(state, prevState) 時才發（y-protocols/awareness.js:278），而 BlockNote 設
-    //    data-active 的處理常式只吃 change 的 `updated`（@blocknote/core/dist/yjs.js:80）。
-    //    把 state 裡的 `beat` 拿掉 → 心跳送出的 state 與上一拍完全相同 → change 不發 →
-    //    名牌永遠是那個 4×5 的透明框。整支測試除了這一案不會有任何一案變紅。
+  it("the state sent on every touch/heartbeat is deep-unequal to the previous one (beat increases monotonically), so the name tag lights up", () => {
+    // Awareness emits its change event only when !equalityDeep(state, prevState) (y-protocols/awareness.js), and BlockNote's data-active
+    // handler only consumes the `updated` of the change (@blocknote/core/dist/yjs.js). Remove `beat` from the state -> a heartbeat sends a
+    // state identical to the previous one -> no change event -> the name tag stays a transparent 4x5 box. This case catches that.
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("n7", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("n7", "t7");
     const snap = () => JSON.stringify(doc.awareness.states.get(id));
     reg.touch("n7", "t7", user, { kind: "doc-start" });
     const s1 = snap();
-    vi.advanceTimersByTime(10_000);          // heartbeat：目標與內容完全沒變
+    vi.advanceTimersByTime(10_000);
     const s2 = snap();
+    // heartbeat: target and content unchanged, so only `beat` can make s2 differ from s1
     expect(s2).not.toBe(s1);
-    reg.touch("n7", "t7", user, { kind: "doc-start" }); // 同一個目標再 touch 一次
+    reg.touch("n7", "t7", user, { kind: "doc-start" });
     const s3 = snap();
     expect(s3).not.toBe(s2);
     const beats = [s1, s2, s3].map(s => (JSON.parse(s) as { beat: number }).beat);
@@ -146,17 +143,17 @@ describe("PresenceRegistry", () => {
     expect(new Set(beats).size).toBe(3);
   });
 
-  it("內容的第一個子節點是元素而非文字（表格這類）時不送 cursor，也不丟錯（窄化成只判 undefined 會漏這個 case——見 presence.ts 的判型註解）", () => {
-    // 手工造：blockContainer(tbl1) > table > tableRow（table 的內容不是 XmlText，是另一個
-    // XmlElement）。圖片／分隔線那類「內容根本沒有子節點」已被本檔其餘 8 案的整條判型拿掉
-    // 突變蓋住；這一案專守「有子節點但是元素、不是文字」這個窄化最可能漏掉的窄縫。
+  it("when the first child of the content is an element rather than text (tables etc.) no cursor is sent and nothing throws (narrowing to only check undefined would miss this case, see the type-check note in presence.ts)", () => {
+    // Hand-built: blockContainer(tbl1) > table > tableRow (the table's content is not XmlText but another XmlElement). Content with no children
+    // at all (image/divider) is the simpler case; this case targets the narrow gap "has a child, but an
+    // element, not text", which narrowing most easily misses.
     const yDoc = new Y.Doc();
     const fragment = yDoc.getXmlFragment(YDOC_FRAGMENT);
     const group = new Y.XmlElement("blockGroup");
     const container = new Y.XmlElement("blockContainer");
     container.setAttribute("id", "tbl1");
     const table = new Y.XmlElement("table");
-    const row = new Y.XmlElement("tableRow"); // 表格內容的第一個子節點是元素，不是 XmlText
+    const row = new Y.XmlElement("tableRow");
     table.insert(0, [row]);
     container.insert(0, [table]);
     group.insert(0, [container]);
@@ -175,7 +172,7 @@ describe("PresenceRegistry", () => {
     expect(states.get(id)).not.toHaveProperty("cursor");
   });
 
-  it("畸形列：欄的第一個子節點是 XmlText（用戶端可送的畸形 Y）→ 不丟錯、不送 cursor", () => {
+  it("malformed row: a column's first child is XmlText (malformed Y a client can send) -> no throw, no cursor", () => {
     const yDoc = new Y.Doc();
     const fragment = yDoc.getXmlFragment(YDOC_FRAGMENT);
     const group = new Y.XmlElement("blockGroup");
@@ -196,21 +193,21 @@ describe("PresenceRegistry", () => {
     reg.stopAll();
   });
 
-  it("clock map 是 process 生命週期：換一個全新的 registry，同一組鍵的 clock 仍嚴格遞增", () => {
-    // ⚠ 這一案是「clock map 不得搬進實例」這條不變量的**唯一**守衛（presence.ts 檔頭指名它）。
-    // 把 map 搬進實例、或加一個 reset()，只有這一案會紅，其餘全部照綠。
+  it("the clock map lives for the process: a brand-new registry still gives the same key a strictly increasing clock", () => {
+    // The invariant is that the clock map must not move into the instance (named in the header of presence.ts): moving the map into the
+    // instance, or adding a reset(), is caught here.
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("n6", doc);
     const id = presenceClientId("n6", "t6");
     const first = new PresenceRegistry(h as never);
     first.touch("n6", "t6", user, { kind: "doc-start" });
     first.stop("n6", "t6");
     const highWater = clockOf(doc, id);
-    const second = new PresenceRegistry(h as never); // 全新 registry，舊的丟掉
+    const second = new PresenceRegistry(h as never);
     second.touch("n6", "t6", user, { kind: "doc-start" });
     expect(clockOf(doc, id)).toBeGreaterThan(highWater);
   });
 
-  it("EP-K1 state 帶 `knotebook` agent 標記；`user` 恰為 name／color 兩欄（handle／label 不漏進 user）", () => {
+  it("state carries the `knotebook` agent marker; `user` has exactly the name/color fields (handle/label don't leak into user)", () => {
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("nk1", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("nk1", "tk1");
@@ -220,7 +217,7 @@ describe("PresenceRegistry", () => {
     expect(st.user).toEqual({ name: "w (claude)", color: "#7c3aed" });
   });
 
-  it("EP-K2 同一組 (note, token) 再 touch 換身分 → state 跟著換；心跳後仍是新值", () => {
+  it("touching the same (note, token) again with a different identity -> the state follows; after a heartbeat it is still the new value", () => {
     const h = fakeHocuspocus(); const doc = h.makeDoc(); h.documents.set("nk2", doc);
     const reg = new PresenceRegistry(h as never);
     const id = presenceClientId("nk2", "tk2");

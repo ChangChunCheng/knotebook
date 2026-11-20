@@ -4,23 +4,17 @@ import { BlockNoteEditor } from "@blocknote/core";
 import { noteSchema } from "./schema";
 import { resolveTrailingMarkdownLink } from "./markdown-link";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote 泛型三元組，走 repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 let editor: BlockNoteEditor<any, any, any>;
 beforeAll(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
   editor = BlockNoteEditor.create({ schema: noteSchema }) as BlockNoteEditor<any, any, any>;
 });
 
-/** 「必須觸發」8 案，逐字比對——不是「有 link 就好」。
+/** The "must fire" cases, compared verbatim, not just "has a link".
  *
- * `# 標題裡的 [a](…)` 這一案：`text` 來自 `$from.parent`，**一般打字路徑到不了**這個
- * 形狀（`# ` 一打完空格就先被 heading input rule 吃掉，變成 heading block，真編輯器
- * 裡剩下的 textBefore 會是 `標題裡的 [a](…)`，不含 `# ` 前綴）。⚠ 但它**不是不可達**
- * ——`resolveTrailingMarkdownLink` 本身是純函式，不管字串怎麼來；用「先打
- * `x# 標題裡的 [a](https://x.com`、刪掉開頭的 `x`、再打 `)`」這類迂迴路徑一樣能讓
- * heading 規則來不及先吃掉 `# `，把這個形狀的 `textBefore` 真的餵給規則。實測行為
- * 正確（下表最後一案），所以列進來、不再宣稱它到不了。 */
-describe("resolveTrailingMarkdownLink 必須觸發", () => {
+ * Case `# <heading text> [a](...)`: `text` comes from `$from.parent`, a shape that **ordinary typing can't reach** (once `# ` is followed by a space the heading input rule eats it and turns it into a heading block, so in a real editor the textBefore is `<heading text> [a](...)` without the `# ` prefix). ⚠ But it's **not unreachable**: `resolveTrailingMarkdownLink` is a pure function and doesn't care how the string arrived; a roundabout path such as typing `x# <heading text> [a](https://x.com`, deleting the leading `x`, then typing `)` stops the heading rule from eating `# ` first and feeds this shape of `textBefore` to the rule. Behaviour is correct (last case in the table below), so it's listed rather than claimed unreachable. */
+describe("resolveTrailingMarkdownLink must fire", () => {
   it.each([
     ["[a](https://x.com)", "a", "https://x.com", 18],
     ["[水星](https://zh.wikipedia.org/wiki/水星_(行星))", "水星", "https://zh.wikipedia.org/wiki/水星_(行星)", 43],
@@ -35,17 +29,15 @@ describe("resolveTrailingMarkdownLink 必須觸發", () => {
   });
 });
 
-/** 「必須不觸發」。前三案在補 null 防呆前會丟 TypeError（image 沒有 content
- * 欄位、空顯示文字的 paragraph content 是空陣列、table 的 content 是物件）——它們是
- * 「判準寫成正面條件」的證據，不是形式主義。 */
-describe("resolveTrailingMarkdownLink 必須不觸發", () => {
+/** The "must not fire" cases. The first three threw TypeError before the null guard was added (an image has no content field, a paragraph with empty display text has an empty content array, a table's content is an object): they show that writing the criterion as a positive condition is warranted, not formalism. */
+describe("resolveTrailingMarkdownLink must not fire", () => {
   it.each([
-    ["![a](https://x.com/i.png)"], // image block，無 content 欄位
-    ["[](https://x.com)"], // paragraph，content 是空陣列
-    ["<table><tr><td>[a](https://x.com)"], // table，content 是物件
-    ["\\[a](https://x.com)"], // 反斜線跳脫：由構造擋掉，不靠黑名單
+    ["![a](https://x.com/i.png)"], // image block, no content field
+    ["[](https://x.com)"], // paragraph, content is an empty array
+    ["<table><tr><td>[a](https://x.com)"], // table, content is an object
+    ["\\[a](https://x.com)"], // backslash escape: blocked by construction, not by a blacklist
     ["![a](https://x.com/i.png) 後面還有 ![b](https://y.com/j.png)"],
-    ["[水星](https://zh.wikipedia.org/wiki/水星_(行星)"], // 少一個右括號
+    ["[水星](https://zh.wikipedia.org/wiki/水星_(行星)"], // one closing parenthesis missing
     ['[a](https://x.com "標題")'],
     ["[a](<https://x.com>)"],
     ["[a](  https://x.com  )"],
@@ -59,27 +51,19 @@ describe("resolveTrailingMarkdownLink 必須不觸發", () => {
 });
 
 /**
- * code block／行內 code 內不套用：這件事目前天然成立，靠的是「我們用
- * `addInputRules()` 而不是手寫 `editorProps.handleTextInput`」（tiptap 的
- * `inputRulesPlugin` 自帶 code 跳過，四條入口全經過）。這裡守的是
- * 一條**結構性**事實：本檔用了 `addInputRules`，且不含 `handleTextInput` 的掛載形。
+ * Doesn't apply inside code blocks / inline code: this holds naturally today because we use `addInputRules()` rather than a hand-written `editorProps.handleTextInput` (tiptap's `inputRulesPlugin` skips code itself, and all four entry points go through it). What's guarded here is a **structural** fact: this file uses `addInputRules` and contains no mounted form of `handleTextInput`.
  *
- * ⚠ 判準不能寫成「不得出現 `handleTextInput` 這個字串」——handler 註解
- * 逐字含它（在解釋偏移量為什麼隨入口而異），那樣寫對自己的成品就必紅。這裡改用
- * `/handleTextInput\s*[:(]/`：只命中「掛載形」（物件屬性 `handleTextInput:` 或函式呼叫
- * `handleTextInput(`），不命中反引號包住的散文引用。
+ * ⚠ The criterion can't be "the string `handleTextInput` must not appear": the handler's comment contains it verbatim (explaining why the offset differs by entry point), so that would turn red on the file's own product. Instead `/handleTextInput\s*[:(]/` is used: it matches only the mounted form (object property `handleTextInput:` or call `handleTextInput(`), not prose references wrapped in backticks.
  */
-describe("結構守衛：本檔用 addInputRules 而不是手寫 handleTextInput", () => {
-  // `import.meta.url` 在 vitest 的轉換環境下不保證是 file: scheme（實測會炸
-  // "The URL must be of scheme file"），改用 `process.cwd()` 組路徑——同檔案
-  // `paste.subset.test.ts` 讀 node_modules 原始碼用的就是這個既有慣例。
+describe("structural guard: this file uses addInputRules, not a hand-written handleTextInput", () => {
+  // `import.meta.url` isn't guaranteed to be a file: scheme under vitest's transform environment (it throws "The URL must be of scheme file"), so the path is built from `process.cwd()`, the same existing convention `paste.subset.test.ts` uses to read node_modules source.
   const source = readFileSync(`${process.cwd()}/src/collab/markdown-link.ts`, "utf8");
 
-  it("含 addInputRules() 註冊", () => {
+  it("contains an addInputRules() registration", () => {
     expect(source).toMatch(/addInputRules\s*\(\s*\)\s*\{/);
   });
 
-  it("不含 handleTextInput 的掛載形（散文引用可以有，掛載形不行）", () => {
+  it("contains no mounted form of handleTextInput (prose references are fine, the mounted form isn't)", () => {
     expect(source).not.toMatch(/handleTextInput\s*[:(]/);
   });
 });

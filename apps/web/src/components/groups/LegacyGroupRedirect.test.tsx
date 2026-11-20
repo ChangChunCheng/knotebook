@@ -28,24 +28,24 @@ function renderAt(entry: { pathname: string; state?: unknown }) {
 
 const BG = { pathname: "/n/tester/my-note", search: "", hash: "", state: null, key: "bg" } as Location;
 
-describe("LegacyGroupRedirect（#247）", () => {
-  it("/settings/groups/:id → /groups/:id，參數代入、replace", async () => {
+describe("LegacyGroupRedirect (#247)", () => {
+  it("/settings/groups/:id -> /groups/:id, params substituted, replace", async () => {
     renderAt({ pathname: "/settings/groups/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
     await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("/groups/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
     expect(screen.getByTestId("probe")).toHaveAttribute("data-nav", "REPLACE");
   });
 
-  it("/settings/groups/:id/roles → /groups/:id/roles", async () => {
+  it("/settings/groups/:id/roles -> /groups/:id/roles", async () => {
     renderAt({ pathname: "/settings/groups/g1/roles" });
     await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent(/^\/groups\/g1\/roles$/));
   });
 
-  it("id 以 encodeURIComponent 代回（useParams 已解碼）", async () => {
+  it("the id is put back through encodeURIComponent (useParams already decoded it)", async () => {
     renderAt({ pathname: "/settings/groups/a%20b%2Fc" });
     await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("/groups/a%20b%2Fc"));
   });
 
-  it("轉傳 location.state：舊網址帶 backgroundLocation 進來，轉址後仍在（突變：拿掉 state 轉傳要紅）", async () => {
+  it("forwards location.state: an old URL arriving with backgroundLocation keeps it after the redirect", async () => {
     renderAt({ pathname: "/settings/groups/g1", state: { backgroundLocation: BG } });
     await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("/groups/g1"));
     expect(screen.getByTestId("probe")).toHaveAttribute("data-bg", "/n/tester/my-note");

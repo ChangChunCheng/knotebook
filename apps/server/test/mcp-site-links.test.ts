@@ -31,8 +31,8 @@ function wikilinkAttrs(doc: Y.Doc): Array<Record<string, unknown>> {
   return out;
 }
 
-describe("#269：MCP 站內連結往返", () => {
-  it("寫 [x](/g/<gid>/<slug>#b-<bid>) → 讀回 [x](/notes/<id>#b-<bid>)；label 空時改目標標題後讀回新標題；表格同；REST /content 同形", async () => {
+describe("#269: MCP internal link round trip", () => {
+  it("writing [x](/g/<gid>/<slug>#b-<bid>) reads back [x](/notes/<id>#b-<bid>); with an empty label, after the target is renamed the new title reads back; same in tables; REST /content has the same shape", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
@@ -43,27 +43,27 @@ describe("#269：MCP 站內連結往返", () => {
 
     await call(ctx.app, token, "edit_note", { note_id: host.id, op: "append", markdown: `[x](/g/${group.id}/group-doc#b-abc123)` });
     await call(ctx.app, token, "edit_note", { note_id: host.id, op: "append", markdown: `[Target](${testConfig.publicUrl.origin}/notes/${target.id})` });
-    // 表格兩格：label 非空（cell）與 label 空（文字＝標題）——表格裡的「改名後讀回新標題」也要有整合層觀測。
+    // Two table cells: one with a non-empty label (cell), one with an empty label (text = title): "read back the new title after a rename" also needs integration-level observation in tables.
     await call(ctx.app, token, "edit_note", { note_id: host.id, op: "append", markdown: `| a | b |\n| --- | --- |\n| [cell](/notes/${target.id}) | [Target](/notes/${target.id}) |` });
     const count = (s: string, sub: string) => s.split(sub).length - 1;
 
     let md = await topMarkdown(ctx.app, token, host.id);
     expect(md).toContain(`[x](/notes/${gnote.id}#b-abc123)`);
-    expect(count(md, `[Target](/notes/${target.id})`)).toBe(2); // 段落＋表格
+    expect(count(md, `[Target](/notes/${target.id})`)).toBe(2); // paragraph + table
     expect(md).toContain(`[cell](/notes/${target.id})`);
 
     await ctx.db.update(notes).set({ title: "Renamed" }).where(eq(notes.id, target.id));
     md = await topMarkdown(ctx.app, token, host.id);
-    expect(count(md, `[Renamed](/notes/${target.id})`)).toBe(2); // label 空 ⇒ 現行標題（段落與表格 cell 都是）
+    expect(count(md, `[Renamed](/notes/${target.id})`)).toBe(2); // empty label => current title (both paragraph and table cell)
     expect(md).not.toContain(`[Target](/notes/${target.id})`);
-    expect(md).toContain(`[cell](/notes/${target.id})`); // label 非空 ⇒ 不變
+    expect(md).toContain(`[cell](/notes/${target.id})`); // non-empty label => unchanged
 
     const rest = await getContent(ctx.app, host.id, token);
     expect(rest.statusCode).toBe(200);
     expect((rest.json() as { markdown: string }).markdown).toContain(`[Renamed](/notes/${target.id})`);
   });
 
-  it("讀者看不到目標：讀回 snapshotTitle、不露現行標題；寫回後變一般連結", async () => {
+  it("reader can't see the target: reads back snapshotTitle, doesn't reveal the current title; after write-back it becomes an ordinary link", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const reader = await ctx.createUser({ email: `r-${randomUUID()}@example.com`, password: PASSWORD });
@@ -73,18 +73,18 @@ describe("#269：MCP 站內連結往返", () => {
     const host = await ctx.createNote(owner.id, "Host");
     await ctx.share(host.id, reader.id, "editor");
     await call(ctx.app, token, "edit_note", { note_id: host.id, op: "append", markdown: `[Secret Title](/notes/${secret.id})` });
-    // 表格 cell 裡讀者看不到的目標同樣讀回存下來的文字。
+    // A target the reader can't see inside a table cell likewise reads back the stored text.
     await call(ctx.app, token, "edit_note", { note_id: host.id, op: "append", markdown: `| s |\n| --- |\n| [Secret Title](/notes/${secret.id}) |` });
     await ctx.db.update(notes).set({ title: "Renamed Secret" }).where(eq(notes.id, secret.id));
     const count = (s: string, sub: string) => s.split(sub).length - 1;
 
     const md = await topMarkdown(ctx.app, readerToken, host.id);
-    expect(count(md, `[Secret Title](/notes/${secret.id})`)).toBe(2); // 段落＋表格 cell
+    expect(count(md, `[Secret Title](/notes/${secret.id})`)).toBe(2); // paragraph + table cell
     expect(md).not.toContain("Renamed Secret");
-    // 對照：owner 看得到 ⇒ 同一份文件讀回現行標題（證明上面兩行不是因為什麼都沒換）。
+    // Control: the owner can see it => the same document reads back the current title (proves the two lines above aren't from nothing having been replaced).
     expect(count(await topMarkdown(ctx.app, token, host.id), `[Renamed Secret](/notes/${secret.id})`)).toBe(2);
 
-    // REST 讀出同樣以**讀者**的可見性取標題——`/content` 與 `/edits` 409 的 `current`。
+    // REST reads also take the title from the **reader's** visibility: `/content` and the `current` of a `/edits` 409.
     const rest = await getContent(ctx.app, host.id, readerToken);
     expect(rest.statusCode).toBe(200);
     const restMd = (rest.json() as { markdown: string }).markdown;
@@ -103,17 +103,17 @@ describe("#269：MCP 站內連結往返", () => {
 
     await call(ctx.app, readerToken, "edit_note", { note_id: host.id, op: "append", markdown: `[again](/notes/${secret.id})` });
     const doc = (await loadDoc(ctx.db, host.id))!;
-    expect(wikilinkAttrs(doc)).toHaveLength(2); // owner 寫的段落＋表格兩個；reader 寫的那一個看不到 ⇒ 一般連結
+    expect(wikilinkAttrs(doc)).toHaveLength(2); // the owner's paragraph + table make two; the reader's one can't be seen => an ordinary link
   });
 
-  it("標題與 label 含 markdown 特殊字元——讀出跳脫正確、寫回 label 逐字相同（或文字＝標題時為空）", async () => {
+  it("titles and labels containing markdown special characters - escaping is right on read, and the label is identical on write-back (or empty when the text = the title)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
     const tricky = await ctx.createNote(owner.id, "[Draft] Plan *v2*");
     const src = await ctx.createNote(owner.id, "Src");
     const dst = await ctx.createNote(owner.id, "Dst");
-    // label 空（文字＝標題）與 label 含 ] 與反斜線兩種
+    // An empty label (text = title), and a label containing `]` and a backslash.
     await call(ctx.app, token, "edit_note", { note_id: src.id, op: "append", markdown: `[\\[Draft\\] Plan \\*v2\\*](/notes/${tricky.id}) [a\\]b\\\\](/notes/${tricky.id})` });
     const before = wikilinkAttrs((await loadDoc(ctx.db, src.id))!);
     expect(before.map(a => a.label ?? "")).toEqual(["", "a]b\\"]);
@@ -125,15 +125,15 @@ describe("#269：MCP 站內連結往返", () => {
     expect(after.map(a => a.targetNoteId)).toEqual([tricky.id, tricky.id]);
   });
 
-  // 舊文件可能存大寫 targetNoteId，DB 回的 id 是小寫——現行標題查找要不分大小寫，否則退到 snapshotTitle。
-  it("文件存大寫 targetNoteId：MCP 讀出仍是現行標題（不是 snapshotTitle）", async () => {
+  // Old documents may store an uppercase targetNoteId while the DB returns lowercase ids: the current-title lookup must be case-insensitive, otherwise it falls back to snapshotTitle.
+  it("document stores an uppercase targetNoteId: MCP still reads the current title (not snapshotTitle)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");
     const target = await ctx.createNote(owner.id, "Live Title");
     const host = await ctx.createNote(owner.id, "Host");
     const upper = target.id.toUpperCase();
-    expect(upper).not.toBe(target.id); // fixture 自檢：id 真的有 a–f 字母會被轉大寫
+    expect(upper).not.toBe(target.id); // fixture self-check: the id really has letters a-f that get uppercased
     const doc = new Y.Doc();
     const g = new Y.XmlElement("blockGroup");
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [g]);
@@ -155,8 +155,8 @@ describe("#269：MCP 站內連結往返", () => {
     expect(md).not.toContain("Old Snapshot");
   });
 
-  // `createWithContent` 的寫入轉換（可見清單＋siteOrigin）原本沒有整合層觀測。
-  it("create_note 的 content 裡的站內連結 → 存成 wikilink（同 edit_note 的規則）", async () => {
+  // `createWithContent`'s write transform (visible list + siteOrigin) had no integration-level observation.
+  it("internal links in create_note's content -> stored as wikilinks (same rule as edit_note)", async () => {
     const ctx = await buildCollabTestApp();
     const owner = await ctx.createUser({ email: `o-${randomUUID()}@example.com`, password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, owner.id, "notes:read notes:write");

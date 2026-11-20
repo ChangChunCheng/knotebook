@@ -1,6 +1,6 @@
 /**
- * #132：canonical resource identifier 的比對判準。authorize 的 resource 檢查與
- * `/oauth/token` 的兩個 grant 分支共用這一支，所以它的邊界要逐格釘住。
+ * #132: the comparison criterion for the canonical resource identifier. The resource check at authorize and the two grant branches of
+ * `/oauth/token` share this one, so its boundaries are pinned cell by cell.
  */
 import { describe, expect, it } from "vitest";
 import { canonicalResource, isCanonicalResource } from "../../src/oauth/resource.js";
@@ -8,51 +8,51 @@ import { canonicalResource, isCanonicalResource } from "../../src/oauth/resource
 const ISSUER = "http://host";
 
 describe("canonicalResource", () => {
-  it("是 issuer 加上 /api/mcp，無尾斜線", () => {
+  it("is the issuer plus /api/mcp, no trailing slash", () => {
     expect(canonicalResource("http://host:3000")).toBe("http://host:3000/api/mcp");
   });
 });
 
 describe("isCanonicalResource", () => {
-  it("接受逐字相等的形", () => {
+  it("accepts the verbatim equal form", () => {
     expect(isCanonicalResource("http://host/api/mcp", ISSUER)).toBe(true);
   });
 
-  // scheme 與 host 由 new URL 正規化成小寫，所以大小寫不同的 origin 仍成立
-  it("接受大小寫不同的 scheme 與 host", () => {
+  // scheme and host are normalized to lowercase by new URL, so an origin differing in case still matches
+  it("accepts a scheme and host in different case", () => {
     expect(isCanonicalResource("HTTP://HOST/api/mcp", ISSUER)).toBe(true);
   });
 
-  it("接受顯式的預設 port", () => {
+  it("accepts an explicit default port", () => {
     expect(isCanonicalResource("http://host:80/api/mcp", ISSUER)).toBe(true);
   });
 
-  it("path 大小寫敏感", () => {
+  it("path is case-sensitive", () => {
     expect(isCanonicalResource("http://host/API/MCP", ISSUER)).toBe(false);
   });
 
-  it("拒絕尾斜線", () => {
+  it("rejects a trailing slash", () => {
     expect(isCanonicalResource("http://host/api/mcp/", ISSUER)).toBe(false);
   });
 
-  it("拒絕帶 query 或 fragment", () => {
+  it("rejects query or fragment", () => {
     expect(isCanonicalResource("http://host/api/mcp?x=1", ISSUER)).toBe(false);
     expect(isCanonicalResource("http://host/api/mcp#f", ISSUER)).toBe(false);
   });
 
-  // 空的 `?` 是 search==="" 但 href 保留尾端問號——釘死「比 origin+pathname、不比 href」
-  // 這個設計選擇（改用 href 的話這一案會紅）。
-  it("接受尾端只有一個空 query 分隔符的形", () => {
+  // An empty `?` gives search === "" but href keeps the trailing question mark: pins the design choice of comparing origin + pathname, not href
+  // (switching to href would fail this case).
+  it("accepts a form with only an empty query separator at the end", () => {
     expect(isCanonicalResource("http://host/api/mcp?", ISSUER)).toBe(true);
   });
 
-  it("拒絕不同 host、不同 port 與非 URL", () => {
+  it("rejects a different host, a different port and non-URLs", () => {
     expect(isCanonicalResource("http://other/api/mcp", ISSUER)).toBe(false);
     expect(isCanonicalResource("http://host:3000/api/mcp", ISSUER)).toBe(false);
     expect(isCanonicalResource("not a url", ISSUER)).toBe(false);
   });
 
-  it("缺席（undefined）為 false", () => {
+  it("absent (undefined) is false", () => {
     expect(isCanonicalResource(undefined, ISSUER)).toBe(false);
   });
 });

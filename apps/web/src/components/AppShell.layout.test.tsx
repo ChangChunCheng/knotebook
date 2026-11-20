@@ -40,19 +40,10 @@ function stubFetch() {
 }
 
 /**
- * AppShell 版面 smoke：直接斷言高度＋寬度鎖鏈的 class 字串本身——根
- * `h-screen overflow-hidden`（連同 `gap-3 bg-background p-3`），`main`
- * `min-h-0 min-w-0 flex-1 flex-col`（側欄卡化後捲動全部內移到側欄自己的清單
- * 容器，main 不再自己 `overflow-y-auto`，改成寬度鏈的起點——見 `AppShell.tsx`
- * 檔頭「卡片版面」那段說明）。這類 class 組合在 jsdom 快照/一般
- * 互動測試裡看起來完全正常，只有真的有滾動內容、真的有 flex 容器擠壓時才會
- * 露餡，必須直接斷言字串本身，不能只看畫面像不像對。
- *
- * 側欄寬度改 inline style（可拖曳），根 `gap-3` 不動——拖曳把手是 `<aside>`
- * 內 `absolute left-full w-3` 的子元素，約略蓋在這條間距上（以 padding box 定位、壓住 aside
- * 右框一個框寬；把手本身見 `AppShell.resize.test.tsx`）。
+ * Asserts the class strings themselves: these combinations look fine in jsdom snapshots and ordinary interaction tests and only break with real scrolling content and flex squeeze.
+ * Sidebar width is an inline style (draggable); root `gap-3` stays because the drag handle (an `absolute left-full w-3` child of `<aside>`) overlaps that gap. The handle itself: `AppShell.resize.test.tsx`.
  */
-describe("AppShell 版面 smoke", () => {
+describe("AppShell layout smoke", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.localStorage.removeItem("sidebar.width");
@@ -63,7 +54,7 @@ describe("AppShell 版面 smoke", () => {
     vi.unstubAllGlobals();
   });
 
-  it("根＝flex h-screen overflow-hidden gap-3 bg-background＋四邊 safe area 內距；main＝flex min-h-0 min-w-0 flex-1 flex-col", async () => {
+  it("root = flex h-dvh overflow-hidden gap-3 bg-background + safe-area padding on all four sides; main = flex min-h-0 min-w-0 flex-1 flex-col", async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ThemeProvider>
@@ -78,35 +69,30 @@ describe("AppShell 版面 smoke", () => {
     const root = main.closest("main")?.parentElement;
 
     expect(main.closest("main")).toHaveClass("flex", "min-h-0", "min-w-0", "flex-1", "flex-col");
-    // 高度跟著瀏覽器工具列伸縮（dvh），不是固定的 100vh。
+    // Height follows the browser toolbar (dvh), not a fixed 100vh.
     expect(root).toHaveClass("flex", "h-dvh", "overflow-hidden", "gap-3", "bg-background");
     expect(root).not.toHaveClass("h-screen");
-    // 外框四邊都是 max(12px, safe area)：瀏海與圓角下不貼邊，沒有 inset 的裝置仍是 12px。
+    // Each side is max(12px, safe area): no edge contact under notches/rounded corners, still 12px without insets.
     expect(root).not.toHaveClass("p-3");
     for (const [prefix, side] of [["pt", "top"], ["pr", "right"], ["pb", "bottom"], ["pl", "left"]]) {
       expect(root).toHaveClass(`${prefix}-[max(0.75rem,env(safe-area-inset-${side}))]`);
     }
-    // 手機（< 640）內容貼齊螢幕邊：外框內距歸零（上面的非手機 class 仍在，640 起不變）。
+    // Phone (< 640): content hugs the screen edge, so the outer padding is zero (the non-phone classes remain; unchanged from 640 up).
     expect(root).toHaveClass("max-sm:p-0");
-    // 手機的左右 safe area（橫拿的瀏海）改由主內容區自己退開。
+    // On phone the left/right safe area (landscape notch) is handled by the main content area itself.
     expect(main.closest("main")).toHaveClass("max-sm:pl-[env(safe-area-inset-left)]", "max-sm:pr-[env(safe-area-inset-right)]");
 
-    // 靜態側欄卡 `<xl` 藏起來（浮動抽屜接手）、`xl+` 才以卡片顯示——`hidden`
-    // 搭配 `xl:flex xl:flex-col` 缺一即壞（缺 xl:flex 寬螢幕也消失；缺 xl:flex-col
-    // 內部堆疊失去方向）。
+    // The static sidebar card is hidden below xl (the floating drawer takes over) and shown from xl up; `hidden` needs both `xl:flex` (else it vanishes on wide screens) and `xl:flex-col` (else the inner stack loses its direction).
     const aside = root?.querySelector("aside");
     expect(aside).not.toBeNull();
     expect(aside).toHaveClass("relative", "hidden", "shrink-0", "xl:flex", "xl:flex-col");
-    // 寬度改 inline style（可拖曳），不再是 `w-64`；未存過寬度＝預設寬度。
+    // Width is an inline style (draggable), not `w-64`; no saved width = default width.
     expect(aside).not.toHaveClass("w-64");
     expect(aside?.style.width).toBe(`${SIDEBAR_WIDTH_DEFAULT}px`);
   });
 
-  // K logo 與新增筆記鈕跟主題色。K 的 <span> 是 aria-hidden——getByText 不受
-  // 可及性樹過濾，是這裡唯一取得到它的握把。ThemeProvider 掛載會恆設
-  // data-accent 在 <html> 上（見 theme.tsx）——跟 UserMenu.test.tsx 同一套
-  // 清理紀律，finally 清掉避免污染同檔案後續案。
-  it("K logo 套用 text-brand；新增筆記鈕套用 brand tint variant", async () => {
+  // getByText is not filtered by the accessibility tree, so it can reach the aria-hidden K <span>. ThemeProvider always sets data-accent on <html> on mount (theme.tsx), so clean up in finally to avoid polluting later cases (same as UserMenu.test.tsx).
+  it("K logo uses text-brand; new-note button uses the brand tint variant", async () => {
     try {
       render(
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

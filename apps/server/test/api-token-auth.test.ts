@@ -1,14 +1,9 @@
 /**
- * #130：`authenticateTokenOrSession`（Bearer／session 雙路徑認證）與 `/api/mcp` 的
- * Bearer challenge。
+ * Since #108 `GET /api/mcp` returns `405` (+ `Allow: POST`) after authentication passes, not 501: this file uses it as the "auth passed" sentinel
+ * (405 still goes through `authenticateTokenOrSession` and the `tokenRead` charge).
  *
- * ⚠ #108 之後 `GET /api/mcp` 不再是 501，而是**認證通過後**的 `405`（＋`Allow: POST`）——
- * 本檔用它當「認證這一關過了」的哨兵，狀態碼換了但語意不變（405 一樣走完
- * `authenticateTokenOrSession` 與 `tokenRead` 扣點）。
- *
- * 這一族守的是三件會靜默壞掉的事：①401／403 的 `WWW-Authenticate` 形狀（MCP client
- * 靠它發現授權伺服器，少一個欄位整條 OAuth 流程起不了頭）；②哪些失敗計入
- * BEARER_MISS 桶、哪些刻意不計；③token 明文與 `Authorization` header 永不落 log。
+ * Guards three silent breakages: the `WWW-Authenticate` shape of 401/403 (MCP clients discover the authorization server through it; a missing field and the OAuth flow can't start);
+ * which failures count toward BEARER_MISS and which deliberately don't; token plaintext and the `Authorization` header never reaching the log.
  */
 import { describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
@@ -22,19 +17,19 @@ import type { Db } from "../src/db/index.js";
 import { buildTestApp, freshLimiters, signTestSession } from "./helpers.js";
 import { INITIALIZE, mcpPost } from "./mcp-helpers.js";
 
-/** testConfig 的 PUBLIC_URL 是 http://localhost:3000，issuer 取其 origin。 */
+/** testConfig's PUBLIC_URL is http://localhost:3000; the issuer is its origin. */
 const ISSUER = "http://localhost:3000";
 
 function hash(plaintext: string): string {
   return createHash("sha256").update(plaintext).digest("hex");
 }
 
-/** 用產品的產生器（真的 base64url 字符集）；`hash()` 則刻意不 import，留作獨立 oracle。 */
+/** Uses the product's generator (real base64url alphabet); `hash()` is deliberately not imported, kept as an independent oracle. */
 function randomToken(): string {
   return generateAccessToken();
 }
 
-/** 等 fire-and-forget 的 UPDATE 落盤：有上限的輪詢，滿足即回。 */
+// Waits for the fire-and-forget UPDATE to land (bounded polling).
 async function waitFor(check: () => Promise<boolean>): Promise<void> {
   for (let i = 0; i < 40; i += 1) {
     if (await check()) return;
@@ -75,8 +70,8 @@ async function seedToken(
   return { token, userId: user.id, tokenId: row.id };
 }
 
-describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
-  it("三個 method 無憑證 → 401，challenge 帶 resource_metadata 與四個 scope、不帶 error", async () => {
+describe("/api/mcp method shape and Bearer challenge", () => {
+  it("all three methods without credentials -> 401, challenge carries resource_metadata and four scopes, no error", async () => {
     const { app } = await buildTestApp();
     for (const method of ["GET", "POST", "DELETE"] as const) {
       const res = await app.inject({ method, url: "/api/mcp", ...(method === "POST" ? { payload: {} } : {}) });
@@ -88,12 +83,12 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     }
   });
 
-  it("有效 token 通過 → GET 是 405 ＋ Allow: POST（是 method 不合，不是 500 internal）", async () => {
+  it("valid token passes -> GET is 405 + Allow: POST (a method mismatch, not a 500 internal)", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db);
     const res = await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(405);
-    // #108：RFC 9110 §15.5.6 的 MUST。405 的 body 是 JSON-RPC error 形（見 routes/mcp.ts）。
+    // #108: a MUST of RFC 9110 §15.5.6. The 405 body is JSON-RPC error shaped (see routes/mcp.ts).
     expect(res.headers.allow).toBe("POST");
     expect(res.json()).toEqual({
       jsonrpc: "2.0",
@@ -102,14 +97,14 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     });
   });
 
-  it("壞 token → 401 且 challenge 帶 error=invalid_token", async () => {
+  it("bad token -> 401 and the challenge carries error=invalid_token", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: "Bearer knb_nope" } });
     expect(res.statusCode).toBe(401);
     expect(res.headers["www-authenticate"]).toContain(`error="invalid_token"`);
   });
 
-  it("Authorization: Basic → 401 不帶 error（RFC 6750 §3），且計入 BEARER_MISS", async () => {
+  it("Authorization: Basic -> 401 without error (RFC 6750 section 3), and counts toward BEARER_MISS", async () => {
     const { app } = await buildTestApp({
       limiters: freshLimiters({ bearerMiss: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) }),
     });
@@ -120,11 +115,11 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     }
     const fourth = await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: "Basic dXNlcjpwdw==" } });
     expect(fourth.statusCode).toBe(429);
-    // 429 不帶 challenge（RFC 6750 的 challenge 只定義在 400／401／403）
+    // 429 carries no challenge (RFC 6750 challenges are only defined for 400/401/403)
     expect(fourth.headers["www-authenticate"]).toBeUndefined();
   });
 
-  it("knb_ 前綴但查無的 token 也計入 BEARER_MISS（不是只有 Basic 那條路）", async () => {
+  it("a knb_-prefixed token that isn't found also counts toward BEARER_MISS (not only the Basic path)", async () => {
     const { app } = await buildTestApp({
       limiters: freshLimiters({ bearerMiss: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }),
     });
@@ -136,9 +131,9 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(third.headers["www-authenticate"]).toBeUndefined();
   });
 
-  it("refresh token 當 Bearer 送 → 401 invalid_token，且計入 BEARER_MISS（前綴不合）", async () => {
-    // 「前綴不合就不查 DB」這個性質這裡沒有斷言（拿掉 isAccessTokenShape 早退，查表
-    // 落空後回應與計桶完全同形）——它由 test/unit/api-token.test.ts 的前綴單元測試守。
+  it("refresh token sent as Bearer -> 401 invalid_token, and counts toward BEARER_MISS (prefix mismatch)", async () => {
+    // "A mismatched prefix isn't looked up in the DB" is not asserted here (removing the isAccessTokenShape early return gives an identical response
+    // and bucket count after a failed lookup); it is guarded by the prefix unit test in test/unit/api-token.test.ts.
     const { app } = await buildTestApp({
       limiters: freshLimiters({ bearerMiss: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }),
     });
@@ -149,7 +144,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect((await app.inject({ method: "GET", url: "/api/mcp", headers: refreshAsBearer })).statusCode).toBe(429);
   });
 
-  it("過期 PAT → 401；不到期 PAT（access_expires_at IS NULL）→ 通過", async () => {
+  it("expired PAT -> 401; non-expiring PAT (access_expires_at IS NULL) -> passes", async () => {
     const { app, db } = await buildTestApp();
     const expired = await seedToken(db, { expiresAt: new Date(Date.now() - 1000) });
     const never = await seedToken(db, { expiresAt: null });
@@ -163,7 +158,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     ).toBe(405);
   });
 
-  it("停權使用者的 token → 401；mustChangePassword 的 token → 401", async () => {
+  it("suspended user's token -> 401; mustChangePassword token -> 401", async () => {
     const { app, db } = await buildTestApp();
     const disabled = await seedToken(db, { disabled: true });
     const mustChange = await seedToken(db, { mustChangePassword: true });
@@ -177,7 +172,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     ).toBe(401);
   });
 
-  it("有 Bearer 也有 cookie 時只看 Bearer（不回退 session）", async () => {
+  it("with both Bearer and cookie only the Bearer counts (no fallback to the session)", async () => {
     const { app, db } = await buildTestApp();
     const [user] = await db
       .insert(users)
@@ -185,11 +180,11 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
       .returning();
     const cookie = await signTestSession({ userId: user.id, tv: 0 });
 
-    // 先確認這個 cookie 本身有效
+    // Precondition: the cookie alone authenticates (405), so the 401 below comes from the Bearer.
     const cookieOnly = await app.inject({ method: "GET", url: "/api/mcp", cookies: { [SESSION_COOKIE]: cookie } });
     expect(cookieOnly.statusCode).toBe(405);
 
-    // 同一發再帶一個壞掉的 Bearer——必須 401，不得回退到 cookie 而變成 405
+    // Same request with a broken Bearer added: must be 401, must not fall back to the cookie and become 405
     const both = await app.inject({
       method: "GET",
       url: "/api/mcp",
@@ -200,7 +195,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(both.headers["www-authenticate"]).toContain(`error="invalid_token"`);
   });
 
-  it("last_used_at：第一發寫入，60 秒內第二發不再寫（節流）", async () => {
+  it("last_used_at: first request writes, a second within 60 seconds doesn't write again (throttled)", async () => {
     const { app, db } = await buildTestApp();
     const { token, tokenId } = await seedToken(db);
     const read = async () => (await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)))[0];
@@ -210,16 +205,16 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(first.lastUsedAt).not.toBeNull();
 
     await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: `Bearer ${token}` } });
-    // 負向斷言（沒有第二次寫入）輪詢救不了——固定等一段，讓「若有寫」來得及落盤。
+    // A negative assertion (no second write) can't be rescued by polling - wait a fixed time so a write, if any, has time to land.
     await new Promise(resolve => setTimeout(resolve, 100));
     const second = await read();
     expect(second.lastUsedAt!.getTime()).toBe(first.lastUsedAt!.getTime());
   });
 
-  it("oauth grant 的 Bearer 連帶更新 oauth_clients.last_used_at（#132 機會性清理的 ① 依賴它）", async () => {
+  it("an oauth grant's Bearer also updates oauth_clients.last_used_at (the opportunistic cleanup of #132 depends on it)", async () => {
     const { app, db } = await buildTestApp();
-    // 目前沒有建立 oauth grant 的產品路徑，直接插一列——這條分支的邏輯現在就在
-    // auth/bearer.ts 裡，必須有守衛，不能等 #132。
+    // There is no product path that creates an oauth grant yet, so a row is inserted directly: this branch's logic already lives in auth/bearer.ts
+    // and needs a guard now, not when #132 lands.
     const [user] = await db
       .insert(users)
       .values({ email: `oa-${randomUUID()}@example.com`, displayName: "O" })
@@ -252,9 +247,9 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(client.lastUsedAt.getTime()).toBeGreaterThan(stale.getTime());
   });
 
-  it("通過後 request.user 是 gate 投影的使用者、authKind 依路徑而異", async () => {
-    // token 路徑的 request.user 是三條 notes 路由做擁有權判定的依據——把它
-    // 設成 DB 的 api_tokens 列（而非 gate 的 user）測試不會紅，這裡用探針釘住。
+  it("after passing, request.user is the user projected by the gate, authKind depends on the path", async () => {
+    // On the token path request.user is what the three notes routes use for ownership decisions - setting it to the DB api_tokens row
+    // (instead of the gate's user) wouldn't turn the tests red, so it is pinned explicitly here.
     const { app, db } = await buildTestApp();
     app.get("/__test/whoami-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async request => ({
       id: request.user?.id,
@@ -287,7 +282,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(viaSession.json()).toEqual({ id: userId, email: user.email, authKind: "session", tokenScope: null, tokenId: null });
   });
 
-  it("cookie-only 路由不帶 challenge（Bearer 打 /api/auth/me → 401 無 header）", async () => {
+  it("cookie-only route sends no challenge (Bearer to /api/auth/me -> 401 without the header)", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db);
     const res = await app.inject({ method: "GET", url: "/api/auth/me", headers: { authorization: `Bearer ${token}` } });
@@ -295,7 +290,7 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(res.headers["www-authenticate"]).toBeUndefined();
   });
 
-  it("token 明文與 Authorization header 都不落 log", async () => {
+  it("neither token plaintext nor the Authorization header reaches the log", async () => {
     const chunks: string[] = [];
     const sink = new Writable({
       write(chunk, _encoding, callback) {
@@ -308,13 +303,13 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     await app.inject({ method: "GET", url: "/api/mcp", headers: { authorization: `Bearer ${token}` } });
 
     const output = chunks.join("");
-    // 先確認 log 真的有輸出，否則下面兩條斷言是空的（假綠）
+    // First confirm the log really has output, otherwise the two assertions below are vacuous (false green)
     expect(output).toContain("/api/mcp");
     expect(output).not.toContain(token);
     expect(output.toLowerCase()).not.toContain("authorization");
   });
 
-  it("5xx 的錯誤 log 記得 authKind（否則 request.authKind 是只寫不驗的死欄位）", async () => {
+  it("5xx error log records authKind (otherwise request.authKind is a write-only dead field)", async () => {
     const chunks: string[] = [];
     const sink = new Writable({
       write(chunk, _encoding, callback) {
@@ -323,8 +318,8 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
       },
     });
     const { app, db } = await buildTestApp({}, { logger: { level: "info", stream: sink } });
-    // `withTestRoutes` 的 /__test/throw 是既有的「丟例外」探針；掛上 authenticateTokenOrSession
-    // 才會有 authKind，所以這裡另掛一條同形的探針路由。
+    // `withTestRoutes`'s /__test/throw is the existing "throw an exception" route; authKind only exists once authenticateTokenOrSession is attached,
+    // so a same-shaped route is mounted separately here.
     app.get("/__test/throw-auth", { preHandler: app.authenticateTokenOrSession("notes:read") }, async () => {
       throw new Error("boom");
     });
@@ -339,16 +334,15 @@ describe("/api/mcp 的 method 形狀與 Bearer challenge", () => {
     expect(res.statusCode).toBe(500);
 
     const output = chunks.join("");
-    // 釘住「token 路徑真的把 authKind 寫進 request」——只斷言 toContain("token") 是
-    // 恆真的假守衛（tokenId 這個欄位名本身就含 token）。
+    // Pins that the token path really writes authKind into the request - asserting only toContain("token") is a tautological false guard
+    // (the field name tokenId itself contains token).
     expect(output).toContain('"authKind":"token"');
-    // 明文與 header 一樣不得出現在錯誤 log 裡
     expect(output).not.toContain(token);
   });
 });
 
-describe("notes 路由收 Bearer（允許清單）", () => {
-  it("write token 打得動三條路由", async () => {
+describe("notes routes accepting Bearer (allow list)", () => {
+  it("write token can call the three routes", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db);
     const auth = { authorization: `Bearer ${token}` };
@@ -361,9 +355,9 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect((await app.inject({ method: "GET", url: `/api/notes/${noteId}`, headers: auth })).statusCode).toBe(200);
   });
 
-  it("read token 打得動兩條 GET、打不動 POST（各路由的 required 值逐條釘住）", async () => {
-    // 沒有這條，把 GET /api/notes/:ref 的 required 改成 notes:write 全套照樣綠——唯讀
-    // token 會被鎖在 MCP 最主要的讀取路由外。允許清單的核心語意就是每列的 required。
+  it("read token can call the two GETs but not POST (the required value of each route pinned one by one)", async () => {
+    // Without this, changing the required value of GET /api/notes/:ref to the full notes:write still passes - a read-only token would be locked out
+    // of MCP's main read route. The core semantics of the allow list is the required value of each row.
     const { app, db } = await buildTestApp();
     const writer = await seedToken(db);
     const created = await app.inject({
@@ -373,7 +367,6 @@ describe("notes 路由收 Bearer（允許清單）", () => {
       payload: { title: "shared" },
     });
     expect(created.statusCode).toBe(201);
-    // 讓 reader 也讀得到這篇：分享給 reader 的使用者
     const reader = await seedToken(db, { scope: "notes:read" });
     await db.insert(noteShares).values({ noteId: created.json().id, userId: reader.userId, role: "viewer" });
     const auth = { authorization: `Bearer ${reader.token}` };
@@ -383,7 +376,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect((await app.inject({ method: "POST", url: "/api/notes", headers: auth, payload: { title: "x" } })).statusCode).toBe(403);
   });
 
-  it("token 建的筆記擁有者是 token 的使用者（request.user 走 gate 投影）", async () => {
+  it("a note created by a token is owned by the token's user (request.user comes from the gate projection)", async () => {
     const { app, db } = await buildTestApp();
     const { token, userId } = await seedToken(db);
     const auth = { authorization: `Bearer ${token}` };
@@ -395,7 +388,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect(note.ownerId).toBe(userId);
   });
 
-  it("read token 打 POST /api/notes → 403 insufficient_scope，challenge 帶該 error", async () => {
+  it("read token on POST /api/notes -> 403 insufficient_scope, challenge carries that error", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db, { scope: "notes:read" });
     const res = await app.inject({
@@ -409,8 +402,8 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect(res.headers["www-authenticate"]).toContain('error="insufficient_scope"');
   });
 
-  // #181 AB：notes:delete 只多一個成員，REST 的 notes:write 判定與 /api/mcp 認證照常。
-  it("AB：讀寫刪除 token 打 POST /api/notes → 201、打 POST /api/mcp initialize → 200", async () => {
+  // #181: notes:delete adds just one member; REST's notes:write decision and /api/mcp authentication are unchanged.
+  it("read/write/delete token on POST /api/notes -> 201, on POST /api/mcp initialize -> 200", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db, { scope: "notes:read notes:write notes:delete" });
     const created = await app.inject({
@@ -423,7 +416,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect((await mcpPost(app, INITIALIZE, { token })).statusCode).toBe(200);
   });
 
-  it("無憑證打 GET /api/notes → 401 帶 challenge，scope 只有 notes:read（鑑別力由 scope 值承擔）", async () => {
+  it("no credentials on GET /api/notes -> 401 with challenge, scope only notes:read (discrimination is carried by the scope value)", async () => {
     const { app } = await buildTestApp();
     const res = await app.inject({ method: "GET", url: "/api/notes" });
     expect(res.statusCode).toBe(401);
@@ -432,7 +425,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect(challenge).toContain("/.well-known/oauth-protected-resource/api/mcp");
   });
 
-  it("未開放的 notes 路由不收 Bearer：PATCH／DELETE /api/notes/:id 與 collab-token 皆 401 且無 challenge", async () => {
+  it("routes not opened to Bearer don't accept it: PATCH/DELETE /api/notes/:id and collab-token all 401 without challenge", async () => {
     const { app, db } = await buildTestApp();
     const { token } = await seedToken(db);
     const auth = { authorization: `Bearer ${token}` };
@@ -440,7 +433,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     const cases = [
       { method: "PATCH" as const, url: `/api/notes/${noteId}`, payload: { title: "x" } },
       { method: "DELETE" as const, url: `/api/notes/${noteId}` },
-      // collab-token 明文不收 Bearer
+      // collab-token doesn't accept Bearer at all
       { method: "POST" as const, url: `/api/notes/${noteId}/collab-token`, payload: {} },
     ];
     for (const c of cases) {
@@ -455,11 +448,11 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     }
   });
 
-  it("403 不啃 write 桶、也不啃 BEARER_MISS（扣點在 scope 檢查之後，合法 token 不連累同 IP）", async () => {
+  it("403 doesn't consume the write bucket nor BEARER_MISS (the charge comes after the scope check, a legitimate token doesn't implicate the same IP)", async () => {
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({
         tokenWrite: new FixedWindowLimiter({ limit: 3, windowMs: 600_000 }),
-        // 預設 30 額度四發打不滿——bearerMiss 也收緊，否則「403 計入 miss 桶」翻掉不會紅。
+        // The default quota of 30 can't be exhausted in four requests - bearerMiss is tightened too, otherwise "403 counts toward the miss bucket" flipping wouldn't turn red.
         bearerMiss: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }),
       }),
     });
@@ -471,16 +464,16 @@ describe("notes 路由收 Bearer（允許清單）", () => {
         headers: { authorization: `Bearer ${token}` },
         payload: {},
       });
-      // 扣點若在 scope 檢查之前，第 4 發會變成 429；若 403 計入 miss 桶，第 3 發就 429
+      // If the charge were before the scope check the 4th would become 429; if 403 counted toward the miss bucket the 3rd would be 429.
       expect(res.statusCode, `attempt ${i + 1}`).toBe(403);
     }
-    // 「照扣但不看回傳值」的形上面抓不到：同 IP 接著送一發壞 token，miss 桶若被
-    // 403 扣過會提早 429，正確是 401。
+    // The "charged but return value ignored" shape isn't caught above: then the same IP sends a bad token - if the miss bucket was charged by 403 it would 429 early,
+    // the correct result is 401.
     const bad = await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${randomToken()}` } });
     expect(bad.statusCode).toBe(401);
   });
 
-  it("/api/mcp 與 GET /api/notes 同一顆 read 桶", async () => {
+  it("/api/mcp and GET /api/notes share the same read bucket", async () => {
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({ tokenRead: new FixedWindowLimiter({ limit: 3, windowMs: 60_000 }) }),
     });
@@ -491,11 +484,11 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     }
     const limited = await app.inject({ method: "GET", url: "/api/notes", headers: auth });
     expect(limited.statusCode).toBe(429);
-    // 429 一律不帶 challenge（read 桶與 BEARER_MISS 同紀律）
+    // 429 never carries a challenge (the read bucket follows the same rule as BEARER_MISS)
     expect(limited.headers["www-authenticate"]).toBeUndefined();
   });
 
-  it("write 路由吃 write 桶，不吃 read 桶", async () => {
+  it("write routes use the write bucket, not the read bucket", async () => {
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({
         tokenRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }),
@@ -504,9 +497,8 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     });
     const { token } = await seedToken(db);
     const auth = { authorization: `Bearer ${token}` };
-    // read 桶只剩 1 額度，先用掉
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: auth })).statusCode).toBe(200);
-    // write 路由若誤吃 read 桶，這裡會 429
+    // If the write route wrongly used the read bucket, this would be 429
     expect((await app.inject({ method: "POST", url: "/api/notes", headers: auth, payload: { title: "a" } })).statusCode).toBe(201);
     expect((await app.inject({ method: "POST", url: "/api/notes", headers: auth, payload: { title: "b" } })).statusCode).toBe(201);
     const third = await app.inject({ method: "POST", url: "/api/notes", headers: auth, payload: { title: "c" } });
@@ -514,22 +506,22 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     expect(third.headers["www-authenticate"]).toBeUndefined();
   });
 
-  it("token 桶 429 不寫 last_used_at（last_used 只記驗證成功的請求）", async () => {
-    // #132 機會性清理的 ① 用 last_used_at 判斷 client 是否「30 天未使用」；被限流打回的請求
-    // 若也蓋時間戳，一支只會被 429 的 token 會讓它的 client 永遠看起來活著。
+  it("429 from the token bucket doesn't write last_used_at (last_used only records successfully authenticated requests)", async () => {
+    // The opportunistic cleanup of #132 uses last_used_at to decide whether a client is "unused for 30 days"; if rate-limited requests also stamped it,
+    // a token that only ever gets 429 would keep its client looking alive forever.
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({ tokenRead: new FixedWindowLimiter({ limit: 0, windowMs: 60_000 }) }),
     });
     const { token, tokenId } = await seedToken(db);
     const res = await app.inject({ method: "GET", url: "/api/notes", headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(429);
-    // 負向斷言：固定等一段，讓「若有寫」來得及落盤
+    // Negative assertion: wait a fixed time so a write, if any, has time to land
     await new Promise(resolve => setTimeout(resolve, 100));
     const [row] = await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId));
     expect(row.lastUsedAt).toBeNull();
   });
 
-  it("token 打滿不影響同一使用者的 session（限流只對 token 路徑）", async () => {
+  it("exhausting the token bucket doesn't affect the same user's session (rate limit applies only to the token path)", async () => {
     const { app, db } = await buildTestApp({
       limiters: freshLimiters({ tokenRead: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }),
     });
@@ -537,7 +529,7 @@ describe("notes 路由收 Bearer（允許清單）", () => {
     const auth = { authorization: `Bearer ${token}` };
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: auth })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: "/api/notes", headers: auth })).statusCode).toBe(429);
-    // 同一使用者的 cookie session 不受影響（repo 慣例：各測試檔自己 signTestSession）
+    // The same user's cookie session is unaffected (repo convention: each test file signs its own via signTestSession)
     const cookie = await signTestSession({ userId, tv: 0 });
     const viaSession = await app.inject({ method: "GET", url: "/api/notes", cookies: { [SESSION_COOKIE]: cookie } });
     expect(viaSession.statusCode).toBe(200);

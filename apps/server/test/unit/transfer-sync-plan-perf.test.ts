@@ -3,19 +3,19 @@ import { BlockNoteEditor } from "@blocknote/core";
 import * as shared from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { sameCanonicalStats } from "../../src/transfer/same-canonical.js";
-// 呼叫次數的案子不量牆鐘，但照樣真的讓出事件迴圈：整段規劃（上千區）同步跑完會佔住 vitest worker（onTaskUpdate 60 秒逾時，PR #400 的 CI）。
+// Cases that count calls do not measure wall-clock time but still really yield to the event loop: running the whole planning (thousands of regions) synchronously would hold the vitest worker (onTaskUpdate 60 s timeout, CI of PR #400).
 import { yieldToLoop } from "../../src/transfer/yield.js";
 import { docWith, forkOf, makeBaseInMemory, planInMemory, withEditor } from "./fixtures/transfer-sync.js";
 
-// 不靠時間的守衛：數 `topLevelBlocks` 被呼叫幾次（同 sameCanonical 的頂層索引入口；包一層計數、內部仍呼叫原函式）。
+// Guard that does not depend on time: count how many times `topLevelBlocks` is called (the same top-level index entry as sameCanonical; wrapped in a counter that still calls the original).
 vi.mock("@knotebook/shared", async importOriginal => {
   const m = await importOriginal<typeof import("@knotebook/shared")>();
   return { ...m, topLevelBlocks: vi.fn(m.topLevelBlocks) };
 });
 
 /**
- * bulk transfer：規劃尾段的複雜度與停頓。2 000 顆、隔一顆改一顆（1 000 區）時，逐區重建頂層表
- * 是 O(區數×頂層數)（最後一次讓出之後同步 7 639 ms，1 000 次 sameCanonicalSeq 佔 6 158 ms）。
+ * bulk transfer: complexity and stalls in the tail of planning. With 2 000 blocks and every other block changed (1 000 regions), rebuilding the top-level table per region
+ * is O(regions x top-level count) (7 639 ms synchronously after the last yield, of which 1 000 sameCanonicalSeq calls took 6 158 ms).
  */
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
@@ -29,10 +29,10 @@ async function scene(n: number) {
   return { b, live: forkOf(doc), body };
 }
 
-describe("規劃尾段", () => {
-  // 牆鐘門檻只抓數量級退化（300 ms 在雲端 CI 上兩個方向都可能翻）；「每區之後都讓出」的確定性守衛在
-  // transfer-sync-plan.test.ts 的步進時鐘案，呼叫次數守衛在下面兩案。
-  it("1 000 區、2 000 顆：預設讓出下，最長同步間隔（含最後一次讓出到回傳）< 1 500 ms", async () => {
+describe("tail of planning", () => {
+  // The wall-clock threshold only catches order-of-magnitude regressions (300 ms can flip either way on a cloud CI); the stepping-clock case in
+  // transfer-sync-plan.test.ts checks "yield after every region" deterministically, and the cases below count calls.
+  it("1 000 regions, 2 000 blocks: with the default yield, the longest synchronous interval (including from the last yield to the return) < 1 500 ms", async () => {
     const { b, live, body } = await scene(2000);
     const stamps: number[] = [];
     const { yieldToLoop } = await import("../../src/transfer/yield.js");
@@ -47,7 +47,7 @@ describe("規劃尾段", () => {
     const t1 = performance.now();
     if (!r.ok) throw new Error(r.code);
     expect(r.plan.regions).toHaveLength(1000);
-    // 間隔＝上一次讓出回來 → 下一次讓出開始；頭（開始到第一次讓出）與尾（最後一次讓出回來到回傳）都算
+    // interval = from returning from one yield to the start of the next; the head (start to the first yield) and the tail (return from the last yield to the end) count too
     const points = [t0, ...stamps, t1];
     let maxGap = 0;
     for (let i = 0; i + 1 < points.length; i += 2) maxGap = Math.max(maxGap, points[i + 1]! - points[i]!);
@@ -57,7 +57,7 @@ describe("規劃尾段", () => {
     expect(maxGap).toBeLessThan(1500);
   }, 180_000);
 
-  it("topLevelBlocks 的呼叫次數與區數無關（每個 fragment 只建一次索引）", async () => {
+  it("the number of topLevelBlocks calls does not depend on the number of regions (the index is built once per fragment)", async () => {
     const spy = vi.mocked(shared.topLevelBlocks);
     const counts: number[] = [];
     for (const n of [20, 200]) {
@@ -72,7 +72,7 @@ describe("規劃尾段", () => {
     expect(counts[1]).toBeLessThanOrEqual(4);
   }, 120_000);
 
-  it("scratch 寫入不逐區重讀 editor.document（整份 block JSON；呼叫次數與區數無關）", async () => {
+  it("scratch writes do not re-read editor.document per region (the whole block JSON; call count independent of the number of regions)", async () => {
     const spy = vi.spyOn(BlockNoteEditor.prototype, "document", "get");
     const counts: number[] = [];
     try {
@@ -90,7 +90,7 @@ describe("規劃尾段", () => {
     expect(counts[1]).toBe(counts[0]);
   }, 120_000);
 
-  /** 人刪光基底、換成 2 000 顆外來；agent 在 1 000 處各插一段（插入區，比外來 block 用 contiguous）或改 1 000 段（改寫區、倖存者全不見，equal）。 */
+  /** A human deletes the whole base and replaces it with 2 000 foreign blocks; the agent inserts a paragraph at 1 000 places (insertion regions, compared contiguously with the foreign blocks) or changes 1 000 paragraphs (rewrite regions, survivors all gone, equal). */
   async function foreignScene(mode: "insert" | "rewrite") {
     const n = 1000;
     const doc = await docWith(rt, Array.from({ length: n }, (_, i) => P(`p${i}`)));
@@ -100,7 +100,7 @@ describe("規劃尾段", () => {
     const body = Array.from({ length: n }, (_, i) => (mode === "insert" ? `p${i}\n\nnew${i}` : i % 2 === 0 ? `p${i} changed` : `p${i}`)).join("\n\n");
     return { b, live, body };
   }
-  it("canonicalize 次數（不靠牆鐘）：插入區 1 000 個 × 外來 2 000 顆 → 每顆至多一次（快取）；改寫區長度不同 → 不 canonicalize 外來（先比長度）", async () => {
+  it("canonicalize count (not wall-clock): 1 000 insertion regions x 2 000 foreign blocks -> at most once per foreign block (cache); rewrite regions of different length -> foreign blocks are not canonicalized (length compared first)", async () => {
     const ins = await foreignScene("insert");
     sameCanonicalStats.canonicalized = 0;
     const ri = await planInMemory(rt, ins.b, ins.body, ins.live, { yieldFn: yieldToLoop });
@@ -114,7 +114,7 @@ describe("規劃尾段", () => {
     expect(rr.plan.regions).toHaveLength(500);
     const rwCount = sameCanonicalStats.canonicalized;
     console.log(`CANON insert=${insCount} rewrite=${rwCount}`);
-    expect(insCount).toBeLessThanOrEqual(1000 + 2000); // 預解析 1 000＋外來 2 000，各一次
-    expect(rwCount).toBeLessThanOrEqual(500); // 只有預解析；外來一顆都沒 canonicalize
+    expect(insCount).toBeLessThanOrEqual(1000 + 2000); // pre-parse 1 000 + foreign 2 000, once each
+    expect(rwCount).toBeLessThanOrEqual(500); // pre-parse only; no foreign block is canonicalized
   }, 300_000);
 });

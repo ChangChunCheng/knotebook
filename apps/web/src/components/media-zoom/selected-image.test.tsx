@@ -5,7 +5,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { noteSchema } from "@/collab/schema";
 import { selectedImageOf } from "./selected-image";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- editor ref 泛型三元組，repo 慣例
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- editor ref generic triple, a repo convention
 let current: any;
 
 function Host() {
@@ -27,7 +27,7 @@ function Host() {
 }
 
 describe("selectedImageOf", () => {
-  it("外層 image block 設成 NodeSelection → 回外層那張圖，不是巢狀子 block 的", async () => {
+  it("an outer image block set as NodeSelection returns the outer image, not a nested child block's", async () => {
     const { container } = render(<Host />);
     await waitFor(() => expect(container.querySelectorAll("img.bn-visual-media")).toHaveLength(3));
     const view = current.prosemirrorView;
@@ -43,7 +43,7 @@ describe("selectedImageOf", () => {
     expect(img!.getAttribute("src")).toContain("outer.png");
   });
 
-  it("選的是帶巢狀圖片的段落 → null（不往子 block 找）", async () => {
+  it("selecting a paragraph that holds a nested image gives null (does not look into child blocks)", async () => {
     const { container } = render(<Host />);
     await waitFor(() => expect(container.querySelectorAll("img.bn-visual-media")).toHaveLength(3));
     const view = current.prosemirrorView;
@@ -57,7 +57,7 @@ describe("selectedImageOf", () => {
     expect(selectedImageOf(view)).toBeNull();
   });
 
-  it("文字游標 → null", async () => {
+  it("a text cursor gives null", async () => {
     const { container } = render(<Host />);
     await waitFor(() => expect(container.querySelectorAll("img.bn-visual-media")).toHaveLength(3));
     const view = current.prosemirrorView;
@@ -65,7 +65,7 @@ describe("selectedImageOf", () => {
     expect(selectedImageOf(view)).toBeNull();
   });
 
-  it("view 為 undefined → null", () => {
+  it("view undefined gives null", () => {
     expect(selectedImageOf(undefined)).toBeNull();
   });
 });

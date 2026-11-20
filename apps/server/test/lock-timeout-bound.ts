@@ -1,12 +1,12 @@
 /**
- * 「注入的短 lock_timeout 真的生效」這一族斷言的共用常數（不 import 任何東西：`vi.mock` 的 factory 會動態載入本檔，
- * 不能因此把被 mock 的模組又拉進來）。
+ * Shared constants for the family of assertions "the injected short lock_timeout really took effect" (imports nothing: the `vi.mock` factory loads this file
+ * dynamically, which must not pull the mocked module back in).
  *
- * 做法：用到的檔在檔頂 `vi.mock("../src/storage/tx/quota.js", …)`，把預設 `DEFAULT_STORAGE_LOCK_TIMEOUT_MS`（產品值 5000）
- * 換成 `SLOW_DEFAULT_LOCK_TIMEOUT_MS`；函式層的案則在交易內先 `set local lock_timeout` 成同一個值。注入值（200／300 ms）
- * 與「沒生效、落回預設」（60 s）差兩百倍，牆鐘界線 `INJECTED_LOCK_TIMEOUT_BOUND_MS` 放在 20 s——離兩邊都遠：
- * 機器再忙，一個被鎖擋 300 ms 的請求也不會多花將近 20 s；沒生效就得等滿 60 s 才 409 → 這條斷言紅
- * （60 s 仍在全域 120 s testTimeout 內，紅的是斷言，不是逾時）。以前是 300 ms 對 5000 ms、界線 3 s，慢機器只剩 2.7 s 餘裕。
+ * Files using it put `vi.mock("../src/storage/tx/quota.js", ...)` at the top, replacing the default `DEFAULT_STORAGE_LOCK_TIMEOUT_MS` (product value 5000) with
+ * `SLOW_DEFAULT_LOCK_TIMEOUT_MS`; function-level tests `set local lock_timeout` to the same value inside the transaction. The injected value (200/300 ms) and the
+ * "didn't take effect, fell back to the default" value (60 s) differ by 200x, and the wall-clock bound `INJECTED_LOCK_TIMEOUT_BOUND_MS` sits at 20 s, far from both:
+ * however busy the machine, a request blocked by a lock for 300 ms won't take almost 20 s more; if the injection didn't take effect it waits the full 60 s before the 409
+ * and this assertion goes red (60 s is still inside the global 120 s testTimeout, so what fails is the assertion, not a timeout).
  */
 export const SLOW_DEFAULT_LOCK_TIMEOUT_MS = 60_000;
 export const INJECTED_LOCK_TIMEOUT_BOUND_MS = 20_000;

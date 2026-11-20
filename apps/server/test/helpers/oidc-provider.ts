@@ -17,18 +17,18 @@ export interface SeedProviderOpts {
   template?: "gitlab" | "google" | "oidc";
   displayName?: string;
   clientId?: string;
-  /** null＝不存 secret（此時 `enabled` 必須為 false，否則 CHECK 擋）。 */
+  /** null = don't store the secret (then `enabled` must be false, otherwise the CHECK rejects it). */
   clientSecret?: string | null;
   enabled?: boolean;
   legacyCallback?: boolean;
   sortOrder?: number;
   resolvedIssuer?: string | null;
   configVersion?: number;
-  /** 預設 true，讓既有的首登建帳測試維持原意；DB 預設 false 由 migrate／admin 測試守。 */
+  /** Defaults to true so existing first-login account tests keep their meaning; the DB default (false) is guarded by the migrate/admin tests. */
   autoCreateEnabled?: boolean;
 }
 
-/** 直接寫 `auth_providers`（管理 API 另有測試）。secret 以 `testConfig.appSecret` 封——`buildTestApp` 預設 config 同一把。 */
+/** Writes `auth_providers` directly (the admin API has its own tests). The secret is sealed with `testConfig.appSecret`, the same key as `buildTestApp`'s default config. */
 export async function seedAuthProvider(db: Db, opts: SeedProviderOpts): Promise<OidcProviderRow> {
   const id = opts.id ?? randomUUID();
   const secret = opts.clientSecret === undefined ? "test-secret" : opts.clientSecret;
@@ -72,10 +72,10 @@ export async function identitiesOf(db: Db, userId: string): Promise<Array<{ issu
 }
 
 /**
- * #187：單一 legacy provider 的 OIDC 整合測試（oidc-login／oidc-callback／handle）共用起手式——`buildTestApp` 注入以 `fetch`
- * 接 fake IdP 的 `createOidcRuntimeRegistry`（OIDC 設定一律來自 DB 的 `auth_providers`，不再讀 config），再
- * seed 一個 legacy provider（＝env 匯入的那一個，走舊網址 `/api/auth/oidc/login`、`/callback`），issuer 與 fake IdP 相同。
- * `config` 就是 `testConfig`：PUBLIC_URL（http://localhost:3000）與 APP_SECRET（"a"×64）與舊 `oidcConfig()` 逐字相同。
+ * Shared starting point for the single-legacy-provider OIDC integration tests (oidc-login/oidc-callback/handle): `buildTestApp` gets a `createOidcRuntimeRegistry` that
+ * routes `fetch` to the fake IdP (OIDC config always comes from the DB's `auth_providers`, no longer from config), then seeds a legacy provider (the env-imported one, on the
+ * old URLs `/api/auth/oidc/login` and `/callback`) whose issuer equals the fake IdP's. `config` is `testConfig`: PUBLIC_URL (http://localhost:3000) and APP_SECRET ("a" x 64)
+ * match the old `oidcConfig()` character for character.
  */
 export async function legacyOidcApp(
   fetch: CustomFetch,
@@ -89,7 +89,7 @@ export async function legacyOidcApp(
 
 type InjectResponse = Awaited<ReturnType<FastifyInstance["inject"]>>;
 
-/** 多個 in-process fake IdP 共用一個 fetch：依 issuer 前綴分派（fake IdP 本身以路徑尾綴分派、一個 issuer 一份）。 */
+/** Several in-process fake IdPs share one fetch: dispatch by issuer prefix (a fake IdP itself dispatches by path suffix, one issuer each). */
 export function combineFakeIdpFetch(entries: Array<{ issuer: string; idp: FakeIdp }>): CustomFetch {
   return async (url, options) => {
     const href = String(url);
@@ -106,7 +106,7 @@ export interface OidcTestApp {
   provider: (key: string) => OidcProviderRow;
 }
 
-/** 每個 provider 一份 fake IdP（`idpIssuer` 預設＝`issuerUrl` 去尾斜線）；registry 注入合併後的 fetch。 */
+/** One fake IdP per provider (`idpIssuer` defaults to `issuerUrl` without the trailing slash); the registry gets the merged fetch. */
 export async function buildOidcApp(
   spec: { providers: Array<{ key: string; idpIssuer?: string } & SeedProviderOpts> },
   overrides: Partial<AppDeps> = {},
@@ -141,8 +141,8 @@ function mergeCookies(base: Record<string, string>, res: InjectResponse): Record
 }
 
 /**
- * login 302 → fakeIdp.authorize → callback。callback 路徑取自 authorize URL 上的 `redirect_uri`（＝也順手驗了字面相符），
- * 除非 `callbackPath` 指定（大寫路徑、state 錯配那幾案）。
+ * login 302 -> fakeIdp.authorize -> callback. The callback path comes from `redirect_uri` in the authorize URL (which also verifies it matches literally)
+ * unless `callbackPath` is given (the uppercase-path and state-mismatch cases).
  */
 export async function ssoRoundTrip(
   app: FastifyInstance,

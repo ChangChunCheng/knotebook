@@ -1,4 +1,3 @@
-/** #397：9 顆可調節流桶接上 `siteLimits`（改值立即生效）。 */
 import { describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { FixedWindowLimiter } from "../src/http/rate-limit.js";
@@ -12,8 +11,8 @@ import { seedAttachment } from "./storage-helpers.js";
 const PW = "correct horse battery staple";
 const search = () => new FixedWindowLimiter({ limit: 60, windowMs: 60_000 });
 
-describe("rateEdit 立即生效", () => {
-  it("collab harness，POST /api/notes/:id/edits：3 次後第 4 次 429；改回 null 後換使用者連打 4 次都不是 429", async () => {
+describe("rateEdit takes effect immediately", () => {
+  it("collab harness, POST /api/notes/:id/edits: 4th after 3 is 429; after resetting to null, another user's 4 requests are none 429", async () => {
     const ctx = await buildCollabTestApp({ limiters: { search: search() } });
     try {
       const admin = await ctx.createUser({ email: "admin-rate@example.com", password: PW, isAdmin: true });
@@ -35,7 +34,7 @@ describe("rateEdit 立即生效", () => {
     }
   });
 
-  it("buildTestApp，POST /api/notes/:id/copy：rateEdit 3 → 第 4 次 429", async () => {
+  it("buildTestApp, POST /api/notes/:id/copy: rateEdit 3 -> 4th is 429", async () => {
     const { app, db, siteLimits } = await buildTestApp({ limiters: freshLimiters({ search: search() }) });
     const admin = await seedUser(db, { isAdmin: true });
     const me = await seedUser(db);
@@ -48,8 +47,8 @@ describe("rateEdit 立即生效", () => {
   });
 });
 
-describe("rateUpload 改了，MCP 訊息跟著變", () => {
-  it("rateUpload 12、桶打滿 → copy_note 錯誤訊息含 12 files per 10 minutes", async () => {
+describe("changing rateUpload changes the MCP message", () => {
+  it("rateUpload 12 with the bucket full -> copy_note error message contains 12 files per 10 minutes", async () => {
     const { app, db, uploadsDir, siteLimits } = await buildTestApp();
     const admin = await seedUser(db, { isAdmin: true });
     const me = await seedUser(db);
@@ -65,15 +64,15 @@ describe("rateUpload 改了，MCP 訊息跟著變", () => {
       return res.json().result as { isError?: true; structuredContent?: { code?: string; message?: string } };
     };
     const first = await call(app);
-    expect(first.isError, JSON.stringify(first.structuredContent)).toBeUndefined(); // 用掉整窗 12 個
+    expect(first.isError, JSON.stringify(first.structuredContent)).toBeUndefined();
     const second = await call(app);
     expect(second.structuredContent?.code).toBe("too_many_requests");
     expect(second.structuredContent?.message).toContain("12 files per 10 minutes");
   });
 });
 
-describe("覆寫的桶不受 PATCH 影響", () => {
-  it("limiters.edit 自己給 5 → rateEdit 3 之後第 4、5 次仍 2xx", async () => {
+describe("overridden buckets are not affected by PATCH", () => {
+  it("limiters.edit given as 5 -> the 4th and 5th after rateEdit 3 are still 2xx", async () => {
     const { app, db, siteLimits } = await buildTestApp({
       limiters: freshLimiters({ edit: new FixedWindowLimiter({ limit: 5, windowMs: 60_000 }) }),
     });

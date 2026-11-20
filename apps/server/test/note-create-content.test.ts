@@ -8,8 +8,8 @@ import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
 
 const PASSWORD = "correct-horse-battery";
 
-describe("POST /api/notes 帶 content", () => {
-  it("201 一般 NoteDto 且內容在、初始空 paragraph 被換、留一列 replace_all 可撤回、帶 [[…]] → 目標 backlinks 含新筆記", async () => {
+describe("POST /api/notes with content", () => {
+  it("201 plain NoteDto with the content present, initial empty paragraph replaced, one undoable replace_all row left; [[...]] link -> target's backlinks include the new note", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const target = await ctx.createNote(u.id, "目標");
@@ -21,21 +21,20 @@ describe("POST /api/notes 帶 content", () => {
     const id = res.json().id;
     const c = (await getContent(ctx.app, id, token)).json();
     expect(c.markdown).toContain(`看 [目標](/notes/${target.id})`);
-    expect(c.outline).toHaveLength(2); // _top(0) + H：初始空 paragraph 沒留下
+    expect(c.outline).toHaveLength(2); // _top(0) + H: the initial empty paragraph is gone
     const rows = await ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, id));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.op).toBe("replace_all");
-    // ⚠ `/backlinks` 是 **cookie-only**（`app.authenticate`，不在 #107 的 Bearer 允許清單上）
-    // ——用 Bearer 會拿到 401、`body.backlinks` 是 undefined。這裡改用 session cookie。
+    // `/backlinks` is cookie-only (`app.authenticate`, not on #107's Bearer allowlist): Bearer would give 401 and an undefined
+    // `body.backlinks`, so a session cookie is used.
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: u.id, tv: 0 })}`;
     const back = await ctx.app.inject({ method: "GET", url: `/api/notes/${target.id}/backlinks`, headers: { cookie } });
     expect(back.json().backlinks.map((b: { id: string }) => b.id)).toContain(id);
   });
 
-  it("#145：帶 content 的建立也從標題派生 slug（`createWithContent` 裡那個建列點）", async () => {
-    // 三條建立路徑裡**唯一不在 `routes/notes.ts` 也不在 `mcp/tools/create-note.ts`** 的那一個
-    // ——它在 service 裡（`notes/editing/write-service.ts`，解析之後才建列）。漏改它的話這一案
-    // 是唯一會紅的。
+  it("#145: create with content also derives the slug from the title (the row-insert point in `createWithContent`)", async () => {
+    // This creation path lives in the service (`notes/editing/write-service.ts`, row created after parsing), not in `routes/notes.ts` or
+    // `mcp/tools/create-note.ts`, so a derivation missing here wouldn't show in the other paths' results.
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id);
@@ -47,11 +46,11 @@ describe("POST /api/notes 帶 content", () => {
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().slug).toBe("content-path");
-    // 內容真的落盤（派生沒有把管線後半段擠掉——insert 仍排在解析之後、套用之前）。
+    // Content really persisted: slug derivation didn't displace the pipeline's later half (insert still runs after parsing, before applying).
     expect((await getContent(ctx.app, res.json().id as string, token)).json().markdown).toContain("本文");
   });
 
-  it("壞 content（空／超長／NUL）與含 NUL 的 title → 400 無新列；無 collab 的 app 帶 content → 400 不建列", async () => {
+  it("bad content (empty/too long/NUL) and a title with NUL -> 400 with no new row; app without collab given content -> 400, no row", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id);
@@ -61,10 +60,10 @@ describe("POST /api/notes 帶 content", () => {
       [{ title: "T", content: "   \n" }, "empty_content"],
       [{ title: "T", content: "a".repeat(262_145) }, "invalid_body"],
       [{ title: "T", content: "x" + NUL }, "invalid_body"],
-      // 會被丟掉的元素混在內文裡也整筆拒絕（以前悄悄拿掉、照建）
+      // An element that would be dropped inside the body also rejects the whole write
       [{ title: "T", content: '內文\n\n<iframe src="https://example.com"></iframe>' }, "unsupported_block"],
-      // Minor-1：含 NUL 的 title。少了 schema 那道 `.refine(noNul)`，這一格是 500 不是 400
-      // （pg 對 text 欄位的 0x00 直接拒收，錯誤逃到全域 errorHandler）。
+      // Title with NUL: without the schema's `.refine(noNul)` this is a 500, not 400
+      // (pg rejects 0x00 in text columns and the error escapes to the global errorHandler).
       [{ title: "T" + NUL }, "invalid_body"],
       [{ title: "T" + NUL, content: "x" }, "invalid_body"],
     ] as const) {
@@ -73,11 +72,9 @@ describe("POST /api/notes 帶 content", () => {
       expect(r.json().error.code).toBe(code);
     }
     expect(await count()).toBe(0);
-    // ⚠ `buildTestApp()` 與 `buildCollabTestApp()` **各自呼叫 `freshDb()`，是兩個不同的資料庫**。
-    // 使用者必須建在 `plain.db` 上，token 才插得進去（原本寫成「在 ctx 建帳、往 plain 插 token」
-    // 會直接撞 `api_tokens.user_id` 的外鍵）。`buildTestApp` 沒有 `createUser`，比照 `notes.test.ts`
-    // 的既有慣例直接 `db.insert(users)`（`handle` 有 DB default，不必給）。
-    // 這一案守的是「缺少協作元件時帶 content → 400 且不建列」，別因為它紅就把它刪掉。
+    // `buildTestApp()` and `buildCollabTestApp()` each call `freshDb()`: they are two different databases. The user must be created
+    // on `plain.db` for its token to be inserted (a user in ctx with a token in plain hits the `api_tokens.user_id` FK).
+    // `buildTestApp` has no `createUser`, so insert into `users` directly as `notes.test.ts` does (`handle` has a DB default).
     const plain = await buildTestApp();
     const [u2] = await plain.db.insert(users).values({ email: "b@example.com", displayName: "B" }).returning();
     const { token: t2 } = await seedTokenForUser(plain.db, u2!.id);
@@ -87,7 +84,7 @@ describe("POST /api/notes 帶 content", () => {
     expect((await plain.db.select().from(notes).where(eq(notes.ownerId, u2!.id))).length).toBe(0);
   });
 
-  it("schema 改嚴格：未知欄位 → 400 invalid_body、不建列（對既有呼叫端的行為變更，已寫進 docs 與 CHANGELOG）", async () => {
+  it("stricter schema: unknown field -> 400 invalid_body, no row (behaviour change for existing callers, documented in docs and CHANGELOG)", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id);
@@ -97,7 +94,7 @@ describe("POST /api/notes 帶 content", () => {
     expect((await ctx.db.select().from(notes).where(eq(notes.ownerId, u.id))).length).toBe(0);
   });
 
-  it("pipeline 失敗（beforeRecord throw）→ 500 且列已刪", async () => {
+  it("pipeline failure (beforeRecord throws) -> 500 and the row is deleted", async () => {
     const ctx = await buildCollabTestApp({ editingTestHooks: { beforeRecord: async () => { throw new Error("boom"); } } });
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const { token } = await seedTokenForUser(ctx.db, u.id);
@@ -106,7 +103,7 @@ describe("POST /api/notes 帶 content", () => {
     expect((await ctx.db.select().from(notes).where(eq(notes.ownerId, u.id))).length).toBe(0);
   });
 
-  it("#175：成員帶 content＋groupId → 201 群組筆記（role editor、ownerId null、groupId 有值），內容真的落盤", async () => {
+  it("#175: member with content + groupId -> 201 group note (role editor, ownerId null, groupId set), content really persisted", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
     const g = await seedGroup(ctx.db, "Team", [{ userId: u.id, role: "member" }]);
@@ -114,7 +111,7 @@ describe("POST /api/notes 帶 content", () => {
     const res = await ctx.app.inject({ method: "POST", url: "/api/notes", headers: bearer(token), payload: { groupId: g.id, content: "# Hi" } });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ role: "editor", ownerId: null, ownerHandle: null, groupId: g.id, group: { id: g.id, name: "Team" } });
-    // 群組筆記的重讀（`loadNoteWithOwner` 的 LEFT JOIN users）沒落空：回應帶落款，不是退回 insert 那一列的 null。
+    // Re-reading the group note (LEFT JOIN users in `loadNoteWithOwner`) didn't come back empty: the response carries a signature instead of falling back to the insert row's null.
     expect(res.json().lastEdited).not.toBeNull();
     expect((await getContent(ctx.app, res.json().id as string, token)).json().markdown).toContain("Hi");
     const [row] = await ctx.db.select({ ownerId: notes.ownerId, groupId: notes.groupId }).from(notes).where(eq(notes.id, res.json().id as string));

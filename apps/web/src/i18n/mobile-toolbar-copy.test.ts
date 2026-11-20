@@ -8,9 +8,9 @@ import toolbarEnRaw from "./mobile-toolbar.en.json?raw";
 import toolbarZhTWRaw from "./mobile-toolbar.zh-TW.json?raw";
 
 /**
- * 手機編輯工具列的 lazy 字串包（`mobileToolbar.*`，只由 `components/editor/mobile/*` 經 `mobile-toolbar-strings.ts` 註冊）。
- * 主 JSON 的 parity（`index.test.ts`）不涵蓋這兩檔，所以鍵集合相同、與主檔不重疊、無重複鍵都在這裡。
- * 主檔一律讀 `?raw`：註冊後 deep merge 會把包併進 i18n 初始化時那份主 JSON 物件。
+ * Lazy string bundle for the phone editing toolbar (`mobileToolbar.*`, registered only by `components/editor/mobile/*` via `mobile-toolbar-strings.ts`).
+ * The main-JSON parity test (`index.test.ts`) does not cover these two files, so same key set, no overlap with the main file and no duplicate keys are checked here.
+ * The main file is always read as `?raw`: after registration the deep merge folds the bundle into the main JSON object from i18n init.
  */
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -18,7 +18,7 @@ function flattenKeys(value: unknown, prefix = ""): string[] {
   return Object.entries(value).flatMap(([key, child]) => flattenKeys(child, prefix ? `${prefix}.${key}` : key));
 }
 
-/** `JSON.parse` 遇重複鍵只留最後一份，直接掃原始文字（同 `select-copy.test.ts`）。 */
+/** `JSON.parse` keeps only the last of duplicate keys, so scan the raw text (same as `select-copy.test.ts`). */
 function duplicateKeys(raw: string): string[] {
   const dups: string[] = [];
   const stack: { keys: Set<string> | null; expectKey: boolean }[] = [];
@@ -44,24 +44,24 @@ function duplicateKeys(raw: string): string[] {
   return dups;
 }
 
-describe("MT1 兩語系鍵集合相同、頂層只有 mobileToolbar", () => {
-  it("鍵集合相同", () => {
+describe("both locales have the same key set, top level is only mobileToolbar", () => {
+  it("same key set", () => {
     expect(flattenKeys(toolbarZhTW).sort()).toEqual(flattenKeys(toolbarEn).sort());
   });
 
-  it("頂層恰一個鍵 mobileToolbar", () => {
+  it("exactly one top-level key, mobileToolbar", () => {
     expect(Object.keys(toolbarEn)).toEqual(["mobileToolbar"]);
     expect(Object.keys(toolbarZhTW)).toEqual(["mobileToolbar"]);
   });
 
-  it("每個值都是非空字串", () => {
+  it("every value is a non-empty string", () => {
     for (const resource of [toolbarEn, toolbarZhTW]) {
       for (const value of Object.values(resource.mobileToolbar)) expect(value.trim()).not.toBe("");
     }
   });
 });
 
-describe("MT2 主 JSON 沒有 mobileToolbar 頂層鍵，也沒有與字串包重疊的鍵", () => {
+describe("main JSON has no mobileToolbar top-level key and no key overlapping the bundle", () => {
   it.each([
     ["en", enRaw],
     ["zh-TW", zhTWRaw],
@@ -73,7 +73,7 @@ describe("MT2 主 JSON 沒有 mobileToolbar 頂層鍵，也沒有與字串包重
   });
 });
 
-describe("MT3 字串包沒有重複鍵", () => {
+describe("bundle has no duplicate keys", () => {
   it.each([
     ["en", toolbarEnRaw],
     ["zh-TW", toolbarZhTWRaw],

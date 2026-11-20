@@ -4,7 +4,7 @@ import i18n from "@/i18n";
 import { useMediaZoom, type MediaZoomApi, type ZoomSource } from "./context";
 import { MediaZoomProvider } from "./MediaZoomProvider";
 
-// chunk 由測試決定何時載完：驗證等待期間外殼就已經出現、關得掉，載完後換手。
+// The test decides when the chunk finishes loading: checks that the shell is already there during the wait and can be closed, and takes over after loading.
 const deferred = vi.hoisted(() => {
   const d: { promise: Promise<unknown>; resolve: (m: unknown) => void } = { promise: Promise.resolve(), resolve: () => {} };
   d.promise = new Promise(resolve => {
@@ -33,8 +33,8 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("MediaZoomProvider：chunk 載入期間", () => {
-  it("open() 當下就顯示外殼與灰塊；Esc 關掉並把焦點還給放大鈕", () => {
+describe("MediaZoomProvider: while the chunk loads", () => {
+  it("open() shows the shell and grey block immediately; Esc closes it and returns focus to the zoom button", () => {
     render(
       <MediaZoomProvider>
         <Probe />
@@ -53,7 +53,7 @@ describe("MediaZoomProvider：chunk 載入期間", () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it("外殼開著時 chunk 載完：換成放大畫面、焦點進到畫面裡，按一次 Esc 就關並把焦點還給放大鈕", async () => {
+  it("when the chunk finishes loading while the shell is open: switches to the zoom view with focus inside it, and one Esc closes and returns focus to the zoom button", async () => {
     render(
       <MediaZoomProvider>
         <Probe />

@@ -1,8 +1,3 @@
-/**
- * 資料夾的資料夾 MCP 工具。
- * LF＝`list_folders`、RO＝`read_note_outline` 的 `folder`；其餘案代號：MN／CN／CP／MG／KF／BZ-N／PX-N、DF／PX-D／SC／DS-D。
- * 比對對象是同一人 cookie 的 REST（`GET /api/folders`，同一個可見性述詞）。
- */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -59,13 +54,11 @@ function ok(r: ToolCallResult): Record<string, unknown> {
   expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
   return r.structuredContent!;
 }
-/** 一頁；斷 payload ≤ 預算。 */
 async function listPage(app: FastifyInstance, auth: McpAuth, args: Record<string, unknown> = {}): Promise<ListFoldersOut> {
   const out = ok(await callTool(app, auth, "list_folders", args)) as unknown as ListFoldersOut;
   expect(wireCost(out)).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
   return out;
 }
-/** 翻到 nextCursor 為 null；`between` 在每頁之後呼叫一次（翻頁期間造資料用）。 */
 async function listAll(app: FastifyInstance, auth: McpAuth, args: Record<string, unknown> = {}, between?: (i: number) => Promise<void>): Promise<ListFoldersOut[]> {
   const pages: ListFoldersOut[] = [];
   let cursor: string | undefined;
@@ -83,14 +76,13 @@ async function restFolderIds(app: FastifyInstance, userId: string): Promise<stri
   expect(res.statusCode, res.body).toBe(200);
   return (res.json() as FolderListDto).folders.map(f => f.id);
 }
-/** `noRead`（自訂角色全 false）成員。 */
 async function addNoReadMember(db: Db, groupId: string, userId: string): Promise<void> {
   const roleId = await seedRole(db, groupId, "noRead", {});
   await db.insert(groupMembers).values({ groupId, userId, roleId });
 }
 
-describe("LF1 三種空間", () => {
-  it("個人、can_read 群組、自己的 shared 都列得到；別人的與 noRead 群組的列不到；path 末段＝名稱；space 三形逐字；id 集合＝REST；唯讀憑證可用", async () => {
+describe("list_folders across the three spaces", () => {
+  it("personal, can_read groups and one's own shared are listed; others' and noRead groups' aren't; the last path segment = name; the three space shapes verbatim; id set = REST; works with a read-only token", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -116,8 +108,8 @@ describe("LF1 三種空間", () => {
   });
 });
 
-describe("LF2 group_id", () => {
-  it("只列該群組；非成員、noRead 群組、隨機 uuid → 三者逐欄相同（group_not_found＋FM2）；大寫 group_id 與小寫相同", async () => {
+describe("list_folders group_id", () => {
+  it("lists only that group; non-member, noRead group and random uuid -> identical field by field (group_not_found + the group-not-found message); uppercase group_id behaves like lowercase", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -144,14 +136,14 @@ describe("LF2 group_id", () => {
   });
 });
 
-describe("LF3 翻頁", () => {
+describe("list_folders paging", () => {
   const seedMany = (db: Db, kind: "personal" | "shared", ownerId: string, n: number, tag: string) =>
     db.$client.query(
       `insert into folders (kind, owner_id, name, created_by) select $1, $2::uuid, $4 || g, $2::uuid from generate_series(1, $3::int) g`,
       [kind, ownerId, n, tag],
     );
 
-  it("121 個（三種空間混）→ 50／50／21、最後 nextCursor null、無 pageCutShort、每頁 ≤ 預算、id 集合＝REST 不重複；翻頁期間新建一個 → 不報錯、不重複", async () => {
+  it("121 folders (mixed across the three spaces) -> 50/50/21, last nextCursor null, no pageCutShort, every page within budget, id set = REST without duplicates; creating one while paging -> no error, no duplicates", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "LF3", [{ userId: me.id, role: "member" }]);
@@ -179,8 +171,8 @@ describe("LF3 翻頁", () => {
   });
 });
 
-describe("LF3b 換頁點落在同種空間的兩個群組之間", () => {
-  it("兩個群組各 40 個＋個人 30 個 → 50／50／10；第一頁兩個群組都有；翻完 id 集合＝REST、不重複", async () => {
+describe("page break between two groups of the same space kind", () => {
+  it("two groups of 40 each + 30 personal -> 50/50/10; the first page has both groups; after paging the id set = REST without duplicates", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g1 = await seedGroup(ctx.db, "LF3b-1", [{ userId: me.id, role: "member" }]);
@@ -198,15 +190,15 @@ describe("LF3b 換頁點落在同種空間的兩個群組之間", () => {
     const pages = await listAll(ctx.app, await tokenOf(ctx.db, me.id));
     expect(pages.map(p => p.folders.length)).toEqual([MCP_FOLDER_PAGE_MAX, MCP_FOLDER_PAGE_MAX, 10]);
     const firstGroups = new Set(pages[0]!.folders.map(f => (f.space.kind === "group" ? f.space.groupId : f.space.kind)));
-    expect(firstGroups).toEqual(new Set([g1.id, g2.id])); // 前提：換頁點落在兩個群組之間
+    expect(firstGroups).toEqual(new Set([g1.id, g2.id])); // precondition: the page break falls between the two groups
     const ids = pages.flatMap(p => p.folders.map(f => f.id));
     expect(new Set(ids).size).toBe(ids.length);
     expect([...ids].sort()).toEqual((await restFolderIds(ctx.app, me.id)).sort());
   });
 });
 
-describe("LF4 截斷", () => {
-  it("名稱 80 個 \"、群組名 67＋13、八層 27 個 \"（丟段）、五層 [33,40,40,40,41]（截段）→ 各自的旗標、各欄在上限內；一般資料沒有任何旗標鍵", async () => {
+describe("truncation", () => {
+  it("name of 80 \", group name 67+13, eight levels of 27 \" (segments dropped), five levels [33,40,40,40,41] (segments cut) -> each flag, every field within its limit; ordinary data has no flag key", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "LF4", [{ userId: me.id, role: "member" }]);
@@ -237,8 +229,8 @@ describe("LF4 截斷", () => {
   });
 });
 
-describe("LF5 壞游標", () => {
-  it("\"x\"、list_notes 發的游標、f| 之後夾 NUL、kind 不合法、id 不是 UUID → invalid_body＋BAD_CURSOR_MESSAGE", async () => {
+describe("bad cursors", () => {
+  it("\"x\", a cursor issued by list_notes, NUL after f|, invalid kind, non-UUID id -> invalid_body + BAD_CURSOR_MESSAGE", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     await seedNote(ctx.db, { ownerId: me.id }, { title: "a" });
@@ -265,8 +257,8 @@ describe("LF5 壞游標", () => {
   });
 });
 
-describe("LF6 描述與 annotations", () => {
-  it("description 逐字寫死、不提 fewer when；annotations 逐字 { readOnlyHint: true }", async () => {
+describe("description and annotations", () => {
+  it("description is hard-coded verbatim and doesn't mention \"fewer when\"; annotations are verbatim { readOnlyHint: true }", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const res = await mcpPost(ctx.app, rpc("tools/list"), await tokenOf(ctx.db, me.id));
@@ -284,8 +276,8 @@ describe("LF6 描述與 annotations", () => {
   });
 });
 
-describe("LF7 describe 字串", () => {
-  it("tools/list 上 list_folders 的 group_id／cursor／folders 與 read_note_outline 的 folder 說明逐字", async () => {
+describe("describe strings of list_folders", () => {
+  it("tools/list: the group_id / cursor / folders descriptions of list_folders and the folder description of read_note_outline are verbatim", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const res = await mcpPost(ctx.app, rpc("tools/list"), await tokenOf(ctx.db, me.id));
@@ -305,12 +297,12 @@ describe("LF7 describe 字串", () => {
   });
 });
 
-describe("RO1 read_note_outline 的 folder", () => {
+describe("folder in read_note_outline", () => {
   type OutlineOut = { folder: { id: string; path: string[]; pathTruncated?: true } | null };
   const outlineOf = async (app: FastifyInstance, auth: McpAuth, noteId: string) =>
     ok(await callTool(app, auth, "read_note_outline", { note_id: noteId })) as unknown as OutlineOut;
 
-  it("個人、群組、根層；被分享者看不到擁有者的資料夾（自己放置後是自己的路徑）；八層鏈 → pathTruncated", async () => {
+  it("personal, group, root; a shared recipient can't see the owner's folder (after placing it themselves it is their own path); an eight-level chain -> pathTruncated", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const b = await seedUser(ctx.db);
@@ -346,9 +338,9 @@ describe("RO1 read_note_outline 的 folder", () => {
   });
 });
 
-describe("FR folderReply 重讀落空", () => {
-  // 建立／改名／搬移成功後、重讀之前被刪的毫秒級視窗在 HTTP 上造不出；直呼 export 的 folderReply、給真 db 與隨機 uuid 就走到落空分支。
-  it("真 db＋隨機 uuid → not_found＋FM1（不回半套的資料夾）", async () => {
+describe("folderReply re-read finds nothing", () => {
+  // The millisecond window where the folder is deleted after a create/rename/move succeeds and before the re-read can't be built over HTTP; calling the exported folderReply directly with a real db and a random uuid reaches the miss branch.
+  it("real db + random uuid -> not_found + the not-found message (no half-formed folder returned)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const r = (await folderReply({ db: ctx.db, userId: me.id } as unknown as McpToolCtx, randomUUID())) as ToolCallResult;
@@ -356,17 +348,15 @@ describe("FR folderReply 重讀落空", () => {
   });
 });
 
-describe("RO2 資料夾在兩句之間被刪", () => {
-  // 誠實缺口：HTTP 上造不出（沒有縫；FK SET NULL 也讓活筆記不會指向不存在的資料夾）。這裡直呼 outlineFolderFor，
-  // 以替身 db 讓第二句（loadFolderPath）落空——owner 的筆記不查放置，第一句不碰 db。
-  it("viewerFolderIdFor 有 id、loadFolderPath 回 null → folder: null（不 throw）", async () => {
+describe("folder deleted between two statements", () => {
+  // Honest gap: can't be built over HTTP (no seam; FK SET NULL also means a live note never points at a nonexistent folder). Calls outlineFolderFor directly and makes the second statement
+  // (loadFolderPath) miss with a stand-in db - the owner's note doesn't query placement, so the first statement doesn't touch db.
+  it("viewerFolderIdFor has an id, loadFolderPath returns null -> folder: null (no throw)", async () => {
     const userId = randomUUID();
     const stub = { execute: async () => ({ rows: [] }) } as unknown as Db;
     expect(await outlineFolderFor(stub, { id: randomUUID(), ownerId: userId, groupId: null, folderId: randomUUID() }, userId)).toBeNull();
   });
 });
-
-// ───────────────────────── 資料夾：create_folder／rename_folder／move_folder ─────────────────────────
 
 const RW: TokenScope = "notes:read notes:write";
 const FM1 =
@@ -395,7 +385,6 @@ function err(r: ToolCallResult, code: string, message: string): void {
   expect(r.isError, JSON.stringify(r.structuredContent)).toBe(true);
   expect(r.structuredContent).toEqual({ code, message });
 }
-/** 剩幾次（耗盡它）。 */
 function remaining(l: FixedWindowLimiter, key: string): number {
   let n = 0;
   while (n <= 1000 && l.consume(key)) n += 1;
@@ -403,8 +392,8 @@ function remaining(l: FixedWindowLimiter, key: string): number {
 }
 const busyErr = () => Object.assign(new Error("serialization"), { code: "40001" });
 
-describe("LP listVisibleFoldersPage 的 ids", () => {
-  it("ids 空陣列 → 不發錯、0 列；ids 只回該資料夾", async () => {
+describe("ids of listVisibleFoldersPage", () => {
+  it("empty ids array -> no error, 0 rows; ids returns only that folder", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const f = await seedFolder(ctx.db, { personal: me.id }, { name: "only" });
@@ -414,8 +403,8 @@ describe("LP listVisibleFoldersPage 的 ids", () => {
   });
 });
 
-describe("CF1 create_folder 的四種位置", () => {
-  it("不給 → 個人根層；parent_id（含 shared 父層）→ 子資料夾；group_id（含大寫）→ 群組根層；shared: true → shared 根層；shared: false＋group_id → 群組根層", async () => {
+describe("four placements of create_folder", () => {
+  it("none -> personal root; parent_id (including a shared parent) -> child folder; group_id (including uppercase) -> group root; shared: true -> shared root; shared: false + group_id -> group root", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "CF1", [{ userId: me.id, role: "member" }]);
@@ -437,7 +426,7 @@ describe("CF1 create_folder 的四種位置", () => {
     expect([g3.space.kind, g3.parentId]).toEqual(["group", null]);
   });
 
-  it("位置參數兩個以上 → invalid_body＋FM20、名稱不合法 → FM6；DB 無新列；tokenWrite 已扣（scope 在兩者之前）而 folder 桶未扣", async () => {
+  it("two or more placement params -> invalid_body + the multiple-placements message, invalid name -> the name-length message; no new DB row; tokenWrite is charged (scope comes before both) while the folder limiter isn't", async () => {
     const tokenWrite = new FixedWindowLimiter({ limit: 50, windowMs: 600_000 });
     const folder = new FixedWindowLimiter({ limit: 50, windowMs: 600_000 });
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite, folder } });
@@ -449,9 +438,8 @@ describe("CF1 create_folder 的四種位置", () => {
     for (const args of [{ name: "x", parent_id: f.id, group_id: g.id }, { name: "x", group_id: g.id, shared: true }, { name: "x", parent_id: f.id, shared: true }]) {
       err(await callTool(ctx.app, auth, "create_folder", args), "invalid_body", FM20);
     }
-    // 名稱不合法也在 scope（tokenWrite 扣點）之後才判。
+    // An invalid name is also judged only after scope (the tokenWrite charge); rename_folder follows the same order.
     err(await callTool(ctx.app, auth, "create_folder", { name: "   " }), "invalid_body", FM6);
-    // rename_folder 同樣是 scope → 名稱預判。
     err(await callTool(ctx.app, auth, "rename_folder", { folder_id: f.id, name: "   " }), "invalid_body", FM6);
     expect(await folderCount(ctx.db)).toBe(before);
     expect((await folderOf(ctx.db, f.id))!.name).toBe("P");
@@ -460,8 +448,8 @@ describe("CF1 create_folder 的四種位置", () => {
   });
 });
 
-describe("CF2 名稱", () => {
-  it("NUL、落單代理 → FM4；字中換行 → FM5；81 個字、只有空白 → FM6；尾端換行修掉後成功；NFC 等價與大小寫不同的同名 → FM7；回應 name 是 NFC", async () => {
+describe("names", () => {
+  it("NUL, lone surrogate -> the unstorable-character message; newline inside -> the control-character message; 81 characters, whitespace only -> the name-length message; succeeds after a trailing newline is trimmed; NFC-equivalent and case-different same names -> the duplicate-name message; the response name is NFC", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx.db, me.id, RW);
@@ -482,8 +470,8 @@ describe("CF2 名稱", () => {
   });
 });
 
-describe("CF3 群組根層看不到", () => {
-  it("非成員、noRead、隨機 uuid、交易前群組被刪 → 四者逐欄相同（group_not_found＋FM2）；readOnly → forbidden＋FM3", async () => {
+describe("group root not visible", () => {
+  it("non-member, noRead, random uuid, group deleted before the transaction -> identical field by field (group_not_found + the group-not-found message); readOnly -> forbidden + the cannot-change-folders message", async () => {
     let doomed: string | null = null;
     const ctx = await buildCollabTestApp({
       groupTestHook: async (point, hctx) => {
@@ -510,8 +498,8 @@ describe("CF3 群組根層看不到", () => {
   });
 });
 
-describe("CF4 上限", () => {
-  it("第 6 層 → conflict＋FM8；空間已有 1000 個 → conflict＋FM10", async () => {
+describe("limits", () => {
+  it("6th level -> conflict + the depth-limit message; space already has 1000 -> conflict + the folder-count-limit message", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx.db, me.id, RW);
@@ -526,7 +514,7 @@ describe("CF4 上限", () => {
 });
 
 describe("rename_folder", () => {
-  it("改名成功、path 末段是新名、筆記 updated_at／slug 不變；看不到與隨機 uuid 逐欄相同（FM1）；readOnly → FM3；撞名 → FM7", async () => {
+  it("rename succeeds, the path's last segment is the new name, the note's updated_at/slug unchanged; invisible and random uuid identical field by field (the not-found message); readOnly -> the cannot-change-folders message; name collision -> the duplicate-name message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -554,7 +542,7 @@ describe("rename_folder", () => {
 });
 
 describe("move_folder", () => {
-  it("同空間搬移、parent_id null 回根層、搬到原父層成功且 DB 不變；看不到（含跨空間）與隨機 uuid 逐欄相同；看得到但跨空間 → FM17；搬進子孫 → FM9；太深 → FM8", async () => {
+  it("move within a space, parent_id null returns to root, moving to the original parent succeeds with DB unchanged; invisible (including cross-space) and random uuid identical field by field; visible but cross-space -> the cross-space-move message; into a descendant -> the move-into-itself message; too deep -> the depth-limit message", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const other = await seedUser(ctx.db);
@@ -569,21 +557,21 @@ describe("move_folder", () => {
 
     const theirs = await seedFolder(ctx.db, { personal: other.id }, { name: "theirs" });
     const hidden = await callTool(ctx.app, auth, "move_folder", { folder_id: c!, parent_id: theirs.id });
-    err(hidden, "not_found", FM1); // 看不到＋跨空間：先判可見性（入口順序）
+    err(hidden, "not_found", FM1); // invisible + cross-space: visibility is judged first (entry order)
     expect(await callTool(ctx.app, auth, "move_folder", { folder_id: c!, parent_id: randomUUID() })).toEqual(hidden);
     const mine = await seedFolder(ctx.db, { shared: me.id }, { name: "mine shared" });
     err(await callTool(ctx.app, auth, "move_folder", { folder_id: c!, parent_id: mine.id }), "invalid_body", FM17);
     const [, kid] = await seedFolderChain(ctx.db, { personal: me.id }, ["X1", "X2"], { parentId: p! });
     err(await callTool(ctx.app, auth, "move_folder", { folder_id: p!, parent_id: kid! }), "conflict", FM9);
     const deep = await seedFolderChain(ctx.db, { personal: me.id }, ["d1", "d2", "d3"]);
-    // p 的子樹高度 3（P › X1 › X2）＋放在第 3 層之下 → 第 6 層
+    // p's subtree is 3 high (P > X1 > X2) + placed below level 3 -> level 6
     err(await callTool(ctx.app, auth, "move_folder", { folder_id: p!, parent_id: deep.at(-1)! }), "conflict", FM8);
     expect(await folderOf(ctx.db, p!)).toEqual({ name: "P", parent_id: null });
   });
 });
 
-describe("交易內重判", () => {
-  it("取完結構鎖後拿掉 editOnly 的 can_edit → 三支都 forbidden＋FM3、DB 不變", async () => {
+describe("folder tools: re-judgement inside the transaction", () => {
+  it("after taking the structure lock, removing can_edit from editOnly -> all three tools forbidden + the cannot-change-folders message, DB unchanged", async () => {
     let roleToStrip: string | null = null;
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
@@ -613,8 +601,8 @@ describe("交易內重判", () => {
   });
 });
 
-describe("BZ-W 可重試錯誤", () => {
-  it("結構鎖之後丟 40001 → 三支都 server_busy＋FM11、DB 不變", async () => {
+describe("retryable errors", () => {
+  it("40001 thrown after the structure lock -> all three server_busy + the server-busy message, DB unchanged", async () => {
     const ctx = await buildCollabTestApp({
       groupTestHook: async point => {
         if (point === "folder-structure-locked") throw busyErr();
@@ -632,8 +620,8 @@ describe("BZ-W 可重試錯誤", () => {
   });
 });
 
-describe("桶", () => {
-  it("folder 桶 0 → too_many_requests、DB 不變；同設定下看不到的資料夾 → not_found（授權在扣桶之前）", async () => {
+describe("limiters", () => {
+  it("folder limiter 0 -> too_many_requests, DB unchanged; with the same settings an invisible folder -> not_found (authorization is before charging the limiter)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { folder: new FixedWindowLimiter({ limit: 0, windowMs: 600_000 }) } });
     const me = await seedUser(ctx.db);
     const f = await seedFolder(ctx.db, { personal: me.id }, { name: "F" });
@@ -646,7 +634,7 @@ describe("桶", () => {
     expect((await folderOf(ctx.db, f.id))!.name).toBe("F");
   });
 
-  it("tokenWrite 桶 0（讀寫 token）→ create／rename／move 三支與 move_note_to_folder 都 too_many_requests、DB 不變", async () => {
+  it("tokenWrite limiter 0 (read-write token) -> create / rename / move and move_note_to_folder all too_many_requests, DB unchanged", async () => {
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite: new FixedWindowLimiter({ limit: 0, windowMs: 600_000 }) } });
     const me = await seedUser(ctx.db);
     const [p, c] = await seedFolderChain(ctx.db, { personal: me.id }, ["P", "C"]);
@@ -669,8 +657,8 @@ describe("桶", () => {
   });
 });
 
-describe("PX-W REST／MCP 同一份 fixture（第二張表：建／改名／搬資料夾）", () => {
-  it("sixRoleScene＋noRead × {建群組根層、建子資料夾、改名、搬移}：REST 與 MCP 的結果對映表逐格相同", async () => {
+describe("REST and MCP over the same fixture (create / rename / move folder)", () => {
+  it("sixRoleScene + noRead x {create group root, create child folder, rename, move}: the result mapping tables of REST and MCP are identical cell by cell", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const noRead = await seedUser(ctx.db);
@@ -697,14 +685,12 @@ describe("PX-W REST／MCP 同一份 fixture（第二張表：建／改名／搬�
       ].map(mcpCat);
     }
     expect(mcp).toEqual(rest);
-    // 前提：表不是全同一格（真的分出了能管／不能管／看不到）
+    // Precondition: the table isn't all one cell (it really separates can manage / can't manage / can't see).
     expect(rest.member).toEqual(["ok", "ok", "ok", "ok"]);
     expect(rest.readOnly).toEqual(["forbidden", "forbidden", "forbidden", "forbidden"]);
     expect(rest.outsider).toEqual(["group_not_found", "not_found", "not_found", "not_found"]);
   });
 });
-
-// ───────────────────────── 資料夾：move_note_to_folder 與三支既有工具的 folder_id ─────────────────────────
 
 const RWM: TokenScope = "notes:read notes:write notes:move";
 const NOTE_NF = "No note with that id. It may not exist, it may not be shared with you, or it may belong to a group you aren't in.";
@@ -730,7 +716,6 @@ const countTitled = async (db: Db, title: string): Promise<number> =>
   (await db.$client.query<{ n: number }>(`select count(*)::int n from notes where title = $1`, [title])).rows[0]!.n;
 const folderIdOf = async (db: Db, id: string): Promise<string | null | undefined> => (await noteFolderCols(db.$client, id))?.folder_id;
 
-/** 測試縫：`arm(point, fn)` 之後第一次經過 point 時跑 fn（只跑一次）。 */
 function armedHook() {
   let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
   return {
@@ -753,7 +738,6 @@ async function transferGroup(app: FastifyInstance, groupId: string, adminId: str
   const del = await inject(app, "DELETE", `/api/groups/${groupId}`, adminId, { mode: "transfer", transferTo: adminId });
   expect(del.statusCode, del.body).toBe(204);
 }
-/** 自訂角色「讀＋建、不能編輯」的成員。 */
 async function createOnlyMember(db: Db, groupId: string) {
   const u = await seedUser(db);
   const roleId = await seedRole(db, groupId, `co-${u.id.slice(0, 8)}`, { canRead: true, canCreate: true });
@@ -761,8 +745,8 @@ async function createOnlyMember(db: Db, groupId: string) {
   return u;
 }
 
-describe("MN1 move_note_to_folder 三種筆記", () => {
-  it("個人 → 個人資料夾；群組（member）→ 群組資料夾；共享（viewer、editor）→ 自己的 shared 資料夾，擁有者的 folder_id 與 list_notes 不變、回應不帶擁有者的資料夾；folder_id null → 回根層", async () => {
+describe("move_note_to_folder for three kinds of notes", () => {
+  it("personal -> personal folder; group (member) -> group folder; shared (viewer, editor) -> own shared folder, the owner's folder_id in list_notes unchanged, the response carries no owner folder; folder_id null -> back to root", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const s = await sixRoleScene(ctx.db);
@@ -783,7 +767,7 @@ describe("MN1 move_note_to_folder 三種筆記", () => {
     expect([b.id, b.role, b.folder]).toEqual([gn.id, "editor", { id: gf.id, name: "GF" }]);
     expect(await folderIdOf(ctx.db, gn.id)).toBe(gf.id);
 
-    // 共享：擁有者把筆記放在「機密專案」；被分享者各自放進自己的 shared 資料夾。
+    // Shared: the owner places the note in a confidential-project folder; the recipients each place it in their own shared folder.
     const secret = await seedFolder(ctx.db, { personal: owner.id }, { name: "機密專案" });
     const sn = await seedNote(ctx.db, { ownerId: owner.id }, { title: "mn1 s" });
     await setNoteFolder(pool, sn.id, secret.id);
@@ -814,8 +798,8 @@ describe("MN1 move_note_to_folder 三種筆記", () => {
   });
 });
 
-describe("MN2 放置不改可見性與其他欄", () => {
-  it("個人與群組筆記：放進去再回根層，slug、updated_at、公開欄、分享列逐欄相同", async () => {
+describe("placement doesn't change visibility or other fields", () => {
+  it("personal and group notes: placed and then returned to root, slug, updated_at, public fields and share rows are identical field by field", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const s = await sixRoleScene(ctx.db);
@@ -839,8 +823,8 @@ describe("MN2 放置不改可見性與其他欄", () => {
   });
 });
 
-describe("MN3 move_note_to_folder 的錯誤順序", () => {
-  it("看不到的筆記 → 筆記句；看不到的資料夾與隨機 uuid 逐欄相同（FM1）；看得到但跨空間 → FM16；readOnly 的群組筆記 → FM12；看不到的筆記＋看不到的資料夾 → 筆記句", async () => {
+describe("error order of move_note_to_folder", () => {
+  it("invisible note -> the note sentence; invisible folder and random uuid identical field by field (the not-found message); visible but cross-space -> the wrong-space message; readOnly group note -> the cannot-file-note message; invisible note + invisible folder -> the note sentence", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -870,8 +854,8 @@ describe("MN3 move_note_to_folder 的錯誤順序", () => {
   });
 });
 
-describe("MN4 撤分享競態", () => {
-  it("交易內重判之後（note-folder-locked）刪掉分享列 → not_found＋筆記句，不是 internal；沒有放置列", async () => {
+describe("share revoked race", () => {
+  it("share row deleted after the in-transaction re-judgement (note-folder-locked) -> not_found + the note sentence, not internal; no placement row", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const pool = ctx.db.$client;
@@ -889,8 +873,8 @@ describe("MN4 撤分享競態", () => {
   });
 });
 
-describe("MN5 冪等", () => {
-  it("放到已在的地方兩次 → 兩次都成功、第二次 notes 列沒被寫（xmin 不變）", async () => {
+describe("idempotency", () => {
+  it("placing at the place it already is, twice -> both succeed, the second doesn't write the notes row (xmin unchanged)", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const auth = await tokenOf(ctx.db, me.id, RW);
@@ -903,8 +887,8 @@ describe("MN5 冪等", () => {
   });
 });
 
-describe("MN6 describe 字串", () => {
-  it("tools/list 上 move_note_to_folder 的 description／note_id／folder_id／note 與三支既有工具的 folder_id 說明逐字", async () => {
+describe("describe strings of move_note_to_folder", () => {
+  it("tools/list: description / note_id / folder_id / note of move_note_to_folder and the folder_id descriptions of the three existing tools are verbatim", async () => {
     const D_MNF =
       "File a note in a folder, or at the top level of its space with `folder_id: null`. The folder must be in the note's own space: one of your personal folders for a note of yours; one of the group's folders for a group note, which needs a role that can edit notes; or one of your folders for notes shared with you, for a note someone shared with you — that filing is yours alone, and its owner and anyone else see nothing change. Filing never changes who can see the note, its URL, its content or its `updatedAt`. It never moves a personal note into a group; move_note_to_group does that, and needs the notes:move scope. The reply is the note, in the shape list_notes returns.";
     const MNF = "The id of the folder to file the note in, from list_folders, or null for the top level of the note's space.";
@@ -928,8 +912,8 @@ describe("MN6 describe 字串", () => {
   });
 });
 
-describe("CN1 create_note 的 folder_id", () => {
-  it("個人資料夾、群組資料夾＋對的 group_id（含大寫）成功（帶與不帶 content）；四種不一致 → FM14；別群組的資料夾 → FM1 且與隨機 uuid 逐欄相同；editDelete → 既有句；建＋讀不能編 → FM13", async () => {
+describe("folder_id of create_note", () => {
+  it("personal folder, group folder + the right group_id (including uppercase) succeed (with and without content); four mismatches -> the folder-cannot-hold-note message; another group's folder -> the not-found message and identical field by field to a random uuid; editDelete -> the existing sentence; create + read without edit -> the create-but-not-edit message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -983,8 +967,8 @@ describe("CN1 create_note 的 folder_id", () => {
   });
 });
 
-describe("CP1 copy_note 的 folder_id", () => {
-  it("RW：看不到的群組資料夾＋group_id → FM1（不是 insufficient_scope）；看得到＋對的 group_id → insufficient_scope；沒給 group_id → FM14；個人資料夾成功且回應 folder 正確", async () => {
+describe("folder_id of copy_note", () => {
+  it("RW: invisible group folder + group_id -> the not-found message (not insufficient_scope); visible + the right group_id -> insufficient_scope; no group_id -> the folder-cannot-hold-note message; personal folder succeeds and the response folder is right", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -1001,7 +985,7 @@ describe("CP1 copy_note 的 folder_id", () => {
     expectSameNotFound(hidden, await callTool(ctx.app, rw, "copy_note", { note_id: src.id, group_id: X, folder_id: randomUUID() }));
     err(await callTool(ctx.app, rw, "copy_note", { note_id: src.id, group_id: s.groupId, folder_id: GF }), "insufficient_scope", COPY_NEEDS_MOVE_MESSAGE);
     err(await callTool(ctx.app, rw, "copy_note", { note_id: src.id, folder_id: GF }), "invalid_body", FM14);
-    // 一致性也在 scope 之前：個人資料夾＋group_id → FM14（不是 insufficient_scope）。
+    // Consistency is also checked before scope: personal folder + group_id -> FM14 (not insufficient_scope).
     err(await callTool(ctx.app, rw, "copy_note", { note_id: src.id, group_id: s.groupId, folder_id: PF }), "invalid_body", FM14);
     expect(await countTitled(ctx.db, "cp1 src")).toBe(1);
     const copy = noteOut(await callTool(ctx.app, rw, "copy_note", { note_id: src.id, folder_id: PF }));
@@ -1009,7 +993,7 @@ describe("CP1 copy_note 的 folder_id", () => {
     expect(await folderIdOf(ctx.db, copy.id)).toBe(PF);
   });
 
-  it("RWM：群組資料夾＋對的 group_id 成功；來源在資料夾、複製到同一資料夾成功；建＋讀不能編 → FM13", async () => {
+  it("RWM: group folder + the right group_id succeeds; source in a folder copied into the same folder succeeds; create + read without edit -> the create-but-not-edit message", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -1032,7 +1016,7 @@ describe("CP1 copy_note 的 folder_id", () => {
     expect(await countTitled(ctx.db, "cp1b co")).toBe(1);
   });
 
-  it("tools/list：RW 版 folder_id 說明逐字＝`COPY_FOLDER_ID_DESCRIBE_NO_MOVE` 且不提 group；RWM 版＝`COPY_FOLDER_ID_DESCRIBE`", async () => {
+  it("tools/list: the RW folder_id description is verbatim `COPY_FOLDER_ID_DESCRIBE_NO_MOVE` and doesn't mention group; the RWM one is `COPY_FOLDER_ID_DESCRIBE`", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const describeOf = async (scope: TokenScope) => {
@@ -1047,8 +1031,8 @@ describe("CP1 copy_note 的 folder_id", () => {
   });
 });
 
-describe("MG1 move_note_to_group 的 folder_id", () => {
-  it("帶群組資料夾成功（回應 folder）；別群組的資料夾 → FM15；看不到的資料夾與隨機 uuid 逐欄相同；建＋讀不能編 → FM13；被分享者原本的放置隨分享列消失", async () => {
+describe("folder_id of move_note_to_group", () => {
+  it("with a group folder succeeds (response folder); another group's folder -> the other-group-folder message; invisible folder and random uuid identical field by field; create + read without edit -> the create-but-not-edit message; a recipient's earlier placement disappears with the share row", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const me = s.member;
@@ -1084,8 +1068,8 @@ describe("MG1 move_note_to_group 的 folder_id", () => {
   });
 });
 
-describe("KF 每個入口的消失競態", () => {
-  it("create_note：membership-checked 之後群組被轉移或目標資料夾被刪（FK）→ not_found＋FM1，不是 internal／group_not_found；不建列", async () => {
+describe("disappearance race at every entry point", () => {
+  it("create_note: after membership-checked the group is transferred or the target folder is deleted (FK) -> not_found + the not-found message, not internal/group_not_found; no row created", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1104,7 +1088,7 @@ describe("KF 每個入口的消失競態", () => {
     expect(await countTitled(ctx.db, "kf c1")).toBe(0);
   });
 
-  it("copy_note（note-copy-authorized）、move_note_to_group（note-move-authorized）：縫裡轉移目標群組 → not_found＋FM1，不是 internal", async () => {
+  it("copy_note (note-copy-authorized), move_note_to_group (note-move-authorized): transferring the target group inside the seam -> not_found + the not-found message, not internal", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1124,7 +1108,7 @@ describe("KF 每個入口的消失競態", () => {
     expect(await noteState(ctx.db.$client, n.id)).toMatchObject({ owner_id: s2.member.id, group_id: null });
   });
 
-  it("move_note_to_folder（note-folder-authorized）：轉移群組 → not_found＋筆記句（筆記先判）；刪掉目標資料夾 → not_found＋FM1", async () => {
+  it("move_note_to_folder (note-folder-authorized): transferring the group -> not_found + the note sentence (the note is judged first); deleting the target folder -> not_found + the not-found message", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const s = await sixRoleScene(ctx.db);
@@ -1146,8 +1130,8 @@ describe("KF 每個入口的消失競態", () => {
   });
 });
 
-describe("BZ-N create_note 建列遇到可重試錯誤", () => {
-  it("beforeInsert 丟 40P01（不帶 content、帶 title；不帶與帶資料夾）→ server_busy＋CREATE_BUSY、DB 無新列", async () => {
+describe("create_note insert hits a retryable error", () => {
+  it("beforeInsert throws 40P01 (without content, with title; without and with a folder) -> server_busy + CREATE_BUSY, no new DB row", async () => {
     const ctx = await buildCollabTestApp({
       noteCreateHooks: {
         beforeInsert: () => {
@@ -1164,8 +1148,8 @@ describe("BZ-N create_note 建列遇到可重試錯誤", () => {
   });
 });
 
-describe("PX-N REST／MCP 同一份 fixture（第一張表：放置、建立、複製、移入群組）", () => {
-  it("sixRoleScene＋noRead × {放置群組筆記進群組資料夾、在群組資料夾建立、複製進群組資料夾、移入群組帶資料夾}：REST 與 MCP 的結果對映表逐格相同", async () => {
+describe("REST and MCP over the same fixture (placement, create, copy, move into group)", () => {
+  it("sixRoleScene + noRead x {place a group note into a group folder, create in a group folder, copy into a group folder, move into a group with a folder}: the result mapping tables of REST and MCP are identical cell by cell", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const noRead = await seedUser(ctx.db);
@@ -1207,14 +1191,12 @@ describe("PX-N REST／MCP 同一份 fixture（第一張表：放置、建立、�
       ].map(mcpCat);
     }
     expect(mcp).toEqual(rest);
-    // 前提：表真的分出了能做／不能做／看不到
+    // Precondition: the table really separates can / can't / can't see.
     expect(rest.member).toEqual(["ok", "ok", "ok", "ok"]);
     expect(rest.outsider).toEqual(["not_found", "not_found", "not_found", "not_found"]);
     expect(rest.readOnly![0]).toBe("forbidden");
   });
 });
-
-// ───────────────────────── 資料夾：delete_folder ─────────────────────────
 
 const RWD: TokenScope = "notes:read notes:write notes:delete";
 const RWMD: TokenScope = "notes:read notes:write notes:move notes:delete";
@@ -1241,7 +1223,6 @@ async function noteInFolder(db: Db, owner: { ownerId: string } | { groupId: stri
 const isTrashedNote = async (db: Db, id: string): Promise<boolean> => (await trashCols(db.$client, id))!.deleted_at !== null;
 const trashedCount = async (db: Db): Promise<number> =>
   (await db.$client.query<{ n: number }>(`select count(*)::int n from notes where deleted_at is not null`)).rows[0]!.n;
-/** 失敗案「什麼都沒刪」：筆記都不在垃圾桶、還在原資料夾；資料夾都在。 */
 async function expectKept(db: Db, notesAt: ReadonlyArray<[string, string]>, folderIds: readonly string[]): Promise<void> {
   for (const [id, folderId] of notesAt) {
     expect((await trashCols(db.$client, id))?.deleted_at, id).toBeNull();
@@ -1249,7 +1230,7 @@ async function expectKept(db: Db, notesAt: ReadonlyArray<[string, string]>, fold
   }
   for (const id of folderIds) expect(await folderRow(db.$client, id), id).toBeDefined();
 }
-/** DB 照「deleted_at ＋ 現行保留天數」算出的到期時間（與清單同式；天數 NULL → null）。 */
+/** Expiry computed from deleted_at + the current retention days, same formula as the list (days NULL -> null). */
 async function dbPurgeAt(db: Db, noteId: string): Promise<string | null> {
   const { rows } = await db.$client.query<{ p: Date | null }>(
     `select n.deleted_at + make_interval(days => s.trash_retention_days) p from notes n, site_settings s where n.id = $1 and s.singleton`,
@@ -1258,8 +1239,8 @@ async function dbPurgeAt(db: Db, noteId: string): Promise<string | null> {
   return rows[0]!.p?.toISOString() ?? null;
 }
 
-describe("DF1 個人子樹", () => {
-  it("三層子樹（各層有活筆記、中層另有一篇垃圾桶筆記）→ 活筆記全進垃圾桶、count／ids／deletedFolderCount、資料夾消失、快照＝刪除當下路徑；purgeAt＝DB 的 deleted_at＋保留天數（11 天）；保留天數 NULL → null", async () => {
+describe("personal subtree", () => {
+  it("three-level subtree (live notes at each level, one trashed note in the middle level) -> all live notes go to the trash, count / ids / deletedFolderCount, the folders vanish, snapshot = the path at deletion time; purgeAt = DB deleted_at + retention days (11 days); retention days NULL -> null", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     await pool.query(`update site_settings set trash_retention_days = 11`);
@@ -1288,7 +1269,6 @@ describe("DF1 個人子樹", () => {
     expect(await folderRow(pool, O)).toBeDefined();
     expect(await isTrashedNote(ctx.db, o)).toBe(false);
 
-    // 保留天數 NULL（這個站目前不自動清空垃圾桶）→ purgeAt: null
     await pool.query(`update site_settings set trash_retention_days = null`);
     const P = (await seedFolder(ctx.db, { personal: me.id }, { name: "P" })).id;
     const p = await noteInFolder(ctx.db, { ownerId: me.id }, P);
@@ -1302,8 +1282,8 @@ describe("DF1 個人子樹", () => {
   });
 });
 
-describe("DF2 空資料夾與 shared", () => {
-  it("空的個人資料夾 → 0／[]／purgeAt null、無旗標鍵；shared 子樹（含放置）→ 筆記不動、放置消失、count 0、purgeAt null", async () => {
+describe("empty folder and shared", () => {
+  it("empty personal folder -> 0 / [] / purgeAt null, no flag keys; shared subtree (with placements) -> notes untouched, placements gone, count 0, purgeAt null", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const me = await seedUser(ctx.db);
@@ -1344,8 +1324,8 @@ describe("DF2 空資料夾與 shared", () => {
   });
 });
 
-describe("DF8 刪了再還原（還原句的 MCP 端到端）", () => {
-  it("delete_folder 之後 restore_note → 照刪除當下的路徑 R›X 重建、筆記回到 X；沒有筆記的空子資料夾不回來", async () => {
+describe("delete then restore (the restore sentence end to end over MCP)", () => {
+  it("after delete_folder, restore_note -> recreates the path R > X as at deletion and the note returns to X; empty child folders with no notes don't come back", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const me = await seedUser(ctx.db);
@@ -1368,8 +1348,8 @@ describe("DF8 刪了再還原（還原句的 MCP 端到端）", () => {
   });
 });
 
-describe("DF3 群組（全有全無）", () => {
-  it("editOnly／member：含活筆記 → forbidden＋FM18、全部還在，空資料夾與只剩垃圾桶筆記的資料夾 → 成功；editDelete／admin 成功；readOnly／deleteOnly → FM3；outsider、noRead、隨機 uuid 逐欄相同（FM1）", async () => {
+describe("group (all or nothing)", () => {
+  it("editOnly / member: with live notes -> forbidden + the notes-cannot-be-trashed message and everything stays; empty folders and folders with only trashed notes -> succeed; editDelete / admin succeed; readOnly / deleteOnly -> the cannot-change-folders message; outsider, noRead, random uuid identical field by field (the not-found message)", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const s = await sixRoleScene(ctx.db);
@@ -1392,7 +1372,7 @@ describe("DF3 群組（全有全無）", () => {
       await expectKept(ctx.db, [[sc.m, sc.R], [sc.n, sc.X]], [sc.R, sc.X]);
       const E = (await seedFolder(ctx.db, { group: s.groupId })).id;
       expect(ok(await del(actor.id, E))).toEqual({ trashedNoteCount: 0, trashedNoteIds: [], deletedFolderCount: 1, purgeAt: null });
-      // 只剩垃圾桶筆記：沒有筆記要移入，能管就刪得掉（「when notes in it would move to the trash」）
+      // Only trashed notes left: no note would move to the trash, so anyone who can manage the folder can delete it.
       const tr = await scene();
       await markTrashed(pool, tr.m, s.admin.id);
       await markTrashed(pool, tr.n, s.admin.id);
@@ -1422,8 +1402,8 @@ describe("DF3 群組（全有全無）", () => {
   });
 });
 
-describe("DF4 交易內重判", () => {
-  it("folder-delete-notes-locked 拿掉 editDelete 的 can_delete → forbidden＋FM18；folder-delete-gated 之後子樹多一篇（沒開閘門）→ conflict＋FM19；兩者都什麼都沒刪", async () => {
+describe("delete_folder: re-judgement inside the transaction", () => {
+  it("folder-delete-notes-locked removes can_delete from editDelete -> forbidden + the notes-cannot-be-trashed message; a note added to the subtree after folder-delete-gated (no gate opened) -> conflict + the contents-changed message; both leave nothing deleted", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ groupTestHook: seam.hook });
     const pool = ctx.db.$client;
@@ -1455,8 +1435,8 @@ describe("DF4 交易內重判", () => {
   });
 });
 
-describe("DF5 大子樹", () => {
-  it("300 篇 → trashedNoteCount 300、恰好 100 個 id＝DB 那 300 個 id 排序後的前 100、trashedNoteIdsTruncated: true；整 100 篇 → 沒有旗標鍵", async () => {
+describe("large subtree", () => {
+  it("300 notes -> trashedNoteCount 300, exactly 100 ids = the first 100 of the 300 DB ids sorted, trashedNoteIdsTruncated: true; exactly 100 notes -> no flag key", async () => {
     const ctx = await buildCollabTestApp();
     const pool = ctx.db.$client;
     const me = await seedUser(ctx.db);
@@ -1485,8 +1465,8 @@ describe("DF5 大子樹", () => {
   });
 });
 
-describe("DF6 共編閘門（真 hooks）", () => {
-  it("成功後子樹筆記的閘門關著；預讀後才搬出子樹的那篇不在回應裡、它的閘門已收（比照 REST FD-M1）", async () => {
+describe("collab gate (real hooks)", () => {
+  it("after success the subtree notes' gates are closed; a note moved out of the subtree after the pre-read isn't in the response and its gate has been released (same as REST)", async () => {
     const seam = armedHook();
     const ctx = await buildCollabTestApp({ collabHooks: (server, log) => createCollabHooks(server, log), groupTestHook: seam.hook });
     const pool = ctx.db.$client;
@@ -1503,7 +1483,7 @@ describe("DF6 共編閘門（真 hooks）", () => {
 
     const out = deleted(await callTool(ctx.app, await tokenOf(ctx.db, me.id, RWD), "delete_folder", { folder_id: R! }));
     expect(out).toMatchObject({ trashedNoteCount: 2, trashedNoteIds: sortedIds([a, b]), deletedFolderCount: 3 });
-    // release 是 fire-and-forget：等每一次 releaseDeletingGate 跑完再看閘門。
+    // release is fire-and-forget: wait for every releaseDeletingGate to finish before looking at the gates.
     expect(rel).toHaveBeenCalledTimes(3);
     await Promise.all(rel.mock.results.map(r => r.value));
     expect(ctx.collab.isDeleting(c)).toBe(false);
@@ -1514,8 +1494,8 @@ describe("DF6 共編閘門（真 hooks）", () => {
   });
 });
 
-describe("DF7 桶與設定", () => {
-  it("folder 桶 0 → too_many_requests、什麼都沒刪；同設定下看不到的資料夾 → not_found（授權在扣桶之前）", async () => {
+describe("limiters and settings", () => {
+  it("folder limiter 0 -> too_many_requests, nothing deleted; with the same settings an invisible folder -> not_found (authorization is before charging the limiter)", async () => {
     const ctx = await buildCollabTestApp({ limiters: { folder: new FixedWindowLimiter({ limit: 0, windowMs: 600_000 }) } });
     const me = await seedUser(ctx.db);
     const [R, X] = await seedFolderChain(ctx.db, { personal: me.id }, ["R", "X"]);
@@ -1526,7 +1506,7 @@ describe("DF7 桶與設定", () => {
     await expectKept(ctx.db, [[n, X!]], [R!, X!]);
   });
 
-  it("site_settings 列不在 → internal、什麼都沒刪、folder 桶沒被扣", async () => {
+  it("site_settings row missing -> internal, nothing deleted, folder limiter not charged", async () => {
     const folder = new FixedWindowLimiter({ limit: 5, windowMs: 600_000 });
     const ctx = await buildCollabTestApp({ limiters: { folder } });
     const me = await seedUser(ctx.db);
@@ -1539,7 +1519,7 @@ describe("DF7 桶與設定", () => {
     expect(remaining(folder, me.id)).toBe(5);
   });
 
-  it("tokenWrite 0（RWD 憑證）→ too_many_requests、什麼都沒刪；session 不吃 token 桶，照常成功", async () => {
+  it("tokenWrite 0 (RWD token) -> too_many_requests, nothing deleted; a session doesn't use the token limiter and succeeds as usual", async () => {
     const ctx = await buildCollabTestApp({ limiters: { tokenWrite: new FixedWindowLimiter({ limit: 0, windowMs: 600_000 }) } });
     const me = await seedUser(ctx.db);
     const [R, X] = await seedFolderChain(ctx.db, { personal: me.id }, ["R", "X"]);
@@ -1551,8 +1531,8 @@ describe("DF7 桶與設定", () => {
   });
 });
 
-describe("PX-D REST／MCP 同一份 fixture（第二張表：刪資料夾）", () => {
-  it("sixRoleScene＋noRead × {刪空資料夾、刪含筆記的資料夾}：REST（cookie）與 MCP（RWD）的結果對映表逐格相同（folder_delete_blocked ↔ forbidden＋FM18）", async () => {
+describe("REST and MCP over the same fixture (delete folder)", () => {
+  it("sixRoleScene + noRead x {delete empty folder, delete folder with notes}: the result mapping tables of REST (cookie) and MCP (RWD) are identical cell by cell (folder_delete_blocked <-> forbidden + the notes-cannot-be-trashed message)", async () => {
     const ctx = await buildCollabTestApp();
     const s = await sixRoleScene(ctx.db);
     const noRead = await seedUser(ctx.db);
@@ -1580,7 +1560,7 @@ describe("PX-D REST／MCP 同一份 fixture（第二張表：刪資料夾）", (
       ].map(mcpCat);
     }
     expect(mcp).toEqual(rest);
-    // 前提：表真的分出了能刪／被擋／不能管／看不到
+    // Precondition: the table really separates can delete / blocked / can't manage / can't see.
     expect(rest).toEqual({
       admin: ["ok", "ok"],
       member: ["ok", "blocked"],
@@ -1594,8 +1574,8 @@ describe("PX-D REST／MCP 同一份 fixture（第二張表：刪資料夾）", (
   });
 });
 
-describe("SC 註冊", () => {
-  it("R／RW／RWM 沒有 delete_folder、RWD／RWMD／session 有；名字都不含 purge／empty／permanent；delete_folder 的輸入恰好只有 folder_id；RWM 直接呼叫 → SDK 的 Tool delete_folder not found、DB 不變", async () => {
+describe("registration", () => {
+  it("R / RW / RWM have no delete_folder, RWD / RWMD / session do; no name contains purge / empty / permanent; delete_folder's input is exactly folder_id; RWM calling it directly -> the SDK's Tool delete_folder not found, DB unchanged", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const [P, Q] = await seedFolderChain(ctx.db, { personal: me.id }, ["P", "Q"]);
@@ -1615,7 +1595,7 @@ describe("SC 註冊", () => {
       const names = tools.map(t => t.name);
       expect({ label, has: names.includes("delete_folder") }).toEqual({ label, has: want });
       expect({ label, bad: names.filter(x => /purge|empty|permanent/i.test(x)) }).toEqual({ label, bad: [] });
-      // MCP 不提供「只刪空資料夾」之類的選項：公告的輸入只有 folder_id。
+      // MCP offers no "delete only empty folders" option: the advertised input is only folder_id.
       const df = tools.find(t => t.name === "delete_folder");
       if (df) expect({ label, keys: Object.keys(df.inputSchema.properties ?? {}) }).toEqual({ label, keys: ["folder_id"] });
     }
@@ -1626,7 +1606,7 @@ describe("SC 註冊", () => {
     await expectKept(ctx.db, [[n, Q!]], [P!, Q!]);
   });
 
-  it("RWM 憑證依序呼叫 create_folder、rename_folder、move_folder、move_note_to_folder、create_note／copy_note／move_note_to_group 帶 folder_id → 全部成功，所有筆記 deleted_at IS NULL", async () => {
+  it("RWM token calls create_folder, rename_folder, move_folder, move_note_to_folder, and create_note / copy_note / move_note_to_group with folder_id in turn -> all succeed, every note keeps deleted_at IS NULL", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const g = await seedGroup(ctx.db, "SC-AGF4", [{ userId: me.id, role: "admin" }]);
@@ -1635,7 +1615,7 @@ describe("SC 註冊", () => {
     const auth = await tokenOf(ctx.db, me.id, RWM);
     const step = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
       const r = await callTool(ctx.app, auth, name, args);
-      expect(await trashedCount(ctx.db), `${name} 之後`).toBe(0); // 先於成功與否：回錯也不能已經移入
+      expect(await trashedCount(ctx.db), `${name} 之後`).toBe(0); // checked before success: even an error response must not have moved anything
       expect(r.isError, `${name} ${JSON.stringify(r.structuredContent)}`).toBeUndefined();
       return r.structuredContent!;
     };
@@ -1654,8 +1634,8 @@ describe("SC 註冊", () => {
   });
 });
 
-describe("DS-D describe 字串", () => {
-  it("tools/list（RWD）上 delete_folder 的 description 逐字寫死，folder_id 與輸出各欄說明逐字；含「restore_note usually puts a note back」「folders that held no notes don't come back」；purgeAt 說明含「an admin can change it」", async () => {
+describe("describe strings of delete_folder", () => {
+  it("tools/list (RWD): the delete_folder description is hard-coded verbatim, the folder_id and output field descriptions are verbatim; contains \"restore_note usually puts a note back\" and \"folders that held no notes don't come back\"; the purgeAt description contains \"an admin can change it\"", async () => {
     const ctx = await buildCollabTestApp();
     const me = await seedUser(ctx.db);
     const res = await mcpPost(ctx.app, rpc("tools/list"), (await tokenOf(ctx.db, me.id, RWD)) as { token: string });

@@ -18,7 +18,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/** POST／PATCH /api/folders：`reply` 決定回應；每次的 method、url、body 記下。 */
+/** POST / PATCH /api/folders: `reply` decides the response; each call's method, url and body are recorded. */
 function stubFolders(reply: () => Response = () => json(folderDto({ id: "new", name: "x" }), 201)) {
   const calls: Array<{ method: string; url: string; body: unknown }> = [];
   vi.stubGlobal(
@@ -34,14 +34,14 @@ function stubFolders(reply: () => Response = () => json(folderDto({ id: "new", n
   return calls;
 }
 
-/** 框外的 opener 不歸 React 管，每案結束自己拆掉（不能清整個 body：Radix 的 portal 要留給 RTL cleanup 卸載）。 */
+/** An opener outside the dialog is not managed by React; each case removes it itself (the whole body cannot be cleared: Radix's portal must be left for RTL cleanup to unmount). */
 const openers: HTMLElement[] = [];
 
 type HostProps =
   | { mode: "create"; parent: FolderCreateParent }
   | { mode: "rename"; folder: ReturnType<typeof folderDto>; stack?: { onClosed: (finalName: string) => void; focusTarget: () => HTMLElement | null } };
 
-/** 比照 NoteList host：關閉就卸載。opener 是框外的一顆鈕（還焦點的對象）。 */
+/** Like the NoteList host: unmounts on close. The opener is a button outside the dialog (the target of focus return). */
 function renderDialog(props: HostProps, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const opener = document.createElement("button");
   opener.textContent = "opener";
@@ -77,7 +77,7 @@ describe("FolderNameDialog", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("FN1 create：空白 → 送出 disabled；「  A  」→ body {name: A, space: personal}（送 trim 後的字串）", async () => {
+  it("create: blank -> submit disabled; \"  A  \" -> body {name: A, space: personal} (the trimmed string is sent)", async () => {
     const calls = stubFolders();
     renderDialog({ mode: "create", parent: PERSONAL });
     expect(submit()).toBeDisabled();
@@ -88,7 +88,7 @@ describe("FolderNameDialog", () => {
     await waitFor(() => expect(posted(calls)).toEqual([{ method: "POST", url: "/api/folders", body: { name: "A", space: { kind: "personal" } } }]));
   });
 
-  it("FN2 81 個中文字 → 行內上限錯誤、不送；80 個 emoji（160 code unit、80 code point）→ 可送", async () => {
+  it("81 CJK characters: inline limit error, not sent; 80 emoji (160 code units, 80 code points): can be sent", async () => {
     const calls = stubFolders();
     renderDialog({ mode: "create", parent: PERSONAL });
     type("字".repeat(81));
@@ -105,7 +105,7 @@ describe("FolderNameDialog", () => {
     expect((posted(calls)[0]!.body as { name: string }).name).toBe(emoji);
   });
 
-  it("FN3 字中控制字元（U+2028、bidi）→ 行內錯誤逐字、不送；首尾的控制字元 trim 後可送", async () => {
+  it("a control character inside the text (U+2028, bidi): inline error verbatim, not sent; leading/trailing control characters are trimmed and then it can be sent", async () => {
     const calls = stubFolders();
     renderDialog({ mode: "create", parent: PERSONAL });
     for (const bad of ["A\u0007B", "A\u2028B", "A\u202EB"]) {
@@ -121,7 +121,7 @@ describe("FolderNameDialog", () => {
     await waitFor(() => expect(posted(calls)).toEqual([{ method: "POST", url: "/api/folders", body: { name: "A", space: { kind: "personal" } } }]));
   });
 
-  it("FN4 409 folder_name_taken → 行內錯誤、框仍開", async () => {
+  it("409 folder_name_taken: inline error, the dialog stays open", async () => {
     stubFolders(() => json({ error: { code: "folder_name_taken", message: "x" } }, 409));
     renderDialog({ mode: "create", parent: PERSONAL });
     type("A");
@@ -130,7 +130,7 @@ describe("FolderNameDialog", () => {
     expect(screen.getByRole("dialog", { name: "New folder" })).toBeInTheDocument();
   });
 
-  it("FN5 rename 預填原名、送 PATCH {name: B}", async () => {
+  it("rename: prefilled with the old name, sends PATCH {name: B}", async () => {
     const calls = stubFolders(() => json(folderDto({ id: "f1", name: "B" })));
     renderDialog({ mode: "rename", folder: folderDto({ id: "f1", name: "A" }) });
     expect(input()).toHaveValue("A");
@@ -140,7 +140,7 @@ describe("FolderNameDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("FN6 create（parent＝資料夾 P）成功 → ['folders'] 被失效、P 與祖先（取自快取裡的索引）的收合鍵被刪", async () => {
+  it("create (parent = folder P) success: ['folders'] is invalidated, the collapse keys of P and its ancestors (taken from the index in the cache) are deleted", async () => {
     stubFolders();
     setCollapsed("folder:P", true);
     setCollapsed("folder:GP", true);
@@ -157,7 +157,7 @@ describe("FolderNameDialog", () => {
     expect(isCollapsed("folder:GP")).toBe(false);
   });
 
-  it("FN7 關框焦點回 opener；opener 已卸載 → 不丟錯", async () => {
+  it("closing returns focus to the opener; if the opener is unmounted nothing throws", async () => {
     stubFolders();
     const { opener } = renderDialog({ mode: "create", parent: PERSONAL });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -170,7 +170,7 @@ describe("FolderNameDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("FN8 zh：標題「新增資料夾」「重新命名資料夾」、欄名「資料夾名稱」", async () => {
+  it("zh: titles for create folder and rename folder, and the folder name field", async () => {
     await i18n.changeLanguage("zh-TW");
     stubFolders();
     const first = renderDialog({ mode: "create", parent: PERSONAL });
@@ -181,7 +181,7 @@ describe("FolderNameDialog", () => {
     expect(screen.getByRole("dialog", { name: "重新命名資料夾" })).toBeInTheDocument();
   });
 
-  it("FN9 群組收合時從群組列建資料夾成功 → group:G 寫成展開", async () => {
+  it("creating a folder from a collapsed group row succeeds: group:G is written as expanded", async () => {
     const calls = stubFolders();
     setCollapsed("group:G", true);
     renderDialog({ mode: "create", parent: { space: { kind: "group", groupId: "G" } } });
@@ -193,8 +193,8 @@ describe("FolderNameDialog", () => {
   });
 });
 
-/** 疊資料夾改名形。 */
-describe("FolderNameDialog 疊資料夾改名", () => {
+/** The stacked-folder rename form. */
+describe("FolderNameDialog stacked folder rename", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -206,7 +206,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
 
   const NEW2 = folderDto({ id: "n2", name: "New folder 2" });
 
-  /** 框外的新資料夾列鈕（focusTarget 回它）。 */
+  /** The new folder row's button outside the dialog (focusTarget returns it). */
   function stackHooks() {
     const row = document.createElement("button");
     row.textContent = "row";
@@ -215,7 +215,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     return { row, onClosed: vi.fn<(finalName: string) => void>(), focusTarget: vi.fn(() => row as HTMLElement | null) };
   }
 
-  it("FN-S1 帶 stack、名稱「New folder 2」→ 開啟時輸入框全選（0–12）", () => {
+  it("with stack and the name \"New folder 2\": the input is fully selected on open (0-12)", () => {
     stubFolders();
     const hooks = stackHooks();
     renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -224,7 +224,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect((input() as HTMLInputElement).selectionEnd).toBe(12);
   });
 
-  it("FN-S2 改成「 Q3 」送出 → PATCH {name: Q3}；關閉後 onClosed(\"Q3\") 恰一次", async () => {
+  it("changing to \" Q3 \" and submitting: PATCH {name: Q3}; after closing onClosed(\"Q3\") once", async () => {
     const calls = stubFolders(() => json(folderDto({ id: "n2", name: "Q3" })));
     const hooks = stackHooks();
     renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -236,7 +236,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).toHaveBeenCalledWith("Q3");
   });
 
-  it("FN-S9 名稱沒改（含只加了首尾空白）直接 Save → 不送 PATCH、關框、onClosed(\"New folder 2\") 恰一次；不帶 stack 的 rename 照舊送 PATCH", async () => {
+  it("name unchanged (including only added leading/trailing whitespace) then Save: no PATCH, the dialog closes, onClosed(\"New folder 2\") once; a rename without stack still sends PATCH", async () => {
     const calls = stubFolders(() => json(NEW2));
     const hooks = stackHooks();
     const first = renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -253,7 +253,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     await waitFor(() => expect(posted(calls)).toEqual([{ method: "PATCH", url: "/api/folders/n2", body: { name: "New folder 2" } }]));
   });
 
-  it("FN-S3 按 Cancel → 沒有 PATCH、onClosed(\"New folder 2\") 恰一次", async () => {
+  it("Cancel: no PATCH, onClosed(\"New folder 2\") once", async () => {
     const calls = stubFolders();
     const hooks = stackHooks();
     renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -265,7 +265,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).toHaveBeenCalledWith("New folder 2");
   });
 
-  it("FN-S3 按 Esc → onClosed(\"New folder 2\") 恰一次", async () => {
+  it("Esc: onClosed(\"New folder 2\") once", async () => {
     stubFolders();
     const hooks = stackHooks();
     renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -275,7 +275,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).toHaveBeenCalledWith("New folder 2");
   });
 
-  it("FN-S4 關閉後焦點到 focusTarget() 回的元素（不是 opener）", async () => {
+  it("after closing, focus goes to the element returned by focusTarget() (not the opener)", async () => {
     stubFolders();
     const hooks = stackHooks();
     const { opener } = renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -286,7 +286,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.focusTarget).toHaveBeenCalled();
   });
 
-  it("FN-S5 PATCH 409 → 框仍開、onClosed 未被呼叫", async () => {
+  it("PATCH 409: the dialog stays open and onClosed is not called", async () => {
     stubFolders(() => json({ error: { code: "folder_name_taken", message: "x" } }, 409));
     const hooks = stackHooks();
     renderDialog({ mode: "rename", folder: NEW2, stack: hooks });
@@ -297,7 +297,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).not.toHaveBeenCalled();
   });
 
-  /** 送出「Q3」、PATCH 掛著時按 Esc 關框；回傳放行 PATCH 的函式（reply 決定回應）。 */
+  /** Submits "Q3" and closes the dialog with Esc while the PATCH is pending; returns the function that releases the PATCH (`reply` decides the response). */
   async function escWhileRenaming(hooks: ReturnType<typeof stackHooks>, reply: () => Response) {
     let release: (() => void) | undefined;
     vi.stubGlobal(
@@ -322,7 +322,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     };
   }
 
-  it("FN-S7 送出後 PATCH 還沒回就按 Esc → 先不回報；PATCH 成功後 onClosed(\"Q3\")（最後的名字）恰一次", async () => {
+  it("Esc before the PATCH returns: nothing is reported yet; after PATCH success onClosed(\"Q3\") (the final name) once", async () => {
     const hooks = stackHooks();
     const release = await escWhileRenaming(hooks, () => json(folderDto({ id: "n2", name: "Q3" })));
     expect(hooks.onClosed).not.toHaveBeenCalled();
@@ -333,7 +333,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).toHaveBeenCalledWith("Q3");
   });
 
-  it("FN-S8 送出後 PATCH 還沒回就按 Esc、PATCH 之後 409 → onClosed(\"New folder 2\")（名稱沒變）恰一次", async () => {
+  it("Esc before the PATCH returns, then the PATCH gets 409: onClosed(\"New folder 2\") (name unchanged) once", async () => {
     const hooks = stackHooks();
     const release = await escWhileRenaming(hooks, () => json({ error: { code: "folder_name_taken", message: "x" } }, 409));
     expect(hooks.onClosed).not.toHaveBeenCalled();
@@ -344,7 +344,7 @@ describe("FolderNameDialog 疊資料夾改名", () => {
     expect(hooks.onClosed).toHaveBeenCalledWith("New folder 2");
   });
 
-  it("FN-S6 不帶 stack 的 rename：輸入框不全選（selectionStart === selectionEnd）；關閉焦點照舊回 opener", async () => {
+  it("rename without stack: the input is not fully selected (selectionStart === selectionEnd); closing returns focus to the opener as before", async () => {
     stubFolders();
     const { opener } = renderDialog({ mode: "rename", folder: NEW2 });
     const el = input() as HTMLInputElement;

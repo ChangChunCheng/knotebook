@@ -1,7 +1,6 @@
 /**
- * #398：真的 parse worker（vitest 從原始碼跑：`spawnParseWorker` 走 tsx 啟動碼載入 `parse-worker.ts`）。
- * 結果與同執行緒解析一致、逾時被終止、記憶體用完不拖垮主程序、解析期間主執行緒不被卡住、`createEditingRuntime` 一律用 pool。
- * 正式 build（`dist/*.js`，不經 tsx）走 worker：`parse-pool-dist.test.ts`。
+ * #398: real parse worker, run from source (`spawnParseWorker` boots through tsx).
+ * The production build (`dist/*.js`, no tsx) is covered in `parse-pool-dist.test.ts`.
  */
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -38,20 +37,20 @@ afterAll(async () => {
   for (const p of pools) await p.close();
 });
 
-/** 實測會出事的形狀：premerge 跳過的子樹裡的引言（同執行緒約 25 秒）、深度×內容（同執行緒把 4 GB 吃光）、幾千層巢狀。 */
+/** Shapes known to blow up: a quote inside a premerge-skipped subtree (~25 s on the same thread), depth x content (eats 4 GB on the same thread), thousands of nesting levels. */
 const ps = (n: number) => Array.from({ length: n }, (_, k) => `<p>q${k}</p>`).join("");
 const SLOW_FIGCAPTION = "<figcaption><blockquote>" + ps(2000) + "</blockquote></figcaption>";
 const OOM_QUOTE_BOLD = "> ".repeat(120) + "**x** ".repeat(15000);
 const DEEP_QUOTE = "> ".repeat(8000) + "a";
 
-describe("parse worker（真的執行緒）", () => {
+describe("parse worker (real thread)", () => {
   let pool: ParsePool;
   beforeAll(async () => {
     pool = mk({ workers: 1 });
     await ready(pool);
   }, 180_000);
 
-  it("結果與在 mounted 編輯器上解析相同（golden 全部，去 id）", async () => {
+  it("result matches parsing on a mounted editor (all goldens, ids stripped)", async () => {
     const goldens = JSON.parse(readFileSync(new URL("../../../../packages/shared/test-fixtures/note-markdown-goldens.json", import.meta.url), "utf8")) as { cases: Array<{ id: string; markdown: string }> };
     expect(goldens.cases.length).toBeGreaterThan(10);
     for (const c of goldens.cases) {
@@ -66,15 +65,15 @@ describe("parse worker（真的執行緒）", () => {
     }
   }, 120_000);
 
-  it("錯誤碼與成因照舊從 worker 回來（unsupported_color、nested_paragraph、too_deep）", async () => {
+  it("error codes and causes still come back from the worker (unsupported_color, nested_paragraph, too_deep)", async () => {
     expect(await pool.parse(req('x <span style="color:tomato">o</span>'))).toEqual({ error: "unsupported_color" });
     expect(await pool.parse(req("<p>a<button><p>b</p></button></p>"))).toEqual({ error: "unsupported_block", detail: "nested_paragraph" });
     expect(await pool.parse(req("<blockquote><p>a</p>".repeat(128) + "</blockquote>".repeat(128)))).toEqual({ error: "unsupported_block", detail: "too_deep" });
   }, 60_000);
 });
 
-describe("時限、記憶體上限、主執行緒不被卡住", () => {
-  it("worker 的 young generation 固定為 PARSE_WORKER_YOUNG_MB，不隨主機記憶體變大", async () => {
+describe("time limit, memory cap, main thread not blocked", () => {
+  it("worker young generation is fixed at PARSE_WORKER_YOUNG_MB, independent of host memory", async () => {
     const w = spawnParseWorker({ baseUrl: BASE, workerMemoryMb: 256, stackSizeMb: 4 }) as unknown as import("node:worker_threads").Worker;
     try {
       expect(w.resourceLimits?.maxYoungGenerationSizeMb).toBe(PARSE_WORKER_YOUNG_MB);
@@ -83,7 +82,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
       await w.terminate();
     }
   });
-  it("逾時：figcaption 裡 2 000 段的引言（同執行緒約 25 秒）→ 時限 1.5 秒到就 too_complex、worker 被換掉；換上的照常解析", async () => {
+  it("timeout: 2,000 quote paragraphs inside a figcaption (~25 s on the same thread) -> too_complex at the 1.5 s limit and the worker is replaced; the replacement parses normally", async () => {
     const pool = mk({ workers: 1, timeoutMs: 1_500 });
     await ready(pool);
     const t = performance.now();
@@ -96,7 +95,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
     expect(await pool.parse(req("# ok"))).toMatchObject({ unbound: 0 });
   }, 180_000);
 
-  it("解析期間主執行緒照常跑：最大停頓 < max(200 ms, 3 × 閒置時的停頓)（同執行緒時整段停住，秒級）", async () => {
+  it("main thread keeps running during a parse: longest stall < max(200 ms, 3 x idle stall) (the same thread stalls for seconds)", async () => {
     const pool = mk({ workers: 1, timeoutMs: 3_000 });
     await ready(pool);
     const baseline = await idleStall();
@@ -111,7 +110,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
     expect(stall).toBeLessThan(stallLimit(baseline, 200));
   }, 180_000);
 
-  it("記憶體用完：120 層引言裡 1.5 萬個粗體（90 KB，同執行緒把程序吃到 4 GB 崩潰）→ worker 上限 256 MiB 撞到就 too_complex；主程序活著、補開的照常解析", async () => {
+  it("out of memory: 15,000 bold runs inside 120 nested quotes (90 KB; takes the process to 4 GB on the same thread) -> too_complex at the 256 MiB worker cap; main process survives and the replacement parses normally", async () => {
     const pool = mk({ workers: 1, workerMemoryMb: 256, timeoutMs: 60_000 });
     await ready(pool);
     expect(await pool.parse(req(OOM_QUOTE_BOLD))).toEqual(TOO_COMPLEX);
@@ -120,7 +119,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
     expect(await pool.parse(req("# ok"))).toMatchObject({ unbound: 0 });
   }, 180_000);
 
-  it("批次寫回的未閉合 fence 判斷也在 worker 裡：一般檔回那一行；`*a ` 重複 256 KiB＋一行 ```（同執行緒約 64 秒）→ 時限到 \"too_complex\"", async () => {
+  it("the unclosed-fence check for batch write-back also runs in the worker: a normal file returns the fence line; `*a ` repeated for 256 KiB plus one ``` line (~64 s on the same thread) -> \"too_complex\" at the limit", async () => {
     const pool = mk({ workers: 1, timeoutMs: 2_000 });
     await ready(pool);
     expect(await pool.openFenceLine("u", ["A", "", "```", "", "B"])).toBe(2);
@@ -131,7 +130,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
     expect(performance.now() - t).toBeLessThan(6_000);
   }, 180_000);
 
-  it("8 000 層 `>`（16 KB）→ 時限內回 400（too_complex，或 DOM 上算到的 too_deep），不是例外", async () => {
+  it("8,000 levels of `>` (16 KB) -> 400 within the limit (too_complex, or too_deep computed on the DOM), not an exception", async () => {
     const pool = mk({ workers: 1, timeoutMs: 2_000 });
     await ready(pool);
     const r = await pool.parse(req(DEEP_QUOTE));
@@ -140,7 +139,7 @@ describe("時限、記憶體上限、主執行緒不被卡住", () => {
 });
 
 describe("createEditingRuntime", () => {
-  it("生產與整合測試的 runtime 一律用 worker pool（設定取自傳入的 ParseLimits），close 收掉", async () => {
+  it("production and integration runtimes use the worker pool (settings from the given ParseLimits); close shuts it down", async () => {
     const config = loadConfig({ DATABASE_URL: "postgres://u:p@localhost:5432/db", APP_SECRET: "a".repeat(64), PUBLIC_URL: "http://localhost:3000" });
     const runtime = createEditingRuntime(config, { workers: 1, workerMemoryMb: 768, timeoutMs: 7_000, queueWaitMs: 33_000 });
     try {
@@ -152,7 +151,7 @@ describe("createEditingRuntime", () => {
     }
     await expect(runtime.parser.parse(req("x"))).rejects.toThrow("closed");
   }, 180_000);
-  it("直接 new 的 runtime（單元測試）＝同執行緒解析", () => {
+  it("a directly constructed runtime (unit tests) parses on the same thread", () => {
     expect(new EditingRuntime({ baseUrl: BASE }).parser).not.toBeInstanceOf(ParsePool);
   });
 });

@@ -5,22 +5,22 @@ import { noteSchema } from "@/collab/schema";
 import { MERMAID_LANGUAGE, MermaidExternalHTML, commitCode, mermaidBlockConfig } from "./spec";
 
 describe("mermaidBlockConfig", () => {
-  it("type 與 content 形狀固定（schema 掛載端依賴這兩個值）", () => {
+  it("type and content shape are fixed (the schema mount side depends on these two values)", () => {
     expect(mermaidBlockConfig.type).toBe("mermaid");
-    // content:"none" ⇒ 這個 block 沒有 BlockNote 管理的 inline content，
-    // 原始碼整份存在 `code` prop 裡。改成 "inline" 會讓既有文件的內容全部讀不到。
+    // content:"none" => this block has no BlockNote-managed inline content, and the whole source lives in the `code` prop.
+    // Changing it to "inline" would make all existing documents' content unreadable.
     expect(mermaidBlockConfig.content).toBe("none");
   });
 
-  it("code prop 預設為空字串（/mermaid 建立的空 block 走這條）", () => {
+  it("the code prop defaults to an empty string (the empty block created by /mermaid takes this path)", () => {
     expect(mermaidBlockConfig.propSchema.code.default).toBe("");
   });
 });
 
-describe("MermaidExternalHTML — 匯出", () => {
-  it("輸出 ```mermaid 的 code block 形狀，而不是 SVG", () => {
-    // 貼到 GitHub／Obsidian 等支援 mermaid 的地方會自動畫出來；不支援的地方至少看得到原始碼。
-    // 選原始碼而非 SVG 也順帶避開「匯出的 SVG 夾帶外部資源」這一整類問題（比照 #43 的守衛動機）。
+describe("MermaidExternalHTML - export", () => {
+  it("outputs the shape of a ```mermaid code block, not an SVG", () => {
+    // Pasted into GitHub/Obsidian and other places that support mermaid it is drawn automatically; elsewhere at least the source is visible.
+    // Choosing the source rather than an SVG also avoids the whole class of problem where an exported SVG carries external resources (same motivation as the guard in #43).
     const { container } = render(<MermaidExternalHTML code="graph TD; A-->B;" />);
     const code = container.querySelector("pre > code");
     expect(code).not.toBeNull();
@@ -28,24 +28,23 @@ describe("MermaidExternalHTML — 匯出", () => {
     expect(code?.textContent).toBe("graph TD; A-->B;");
   });
 
-  it("原始碼裡的 HTML 以文字輸出，不成為真的節點", () => {
+  it("HTML in the source is output as text and does not become real nodes", () => {
     const { container } = render(<MermaidExternalHTML code={'graph TD; A["<img src=x onerror=1>"]-->B;'} />);
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("pre > code")?.textContent).toContain("<img src=x onerror=1>");
   });
 
-  it("空原始碼也輸出合法結構（不產生半截 HTML）", () => {
+  it("an empty source also outputs a valid structure (no half-formed HTML)", () => {
     const { container } = render(<MermaidExternalHTML code="" />);
     expect(container.querySelector("pre > code")).not.toBeNull();
   });
 });
 
-describe("貼上（HTML 路徑）真正的落點", () => {
-  it("⚠ <pre><code class=\"language-mermaid\"> 經 BlockNote 解析後是 codeBlock，不是 mermaid block", async () => {
-    // 這條釘的是「為什麼這支 spec 沒有 `parse` 規則」：BlockNote 內建 codeBlock 的 `pre` 規則
-    // 優先序更高，自訂 `parse` 永遠不會被呼叫（實測）。HTML 與 markdown 兩條
-    // 貼上路徑都先變成 codeBlock，再由 `collab/mermaid-paste.ts` 在 blocks 層轉成圖。
-    // 哪天 BlockNote 改了優先序、這條轉紅，才是可以考慮加回 `parse` 規則的時候。
+describe("paste (HTML path): where it really lands", () => {
+  it("<pre><code class=\"language-mermaid\"> parses into a codeBlock after BlockNote parsing, not a mermaid block", async () => {
+    // This pins why this spec has no `parse` rule: BlockNote's built-in codeBlock `pre` rule has higher priority, so a custom `parse` is never called.
+    // Both the HTML and markdown paste paths first become a codeBlock, then `collab/mermaid-paste.ts` converts it to a diagram at the block level.
+    // If BlockNote changes the priority one day and this goes red, that is the time to consider adding a `parse` rule back.
     const editor = BlockNoteEditor.create({ schema: noteSchema });
     const blocks = await editor.tryParseHTMLToBlocks('<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>');
 
@@ -54,17 +53,17 @@ describe("貼上（HTML 路徑）真正的落點", () => {
   });
 });
 
-describe("commitCode — 寫回原始碼", () => {
-  it("正常情況直接寫回 code prop", () => {
+describe("commitCode - writing the source back", () => {
+  it("normally writes straight back to the code prop", () => {
     const updateBlock = vi.fn();
     const block = { id: "b1" } as never;
     commitCode({ updateBlock } as never, block, "graph TD; A-->B;");
     expect(updateBlock).toHaveBeenCalledWith(block, { props: { code: "graph TD; A-->B;" } });
   });
 
-  it("⚠ block 已被遠端刪掉時不得外拋（共編下的實際情境）", () => {
-    // `updateBlock` 對不存在的 block 會 throw `Block with ID … not found`。
-    // 例外從 React 事件 handler 拋出去，對使用者就是「剛打的原始碼無聲消失」。
+  it("a block already deleted remotely must not throw outward (a real situation under collaboration)", () => {
+    // `updateBlock` throws `Block with ID ... not found` for a nonexistent block. An exception thrown out of a React event handler
+    // means, to the user, that the source they just typed silently vanished.
     const updateBlock = vi.fn(() => {
       throw new Error("Block with ID b1 not found");
     });

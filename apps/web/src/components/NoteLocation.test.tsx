@@ -38,26 +38,26 @@ describe("fitSegments", () => {
   const segs = ["My notes", "A", "B", "C", "D"];
   const widths = [60, 30, 30, 30, 30];
 
-  it("全放得下 → 原樣、不截尾", () => {
+  it("all fit -> unchanged, no truncation", () => {
     expect(fitSegments(segs, widths, 200, 20)).toEqual({ shown: segs, truncateLast: false });
   });
 
-  it("放不下 → 中間從中央往外換成單一「…」，首尾保留", () => {
-    // 去掉 B 後 170 仍超出 150，再去掉 A 變 140。
+  it("doesn't fit -> the middle is replaced from the center outward by a single ellipsis, first and last kept", () => {
+    // After removing B, 170 still exceeds 150; removing A as well gives 140.
     expect(fitSegments(segs, widths, 150, 20)).toEqual({ shown: ["My notes", "…", "C", "D"], truncateLast: false });
     expect(fitSegments(segs, widths, 170, 20)).toEqual({ shown: ["My notes", "A", "…", "C", "D"], truncateLast: false });
   });
 
-  it("去到只剩首尾仍放不下 → 保留首尾並截最後一段尾端", () => {
+  it("down to only first and last and still doesn't fit -> keep first and last and truncate the tail of the last segment", () => {
     expect(fitSegments(segs, widths, 90, 20)).toEqual({ shown: ["My notes", "…", "D"], truncateLast: true });
   });
 
-  it("沒有中段可去（一或兩段）放不下 → 只截最後一段", () => {
+  it("no middle segment to drop (one or two segments) and doesn't fit -> only truncate the last segment", () => {
     expect(fitSegments(["a", "b"], [60, 30], 50, 20)).toEqual({ shown: ["a", "b"], truncateLast: true });
     expect(fitSegments(["a"], [60], 50, 20)).toEqual({ shown: ["a"], truncateLast: true });
   });
 
-  it("剛好放得下的邊界（含省略號寬）", () => {
+  it("boundary where it exactly fits (including the ellipsis width)", () => {
     expect(fitSegments(["a", "b", "c"], [10, 10, 10], 25, 5)).toEqual({ shown: ["a", "…", "c"], truncateLast: false });
     expect(fitSegments(["a", "b", "c"], [10, 10, 10], 30, 5)).toEqual({ shown: ["a", "b", "c"], truncateLast: false });
   });
@@ -89,18 +89,18 @@ describe("NoteLocation", () => {
     vi.useRealTimers();
   });
 
-  it("一顆按鈕，aria-label 是完整路徑", () => {
+  it("one button, aria-label is the full path", () => {
     renderLocation(note({ folderId: "pB" }));
     const button = screen.getByRole("button", { name: "Show in list: My notes › Projects › Sprint" });
     expect(button).toBeInTheDocument();
   });
 
-  it("共享：路徑後面接 @擁有者帳號", () => {
+  it("shared: the path is followed by @owner account", () => {
     renderLocation(note({ role: "viewer", ownerHandle: "bob" }));
     expect(screen.getByRole("button", { name: "Show in list: Shared with me · @bob" })).toBeInTheDocument();
   });
 
-  it("zh-TW 的 aria-label", async () => {
+  it("zh-TW aria-label", async () => {
     await i18n.changeLanguage("zh-TW");
     try {
       renderLocation(note());
@@ -110,9 +110,9 @@ describe("NoteLocation", () => {
     }
   });
 
-  it("點了：切到該 tab、把資料夾鏈展開", () => {
+  it("click: switches to that tab and expands the folder chain", () => {
     __resetCollapseForTests();
-    // 先寫成收合，驗證點擊會展開。
+    // First written as collapsed, to verify the click expands it.
     localStorage.setItem("sidebar.collapsed.folder:pA", "1");
     localStorage.setItem("sidebar.collapsed.folder:pB", "1");
     __resetCollapseForTests();
@@ -124,7 +124,7 @@ describe("NoteLocation", () => {
     expect(isCollapsed("folder:pB")).toBe(false);
   });
 
-  it("根層筆記：只切 tab，不碰展開狀態", () => {
+  it("root-level note: only switches tab, doesn't touch expand state", () => {
     renderLocation(note());
     fireEvent.click(screen.getByRole("button", { name: /^Show in list/ }));
     expect(showTab).toHaveBeenCalledWith("myNotes");
@@ -144,9 +144,9 @@ describe("NoteLocation", () => {
     return { row, link, scroll };
   }
 
-  it("清單出現後把那一列捲到中央，並把焦點放到它的連結（不再捲動）", () => {
+  it("after the list appears, scrolls that row to the center and puts focus on its link (no further scrolling)", () => {
     vi.useFakeTimers();
-    const hidden = makeRow(false); // 另一份看不見的副本排在前面
+    const hidden = makeRow(false); // another, invisible copy comes first
     const shown = makeRow(true);
     const focus = vi.spyOn(shown.link, "focus");
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
@@ -160,7 +160,7 @@ describe("NoteLocation", () => {
     shown.row.remove();
   });
 
-  it("找不到可見的那一列：最多輪詢 30 個影格就停", () => {
+  it("can't find a visible row: polls at most 30 frames then stops", () => {
     vi.useFakeTimers();
     const hidden = makeRow(false);
     const raf = vi.fn((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
@@ -173,7 +173,7 @@ describe("NoteLocation", () => {
     hidden.row.remove();
   });
 
-  it("群組筆記：點了把收合的群組區塊展開", () => {
+  it("group note: clicking expands a collapsed group block", () => {
     const groupId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     data.groups = [groupDto({ id: groupId, name: "Workshop A" }, adminRole())];
     localStorage.setItem(`sidebar.collapsed.group:${groupId}`, "1");
@@ -185,7 +185,7 @@ describe("NoteLocation", () => {
     expect(isCollapsed(`group:${groupId}`)).toBe(false);
   });
 
-  it("分隔符保留空白、按鈕裁切溢出，量測副本對輔助技術隱藏", () => {
+  it("separators keep their whitespace, the button clips overflow, the measuring copy is hidden from assistive technology", () => {
     renderLocation(note({ folderId: "pB" }));
     const button = screen.getByRole("button", { name: /^Show in list/ });
     expect(button).toHaveClass("overflow-hidden");
@@ -197,9 +197,9 @@ describe("NoteLocation", () => {
     expect(button.contains(measured)).toBe(false);
   });
 
-  describe("量到寬度時", () => {
+  describe("when width is measured", () => {
     beforeEach(() => {
-      // 每個字 10px、分隔符 5px、省略號 10px。
+      // Each character 10px, separator 5px, ellipsis 10px.
       vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
         let width = 0;
         if (this.hasAttribute("data-measure-sep")) width = 5;
@@ -212,8 +212,8 @@ describe("NoteLocation", () => {
       vi.restoreAllMocks();
     });
 
-    it("放不下：中間換成「…」，元件確實套用 fitSegments", () => {
-      data.width = 200; // 全長 80 + 85 + 65 = 230
+    it("doesn't fit: the middle becomes an ellipsis, the component really applies fitSegments", () => {
+      data.width = 200; // full length 80 + 85 + 65 = 230
       renderLocation(note({ folderId: "pB" }));
       const button = screen.getByRole("button", { name: /^Show in list/ });
       expect(within(button).getByText("…")).toBeInTheDocument();
@@ -222,7 +222,7 @@ describe("NoteLocation", () => {
       expect(button).toHaveAccessibleName("Show in list: My notes › Projects › Sprint");
     });
 
-    it("放得下：完整路徑、沒有「…」", () => {
+    it("fits: the full path, no ellipsis", () => {
       data.width = 400;
       renderLocation(note({ folderId: "pB" }));
       const button = screen.getByRole("button", { name: /^Show in list/ });
@@ -230,7 +230,7 @@ describe("NoteLocation", () => {
       expect(within(button).getByText("Projects")).toBeInTheDocument();
     });
 
-    it("第一段很長、首尾放不下：第一段最多佔一半並截尾，最後一段吃剩餘寬度", () => {
+    it("first segment very long, first and last don't fit: the first segment takes at most half and truncates its tail, the last segment takes the remaining width", () => {
       const groupId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
       data.groups = [groupDto({ id: groupId, name: "A very long group name" }, adminRole())];
       data.folders = [groupFolder({ id: "gf", name: "Sub", groupId })];

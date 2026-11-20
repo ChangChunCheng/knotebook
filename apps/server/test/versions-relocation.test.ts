@@ -1,4 +1,3 @@
-// 複製不帶版本、搬到群組與刪群組轉移清空版本（零版本、基底 NULL、計數 0），載入中的筆記重建狀態；搬移 × 切版交錯。
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -16,8 +15,8 @@ async function save(app: FastifyInstance, noteId: string, userId: string) {
   return app.inject({ method: "POST", url: `/api/notes/${noteId}/versions`, cookies: await cookieOf(userId), payload: {} });
 }
 
-describe("REST 形（沒有載入）", () => {
-  it("複製：副本零版本、計數 0、基底 NULL；來源原封", async () => {
+describe("REST form (not loaded)", () => {
+  it("copy: the copy has zero versions, count 0, base NULL; the source is untouched", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const src = await seedNote(db, { ownerId: u.id });
@@ -32,7 +31,7 @@ describe("REST 形（沒有載入）", () => {
     expect((await noteBase(db, src.id)).baseSeq).toBe(1);
   });
 
-  it("搬到群組：版本清空、計數 0、基底 NULL；GET 清單空、nextSeq 1", async () => {
+  it("move to a group: versions cleared, count 0, base NULL; GET list empty, nextSeq 1", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -47,7 +46,7 @@ describe("REST 形（沒有載入）", () => {
     expect(list).toMatchObject({ versions: [], current: { baseSeq: null, nextSeq: 1 }, nextBefore: null });
   });
 
-  it("刪群組・轉移：每篇都清空；全刪（delete 模式）走 CASCADE", async () => {
+  it("delete a group with transfer: every note is cleared; delete-all (delete mode) goes through CASCADE", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
@@ -73,12 +72,11 @@ describe("REST 形（沒有載入）", () => {
     expect(await db.select().from(noteVersions).where(eq(noteVersions.noteId, n2.id))).toEqual([]);
   });
 
-  it("#272 案 22（DB 面）：搬到群組與刪群組轉移同一句清待切三欄與基底 uuid；複製出的副本沒有待切、來源的待切不動", async () => {
+  it("#272 (DB level): move to a group and delete-group transfer clear the three pending columns and the base uuid in the same statement; a copy has no pending, the source's pending is untouched", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
     const pending = { versionPendingAt: new Date("2026-10-14T00:00:00.000Z"), versionPendingEditors: [{ user_id: u.id, agent_label: null }], versionPendingRefFingerprint: "ref" };
-    // 複製
     const src = await seedNote(db, { ownerId: u.id });
     await seedDoc(db, src.id, paraDoc(["來源"]));
     await db.update(notes).set(pending).where(eq(notes.id, src.id));
@@ -86,7 +84,6 @@ describe("REST 形（沒有載入）", () => {
     expect(copied.statusCode).toBe(201);
     expect(await pendingOf(db, copied.json().id as string)).toEqual(NO_PENDING);
     expect(await pendingOf(db, src.id)).toEqual({ at: pending.versionPendingAt, editors: pending.versionPendingEditors, ref: "ref" });
-    // 搬到群組（noteId 述詞）
     const n = await seedNote(db, { ownerId: u.id });
     await seedDoc(db, n.id, paraDoc(["個人時期"]));
     expect((await save(app, n.id, u.id)).statusCode).toBe(201);
@@ -95,7 +92,6 @@ describe("REST 形（沒有載入）", () => {
     expect((await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id } })).statusCode).toBe(200);
     expect(await pendingOf(db, n.id)).toEqual(NO_PENDING);
     expect(await baseVersionIdOf(db, n.id)).toBeNull();
-    // 刪群組・轉移（groupId 述詞）：n 已在 g 裡，另加一篇群組筆記
     const gn = await seedNote(db, { groupId: g.id });
     await seedDoc(db, gn.id, paraDoc(["群組時期"]));
     expect((await save(app, gn.id, u.id)).statusCode).toBe(201);
@@ -109,7 +105,7 @@ describe("REST 形（沒有載入）", () => {
   });
 });
 
-describe("載入中的筆記（真 collab）", () => {
+describe("loaded notes (real collab)", () => {
   async function setup(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
     const ctx = await buildCollabTestApp({ versionAutoWaitMs: 0, ...opts });
     const u = await ctx.createUser({ email: "a@example.com", password: PASSWORD });
@@ -121,7 +117,7 @@ describe("載入中的筆記（真 collab）", () => {
     return { ctx, u, note, session, g, move, unloaded };
   }
 
-  it("搬移後狀態重建（spaceKey 換成群組）；再改一次、離開、掃描 → 新的 v1；GET /versions/1 回的是新 v1", async () => {
+  it("state is rebuilt after a move (spaceKey becomes the group); edit again, leave, scan -> a new v1; GET /versions/1 returns the new v1", async () => {
     const s = await setup();
     const client = await seedContent(s.ctx, s.session, s.note.id, "個人時期的內容");
     const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
@@ -144,7 +140,7 @@ describe("載入中的筆記（真 collab）", () => {
     expect((await snap.json()).id).toBe(rows[0]!.id);
   });
 
-  it("沒有基底的筆記：搬移持列鎖時自動切版卡在等鎖 → 搬移 commit 後它因 spaceKey 對不上 rollback → 零版本", async () => {
+  it("note with no base: an automatic cut waits on the lock while the move holds the row lock -> after the move commits it rolls back because spaceKey no longer matches -> zero versions", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>(r => { release = r; });
     let paused: () => void = () => {};
@@ -159,7 +155,7 @@ describe("載入中的筆記（真 collab）", () => {
     const client = await seedContent(s.ctx, s.session, s.note.id, "沒存過的個人內容");
     const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
     const moving = s.move();
-    await pausedP; // 搬移交易已持該列 FOR UPDATE
+    await pausedP; // The move transaction already holds that row FOR UPDATE.
     const cut = s.ctx.collab.versions.cutIfDirty(s.note.id, live, { kind: "auto" });
     expect(await waitForBlockedOrSettled(s.ctx.db.$client, cut)).toBe("blocked");
     release();
@@ -168,10 +164,10 @@ describe("載入中的筆記（真 collab）", () => {
     client.disconnect();
     await s.unloaded();
     await s.ctx.collab.versions.scanDue();
-    expect(await versionsOf(s.ctx.db, s.note.id)).toEqual([]); // 重建時 loadFingerprint＝當下內容、搬移清了待切，掃描也不切
+    expect(await versionsOf(s.ctx.db, s.note.id)).toEqual([]); // loadFingerprint = the current content at rebuild and the move cleared pending, so the scan does not cut
   });
 
-  it("移進自動儲存關閉的群組 → autoEnabled=false、離開並掃描後零版本", async () => {
+  it("moved into a group with auto-save off -> autoEnabled=false, zero versions after leaving and scanning", async () => {
     const s = await setup();
     await s.ctx.db.update(groups).set({ autoVersions: false }).where(eq(groups.id, s.g.id));
     const client = await seedContent(s.ctx, s.session, s.note.id, "個人時期");
@@ -184,7 +180,7 @@ describe("載入中的筆記（真 collab）", () => {
     expect(await versionsOf(s.ctx.db, s.note.id)).toEqual([]);
   });
 
-  it("刪群組・轉移時群組筆記載入中 → 狀態重建（spaceKey 換成 u:<transferTo>、autoEnabled 依接收者個人開關＝false）；離開並掃描後零版本", async () => {
+  it("delete group with transfer while the group note is loaded -> state rebuilt (spaceKey becomes u:<transferTo>, autoEnabled follows the recipient's personal switch = false); zero versions after leaving and scanning", async () => {
     const s = await setup();
     await s.ctx.db.update(users).set({ autoVersions: false }).where(eq(users.id, s.u.id));
     const gn = await seedNote(s.ctx.db, { groupId: s.g.id });

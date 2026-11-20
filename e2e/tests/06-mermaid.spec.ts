@@ -3,73 +3,63 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, createNote, editorLocator, loginAs, waitForEditorSelection } from "./helpers.js";
 
 /**
- * issue #94：mermaid 圖表 block 的端到端覆蓋。
- *
- * 這支存在的理由是**單元測試在結構上測不到的那幾件事**：
- * 1. mermaid 本體在 jsdom 跑不起來（`render()` 要往 body 插隱藏 div 做文字量測，
- *    jsdom 沒有 layout／`getBBox`），所以單元測試一律把它 mock 掉——「圖到底畫不畫得出來」
- *    只有這裡驗得到。
- * 2. lazy chunk 真的載得進來（`import("mermaid")` 在正式 build 下切成獨立 chunk）。
- * 3. **貼上轉換**：```mermaid 的純文字貼上會不會變成圖。開發期用合成 `ClipboardEvent`
- *    驗過但不穩定（游標落點不同結果就不同），只有真瀏覽器＋真剪貼簿算數。
+ * issue #94: end-to-end coverage of the mermaid diagram block, for what unit tests structurally cannot see:
+ * 1. mermaid itself cannot run in jsdom (`render()` inserts a hidden div into body for text measurement, and jsdom has no
+ *    layout / `getBBox`), so unit tests always mock it; whether a diagram actually draws is checked only here.
+ * 2. The lazy chunk really loads (`import("mermaid")` is split into its own chunk in the production build).
+ * 3. **Paste conversion**: whether a plain-text paste of ```mermaid becomes a diagram. A synthetic `ClipboardEvent` was
+ *    unstable (the caret position changes the result); only a real browser with the real clipboard counts.
  */
 
 const DIAGRAM_SOURCE = "graph TD\n    A[Start] --> B[End]";
 const PASTED_SOURCE = "```mermaid\ngraph LR\n    P[Pasted] --> Q[Diagram]\n```\n";
 
-/** 只用來觀察「有沒有發出請求」的哨兵主機；`.invalid` 是保留 TLD，永遠解析不到。 */
+/** Sentinel host used only to observe whether a request is made; `.invalid` is a reserved TLD that never resolves. */
 const BEACON_HOST = "beacon.invalid";
 /**
- * 三條 directive 攻擊面寫在同一張圖裡：themeCSS 的 CSS 資源、htmlLabels 打開後的
- * `<img srcset>`、以及 `fontFamily` 夾帶宣告（實測 fontFamily 那條會連外）。
+ * Three directive attack surfaces in one diagram: CSS resources in themeCSS, `<img srcset>` once htmlLabels is on, and a
+ * `fontFamily` that smuggles in declarations (the fontFamily route does reach out).
  */
 const BEACON_DIAGRAM = [
   `%%{init: {"themeCSS": "* { background: url(http://${BEACON_HOST}/css.png) }", "htmlLabels": true, "fontFamily": "monospace; background-image: url(http://${BEACON_HOST}/ff.png)"}}%%`,
   "graph TD",
   `    A["Start<img src='#' srcset='http://${BEACON_HOST}/label.png 1x'>"] --> B[End]`,
 ].join("\n");
-/** 目前筆記裡第一個 mermaid 圖的 svg。mermaid 產出的 svg 帶 `aria-roledescription`。 */
 function diagramLocator(page: Page) {
   return editorLocator(page).locator("svg[aria-roledescription]").first();
 }
 
 test.describe.configure({ mode: "serial" });
 
-test("/diagram 插入 → 輸入原始碼 → 畫出圖 → 編輯鈕進原始碼、Esc 回到圖", async ({ page }) => {
+test("/diagram inserts a block -> source typed -> diagram drawn -> edit button opens source, Esc returns to the diagram", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid ${Date.now()}`);
 
   const editor = editorLocator(page);
   await editor.click();
 
-  // slash 選單（我們接管的那個：內建項全數保留＋「Diagram」）。
   await editor.pressSequentially("/diagram");
   await page.getByText("Flowcharts and diagrams with Mermaid").click();
 
-  // 空 block 的提示（`note.mermaid.empty`）＋ 尚未有圖。
   await expect(page.getByText("Click to add diagram source")).toBeVisible();
   await expect(diagramLocator(page)).toHaveCount(0);
 
-  // 點一下進編輯態，填原始碼，Esc 提交。
   await page.getByRole("button", { name: "Edit diagram source" }).click();
   const source = page.getByRole("textbox", { name: "Mermaid source" });
   await source.fill(DIAGRAM_SOURCE);
   await source.press("Escape");
 
-  // ⚠ 這一步是本檔的核心：mermaid chunk 真的被 lazy 載入、且圖真的畫出來了。
   await expect(diagramLocator(page)).toBeVisible({ timeout: 20_000 });
   await expect(diagramLocator(page)).toContainText("Start");
 
-  // 錯誤態不得外洩：mermaid 在 parse 失敗時會把一張「Syntax error in text」的圖注入
-  // `document.body`（開發期實測），`lib/mermaid.ts` 以 `suppressErrorRendering: true` 擋掉。
-  // 這裡順帶確認正常路徑下畫面上沒有那個字樣。
+  // No error state may leak: on a parse failure mermaid injects a "Syntax error in text" diagram into `document.body`;
+  // `lib/mermaid.ts` blocks that with `suppressErrorRendering: true`. This also checks the normal path shows no such text.
   await expect(page.getByText("Syntax error in text")).toHaveCount(0);
 
-  // 工具列的「編輯」鈕：進原始碼的第二個入口（第一個是直接點圖）。
-  // ⚠ **出路必須永遠在**。第一版把 block 換成 BlockNote 的 codeBlock，換過去就再也
-  // 回不來（使用者實測第一件事就撞到）——這條是那個死路的迴歸守門，出路是 Esc。
-  // `exact` 不可省：Playwright 的 name 預設是子字串比對，"Edit" 會同時命中點圖區的
-  // "Edit diagram source"。
+  // The toolbar "Edit" button is the second way into the source (the first is clicking the diagram). A way out must always
+  // exist: the first version swapped the block for BlockNote's codeBlock and there was no way back; this guards that dead
+  // end, and the way out is Esc.
+  // `exact` is required: Playwright's `name` defaults to substring, so "Edit" would also match "Edit diagram source".
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Mermaid source" })).toHaveValue(DIAGRAM_SOURCE);
   await expect(diagramLocator(page)).toHaveCount(0);
@@ -79,7 +69,7 @@ test("/diagram 插入 → 輸入原始碼 → 畫出圖 → 編輯鈕進原始�
   await expect(page.getByRole("textbox", { name: "Mermaid source" })).toHaveCount(0);
 });
 
-test("語法錯誤：顯示錯誤訊息與原始碼，且不注入 mermaid 自己的錯誤圖", async ({ page }) => {
+test("syntax error: shows the error message and the source, and does not inject mermaid's own error diagram", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid error ${Date.now()}`);
 
@@ -88,25 +78,24 @@ test("語法錯誤：顯示錯誤訊息與原始碼，且不注入 mermaid 自�
   await editor.pressSequentially("/diagram");
   await page.getByText("Flowcharts and diagrams with Mermaid").click();
 
+  // Error again: a redraw must not add another diagram
   await page.getByRole("button", { name: "Edit diagram source" }).click();
   const source = page.getByRole("textbox", { name: "Mermaid source" });
   await source.fill("graph TD\n    A --> ((((");
   await source.press("Escape");
 
-  // 我們自己的錯誤態：訊息 ＋ **可讀的原始碼**（沒有原始碼使用者就改不回來）。
-  // ⚠ 斷言必須鎖到 `<pre>`：mermaid 的錯誤訊息**本身也會回述原始碼**，用純文字選擇器
-  // 會同時命中 `role="alert"` 的訊息與 `<pre>`，撞上 Playwright 的 strict mode
-  // （第一次跑就是這樣紅的——產品是對的，選擇器不夠精確）。
+  // Our own error state: message plus a **readable source** (without it the user cannot fix the diagram).
+  // The assertion must target `<pre>`: mermaid's error message also echoes the source, so a plain text selector matches both
+  // the `role="alert"` message and the `<pre>` and trips Playwright's strict mode.
   await expect(page.getByRole("alert")).toContainText("Diagram error");
   await expect(editor.locator("pre")).toContainText("A --> ((((");
 
-  // ⚠ 迴歸守門：mermaid 的炸彈錯誤圖**不得**出現在頁面任何角落。
-  // 它是 `render()` 拋錯路徑注入 body 的，逃得出元件邊界；`lib/mermaid.ts` 靠
-  // `suppressErrorRendering: true` 讓 render 拋錯前先清掉暫時容器（#344 起不再先 parse）。
-  // 這條紅了代表那個設定被拿掉了。
+  // Regression guard: mermaid's bomb error diagram must not appear anywhere on the page. It is injected into body by the
+  // `render()` throw path and escapes the component boundary; `lib/mermaid.ts` relies on `suppressErrorRendering: true`
+  // so render clears its temporary container before throwing (no pre-parse since #344). A failure here means that setting
+  // was removed.
   await expectNoMermaidLeftovers(page);
 
-  // 再錯一次（重繪不得一次多一張）。
   await page.getByRole("button", { name: "Edit diagram source" }).click();
   await page.getByRole("textbox", { name: "Mermaid source" }).fill("graph TD\n    B --> ))))");
   await page.getByRole("textbox", { name: "Mermaid source" }).press("Escape");
@@ -114,10 +103,7 @@ test("語法錯誤：顯示錯誤訊息與原始碼，且不注入 mermaid 自�
   await expectNoMermaidLeftovers(page);
 });
 
-/**
- * mermaid 在 body 留下的東西：錯誤圖（文字「Syntax error in text」、`aria-roledescription="error"`）、
- * 它做文字量測用的暫時容器 `#d<id>`（`dmermaid-N`），以及任何不在編輯器裡的 mermaid svg。
- */
+/** Asserts mermaid left nothing behind: no error diagram (`aria-roledescription="error"`), no temporary measuring container (`#dmermaid-N`), and no mermaid svg outside the editor. */
 async function expectNoMermaidLeftovers(page: Page): Promise<void> {
   await expect(page.getByText("Syntax error in text")).toHaveCount(0);
   await expect(page.locator('svg[aria-roledescription="error"]')).toHaveCount(0);
@@ -139,8 +125,9 @@ async function pasteMarkdown(page: Page, markdown: string): Promise<void> {
 }
 
 /**
- * 目標頂端距「筆記捲動容器可見框底緣」多遠（筆記頁捲的是內層容器，不是視窗）。正值＝在底緣下方。
- * 從編輯器外面找起：並排欄 `.bn-block-column` 的 computed overflowY 也是 auto，但它不是捲動容器。
+ * Distance from the target's top to the bottom edge of the note scroll container's visible box (the note page scrolls an
+ * inner container, not the window); positive = below the edge. The search starts from outside the editor: a side-by-side
+ * column `.bn-block-column` also has computed overflowY auto but is not the scroll container.
  */
 async function gapBelowFold(target: Locator): Promise<number> {
   return target.evaluate((el) => {
@@ -151,7 +138,7 @@ async function gapBelowFold(target: Locator): Promise<number> {
   });
 }
 
-test("#344 長筆記：視窗附近（600px 內）的圖不必捲就先畫；更遠的捲到之前不畫（顯示佔位），捲到後畫出來", async ({ page }) => {
+test("#344 long note: diagrams within 600px of the viewport draw without scrolling; farther ones stay a placeholder until scrolled to, then draw", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid lazy ${Date.now()}`);
   const filler = (from: number, n: number) => Array.from({ length: n }, (_, i) => `Filler paragraph ${from + i}\n`);
@@ -169,7 +156,7 @@ test("#344 長筆記：視窗附近（600px 內）的圖不必捲就先畫；更
   const blocks = page.locator('[data-content-type="mermaid"]');
   await expect(blocks).toHaveCount(3, { timeout: 15_000 });
   await expect(editorLocator(page).getByText("Filler paragraph 84")).toBeVisible();
-  // 等存檔落地後重開：貼上後游標在底部、底部那張已經在視窗裡畫過了，要看的是「開筆記」的情境。
+  // Wait for the save to land, then reopen: after the paste the caret is at the bottom and the bottom diagram was already drawn in view; the case under test is opening a note.
   await page.waitForTimeout(1500);
   await page.reload();
 
@@ -179,15 +166,15 @@ test("#344 長筆記：視窗附近（600px 內）的圖不必捲就先畫；更
   await expect(top).toBeVisible({ timeout: 20_000 });
   await expect(top).toContainText("TopNode");
 
-  // 中間那張：在可見框底緣下方、但在 600px 預先範圍內——不捲動也要畫出來
-  // （守 `MermaidView` 的 `root` 用捲動容器：用預設的視窗當 root 時 rootMargin 不生效，這張會一直是佔位）。
+  // Middle diagram: below the visible box's bottom edge but inside the 600px pre-range, so it draws without scrolling
+  // (guards `MermaidView` using the scroll container as `root`: with the default viewport as root, rootMargin has no effect and this one would stay a placeholder).
   const nearGap = await gapBelowFold(near);
   expect(nearGap, "前提：中間那張在可見框之外").toBeGreaterThan(0);
   expect(nearGap, "前提：中間那張在 600px 預先範圍內").toBeLessThan(500);
   await expect(near.locator("svg[aria-roledescription]")).toHaveCount(1, { timeout: 20_000 });
   await expect(near.locator("svg[aria-roledescription]")).toContainText("NearNode");
 
-  // 最底那張在預先範圍之外：再給一段時間，仍不得被畫（只有佔位）。
+  // The bottom diagram is outside the pre-range: wait a while longer, it must still not be drawn (placeholder).
   expect(await gapBelowFold(far), "前提：最底那張在可見框下方 600px 以外").toBeGreaterThan(600);
   await page.waitForTimeout(1500);
   await expect(far.locator("svg[aria-roledescription]")).toHaveCount(0);
@@ -199,11 +186,11 @@ test("#344 長筆記：視窗附近（600px 內）的圖不必捲就先畫；更
   await expect(far.getByText("Rendering diagram…")).toHaveCount(0);
 });
 
-test("#344 並排欄裡的遠處圖：一樣捲到之前不畫（欄的 overflow-x:auto 不得被當成捲動根）", async ({ page }) => {
+test("#344 far diagram inside a side-by-side column: also not drawn until scrolled to (the column's overflow-x:auto must not be taken as the scroll root)", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid lazy columns ${Date.now()}`);
   const filler = (from: number, n: number) => Array.from({ length: n }, (_, i) => `Column filler ${from + i}\n`);
-  // 34-columns 的正規形：右欄一長串文字後面才是圖。
+  // The canonical shape from 34-columns: a long run of text in the right column, then the diagram.
   const column = (body: string) => ['<div data-kb-column style="flex:1">', "", body, "", "</div>"];
   await pasteMarkdown(
     page,
@@ -220,7 +207,7 @@ test("#344 並排欄裡的遠處圖：一樣捲到之前不畫（欄的 overflow
   const blocks = page.locator('[data-content-type="mermaid"]');
   await expect(blocks).toHaveCount(2, { timeout: 15_000 });
   const far = blocks.nth(1);
-  // 前提：那張圖真的在欄裡。
+  // Precondition: that diagram really is inside the column.
   expect(await far.evaluate((el) => el.closest(".bn-block-column") !== null), "前提：第二張圖在並排欄裡").toBe(true);
   await page.waitForTimeout(1500);
   await page.reload();
@@ -234,7 +221,7 @@ test("#344 並排欄裡的遠處圖：一樣捲到之前不畫（欄的 overflow
   await expect(far.locator("svg[aria-roledescription]")).toContainText("ColumnFarNode", { timeout: 20_000 });
 });
 
-test("#344 同一頁兩張相同原始碼的圖：都畫得出來、id 不衝突、箭頭與樣式指向自己那張", async ({ page }) => {
+test("#344 two diagrams with identical source on one page: both draw, ids do not collide, arrows and styles point at their own diagram", async ({ page }) => {
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid twins ${Date.now()}`);
   const twin = ["```mermaid", "graph LR\n    A[TwinStart] --> B[TwinEnd]", "```", ""].join("\n");
@@ -245,7 +232,7 @@ test("#344 同一頁兩張相同原始碼的圖：都畫得出來、id 不衝突
   await expect(svgs.nth(0)).toContainText("TwinStart");
   await expect(svgs.nth(1)).toContainText("TwinStart");
 
-  // 開筆記（第二張走快取命中＋改寫 id 的路徑）與切走再回來（兩張都走快取）各驗一次。
+  // Check once when opening the note (the second diagram takes the cache-hit path with id rewriting) and once after navigating away and back (both take the cache).
   for (const step of ["reload", "spa-return"] as const) {
     if (step === "reload") {
       await page.waitForTimeout(1500);
@@ -263,8 +250,8 @@ test("#344 同一頁兩張相同原始碼的圖：都畫得出來、id 不衝突
 
     const report = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll('[data-testid="note-editor"] svg[aria-roledescription]')) as SVGSVGElement[];
-      // 只看帶 `mermaid-N` 前綴的 id（`rewriteMermaidId` 負責的那一類）。flowchart 沒有別種 id；sankey／sequence／
-      // architecture 另有 mermaid 全域計數器產生、不帶前綴的 id，快取副本裡會重複——已知殘留，見 `lib/mermaid.ts`。
+      // Only ids with the `mermaid-N` prefix (the kind `rewriteMermaidId` handles). flowchart has no other kind of id; sankey /
+      // sequence / architecture also have prefix-less ids from mermaid's global counter, which duplicate in cached copies, a known leftover (see `lib/mermaid.ts`).
       const ids = Array.from(document.querySelectorAll("[id]"), (el) => el.id).filter((id) => /mermaid-\d/.test(id));
       return {
         rootIds: all.map((svg) => svg.id),
@@ -292,15 +279,14 @@ test("#344 同一頁兩張相同原始碼的圖：都畫得出來、id 不衝突
       expect(svg.markersInOwnSvg, `${step}：箭頭 marker 要指向自己那張圖裡的元素`).toBe(true);
       expect(svg.styleScopedToSelf, `${step}：樣式選擇器要指向自己那張圖`).toBe(true);
     }
-    // 兩張的節點樣式一致（都吃到了自己那份 style），且不是沒套樣式的預設黑。
     expect(report.perSvg[0]!.nodeFill).toBe(report.perSvg[1]!.nodeFill);
     expect(report.perSvg[0]!.nodeFill).not.toBe("rgb(0, 0, 0)");
   }
 });
 
-test("貼上 ```mermaid 純文字 → 自動變成圖", async ({ page, context }) => {
-  // 真剪貼簿需要權限；`clipboard-read` 給 `navigator.clipboard` 用，貼上本身是
-  // 鍵盤事件走瀏覽器原生路徑（跟使用者實際操作同一條）。
+test("pasting ```mermaid plain text automatically becomes a diagram", async ({ page, context }) => {
+  // The real clipboard needs permissions; `clipboard-read` is for `navigator.clipboard`, while the paste itself is a keyboard
+  // event on the browser's native path (the same path as real use).
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: E2E_ORIGIN });
 
   await loginAs(page, ADMIN.email, ADMIN.password);
@@ -312,18 +298,18 @@ test("貼上 ```mermaid 純文字 → 自動變成圖", async ({ page, context }
   await page.evaluate((text) => navigator.clipboard.writeText(text), PASTED_SOURCE);
   await page.keyboard.press("ControlOrMeta+v");
 
-  // `collab/mermaid-paste.ts`：貼上產生的是 `codeBlock{language:"mermaid"}`，
-  // 由我們在**貼上完成後**轉成 mermaid block（且只轉這次新插入的）。
+  // `collab/mermaid-paste.ts`: the paste yields `codeBlock{language:"mermaid"}`, which we convert to a mermaid block
+  // **after the paste completes** (and only the newly inserted one).
   await expect(diagramLocator(page)).toBeVisible({ timeout: 20_000 });
   await expect(diagramLocator(page)).toContainText("Pasted");
   await expect(editor.locator("pre code")).toHaveCount(0);
 });
 
-test("貼上帶 text/html 的 ```mermaid（從 GitHub README／AI 對話複製的形狀）→ 自動變成圖", async ({ page, context }) => {
-  // 為什麼要有這一條：`docs/diagrams.md` 主打的情境是「從 AI 對話或 GitHub README 複製」，
-  // 那種剪貼簿**同時帶 text/plain 與 text/html**，走的是 `collab/paste.ts` 的**預設 handler**
-  // 出口（`decideMarkdownPaste` 回 null），跟上面那條純文字走的是不同分支。單元測試用假的
-  // `defaultPasteHandler` 只能驗接線，真剪貼簿的形狀只有這裡驗得到。
+test("pasting ```mermaid with text/html (the shape copied from a GitHub README / AI chat) automatically becomes a diagram", async ({ page, context }) => {
+  // Why this exists: `docs/diagrams.md` centres on the "copy from an AI chat or a GitHub README" case. That clipboard carries
+  // **both text/plain and text/html** and takes the **default handler** exit in `collab/paste.ts` (`decideMarkdownPaste`
+  // returns null), a different branch from the plain-text test above. Unit tests with a fake `defaultPasteHandler` check only
+  // the wiring; the real clipboard shape needs this test.
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: E2E_ORIGIN });
 
   await loginAs(page, ADMIN.email, ADMIN.password);
@@ -350,12 +336,12 @@ test("貼上帶 text/html 的 ```mermaid（從 GitHub README／AI 對話複製�
   await expect(editor.locator("pre code")).toHaveCount(0);
 });
 
-test("圖表的 init directive 不能讓瀏覽器對外部主機發請求", async ({ page }) => {
-  // ⚠ 這條**只有真瀏覽器驗得到**，而且是其中最重要的一條：
-  // `mermaid.render()` 會把圖（含 `<style>`）插進活的 document 做文字量測，瀏覽器當場
-  // 套用 CSS 並發出請求——輸出端再怎麼清洗都**來不及**（實測：渲染後完全不把 SVG
-  // 插進頁面，themeCSS 裡的 url() 照樣命中）。擋得住的是 `lib/mermaid.ts` 的 `secure`
-  // 鎖定清單：themeCSS／htmlLabels／flowchart 不接受圖裡的 directive 覆寫。
+test("a diagram's init directive cannot make the browser request an external host", async ({ page }) => {
+  // Needs a real browser, and is the most important of these: `mermaid.render()` inserts the diagram (including `<style>`)
+  // into the live document for text measurement, so the browser applies the CSS and fires requests on the spot; sanitizing
+  // the output is too late (even if the SVG is never inserted into the page afterwards, a url() in themeCSS still hits).
+  // What blocks it is the `secure` lock list in `lib/mermaid.ts`: themeCSS / htmlLabels / flowchart do not accept overrides
+  // from a directive inside the diagram.
   const requested: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes(BEACON_HOST)) requested.push(request.url());
@@ -374,18 +360,18 @@ test("圖表的 init directive 不能讓瀏覽器對外部主機發請求", asyn
   await source.fill(BEACON_DIAGRAM);
   await source.press("Escape");
 
-  // 圖照樣要畫得出來（directive 被忽略，不是整張圖失敗）。
+  // The diagram must still draw: the directive is ignored, not the whole diagram
   await expect(diagramLocator(page)).toBeVisible({ timeout: 20_000 });
   await expect(diagramLocator(page)).toContainText("Start");
 
   expect(requested, `不該對 ${BEACON_HOST} 發任何請求`).toEqual([]);
 });
 
-test("合法的多行 label 照常畫出來（不得被圖片守衛誤擋）", async ({ page }) => {
-  // mermaid 的 lexer 會把雙引號字串裡的換行轉成 `<br/>`，所以這是**合法**語法。
-  // 前一版在 render 之前解析原始碼的預檢會把它誤判成「解不出來」而擋掉，並且顯示
-  // 「這張圖引用了外部圖片」——一張根本沒有 img 的圖。改成攔
-  // `new Image()` 之後，判斷只看實際要發出去的 URL，這一類誤擋整個消失。
+test("a valid multi-line label still draws (not blocked by mistake by the image guard)", async ({ page }) => {
+  // mermaid's lexer turns newlines inside double-quoted strings into `<br/>`, so this is **valid** syntax. An earlier version
+  // pre-parsed the source before render, misjudged this as unparsable and blocked it with an external-image error for a
+  // diagram that has no img. Since the guard moved to intercepting `new Image()`, the decision looks only at the URL that is
+  // actually about to be requested, and this class of false block is gone.
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid multiline label ${Date.now()}`);
 
@@ -403,10 +389,9 @@ test("合法的多行 label 照常畫出來（不得被圖片守衛誤擋）", a
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("click X href 的圖照常畫出來，連結保留", async ({ page }) => {
-  // 曾經有一版把 SVG `<a href>` 當成外部資源擋掉，於是任何有 `click X href`
-  // 的圖**整張畫不出來**、還顯示一段對不上的錯誤訊息。從 GitHub README 貼進來的圖很常
-  // 帶這一行，這條守著它。
+test("a diagram with a click X href line still draws, and the link is kept", async ({ page }) => {
+  // An earlier version blocked SVG `<a href>` as an external resource, so any diagram with a `click X href` failed to draw
+  // at all and showed a mismatched error. Diagrams pasted from a GitHub README often carry this line; this guards that.
   await loginAs(page, ADMIN.email, ADMIN.password);
   await createNote(page, `E2E mermaid click href ${Date.now()}`);
 

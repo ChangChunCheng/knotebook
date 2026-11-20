@@ -24,14 +24,13 @@ function Probe() {
 
 interface InlineScriptResult {
   dark: boolean;
-  /** 屬性字面值；防閃腳本對非法值不設屬性，此時為 null。 */
   accent: string | null;
 }
 
-/** 把 index.html <head> 裡那段 pre-hydration 腳本抓出來，在 jsdom 裡以指定的
- * storage 值與 OS 偏好執行，回傳它對 dark class 與 data-accent 屬性的判斷。
- * accent／theme 兩段防閃邏輯同擠在同一個 <script> 內（見 index.html 註解），
- * 這裡抓的是整段第一組 <script>...</script> 的原始碼。 */
+/** Grabs the pre-hydration script from index.html's <head> and runs it in jsdom with the given
+ * storage values and OS preference, returning its decision about the dark class and the data-accent attribute.
+ * The accent and theme flash-prevention logic share the same <script> (see the comment in index.html),
+ * and what is grabbed here is the source of the whole first <script>...</script>. */
 function runInlineThemeScript(
   stored: string | null,
   prefersDark: boolean,
@@ -62,9 +61,9 @@ function runInlineThemeScript(
   }
 }
 
-/** 同樣的輸入交給真正的 ThemeProvider，回傳它掛載後對 dark class 與
- * data-accent 屬性的判斷。ThemeProvider 恆設 data-accent（indigo 也設）——與
- * 防閃腳本的「非法值不設屬性」不對稱，比對時不得直接比字面值，見呼叫端。 */
+/** Hands the same input to the real ThemeProvider and returns its decision about the dark class and
+ * the data-accent attribute after mounting. ThemeProvider always sets data-accent (indigo too) - asymmetric with the
+ * flash-prevention script's "don't set the attribute for an invalid value", so the literal values must not be compared directly; see the callers. */
 function renderThemeProvider(
   stored: string | null,
   prefersDark: boolean,
@@ -170,8 +169,8 @@ describe("ThemeProvider / useTheme", () => {
   });
 
   it("updates resolvedTheme when the OS theme flips while theme === 'system'", () => {
-    // jsdom 沒有實作 matchMedia，補一個最小假的 MediaQueryList：可變的
-    // `matches`、記錄 change listener，讓測試能手動觸發「OS 切換深色模式」。
+    // jsdom doesn't implement matchMedia; add a minimal fake MediaQueryList: a mutable
+    // `matches`, recording change listeners so tests can manually trigger "the OS switches to dark mode".
     let changeListener: (() => void) | undefined;
     const fakeMql = {
       matches: false,
@@ -183,7 +182,7 @@ describe("ThemeProvider / useTheme", () => {
       },
     };
     const originalMatchMedia = window.matchMedia;
-    // 只有深淺查詢用這個假的；版面寬度的查詢（手機寬度另有 theme-color）一律不成立。
+    // Only the light/dark query uses this fake; layout-width queries (phone width has its own theme-color) never match.
     const wide = { matches: false, addEventListener: () => {}, removeEventListener: () => {} };
     window.matchMedia = ((query: string) => (query.includes("prefers-color-scheme") ? fakeMql : wide)) as unknown as typeof window.matchMedia;
     const metas = ["light", "dark"].map((scheme) => {
@@ -202,13 +201,11 @@ describe("ThemeProvider / useTheme", () => {
         </ThemeProvider>,
       );
 
-      // 初始：theme='system'、OS 回報淺色 → resolvedTheme='light'、無 .dark。
       expect(screen.getByTestId("theme")).toHaveTextContent("system");
       expect(screen.getByTestId("resolved")).toHaveTextContent("light");
       expect(document.documentElement.classList.contains("dark")).toBe(false);
       for (const meta of metas) expect(meta.getAttribute("content")).toBe(THEME_COLOR.light);
 
-      // 模擬 OS 切到深色：flip matches 後觸發 change listener（theme 本身沒變）。
       act(() => {
         fakeMql.matches = true;
         changeListener?.();
@@ -217,10 +214,10 @@ describe("ThemeProvider / useTheme", () => {
       expect(screen.getByTestId("theme")).toHaveTextContent("system");
       expect(screen.getByTestId("resolved")).toHaveTextContent("dark");
       expect(document.documentElement.classList.contains("dark")).toBe(true);
-      // theme 沒變、只有 OS 翻轉：theme-color meta 也得跟著（不能只在 theme 改變時才同步）。
       for (const meta of metas) expect(meta.getAttribute("content")).toBe(THEME_COLOR.dark);
 
       act(() => {
+        // Only the OS flipped, theme unchanged: the theme-color meta must follow this too, not only theme changes.
         fakeMql.matches = false;
         changeListener?.();
       });
@@ -236,21 +233,21 @@ describe("ThemeProvider / useTheme", () => {
       useTheme();
       return null;
     }
-    // React 18+ 在開發模式下對未捕捉的 render error 會多印一次 console.error，
-    // 這裡只關心會 throw，用 expect(...).toThrow 已經足夠不需要額外消音。
+    // React 18+ in development prints console.error one extra time for an uncaught render error;
+    // all that matters here is that it throws, and expect(...).toThrow is enough without extra silencing.
     expect(() => render(<Bare />)).toThrow(/ThemeProvider/);
   });
 
   /**
-   * 首屏的深色底色由 `index.html` 內嵌的同步腳本負責（React 掛載前就要打上 class，
-   * 否則會閃一下白底）。那段腳本無法 import 本檔的常數，只能複製字面值。
+   * The first-paint dark background is handled by the synchronous script inlined in `index.html` (the class must be put on before React mounts,
+   * otherwise there is a white flash). That script can't import this file's constants, so it can only copy the literal values.
    *
-   * 這條把腳本真的抓出來執行，逐個 storage 值與 `ThemeProvider` 的結果對照：腳本一旦
-   * 與 `readStoredTheme` + `resolveTheme` 不等價（例如把壞值當成淺色而不是 system），
-   * 那些使用者的首屏就會一路閃到 React 掛載為止。
+   * This case really extracts the script and runs it, comparing against `ThemeProvider`'s result for each storage value: once the script
+   * stops being equivalent to `readStoredTheme` + `resolveTheme` (e.g. treating a bad value as light rather than system),
+   * those users' first paint would flash until React mounts.
    */
   it.each([null, "dark", "light", "system", "", "Dark", "sepia", "auto"])(
-    "pre-hydration 腳本對 storage 值 %o 的判斷與 ThemeProvider 等價（OS 深色與淺色各驗一次）",
+    "pre-hydration script's decision for storage value %o is equivalent to ThemeProvider (checked once each with OS dark and light)",
     (stored) => {
       for (const prefersDark of [false, true]) {
         expect(runInlineThemeScript(stored, prefersDark).dark).toBe(
@@ -261,13 +258,13 @@ describe("ThemeProvider / useTheme", () => {
   );
 
   /**
-   * 主題色（accent）防閃的等價案：防閃腳本對非法值「不設屬性」（getAttribute
-   * 回 null），ThemeProvider 恆設屬性（indigo 也設）——兩者呈現同色是靠
-   * index.css 的 :root/:root.dark 基底 fallback＝indigo 值撐住，不是屬性字面相等。
-   * 唯一合法的比對法：兩邊都正規化成「屬性值 ?? "indigo"」再比較。
+   * Equivalence case for accent flash prevention: for an invalid value the script "doesn't set the attribute" (getAttribute
+   * returns null), while ThemeProvider always sets it (indigo too) - the two show the same colour because the
+   * `:root` / `:root.dark` base fallback in index.css = the indigo value, not because the attribute literals are equal.
+   * Compare by normalizing both sides to `attribute value ?? "indigo"`.
    */
   it.each([null, "", "indigo", "blue", "teal", "sage", "rose", "gold", "Teal", "cyan"])(
-    "pre-hydration 腳本對 accent storage 值 %o 的判斷與 ThemeProvider 等價（正規化後比對）",
+    "pre-hydration script's decision for accent storage value %o is equivalent to ThemeProvider (compared after normalizing)",
     (storedAccent) => {
       const scriptResult = runInlineThemeScript(null, false, storedAccent);
       const providerResult = renderThemeProvider(null, false, storedAccent);
@@ -276,13 +273,13 @@ describe("ThemeProvider / useTheme", () => {
     },
   );
 
-  it("index.html 的 pre-hydration 腳本與 theme.tsx 用同一組 storage key 與 class", () => {
-    // vitest 下的 `import.meta.url` 是 vite 的 http URL，不能餵給 fs——用 cwd
-    // （跑 test 時一律是 apps/web）組路徑。
+  it("the pre-hydration script in index.html and theme.tsx use the same storage key and class", () => {
+    // Under vitest `import.meta.url` is vite's http URL and can't be fed to fs - build the path from cwd
+    // (always apps/web when running tests).
     const html = readFileSync(`${process.cwd()}/index.html`, "utf8");
     const head = html.slice(html.indexOf("<head>"), html.indexOf("</head>"));
-    // 只取 script 本體：head 裡另有 `<meta name="theme-color" media="(prefers-color-scheme: dark)">`（#336），
-    // 對整段 head 比對會讓下面的 "prefers-color-scheme: dark" 斷言在 script 失去它時照樣綠。
+    // Take only the script body: the head also has `<meta name="theme-color" media="(prefers-color-scheme: dark)">` (#336),
+    // and matching against the whole head would let the "prefers-color-scheme: dark" assertion below stay green even after the script loses it.
     const inlineScript = head.slice(head.indexOf("<script>"), head.indexOf("</script>"));
 
     expect(inlineScript).toContain(STORAGE_KEY);
@@ -347,10 +344,10 @@ describe("ThemeProvider / useTheme", () => {
 });
 
 /**
- * #336：<meta name="theme-color"> 跟 app 內選的主題，而不是只跟裝置設定
- * （index.html 的兩個 meta 靠 media 查詢，只認 OS）。測試自己在 head 建兩個 meta，測完清掉。
+ * #336: <meta name="theme-color"> follows the theme chosen inside the app, not only the device setting
+ * (the two metas in index.html rely on a media query and only recognise the OS). The test creates two metas in the head itself and cleans them up afterwards.
  */
-describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
+describe("ThemeProvider syncs <meta name=\"theme-color\">", () => {
   let lightMeta: HTMLMetaElement;
   let darkMeta: HTMLMetaElement;
   const originalMatchMedia = window.matchMedia;
@@ -398,17 +395,17 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     document.documentElement.removeAttribute("data-accent");
   });
 
-  it("THEME_COLOR 是淺 #f3f4f6／深 #0e1013", () => {
+  it("THEME_COLOR is light #f3f4f6 / dark #0e1013", () => {
     expect(THEME_COLOR).toEqual({ light: "#f3f4f6", dark: "#0e1013" });
   });
 
-  it("PHONE_THEME_COLOR 是 index.css 卡片色 --card 註解的 hex（淺／深）", () => {
+  it("PHONE_THEME_COLOR is the hex in the index.css card colour --card comment (light / dark)", () => {
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8");
     const cards = [...css.matchAll(/--card:\s*[^;]+;\s*\/\*\s*(#[0-9a-f]{6})/gi)].map((m) => m[1]!.toLowerCase());
     expect(cards.slice(0, 2)).toEqual([PHONE_THEME_COLOR.light, PHONE_THEME_COLOR.dark]);
   });
 
-  it("手機寬度（< 640）、卡片底的頁面（清單與筆記、公開頁）掛著時：兩個 meta 是卡片色；轉到 640 起換回頁底色，再轉回來又是卡片色", () => {
+  it("phone width (< 640) with a card-background page (list and note, public page) mounted: both metas are the card colour; from 640 up they switch back to the page-background colour, and back again to the card colour", () => {
     const tier = stubLayoutTier("phone", (query) => query.includes("dark"));
     function CardPage() {
       useCardPage();
@@ -434,7 +431,7 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     }
   });
 
-  it("手機寬度、但不是卡片底的頁面（登入、註冊、授權、載入中）：照舊是頁底色；卡片底的頁面掛上才換、卸下就換回", () => {
+  it("phone width but not a card-background page (sign-in, register, authorize, loading): still the page-background colour; it switches when a card-background page mounts and back when it unmounts", () => {
     stubLayoutTier("phone", (query) => query.includes("dark"));
     function CardPage() {
       useCardPage();
@@ -459,21 +456,21 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     }
   });
 
-  it("系統淺色、app 選深色：兩個 meta 都是深色頁底色", () => {
+  it("system light, app dark: both metas are the dark page-background colour", () => {
     fakeSystem(false);
     window.localStorage.setItem(STORAGE_KEY, "dark");
     renderProvider();
     expectBoth(THEME_COLOR.dark);
   });
 
-  it("系統深色、app 選淺色：兩個 meta 都是淺色頁底色", () => {
+  it("system dark, app light: both metas are the light page-background colour", () => {
     fakeSystem(true);
     window.localStorage.setItem(STORAGE_KEY, "light");
     renderProvider();
     expectBoth(THEME_COLOR.light);
   });
 
-  it("app 選 system：跟著系統（深色系統→深色，淺色系統→淺色）", () => {
+  it("app chooses system: follows the system (dark system -> dark, light system -> light)", () => {
     fakeSystem(true);
     window.localStorage.setItem(STORAGE_KEY, "system");
     const dark = renderProvider();
@@ -485,7 +482,7 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     expectBoth(THEME_COLOR.light);
   });
 
-  it("主題切換後兩個 meta 都跟著更新（淺→深→淺）", () => {
+  it("after a theme switch both metas follow (light -> dark -> light)", () => {
     fakeSystem(false);
     renderProvider();
     expectBoth(THEME_COLOR.light);
@@ -501,18 +498,18 @@ describe("ThemeProvider 同步 <meta name=\"theme-color\">", () => {
     expectBoth(THEME_COLOR.light);
   });
 
-  it("head 裡沒有 theme-color meta 時不拋錯", () => {
+  it("doesn't throw when the head has no theme-color meta", () => {
     lightMeta.remove();
     darkMeta.remove();
     fakeSystem(false);
     window.localStorage.setItem(STORAGE_KEY, "dark");
     expect(() => renderProvider()).not.toThrow();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    // 放回去，讓 afterEach 的 remove 對已卸下的節點也是安全的
+    // Put it back so afterEach's remove is also safe on an already-removed node
     document.head.append(lightMeta, darkMeta);
   });
 
-  it("只動 theme-color：同在 head 的其他 meta 不受影響", () => {
+  it("only touches theme-color: other metas in the head are unaffected", () => {
     const other = document.createElement("meta");
     other.name = "description";
     other.content = "keep-me";

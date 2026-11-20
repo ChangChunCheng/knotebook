@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 
 describe("EditingRuntime", () => {
-  it("installGlobals 後 window/document 與三個 rect polyfill 存在，document.URL 是 baseUrl，navigator 仍是 Node 內建的 getter", () => {
+  it("after installGlobals, window/document and the three rect polyfills exist, document.URL is baseUrl, and navigator is still Node's built-in getter", () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
     rt.installGlobals();
     expect(typeof globalThis.document.createElement).toBe("function");
@@ -12,18 +12,18 @@ describe("EditingRuntime", () => {
     expect(typeof Range.prototype.getBoundingClientRect).toBe("function");
     expect(typeof Range.prototype.getClientRects).toBe("function");
     const d = Object.getOwnPropertyDescriptor(globalThis, "navigator")!;
-    expect(typeof d.get).toBe("function"); // Node ≥ 21 的 getter-only 內建，沒被覆寫成 jsdom 的值
+    expect(typeof d.get).toBe("function"); // Node >= 21 getter-only built-in, not overridden with jsdom's value
     expect(d.value).toBeUndefined();
   });
 
-  it("installGlobals 之後 new Anthropic() 不 throw（upstream.ts 的 dangerouslyAllowBrowser 守住瀏覽器嗅探）", () => {
+  it("after installGlobals, new Anthropic() does not throw (dangerouslyAllowBrowser in upstream.ts blocks the browser sniffing)", () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
     rt.installGlobals();
-    expect(() => new Anthropic({ apiKey: "x" })).toThrow(/browser-like environment/); // 沒有旗標會炸：釘住嗅探確實被觸發
+    expect(() => new Anthropic({ apiKey: "x" })).toThrow(/browser-like environment/); // without the flag it throws: pins that the sniffing is really triggered
     expect(() => new Anthropic({ apiKey: "x", dangerouslyAllowBrowser: true })).not.toThrow();
   });
 
-  it("假計數器：第 rebuildEvery 次 mount 標記重建；有 in-flight 時延後，歸零才重建", async () => {
+  it("fake counter: the rebuildEvery-th mount marks a rebuild; deferred while there is an in-flight lease, rebuilt once it reaches zero", async () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 2 });
     rt.installGlobals();
     const a = await rt.acquire();
@@ -36,7 +36,7 @@ describe("EditingRuntime", () => {
     expect(rt.rebuildPending).toBe(false);
   });
 
-  it("旗標設下後新 session 被擋 → 排空 → 重建 → 放行", async () => {
+  it("after the flag is set, new sessions are blocked -> drain -> rebuild -> let through", async () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 1 });
     rt.installGlobals();
     const a = await rt.acquire();
@@ -55,7 +55,7 @@ describe("EditingRuntime", () => {
     b.release();
   });
 
-  it("heap 增量超過上限也標記重建（注入 heapUsed 讀法）", async () => {
+  it("a heap increase over the limit also marks a rebuild (heapUsed reader injected)", async () => {
     let heap = 0;
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 1_000, heapGrowthLimit: 10, readHeapUsed: () => heap });
     rt.installGlobals();
@@ -66,10 +66,10 @@ describe("EditingRuntime", () => {
     expect(rt.rebuilds).toBe(1);
   });
 
-  // 兩個 lease 同時持有時，先釋放的那個不能觸發重建——它一走就會把另一個還在用的 window 關掉。
-  // 只有等 in-flight 真的歸零（兩個都 release）才可以重建。把 runtime.ts 的
-  // `|| this.inFlightCount > 0` 拿掉會讓這個案子在 a.release() 那一步就提早重建，本案變紅（已手動驗證）。
-  it("兩個 lease 同時持有時，其中一個 release 不會提前重建；全部釋放才重建", async () => {
+  // When two leases are held, the one released first must not trigger the rebuild: once it leaves it would close the window the other is still
+  // using. Rebuild only when in-flight really reaches zero (both released). Removing `|| this.inFlightCount > 0` in runtime.ts would
+  // rebuild early at the a.release() step and fail this case.
+  it("with two leases held, releasing one doesn't rebuild early; rebuild only after all are released", async () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 1 });
     rt.installGlobals();
     const a = await rt.acquire();
@@ -84,39 +84,39 @@ describe("EditingRuntime", () => {
     expect(rt.rebuildPending).toBe(false);
   });
 
-  // 重建不能只是計數器跳——window 真的要換掉、舊的真的要關閉，否則 mount 造成的記憶體殘留
-  // 完全不會回收（這個模組存在的唯一理由）。把 runtime.ts 的 installGlobals()／window.close() 拿掉
-  // 會讓本案變紅（已手動驗證）。
-  it("重建真的換了 window、真的關閉了舊的 window（不只是計數器跳）", async () => {
+  // A rebuild is not just the counter jumping: the window must really be replaced and the old one really closed, otherwise the memory left
+  // behind by mounts is never reclaimed (the point of this module). Removing installGlobals()/window.close() in runtime.ts would fail
+  // this case.
+  it("a rebuild really swaps the window and really closes the old one (not just the counter)", async () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 1 });
     rt.installGlobals();
     const beforeDoc = globalThis.document;
     const beforeWindow = beforeDoc.defaultView!;
     const a = await rt.acquire();
     rt.noteMount();
-    a.release(); // 觸發重建
+    a.release();
     expect(globalThis.document).not.toBe(beforeDoc);
-    // jsdom 的 window.close() 不會設 `closed` 屬性，但會把 window.document 拆掉——用它釘住「真的關了」。
+    // jsdom's window.close() doesn't set `closed` but does tear down window.document: that pins "really closed".
     expect(beforeWindow.document).toBeUndefined();
   });
 
-  // mountsSinceRebuild 沒歸零的話，重建後立刻再 mount 一次就會因為殘留計數再度達標而誤判 pending。
-  // 把 runtime.ts 的 `this.mountsSinceRebuild = 0` 拿掉會讓本案變紅（已手動驗證）。
-  it("重建後 mountsSinceRebuild 歸零：緊接著再 mount 一次不會又觸發 pending", async () => {
+  // If mountsSinceRebuild weren't reset, mounting again right after a rebuild would reach the threshold again from the leftover count and
+  // wrongly judge pending. Removing `this.mountsSinceRebuild = 0` in runtime.ts would fail this case.
+  it("after a rebuild mountsSinceRebuild is reset: mounting again right away doesn't trigger pending again", async () => {
     const rt = new EditingRuntime({ baseUrl: "http://localhost/", rebuildEvery: 2 });
     rt.installGlobals();
     const a = await rt.acquire();
     rt.noteMount();
     rt.noteMount();
-    a.release(); // 觸發重建
+    a.release();
     expect(rt.rebuildPending).toBe(false);
-    rt.noteMount(); // 重建後的第一次 mount
+    rt.noteMount();
     expect(rt.rebuildPending).toBe(false);
   });
 
-  // installGlobals() 在重建路徑 throw（這裡借用 readHeapUsed 的注入點模擬）時，pending 與
-  // waiters 仍要放掉，否則後面所有 acquire() 永遠不會 settle（整台 server 的 AI 編輯靜默停擺）。
-  it("installGlobals() 在重建時 throw 不會造成永久 hang：pending 清空、waiters 照樣放行、錯誤有留痕", async () => {
+  // When installGlobals() throws on the rebuild path (simulated here via the readHeapUsed injection point), pending and waiters must still
+  // be released, otherwise every later acquire() never settles (AI editing across the whole server stalls silently).
+  it("installGlobals() throwing during a rebuild doesn't hang forever: pending is cleared, waiters are let through, the error is logged", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       let throwOnRead = false;
@@ -131,18 +131,18 @@ describe("EditingRuntime", () => {
       rt.installGlobals();
       const a = await rt.acquire();
       rt.noteMount();
-      throwOnRead = true; // 下一次 installGlobals() 內部的 readHeapUsed() 會 throw
-      a.release(); // 觸發 maybeRebuild()；不應該同步 throw 出來
-      expect(rt.rebuildPending).toBe(false); // 沒有卡在 pending
-      expect(rt.rebuilds).toBe(0); // 沒有假裝重建成功
-      expect(consoleError).toHaveBeenCalledTimes(1); // 錯誤有留痕，不是被靜默吞掉
+      throwOnRead = true;
+      a.release();
+      expect(rt.rebuildPending).toBe(false);
+      expect(rt.rebuilds).toBe(0);
+      expect(consoleError).toHaveBeenCalledTimes(1);
       const raced = await Promise.race([
         rt.acquire().then(() => "acquired" as const),
         new Promise<"timeout">(resolve => setTimeout(() => resolve("timeout"), 200)),
       ]);
-      expect(raced).toBe("acquired"); // 沒有永久卡住之後的 acquire()
+      expect(raced).toBe("acquired");
     } finally {
-      consoleError.mockRestore(); // 任一斷言先炸也要還原 console.error，不然後續測試的錯誤輸出會被吃掉
+      consoleError.mockRestore(); // restore console.error even if an assertion fails first, otherwise later tests' error output is swallowed
     }
   });
 });

@@ -22,7 +22,6 @@ function indexHtml(entry: string): string {
   </head><body><div id="root"></div></body></html>`;
 }
 
-/** 一份假的 document：只需要 script 查詢、visibilityState 與事件。 */
 function fakeDocument(entry: string | null) {
   const target = new EventTarget();
   const doc = document.implementation.createHTMLDocument("t");
@@ -49,22 +48,21 @@ function fakeDocument(entry: string | null) {
   };
 }
 
-/** 讓 fetchHtml 的 promise 鏈跑完。 */
 async function flush() {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
-describe("entryScriptFromHtml／currentEntryScript", () => {
-  it("從 vite build 的 index.html 抓出入口 script，不會抓到 modulepreload 或 CSS", () => {
+describe("entryScriptFromHtml / currentEntryScript", () => {
+  it("extracts the entry script from a vite-built index.html, without picking modulepreload or CSS", () => {
     expect(entryScriptFromHtml(indexHtml(NEWER))).toBe(NEWER);
   });
 
-  it("HTML 裡沒有 /assets/index-*.js（錯誤頁、dev server）→ null", () => {
+  it("no /assets/index-*.js in the HTML (error page, dev server) -> null", () => {
     expect(entryScriptFromHtml("<html><body>502 Bad Gateway</body></html>")).toBeNull();
     expect(entryScriptFromHtml('<script type="module" src="/src/main.tsx"></script>')).toBeNull();
   });
 
-  it("目前頁面：讀 src 屬性原文", () => {
+  it("current page: reads the raw src attribute", () => {
     expect(currentEntryScript(fakeDocument(CURRENT).doc)).toBe(CURRENT);
     expect(currentEntryScript(fakeDocument("/src/main.tsx").doc)).toBeNull();
     expect(currentEntryScript(fakeDocument(null).doc)).toBeNull();
@@ -87,11 +85,11 @@ describe("installUpdateCheck", () => {
     return { page, fetchHtml, onUpdate, uninstall };
   }
 
-  it("間隔是 30 分鐘", () => {
+  it("the interval is 30 minutes", () => {
     expect(UPDATE_CHECK_INTERVAL_MS).toBe(30 * 60 * 1000);
   });
 
-  it("載入後未滿 30 分鐘回到前景：不抓", async () => {
+  it("returning to the foreground before 30 minutes after load: does not fetch", async () => {
     const { page, fetchHtml } = setup(indexHtml(NEWER));
     clock += UPDATE_CHECK_INTERVAL_MS - 1;
     page.show();
@@ -99,7 +97,7 @@ describe("installUpdateCheck", () => {
     expect(fetchHtml).not.toHaveBeenCalled();
   });
 
-  it("滿 30 分鐘回到前景、入口 script 不同：提示一次", async () => {
+  it("returning to the foreground after 30 minutes with a different entry script: prompts once", async () => {
     const { page, fetchHtml, onUpdate } = setup(indexHtml(NEWER));
     clock += UPDATE_CHECK_INTERVAL_MS;
     page.show();
@@ -108,7 +106,7 @@ describe("installUpdateCheck", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("入口 script 相同：不提示，且下一次也要再等 30 分鐘", async () => {
+  it("same entry script: no prompt, and the next check waits another 30 minutes", async () => {
     const { page, fetchHtml, onUpdate } = setup(indexHtml(CURRENT));
     clock += UPDATE_CHECK_INTERVAL_MS;
     page.show();
@@ -127,7 +125,7 @@ describe("installUpdateCheck", () => {
     expect(fetchHtml).toHaveBeenCalledTimes(2);
   });
 
-  it("切到背景（hidden）不抓", async () => {
+  it("going to the background (hidden): does not fetch", async () => {
     const { page, fetchHtml } = setup(indexHtml(NEWER));
     clock += UPDATE_CHECK_INTERVAL_MS * 2;
     page.hide();
@@ -135,7 +133,7 @@ describe("installUpdateCheck", () => {
     expect(fetchHtml).not.toHaveBeenCalled();
   });
 
-  it("提示過之後不再檢查，也不再提示", async () => {
+  it("after prompting, neither checks nor prompts again", async () => {
     const { page, fetchHtml, onUpdate } = setup(indexHtml(NEWER));
     clock += UPDATE_CHECK_INTERVAL_MS;
     page.show();
@@ -147,7 +145,7 @@ describe("installUpdateCheck", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("上一次還沒抓完又回到前景：不重複抓", async () => {
+  it("returning to the foreground while the previous fetch has not finished: does not fetch again", async () => {
     let resolve!: (html: string) => void;
     const { page, fetchHtml, onUpdate } = setup(() => new Promise<string>((r) => (resolve = r)));
     clock += UPDATE_CHECK_INTERVAL_MS;
@@ -160,7 +158,7 @@ describe("installUpdateCheck", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("抓失敗或回來的不是 app 的 HTML：不提示，30 分鐘後再試", async () => {
+  it("fetch failure or a response that is not the app's HTML: no prompt, retry after 30 minutes", async () => {
     let attempt = 0;
     const { page, fetchHtml, onUpdate } = setup(() => {
       attempt += 1;
@@ -177,7 +175,7 @@ describe("installUpdateCheck", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("抓失敗之後也要等滿 30 分鐘才再試", async () => {
+  it("after a fetch failure it also waits the full 30 minutes before retrying", async () => {
     const { page, fetchHtml } = setup(() => Promise.reject(new Error("offline")));
     clock += UPDATE_CHECK_INTERVAL_MS;
     page.show();
@@ -195,7 +193,7 @@ describe("installUpdateCheck", () => {
     expect(fetchHtml).toHaveBeenCalledTimes(2);
   });
 
-  it("目前頁面沒有 hash 檔名的入口 script（dev server）：完全不檢查", async () => {
+  it("no hashed entry script on the current page (dev server): no check at all", async () => {
     const { page, fetchHtml } = setup(indexHtml(NEWER), "/src/main.tsx");
     clock += UPDATE_CHECK_INTERVAL_MS;
     page.show();
@@ -203,7 +201,7 @@ describe("installUpdateCheck", () => {
     expect(fetchHtml).not.toHaveBeenCalled();
   });
 
-  it("拆掉監聽之後不再檢查", async () => {
+  it("after the listener is removed, no more checks", async () => {
     const { page, fetchHtml, uninstall } = setup(indexHtml(NEWER));
     uninstall();
     clock += UPDATE_CHECK_INTERVAL_MS;
@@ -213,12 +211,12 @@ describe("installUpdateCheck", () => {
   });
 });
 
-describe("預設的抓取", () => {
+describe("default fetch", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("抓 / 時帶 Accept: text/html 與 no-store（伺服器只對接受 HTML 的請求回 index.html）", async () => {
+  it("fetches / with Accept: text/html and no-store (the server returns index.html only for requests that accept HTML)", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(new Response(indexHtml(NEWER), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
     const page = fakeDocument(CURRENT);
@@ -248,7 +246,7 @@ describe("showUpdateAvailableToast", () => {
     act(() => dismissAllToasts());
   });
 
-  it("顯示「已更新」與「Reload」鈕；按了才重新載入", () => {
+  it("shows the updated notice and a Reload button; reloads only when clicked", () => {
     render(<Toaster />);
     const reload = vi.fn();
     act(() => showUpdateAvailableToast(reload));
@@ -258,7 +256,7 @@ describe("showUpdateAvailableToast", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("不會自己消失", () => {
+  it("does not disappear on its own", () => {
     vi.useFakeTimers();
     try {
       render(<Toaster />);
@@ -272,7 +270,7 @@ describe("showUpdateAvailableToast", () => {
     }
   });
 
-  it("中文介面", async () => {
+  it("Chinese UI", async () => {
     await i18n.changeLanguage("zh-TW");
     render(<Toaster />);
     act(() => showUpdateAvailableToast(() => {}));

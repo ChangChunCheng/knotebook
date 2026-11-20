@@ -1,5 +1,3 @@
-// 開關矩陣（#272 起只有「停手 X 後掃描切」一個自動切點：關掉就不切、手動照常；站台開＋個人關；改設定要重新載入才生效）、
-// 指紋情境、版號併發、撤回前有人工未存修改。
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
@@ -29,7 +27,6 @@ async function typeFirst(ctx: CollabTestCtx, noteId: string, client: TestClient,
   await waitFor("server 收到", 5_000, () => until(docText(ctx.collab.hocuspocus.documents.get(noteId)!)));
 }
 
-/** #272：人打字、AI 寫入、全部離開，掃描一輪；最後手動儲存。回 [掃描之後的列數, 手動之後的列數]。 */
 async function cutPoints(s: S, noteId: string): Promise<[number, number]> {
   const client = await seedContent(s.ctx, s.session, noteId, "矩陣測試的人工內容");
   const ai = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${noteId}/edits`, headers: bearer(s.token), payload: { op: "append", markdown: "AI 加的" } });
@@ -43,15 +40,15 @@ async function cutPoints(s: S, noteId: string): Promise<[number, number]> {
   return [afterCuts, (await versionsOf(s.ctx.db, noteId)).length];
 }
 
-describe("開關矩陣", () => {
-  it("站台總開關關 → 掃描不切、手動照建", async () => {
+describe("switch matrix", () => {
+  it("site master switch off -> scan cuts nothing, manual still creates", async () => {
     const s = await setup();
     await s.ctx.db.update(siteSettings).set({ autoVersionsEnabled: false });
     const n = await s.ctx.createNote(s.u.id);
     expect(await cutPoints(s, n.id)).toEqual([0, 1]);
   });
 
-  it("個人開關關 → 個人筆記不切；群組筆記照切（站台開＋個人關）", async () => {
+  it("personal switch off -> personal notes are not cut; group notes still are (site on + personal off)", async () => {
     const s = await setup();
     await s.ctx.db.update(users).set({ autoVersions: false }).where(eq(users.id, s.u.id));
     const personal = await s.ctx.createNote(s.u.id);
@@ -59,10 +56,10 @@ describe("開關矩陣", () => {
     const g = await seedGroup(s.ctx.db, "G", [{ userId: s.u.id, role: "admin" }]);
     const gnote = await seedNote(s.ctx.db, { groupId: g.id });
     const [cuts] = await cutPoints(s, gnote.id);
-    expect(cuts).toBe(1); // #272：人與 AI 在同一段安靜期 → 同一版
+    expect(cuts).toBe(1); // #272: human and AI in the same quiet period -> the same version
   });
 
-  it("群組開關關 → 群組筆記不切、手動照建", async () => {
+  it("group switch off -> group notes are not cut, manual still creates", async () => {
     const s = await setup();
     const g = await seedGroup(s.ctx.db, "G", [{ userId: s.u.id, role: "admin" }]);
     await s.ctx.db.update(groups).set({ autoVersions: false }).where(eq(groups.id, g.id));
@@ -70,14 +67,14 @@ describe("開關矩陣", () => {
     expect(await cutPoints(s, gnote.id)).toEqual([0, 1]);
   });
 
-  it("開關改了之後要重新載入才生效：載入中照載入時的值待切與切；重新載入後關了就不再待切", async () => {
+  it("a changed switch takes effect only after reload: while loaded, pending and cuts follow the value at load time; after reload with it off nothing is pending", async () => {
     const s = await setup();
     const n = await s.ctx.createNote(s.u.id);
     const client = await seedContent(s.ctx, s.session, n.id, "載入時開著");
     await waitForPending(s.ctx.db, n.id);
     const r = await s.session.fetch("/api/auth/profile", { method: "PATCH", body: JSON.stringify({ autoVersions: false }) });
     expect(r.status).toBe(200);
-    await s.scan(); // 文件仍載入中：這個載入週期仍是開（⚠ 已卸載的筆記，掃描讀的是 DB 現值）
+    await s.scan(); // the document is still loaded: this load cycle is still on (note: for an unloaded note the scan reads the current DB value)
     expect(await versionsOf(s.ctx.db, n.id)).toHaveLength(1);
     client.disconnect();
     await s.unloaded();
@@ -85,14 +82,14 @@ describe("開關矩陣", () => {
     await typeFirst(s.ctx, n.id, again, t => t.insert(0, "再載入後改"), x => x.includes("再載入後改"));
     again.disconnect();
     await s.unloaded();
-    expect((await pendingOf(s.ctx.db, n.id)).at).toBeNull(); // 重新載入後關了：不待切
+    expect((await pendingOf(s.ctx.db, n.id)).at).toBeNull();
     await s.scan();
     expect(await versionsOf(s.ctx.db, n.id)).toHaveLength(1);
   });
 });
 
-describe("指紋情境", () => {
-  it("套用後打一字再刪 → 不 dirty；套用基底那一版本身（同內容）→ dirty=false 且掃描不多切", async () => {
+describe("fingerprint scenarios", () => {
+  it("after apply, typing one character and deleting it -> not dirty; applying the base version itself (same content) -> dirty=false and the scan does not cut extra", async () => {
     const s = await setup();
     const n = await s.ctx.createNote(s.u.id);
     const client = await seedContent(s.ctx, s.session, n.id, "第一版的文字");
@@ -110,12 +107,12 @@ describe("指紋情境", () => {
   });
 });
 
-describe("版號併發", () => {
-  it("同篇同時 10 次手動切版（各自不同內容、文件沒載入）→ 恰一版成功、其餘因基底改變而 null；再循序 9 次 → seq 1..10 連續＝計數", async () => {
+describe("version number concurrency", () => {
+  it("10 manual cuts of one note at once (each with different content, document not loaded) -> exactly one version succeeds, the rest are null because the base changed; then 9 sequential ones -> seq 1..10 contiguous = the counter", async () => {
     const s = await setup();
     const n = await s.ctx.createNote(s.u.id);
-    // barrier（`testHooks.afterMetaRead`）：10 個呼叫都讀完 meta 才一起放行，全部帶同一份舊基底（null）進交易——
-    // 否則冷 pool 下先拿到暖連線的那一個會在其餘讀 meta 之前就 commit，後到者帶新基底再成功一次（實跑恆為 2）。
+    // Barrier (`testHooks.afterMetaRead`): all 10 calls finish reading meta before they are released together, all entering the transaction with the same old base (null) -
+    // otherwise on a cold pool the call with a warm connection commits before the others read meta, and latecomers with the new base succeed once more (2 succeed).
     let arrived = 0;
     let barrierOn = true;
     let release!: () => void;
@@ -146,7 +143,7 @@ describe("版號併發", () => {
     expect((await noteBase(s.ctx.db, n.id)).counter).toBe(10);
   });
 
-  it("載入中、同內容同時 10 次自動切版 → 恰一版；手動與掃描同內容撞版 → 總數恰 +1（#272 案 21）", async () => {
+  it("loaded, 10 automatic cuts of the same content at once -> exactly one version; a manual and a scan colliding on the same content -> total exactly +1 (#272)", async () => {
     const s = await setup();
     const n = await s.ctx.createNote(s.u.id);
     const client = await seedContent(s.ctx, s.session, n.id, "同一份內容");
@@ -161,8 +158,8 @@ describe("版號併發", () => {
   });
 });
 
-describe("撤回不立刻切版（#272）", () => {
-  it("撤回前有人工未存修改 → 撤回當下不增版；離開後掃描 +1（人、AI、撤回在同一版）", async () => {
+describe("revert does not cut at once (#272)", () => {
+  it("human unsaved changes before the revert -> no new version at revert time; scan after leaving +1 (human, AI and revert in the same version)", async () => {
     const s = await setup();
     const n = await s.ctx.createNote(s.u.id);
     const client = await seedContent(s.ctx, s.session, n.id, "撤回測試原文");

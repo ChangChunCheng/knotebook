@@ -1,10 +1,10 @@
-// 並排（錯誤訊息）：兩個新碼的 MCP 訊息逐字釘住。REST 那兩句由整合測試 mcp-write-guards 逐字比對。
+// Columns (error messages): the MCP messages of the two new codes are pinned verbatim. The two REST sentences are compared verbatim by the integration test mcp-write-guards.
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "@knotebook/shared";
 import { writeFailureMessage } from "../../src/mcp/write-messages.js";
 
-describe("writeFailureMessage：並排與尺寸", () => {
-  it("WM1：unsupported_columns、unsupported_size 各自逐字", () => {
+describe("writeFailureMessage: columns and sizes", () => {
+  it("unsupported_columns and unsupported_size verbatim, each", () => {
     expect(writeFailureMessage("unsupported_columns")).toBe(
       "That markdown has layout or editor-internal HTML this editor cannot store, so nothing was written. Write side-by-side columns exactly as read_note_section returns them: <div data-kb-columns style=\"display:flex;gap:16px\"> holding 2 to 4 <div data-kb-column style=\"flex:N\"> columns, N from 0.1 to 10 with at most two decimal places, with a blank line after each column's opening tag and another before its </div>, at the top level of the markdown, not nested inside a list, a quote or anything else. Other <div> elements cannot use display:flex or display:grid, and no element can carry data-node-type."
     );
@@ -13,18 +13,18 @@ describe("writeFailureMessage：並排與尺寸", () => {
     );
   });
 
-  it("WM2：unsupported_size 不提表格格子裡的圖片（格子裡的圖片寬度還不支援，免得模型被引去寫）", () => {
+  it("unsupported_size does not mention images inside table cells (image widths in cells are not supported yet; this keeps the model from being steered into writing them)", () => {
     expect(writeFailureMessage("unsupported_size")).not.toContain("table cell");
   });
 
-  // 舊句在可到達的情形下是假的——帶 data-node-type 的非並排元素也回 unsupported_columns，
-  // 表格格子裡帶寬的圖片照「figure 內的 img」改寫仍被拒（格子分支），模型會原地打轉。
-  it("WM4：舊句的兩個假敘述不在", () => {
+  // The old sentence is false in reachable cases - a non-column element carrying data-node-type also returns unsupported_columns,
+  // and an image with a width in a table cell is still refused under the "img inside figure" rewrite (the cell branch), so the model would go round in circles.
+  it("the two false statements of the old sentence are absent", () => {
     expect(writeFailureMessage("unsupported_columns")).not.toContain("has side-by-side columns");
     expect(writeFailureMessage("unsupported_size")).not.toContain("on the <img> inside <figure>,");
   });
 
-  it("WM3：兩碼都在 ERROR_CODES（web 的 errors.<code> 與 REST 的 sendError 靠它）", () => {
+  it("both codes are in ERROR_CODES (web's errors.<code> and REST's sendError depend on it)", () => {
     expect(ERROR_CODES).toEqual(expect.arrayContaining(["unsupported_columns", "unsupported_size"]));
   });
 });

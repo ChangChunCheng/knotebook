@@ -1,8 +1,7 @@
 /**
- * #398：正式 build 產物（`tsc -p tsconfig.json`，同 Dockerfile 的 `pnpm -r build`）裡有 worker 進入點，而且不靠 tsx 就能開 worker 解析。
- * 把 server 編到 `node_modules/.cache/` 底下（模組解析往上找得到 apps/server/node_modules），再用沒有任何 loader 的 `node` 子程序
- * 載入編出來的 `createEditingRuntime`、解析一筆、印出結果。正式 image 只有 `dist/`（`pnpm deploy --prod`，沒有 tsx）。
- * 子程序跑的是一個 `.mjs` 檔，不用 `node -e`：worker 預設繼承主程序的 `execArgv`，`-e` 會讓 worker 也去跑那段字串。
+ * #398: the production build (`tsc -p tsconfig.json`, as in the Dockerfile's `pnpm -r build`) must contain the worker entry and open workers without tsx; the production image only has `dist/` (`pnpm deploy --prod`, no tsx).
+ * Built under `node_modules/.cache/` so module resolution finds apps/server/node_modules. The child runs a `.mjs` file, not `node -e`:
+ * workers inherit the parent's `execArgv`, so `-e` would make the worker run that string too.
  */
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -20,12 +19,12 @@ const outDir = (() => {
 })();
 afterAll(() => rmSync(outDir, { recursive: true, force: true }));
 
-// 子程序一律非同步跑（tsc 編整個 server 在 CI 上要十幾秒）：execFileSync 會同步佔住 vitest worker，整段期間 RPC（onTaskUpdate，60 秒逾時）
-// 都卡著（PR #400 的 CI）。
+// Child processes run async (tsc over the whole server takes over ten seconds on CI): execFileSync would block the vitest worker and stall
+// RPC (onTaskUpdate, 60 s timeout) the whole time (CI of PR #400).
 const run = promisify(execFile);
 
-describe("正式 build 走 worker", () => {
-  it("編出 dist/notes/editing/parse-worker.js；不帶 loader 的 node 用 createEditingRuntime 解析成功、pool 開過 worker", async () => {
+describe("production build uses a worker", () => {
+  it("builds dist/notes/editing/parse-worker.js; plain node without a loader parses via createEditingRuntime and the pool opened a worker", async () => {
     const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
     await run(process.execPath, [tsc, "-p", path.join(serverDir, "tsconfig.json"), "--outDir", outDir], { maxBuffer: 64 * 1024 * 1024 });
     expect(existsSync(path.join(outDir, "notes/editing/parse-worker.js"))).toBe(true);

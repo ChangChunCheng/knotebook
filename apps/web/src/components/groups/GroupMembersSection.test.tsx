@@ -6,13 +6,12 @@ import { dismissAllToasts } from "@/components/ui/toast";
 import { chooseOption, displayedLabel, optionLabels, selectedValue } from "@/test/ui-select";
 import { ADMIN_ROLE, BG_NOTE, GROUP_ADMIN, GROUP_CO_ADMIN, GROUP_MEMBER, ME, MEMBER_ROLE, ROLES, callsTo, fail, fakeResponse, groupFetch, locationText, member, ok, renderGroupRoute } from "./group-test-utils";
 
-// 群組 modal「成員」（`/groups/:id`，#247）：案子逐案搬自 main 版 `settings/SettingsGroupDetailSection.test.tsx`
-// （#103；#175）。背景側欄的群組分段吃同一份 `useGroups()` 快取會渲染同樣的群組名字——
-// 一律 `within(dialog)` 才不誤命中背景層。
+// Group modal "Members" page (`/groups/:id`, #247). The background sidebar's group section reads the same `useGroups()` cache and renders the same group names,
+// so always use `within(dialog)` to avoid matching the background layer.
 
 const ROLE_LABELS = ["Admin", "Member"];
 
-describe("GroupMembersSection（/groups/:id，#247）", () => {
+describe("GroupMembersSection (/groups/:id, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -22,7 +21,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("欄寬：名稱欄與 email 欄按 1 : 1.5 分配（真實掛載）", async () => {
+  it("column widths: the name and email columns are allotted 1 : 1.5 (real mount)", async () => {
     const members = [member(ME.id, ME.email, "Me", ADMIN_ROLE)];
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, groupFetch(() => [GROUP_ADMIN], () => members));
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
@@ -30,7 +29,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(table.style.getPropertyValue("--kb-table-cols")).toBe("minmax(14ch,1fr) minmax(14ch,1.5fr) max-content 2.75rem");
   });
 
-  it("canManageMembers：成員表有 email、角色下拉（選項來自 GET …/roles）、移除鈕；加人表單", async () => {
+  it("canManageMembers: the member table has email, a role dropdown (options from GET .../roles), a remove button; the add form", async () => {
     const group = { ...GROUP_ADMIN };
     const members = [member(ME.id, ME.email, "Me", ADMIN_ROLE), member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)];
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => members, (url, method) => {
@@ -41,11 +40,10 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
 
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
-    // 本檔第一次載入群組區塊 lazy chunk（dialog 外殼在首包、不用等）
+    // first load of the group section's lazy chunk in this file (the dialog shell is in the first bundle, no need to wait)
     await within(dialog).findByRole("heading", { level: 1, name: "Members" });
     await waitFor(() => expect(within(dialog).getByText("bob@example.com")).toBeInTheDocument());
 
-    // 成員表：email、角色下拉（值＝角色 id、選項＝GET …/roles 的全部角色、內建兩個走 i18n）、移除鈕。
     expect(within(dialog).getByText("bob@example.com")).toBeInTheDocument();
     expect(within(dialog).getByText("me@example.com")).toBeInTheDocument();
     const bobSelect = within(dialog).getByLabelText("Role for bob@example.com");
@@ -56,14 +54,13 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(within(dialog).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
     expect(callsTo(fetchMock, "GET", `/api/groups/${GROUP_ADMIN.id}/roles`).length).toBeGreaterThanOrEqual(1);
 
-    // 加人表單：角色下拉同樣列 roles。
     expect(within(dialog).getByLabelText("Email address")).toBeInTheDocument();
     expect(await optionLabels(within(dialog).getByLabelText("Role for new member"))).toEqual(ROLE_LABELS);
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
 
-  it("#183 長 email：列名＝email、移除鈕的可見文字不含 email（可及名稱帶 email）；表名 Members、欄名 Name／Email／Role／Actions", async () => {
-    // 欄寬（wrap-anywhere、14ch 下限、框內橫向捲動）由 SettingsTable.test.tsx 與 e2e 26-settings-tables 守。
+  it("#183 long email: the row name = email, the remove button's visible text excludes the email (its accessible name carries it); table name Members, column names Name/Email/Role/Actions", async () => {
+    // Column width (wrap-anywhere, 14ch minimum, horizontal scroll inside the frame) is covered by SettingsTable.test.tsx and e2e 26-settings-tables.
     const LONG = "e2e-24c8c7dd-e54e-4237-9f72-a87df48a3fc2@e2e.local";
     renderGroupRoute(
       `/groups/${GROUP_CO_ADMIN.id}`,
@@ -82,7 +79,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Name", "Email", "Role", "Actions"]);
   });
 
-  it("最後一位管理員的列（builtin admin 只有一人）：角色下拉 disabled、移除鈕 aria-disabled，兩者 title=lastAdminHint、表格下方有可見提示；兩位管理員時不 disabled、無提示", async () => {
+  it("last admin's row (the builtin admin is one person): the role dropdown is disabled, the remove button aria-disabled, both title=lastAdminHint, and a visible hint under the table; with two admins nothing is disabled and there is no hint", async () => {
     const HINT = "The only admin can't be demoted or removed. Make someone else an admin first.";
     const phase1 = renderGroupRoute(
       `/groups/${GROUP_ADMIN.id}`,
@@ -98,7 +95,6 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(meRemoveButton).toHaveAttribute("aria-disabled", "true");
     expect(meRemoveButton).toHaveAttribute("title", HINT);
     expect(within(dialog).getByText(HINT)).toBeInTheDocument();
-    // 一般成員那列不受影響
     expect(within(dialog).getByLabelText("Role for bob@example.com")).not.toBeDisabled();
 
     phase1.unmount();
@@ -118,7 +114,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(within(dialog2).queryByText(HINT)).not.toBeInTheDocument();
   });
 
-  it("加人：PUT {email, roleId}（下拉選管理員 → 管理員角色 id）→ 名單更新；送出後下拉回到內建一般成員的 id；409 already_member → 表單下 alert", async () => {
+  it("add member: PUT {email, roleId} (choosing admin in the dropdown -> the admin role id) -> list updates; after submit the dropdown returns to the built-in member's id; 409 already_member -> alert under the form", async () => {
     let members = [member(ME.id, ME.email, "Me", ADMIN_ROLE)];
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => members, (url, method, init) => {
       if (url === `/api/groups/${GROUP_ADMIN.id}/members` && method === "PUT") {
@@ -135,7 +131,6 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
     const roleSelect = await within(dialog).findByLabelText("Role for new member");
-    // 預設選內建一般成員那一個的 id
     await waitFor(() => expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id));
 
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "carol@example.com" } });
@@ -149,7 +144,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(selectedValue(within(dialog).getByLabelText("Role for carol@example.com"))).toBe(ADMIN_ROLE.id);
     expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id);
 
-    // 409 already_member → 表單下 alert；這一發用的是重設後的預設角色。
+    // 409 already_member -> alert under the form; this request uses the reset default role.
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "dup@example.com" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
     const alert = await within(dialog).findByRole("alert");
@@ -157,7 +152,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(JSON.parse(String(callsTo(fetchMock, "PUT", url)[1].body))).toEqual({ email: "dup@example.com", roleId: MEMBER_ROLE.id });
   });
 
-  it("加人：輸入幾個字 → 建議清單（已是成員者不列）→ 選取填入 email（多地址框：補上「, 」）→ 送出 PUT 帶選到的 email", async () => {
+  it("add member: typing a few characters -> suggestion list (existing members not listed) -> selecting fills the email (multi-address field: appends \", \") -> submit PUT carries the selected email", async () => {
     const members = [member(ME.id, ME.email, "Me", ADMIN_ROLE), member("u-bob", "bob@example.com", "Bob Example", MEMBER_ROLE)];
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => members, (url, method) => {
       if (url === "/api/users/suggest?q=ex" && method === "GET") {
@@ -177,7 +172,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     const roleSelect = await within(dialog).findByLabelText("Role for new member");
     await waitFor(() => expect(selectedValue(roleSelect)).toBe(MEMBER_ROLE.id));
     const box = within(dialog).getByRole("combobox", { name: "Email address" });
-    // #331 收多個地址：text＋inputMode email、#331 的 placeholder 與說明
+    // #331 several addresses: text + inputMode email, #331's placeholder and description
     expect(box).toHaveAttribute("type", "text");
     expect(box).toHaveAttribute("inputmode", "email");
     expect(box).toHaveAttribute("placeholder", "Email addresses (separate several with commas)");
@@ -198,7 +193,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(JSON.parse(String(callsTo(fetchMock, "PUT", url)[0].body))).toEqual({ email: "carol@example.com", roleId: MEMBER_ROLE.id });
   });
 
-  it("加人：roles 還沒到時不送 roleId（body 只有 {email}，server 預設內建一般成員）", async () => {
+  it("add member: when roles has not arrived roleId is not sent (body is only {email}, the server defaults to the built-in member)", async () => {
     const members = [member(ME.id, ME.email, "Me", ADMIN_ROLE)];
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => members, (url, method) => {
       if (url === `/api/groups/${GROUP_ADMIN.id}/roles` && method === "GET") return new Promise<Response>(() => {});
@@ -217,7 +212,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(JSON.parse(String(callsTo(fetchMock, "PUT", url)[0].body))).toEqual({ email: "carol@example.com" });
   });
 
-  it("改角色：PATCH /members/:userId {roleId: 管理員角色 id}；移除：DELETE /members/:userId（無確認）", async () => {
+  it("change role: PATCH /members/:userId {roleId: admin role id}; remove: DELETE /members/:userId after confirmation", async () => {
     let members = [
       member(ME.id, ME.email, "Me", ADMIN_ROLE),
       member("u-bob", "bob@example.com", "Bob", ADMIN_ROLE),
@@ -246,14 +241,14 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", patchUrl)).toHaveLength(1));
     expect(JSON.parse(String(callsTo(fetchMock, "PATCH", patchUrl)[0].body))).toEqual({ roleId: ADMIN_ROLE.id });
 
-    // 移除：先出確認（#395），確認後才 DELETE。
+    // Remove: a confirmation first (#395), DELETE only after confirming.
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove bob@example.com" }));
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove member?" })).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(callsTo(fetchMock, "DELETE", `/api/groups/${GROUP_CO_ADMIN.id}/members/u-bob`)).toHaveLength(1));
     await waitFor(() => expect(within(dialog).queryByText("bob@example.com")).not.toBeInTheDocument());
   });
 
-  it("#175：兩位管理員、沒有一般成員的群組，把其中一位降成一般成員 → PATCH body 是 {roleId: 一般成員角色 id}", async () => {
+  it("#175: in a group with two admins and no ordinary member, demoting one to member: PATCH body is {roleId: member role id}", async () => {
     let members = [member(ME.id, ME.email, "Me", ADMIN_ROLE), member("u-bob", "bob@example.com", "Bob", ADMIN_ROLE)];
     const fetchMock = groupFetch(() => [GROUP_CO_ADMIN], () => members, (url, method) => {
       if (url === `/api/groups/${GROUP_CO_ADMIN.id}/members/u-bob` && method === "PATCH") {
@@ -266,7 +261,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     renderGroupRoute(`/groups/${GROUP_CO_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
     const bobSelect = await within(dialog).findByLabelText("Role for bob@example.com");
-    // 名單裡沒有任何一般成員——一般成員角色的 id 只可能來自 GET …/roles
+    // The list has no ordinary member - the member role id can only come from GET .../roles
     await waitFor(() => expect(bobSelect).not.toBeDisabled());
     expect(await optionLabels(bobSelect)).toEqual(ROLE_LABELS);
     expect(bobSelect).not.toBeDisabled();
@@ -275,12 +270,12 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     const patchUrl = `/api/groups/${GROUP_CO_ADMIN.id}/members/u-bob`;
     await waitFor(() => expect(callsTo(fetchMock, "PATCH", patchUrl)).toHaveLength(1));
     expect(JSON.parse(String(callsTo(fetchMock, "PATCH", patchUrl)[0].body))).toEqual({ roleId: MEMBER_ROLE.id });
-    // 降級後只剩我一位管理員：我的列鎖住
+    // After the demotion only I am admin: my row is locked
     await waitFor(() => expect(within(dialog).getByLabelText("Role for me@example.com")).toBeDisabled());
     expect(selectedValue(within(dialog).getByLabelText("Role for bob@example.com"))).toBe(MEMBER_ROLE.id);
   });
 
-  it("roles 還沒到：列的角色觸發鈕顯示目前角色文字並 disabled，只有那一個選項", async () => {
+  it("roles has not arrived: the row's role trigger shows the current role text and is disabled, with only that option", async () => {
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)], (url, method) => {
       if (url === `/api/groups/${GROUP_ADMIN.id}/roles` && method === "GET") return new Promise<Response>(() => {}) as unknown as Response;
       return null;
@@ -293,7 +288,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(bobSelect).toBeDisabled();
   });
 
-  it("一般成員視角：成員表唯讀（角色名走 roles：內建 i18n、自訂用 name）、沒有加人表單", async () => {
+  it("member's view: the member table is read-only (role names via roles: built-ins i18n, custom ones by name), no add form", async () => {
     const READER: GroupRoleDto = { ...MEMBER_ROLE, id: "33333333-3333-3333-3333-333333333333", builtin: null, name: "Reader" };
     const members = [
       member("u-admin2", "admin2@example.com", "Admin2", ADMIN_ROLE),
@@ -309,10 +304,9 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     const dialog = await screen.findByRole("dialog", { name: GROUP_MEMBER.name });
     await waitFor(() => expect(within(dialog).getByText("admin2@example.com")).toBeInTheDocument());
 
-    // 成員表無控制項：沒有角色下拉、沒有移除鈕；角色以純文字顯示。
     expect(within(dialog).queryByLabelText(/Role for/)).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
-    // 無管理權：角色欄是純文字（fixed），以列名（email）取列、以格的可及名稱找角色。
+    // Without manage rights the role column is plain text (fixed): find the row by its name (email) and the role by the cell's accessible name.
     const rowOf = (email: string) => within(within(dialog).getByRole("row", { name: email }));
     expect(rowOf("admin2@example.com").getByRole("cell", { name: "Admin" })).toBeInTheDocument();
     expect(rowOf("me@example.com").getByRole("cell", { name: "Member" })).toBeInTheDocument();
@@ -324,11 +318,10 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     ]);
     expect(within(dialog).queryByText("[object Object]", { exact: false })).not.toBeInTheDocument();
 
-    // 沒有加人表單。
     expect(within(dialog).queryByLabelText("Email address")).not.toBeInTheDocument();
   });
 
-  it("兩個管理旗標分開看：只有 canManageMembers → 角色下拉／移除／加人；只有 canManageGroup → 成員表唯讀、沒有加人", async () => {
+  it("the two management flags are separate: with only canManageMembers -> role dropdown/remove/add; with only canManageGroup -> member table read-only, no add", async () => {
     const members = [member("u-admin2", "admin2@example.com", "Admin2", ADMIN_ROLE), member(ME.id, ME.email, "Me", MEMBER_ROLE)];
     const membersOnly: GroupDto = { ...GROUP_MEMBER, canManageMembers: true, canManageGroup: false };
     const phase1 = renderGroupRoute(`/groups/${membersOnly.id}`, groupFetch(() => [membersOnly], () => members));
@@ -350,7 +343,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     expect(within(dialog2).queryByLabelText("Email address")).not.toBeInTheDocument();
   });
 
-  describe("#395 移除成員的二次確認", () => {
+  describe("#395 confirmation before removing a member", () => {
     const BOB = member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE);
     const bobUrl = `/api/groups/${GROUP_CO_ADMIN.id}/members/u-bob`;
     const meUrl = `/api/groups/${GROUP_CO_ADMIN.id}/members/${ME.id}`;
@@ -368,7 +361,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
       return fetchMock;
     }
 
-    it("按垃圾桶先出確認、帶被移除者的 email；取消不送 DELETE、成員仍在", async () => {
+    it("pressing the trash first shows a confirmation carrying the removed person's email; cancel sends no DELETE and the member stays", async () => {
       const fetchMock = setup();
       const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
       fireEvent.click(await within(dialog).findByRole("button", { name: "Remove bob@example.com" }));
@@ -384,7 +377,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
       expect(within(dialog).getByText("bob@example.com")).toBeInTheDocument();
     });
 
-    it("確認才送 DELETE；名單更新", async () => {
+    it("only confirming sends DELETE; the list updates", async () => {
       const fetchMock = setup();
       const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
       fireEvent.click(await within(dialog).findByRole("button", { name: "Remove bob@example.com" }));
@@ -395,7 +388,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
       expect(callsTo(fetchMock, "DELETE", meUrl)).toHaveLength(0);
     });
 
-    it("移除自己：文字講明失去存取權、與一般移除不同；確認後 DELETE 自己並回背景頁", async () => {
+    it("removing yourself: the text says you lose access, unlike a normal removal; confirming DELETEs yourself and returns to the background page", async () => {
       const fetchMock = setup({ pathname: `/groups/${GROUP_CO_ADMIN.id}`, state: { backgroundLocation: BG_NOTE } });
       const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
       fireEvent.click(await within(dialog).findByRole("button", { name: "Remove me@example.com" }));
@@ -410,7 +403,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
       await waitFor(() => expect(locationText().startsWith(`${BG_NOTE.pathname}|`)).toBe(true));
     });
 
-    it("移除自己按取消：不送 DELETE、位置不變", async () => {
+    it("removing yourself then cancel: no DELETE, position unchanged", async () => {
       const fetchMock = setup({ pathname: `/groups/${GROUP_CO_ADMIN.id}`, state: { backgroundLocation: BG_NOTE } });
       const dialog = await screen.findByRole("dialog", { name: GROUP_CO_ADMIN.name });
       fireEvent.click(await within(dialog).findByRole("button", { name: "Remove me@example.com" }));
@@ -421,7 +414,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
     });
   });
 
-  it("最後一位管理員的移除鈕：點了不送 DELETE（aria-disabled 擋下）", async () => {
+  it("the last admin's remove button: clicking sends no DELETE (blocked by aria-disabled)", async () => {
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE), member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)]);
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, fetchMock);
     const dialog = await screen.findByRole("dialog", { name: GROUP_ADMIN.name });
@@ -432,7 +425,7 @@ describe("GroupMembersSection（/groups/:id，#247）", () => {
   });
 });
 
-describe("GroupMembersSection 的成員頭貼", () => {
+describe("GroupMembersSection member avatars", () => {
   const REF = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", v: 3 };
 
   beforeEach(async () => {
@@ -453,7 +446,7 @@ describe("GroupMembersSection 的成員頭貼", () => {
     return name.previousElementSibling as HTMLElement;
   }
 
-  it("有頭貼：名稱前一個兄弟是頭像，img 的 src 帶版本、lazy，外層 aria-hidden", async () => {
+  it("with an avatar: the sibling before the name is the avatar, the img src carries the version and is lazy, the wrapper is aria-hidden", async () => {
     const avatar = await renderWith({ ...member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE), avatar: REF });
     const img = avatar.querySelector("img");
     expect(img).not.toBeNull();
@@ -462,13 +455,13 @@ describe("GroupMembersSection 的成員頭貼", () => {
     expect(avatar).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("avatar 為 null：首字、沒有 img", async () => {
+  it("avatar null: initial letter, no img", async () => {
     const avatar = await renderWith(member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE));
     expect(avatar.querySelector("img")).toBeNull();
     expect(avatar.textContent).toBe("B");
   });
 
-  it("舊 server 沒有 avatar 欄（undefined）：不丟錯、顯示首字", async () => {
+  it("old server without the avatar field (undefined): no error, shows the initial", async () => {
     const bob = member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE) as unknown as Record<string, unknown>;
     delete bob.avatar;
     const avatar = await renderWith(bob as unknown as ReturnType<typeof member>);
@@ -476,14 +469,14 @@ describe("GroupMembersSection 的成員頭貼", () => {
     expect(avatar.textContent).toBe("B");
   });
 
-  it("圖載入失敗 → 退回首字", async () => {
+  it("image load failure falls back to the initial", async () => {
     const avatar = await renderWith({ ...member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE), avatar: REF });
     fireEvent.error(avatar.querySelector("img")!);
     expect(avatar.querySelector("img")).toBeNull();
     expect(avatar.textContent).toBe("B");
   });
 
-  it("列的可及名稱與名稱格不受頭像影響", async () => {
+  it("the row's accessible name and the name cell are unaffected by the avatar", async () => {
     await renderWith(member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE));
     expect(screen.getByRole("row", { name: "bob@example.com" })).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "Bob" })).toBeInTheDocument();

@@ -4,7 +4,7 @@ import { directTarget, withDirectConnection, type DirectCtx } from "../src/notes
 import { buildCollabTestApp } from "./helpers.js";
 
 describe("withDirectConnection", () => {
-  it("開連 → transact → finally disconnect；fn 內 throw 也 disconnect 且錯誤原樣冒出；沒人在線時文件不留在記憶體", async () => {
+  it("open connection -> transact -> finally disconnect; a throw inside fn also disconnects and the error propagates unchanged; with nobody online the document doesn't stay in memory", async () => {
     const ctx = await buildCollabTestApp();
     const u = await ctx.createUser({ email: "a@example.com", password: "correct-horse-battery" });
     const note = await ctx.createNote(u.id);
@@ -19,7 +19,7 @@ describe("withDirectConnection", () => {
       })
     ).rejects.toThrow("boom");
     await new Promise(r => setImmediate(r));
-    expect(ctx.collab.hocuspocus.documents.size).toBe(0); // finally 有 disconnect，沒漏
+    expect(ctx.collab.hocuspocus.documents.size).toBe(0); // finally disconnected, nothing leaked
     expect(ctxObj.applied).toBe(false);
   });
 });

@@ -1,9 +1,6 @@
 /**
- * #132：`POST /oauth/register`（DCR）。
- *
- * 這一族守的是：①loopback-only（無認證的 DCR 若收遠端 redirect，任何人都能註冊
- * 好聽的名字做一鍵釣魚）；②不支援的 metadata 一律回絕而不是默默接受；③`client_name`
- * 黑名單；④進表前先跑機會性清理（`runOauthCleanup`）；⑤限流與 content-type 都走 RFC 形。
+ * Loopback-only: an unauthenticated DCR accepting remote redirects would let anyone register a nice-sounding name for one-click
+ * phishing. Unsupported metadata is rejected rather than silently accepted.
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -18,7 +15,7 @@ async function register(app: TestApp["app"], body: object) {
 }
 
 describe("POST /oauth/register", () => {
-  it("201 回註冊結果，不發 secret，欄位固定", async () => {
+  it("201 returns the registration result, issues no secret, fixed fields", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, OK_BODY);
@@ -30,10 +27,10 @@ describe("POST /oauth/register", () => {
       expect(body.grant_types).toEqual(["authorization_code", "refresh_token"]);
       expect(body.response_types).toEqual(["code"]);
       expect(body.token_endpoint_auth_method).toBe("none");
-      // epoch **秒**（RFC 7591）——寫成毫秒的話這兩條會紅
+      // epoch **seconds** (RFC 7591): milliseconds would fail these two
       expect(body.client_id_issued_at).toBeGreaterThan(1_700_000_000);
       expect(body.client_id_issued_at).toBeLessThan(Date.now() / 1000 + 60);
-      // 201 的兩個 header（RFC 7591 §3.2.1 的範例兩個都有）
+      // the two headers on the 201 (the RFC 7591 §3.2.1 example has both)
       expect(res.headers["cache-control"]).toBe("no-store");
       expect(res.headers.pragma).toBe("no-cache");
       expect(body).not.toHaveProperty("client_secret");
@@ -42,7 +39,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("省略 client_name → 落庫值是固定字串 MCP client", async () => {
+  it("client_name omitted -> stored as the fixed string MCP client", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const res = await register(app, { redirect_uris: ["http://localhost/cb"] });
@@ -55,7 +52,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("非 loopback／帶 query／帶 fragment／帶 userinfo 的 redirect_uri → 400 invalid_redirect_uri", async () => {
+  it("redirect_uri that is non-loopback / has a query / has a fragment / has userinfo -> 400 invalid_redirect_uri", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       for (const uri of [
@@ -71,14 +68,14 @@ describe("POST /oauth/register", () => {
         expect(res.statusCode, uri).toBe(400);
         expect(res.json().error, uri).toBe("invalid_redirect_uri");
       }
-      // 一個都沒落庫（拒絕要發生在 insert 之前）
+      // nothing was stored (rejection happens before the insert)
       expect(await db.select().from(oauthClients)).toHaveLength(0);
     } finally {
       await close();
     }
   });
 
-  it("多筆 redirect_uri 只要有一筆不合就整批拒絕", async () => {
+  it("with multiple redirect_uris one bad one rejects the whole batch", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, {
@@ -91,7 +88,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("redirect_uris 為空、超過 8 筆或單筆超長 → 400 invalid_redirect_uri", async () => {
+  it("redirect_uris empty, more than 8, or one too long -> 400 invalid_redirect_uri", async () => {
     const { app, close } = await buildTestApp();
     try {
       const long = `http://127.0.0.1/${"a".repeat(520)}`;
@@ -100,7 +97,7 @@ describe("POST /oauth/register", () => {
         expect(res.statusCode, JSON.stringify(uris).slice(0, 40)).toBe(400);
         expect(res.json().error).toBe("invalid_redirect_uri");
       }
-      // 正對照：剛好 8 筆合法 → 201（上限是 8 不是 7）
+      // Positive control: exactly 8 valid -> 201 (the limit is 8, not 7)
       const ok = await register(app, {
         redirect_uris: Array.from({ length: 8 }, (_, i) => `http://127.0.0.1/cb${i}`),
       });
@@ -110,7 +107,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("缺 redirect_uris → 400 invalid_redirect_uri（不是 invalid_client_metadata）", async () => {
+  it("missing redirect_uris -> 400 invalid_redirect_uri (not invalid_client_metadata)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, { client_name: "X" });
@@ -121,7 +118,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("不支援的 metadata → 400 invalid_client_metadata", async () => {
+  it("unsupported metadata -> 400 invalid_client_metadata", async () => {
     const { app, close } = await buildTestApp();
     try {
       for (const extra of [
@@ -142,7 +139,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("支援範圍內的 metadata 明示給值 → 201（正對照）", async () => {
+  it("supported metadata with explicit values -> 201 (positive control)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, {
@@ -157,8 +154,8 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  // 全空白的名稱同樣是同意頁的視覺洞：trim 後長度 0 就該落 400
-  it("全空白的 client_name → 400 invalid_client_metadata", async () => {
+  // An all-whitespace name is also a visual hole on the consent page: length 0 after trim must be 400
+  it("all-whitespace client_name -> 400 invalid_client_metadata", async () => {
     const { app, close } = await buildTestApp();
     try {
       for (const name of ["   ", "\t\t"]) {
@@ -171,7 +168,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("client_name 含 bidi 覆寫字元 → 400 invalid_client_metadata", async () => {
+  it("client_name containing a bidi override character -> 400 invalid_client_metadata", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, { ...OK_BODY, client_name: `Claude${String.fromCodePoint(0x202e)}Code` });
@@ -182,9 +179,9 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  // trim 跑在黑名單之前：頭尾的行分隔字元被剝掉而不是回 400（方向安全——危險字元在
-  // 顯示前就消失了），但落庫的名稱必須不含它。
-  it("頭尾的 U+2028 被 trim 掉 → 201 且落庫名稱不含它", async () => {
+  // trim runs before the blocklist: leading/trailing line-separator characters are stripped rather than answered with 400
+  // (direction-safe: the dangerous characters vanish before display), but the stored name must not contain them.
+  it("leading/trailing U+2028 is trimmed -> 201 and the stored name doesn't contain it", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const res = await register(app, { ...OK_BODY, client_name: `${String.fromCodePoint(0x2028)}App` });
@@ -197,7 +194,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("未知欄位收到即忽略、回應不回聲", async () => {
+  it("unknown fields are ignored on receipt, the response doesn't echo them", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, { ...OK_BODY, application_type: "native", software_id: "x" });
@@ -209,7 +206,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("超過 DCR 額度 → 429 RFC 形", async () => {
+  it("over the DCR quota -> 429 RFC-shaped", async () => {
     const { app, close } = await buildTestApp({
       limiters: freshLimiters({ dcr: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }),
     });
@@ -225,7 +222,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("進表前跑機會性清理：25 小時前的殭屍 client 在這一發後消失", async () => {
+  it("cleanup runs before the table insert: a zombie client from 25 hours ago disappears after this request", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       await db.insert(oauthClients).values({
@@ -243,7 +240,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("JSON 以外的 content-type → 415 RFC 形", async () => {
+  it("content-type other than JSON -> 415 RFC-shaped", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({
@@ -259,7 +256,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("兩次註冊拿到不同的 client_id", async () => {
+  it("two registrations get different client_ids", async () => {
     const { app, close } = await buildTestApp();
     try {
       const a = (await register(app, OK_BODY)).json().client_id as string;
@@ -270,7 +267,7 @@ describe("POST /oauth/register", () => {
     }
   });
 
-  it("#372：body 超過上限 → 413 RFC 形，error_description 是與 REST 同一句的固定英文句", async () => {
+  it("#372: body over the limit -> 413 RFC-shaped, error_description is the same fixed English sentence as REST", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await register(app, { ...OK_BODY, pad: "x".repeat(1_100_000) });

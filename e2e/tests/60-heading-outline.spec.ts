@@ -3,34 +3,20 @@ import { E2E_ORIGIN } from "../ports.js";
 import { ADMIN, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs, randomEmail, waitForEditorSelection } from "./helpers.js";
 
 /**
- * 右側標題大綱（#465，桌機）：內文欄右側一排細線（每個 H1–H3 一條、目前那一節亮），滑上去展開成面板，點標題跳過去；
- * 標準寬的筆記可以把面板釘住。
- * 除了 60-5 從 1280×800 開始，全部在 1440×900；側欄一律 320（每個案例先寫 localStorage，不依賴側欄預設寬）。
+ * Heading outline on the right (#465, desktop): a row of thin lines at the right of the body column (one per H1-H3, the current section lit) that expands into a panel on hover, and clicking a heading jumps to it;
+ * a standard-width note can pin the panel.
+ * Desktop cases run at 1440x900 except 60-5 (1280x800) and 60-12 (700x900); 60-7a to 60-7f use the phone context (390x844); the sidebar is always 320 (each case first writes localStorage, not relying on the sidebar's default width).
  *
- * 60-1 跳轉：hover 細線 → 面板出現 5 項 → 點「Section D」→ 段落錨點的高亮浮層馬上出現（只留約 2 秒）；
- *      該標題的 `.bn-block-outer` 頂端與捲動容器頂端差在 [-2, 4] px；網址（含 hash）不變；面板收起、細線仍在。
- * 60-2 目前位置：把「Usage」捲過容器頂端 → 細線亮的是 Usage 那條；展開面板時 `aria-current` 也在 Usage。
- * 60-3 釘住：hover → 按「Pin outline」→ 滑鼠移開後面板仍在、細線不在；文字寬＝min(clamp(680, 85%W, 1056), W − 286) − 140
- *      （W＝捲動容器可視寬，誤差 ±1），且與 646 差 ≤ 4；面板左緣離欄右緣 ≥ 16；reload 後仍釘住、`outline.pinned` 是 "1"。
- * 60-4 全寬筆記（偏好釘住）：沒有釘住的面板、細線在；hover 展開的面板沒有釘選鈕。
- * 60-5 1280×800（偏好釘住）：側欄 320 時放不下 640 的欄 → 細線、展開的面板沒有釘選鈕；視窗拉到 1440×900 → 自動變成釘住的面板。
- * 60-6 打字新增標題：在最後一段後面 Enter、打 `## New section` → 5 秒內細線多一條，面板裡有「New section」。
- * 60-7 手機（390×844、觸控）：沒有細線。
- *   a ⋮ →「Heading outline」→ 底部面板列出 5 項 → 點「Section D」→ 面板消失、焦點回到 ⋮、該標題頂端與釘住的頁首下緣差在 [-2, 4] px、
- *     文件捲過了。
- *   b 捲動文件 → 位置泡泡出現、文字含「/5」→ 3 秒內消失；再捲一次 → 點泡泡 → 底部面板出現。
- *   c 沒有標題的筆記：⋮ 沒有「Heading outline」；捲動後沒有泡泡。
- *   d 公開頁（未登入）：捲動容器 → 泡泡出現 → 點它 → 面板 → 點「Usage」→ 該標題捲到容器頂端；頁面沒有 ⋮。
- *   e 編輯中連按 Enter，游標跟著讓文件往下捲：泡泡一次都不出現。
- *   f 編輯中（工具列在）捲動 → 點泡泡 → 面板 → Esc 直接關掉：焦點回到編輯器、工具列還在。
- * 60-8 公開頁（未登入）：細線在；hover → 點「Usage」→ 該標題捲到容器頂端。
- * 60-9 切換標題（真的 BlockNote DOM）：用 `/` 選單建一個切換 H2「Folded」、裡面放一個 H3「Inner」；把 Inner 捲到頂端 → 亮 Inner；
- *      收合 Folded（不捲動、不按指標，只點開合鈕）→ 亮的換成 Folded；從面板點 Inner → Folded 展開、Inner 捲到頂端、亮 Inner。
- * 60-10 最後一個標題：點面板裡最後一個標題（捲不到頂端的那個）→ 捲到底後仍是它亮。
- * 60-11 滾輪：大綱在捲動容器之外，滾輪停在細線上、或停在清單放得下（不會自己捲）的面板上時，捲的是內文。
+ * Cases are numbered 60-1 to 60-13 in their titles; 60-7a to 60-7f are the phone cases.
+ * - 60-1: the heading's `.bn-block-outer` top differs from the scroll container top by [-2, 4] px; the highlight overlay lasts only about 2 seconds; the URL (including the hash) is unchanged.
+ * - 60-3: pinned text width = min(clamp(680, 85%W, 1056), W - 286) - 140 (W = the scroll container's visible width, tolerance +-1) and within 4 of 646 at 1440 wide with the sidebar at 320; the panel's left edge is >= 16 from the column's right edge; `outline.pinned` is "1" after reload.
+ * - 60-5: with the sidebar at 320 a 640 column doesn't fit at 1280x800, so it falls back to the lines; widening to 1440x900 pins automatically.
+ * - 60-7a: after jumping, the heading top differs from the pinned header's bottom edge by [-2, 4] px. 60-7b: the bubble text contains "/5" and disappears within 3 seconds.
+ * - 60-9: collapsing is done by clicking the toggle button only (no scrolling, no pointer events); the outline re-measures from the size change.
+ * - 60-11: the outline is outside the scroll container; with the wheel over the lines, or over a panel whose list fits (doesn't scroll itself), the body scrolls.
  *
- * 帳號與資料：用邀請建一個帳號（alice）；唯讀的筆記在 beforeAll 以 API 建一次（含一篇開了公開連結的），
- * 會被改到的筆記（60-6、60-9）每次在案例裡另建，`--repeat-each` 時互不干擾。每個案例開新 context。
+ * Account and data: one account (alice) is created through an invite; read-only notes are created once in beforeAll via the API (including one with a public link),
+ * and notes that get modified (60-6, 60-9) are created fresh inside each case so that `--repeat-each` runs don't interfere. Every case opens a new context.
  */
 
 test.use({ actionTimeout: 15_000 });
@@ -97,9 +83,9 @@ test.beforeAll(async ({ browser }) => {
 
 interface ContextOptions {
   viewport?: { width: number; height: number };
-  /** 手機：390×844、觸控（`viewport` 不用）。 */
+  /** Phone: 390x844, touch (`viewport` is not used). */
   phone?: boolean;
-  /** 每次載入前另外寫進 localStorage 的鍵值（側欄寬度一律寫 320）。 */
+  /** Key/value pairs written to localStorage before each load (the sidebar width is always written as 320). */
   storage?: Record<string, string>;
 }
 
@@ -109,13 +95,12 @@ async function newContext(browser: Browser, options: ContextOptions = {}): Promi
     try {
       for (const [key, value] of Object.entries(entries)) window.localStorage.setItem(key, value);
     } catch {
-      // 讀不到 localStorage 時照預設寬跑。
+      // When localStorage can't be read, run with the default width.
     }
   }, { "sidebar.width": "320", ...options.storage });
   return { context, page: await context.newPage() };
 }
 
-/** 以 alice 登入、開 `path`，等標題框（筆記頁的 lazy 外殼換完）。 */
 async function openNote(
   browser: Browser,
   path: string | ((page: Page) => Promise<string>),
@@ -135,13 +120,12 @@ const panel = (page: Page): Locator => page.getByTestId("outline-panel");
 const panelItem = (page: Page, text: string): Locator => panel(page).locator("[data-outline-item]").filter({ hasText: new RegExp(`^${text}$`) });
 const scrollerOf = (page: Page): Locator => page.getByTestId("article-column").locator("xpath=ancestor::div[contains(@class,'overflow-y-auto')][1]");
 
-/** 滑上細線、等面板展開（展開有 150 ms 延遲）。 */
+/** Hovers the lines and waits for the panel to expand (it opens after a 150 ms delay). */
 async function openPanel(page: Page): Promise<void> {
   await rail(page).hover();
   await expect(panel(page)).toBeVisible();
 }
 
-/** 內文裡文字恰為 `text` 的標題的區塊 id。 */
 async function headingId(page: Page, text: string): Promise<string> {
   const id = await page.evaluate((text) => {
     const content = Array.from(document.querySelectorAll('[data-content-type="heading"]')).find((el) => el.textContent?.trim() === text);
@@ -151,7 +135,6 @@ async function headingId(page: Page, text: string): Promise<string> {
   return id!;
 }
 
-/** 標題區塊頂端減捲動容器頂端（px）。 */
 async function headingOffset(page: Page, id: string): Promise<number> {
   return scrollerOf(page).evaluate((scroller, id) => {
     const block = scroller.querySelector(`.bn-block-outer[data-id="${id}"]`)!;
@@ -159,7 +142,7 @@ async function headingOffset(page: Page, id: string): Promise<number> {
   }, id);
 }
 
-/** 捲到該標題頂端恰好超過容器頂端 `past` px。 */
+/** Scrolls until the heading top is just `past` px beyond the container top. */
 async function scrollHeadingPastTop(page: Page, id: string, past = 2): Promise<void> {
   await scrollerOf(page).evaluate(
     (scroller, { id, past }) => {
@@ -175,13 +158,12 @@ async function expectLandedAtTop(page: Page, id: string): Promise<void> {
   await expect.poll(() => headingOffset(page, id), { timeout: 5_000, message: "標題頂端與捲動容器頂端的差（px）" }).toBeLessThanOrEqual(4);
 }
 
-/** 細線裡第 `index` 條是唯一亮著的那條。 */
 async function expectActiveLine(page: Page, index: number): Promise<void> {
   await expect(rail(page).locator(":scope > span[data-active]")).toHaveCount(1);
   await expect(railLines(page).nth(index)).toHaveAttribute("data-active", "");
 }
 
-test("60-1 跳轉：hover 展開 5 項，點 Section D 捲到頂端並閃一下，網址不變，面板收起", async ({ browser }) => {
+test("60-1 jump: hover expands 5 items, clicking Section D scrolls to the top and flashes once, the URL is unchanged and the panel collapses", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
@@ -190,7 +172,7 @@ test("60-1 跳轉：hover 展開 5 項，點 Section D 捲到頂端並閃一下�
     await expect(panel(page).locator("[data-outline-item]")).toHaveText(LONG_HEADINGS);
     const id = await headingId(page, "Section D");
     await panelItem(page, "Section D").click();
-    // 高亮只留約 2 秒：點完馬上看，再等捲動停下。
+    // The highlight lasts only about 2 seconds: look right after the click, then wait for scrolling to stop.
     await expect(page.locator(`.kn-anchor-flash[data-anchor-flash="${id}"]`)).toBeAttached({ timeout: 1_500 });
     await expectLandedAtTop(page, id);
     expect(page.url()).toBe(urlBefore);
@@ -202,7 +184,7 @@ test("60-1 跳轉：hover 展開 5 項，點 Section D 捲到頂端並閃一下�
   }
 });
 
-test("60-2 目前位置：Usage 捲過頂端後亮 Usage，面板的 aria-current 也在 Usage", async ({ browser }) => {
+test("60-2 current position: after Usage scrolls past the top Usage is lit, and the panel's aria-current is also on Usage", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
@@ -221,20 +203,17 @@ const PINNED = "outline.pinned";
 const pinButton = (page: Page): Locator => panel(page).getByRole("button", { name: "Pin outline", exact: true });
 const unpinButton = (page: Page): Locator => panel(page).getByRole("button", { name: "Unpin outline", exact: true });
 
-/** 釘住的面板在、細線不在。 */
 async function expectPinnedPanel(page: Page): Promise<void> {
   await expect(panel(page)).toBeVisible({ timeout: 15_000 });
   await expect(rail(page)).toHaveCount(0);
   await expect(unpinButton(page)).toHaveAttribute("aria-pressed", "true");
 }
 
-/** 只有細線（沒展開、沒釘住的面板）。 */
 async function expectRailOnly(page: Page): Promise<void> {
   await expect(rail(page)).toBeVisible({ timeout: 15_000 });
   await expect(panel(page)).toHaveCount(0);
 }
 
-/** 內文欄的文字寬（`.bn-editor` 扣掉左右內距）與捲動容器的可視寬。 */
 async function textAndContainerWidth(page: Page): Promise<{ text: number; container: number }> {
   const text = await page
     .getByTestId("article-column")
@@ -247,17 +226,17 @@ async function textAndContainerWidth(page: Page): Promise<{ text: number; contai
   return { text, container };
 }
 
-/** 釘住時欄寬＝min(標準欄寬, 容器 − 286)，文字寬再扣欄內距 16×2 與編輯器內距 54×2。 */
+/** When pinned, column width = min(standard column width, container - 286); text width is that minus the column padding 16x2 and the editor padding 54x2. */
 const pinnedTextWidth = (container: number): number => Math.min(Math.min(Math.max(680, 0.85 * container), 1056), container - 286) - 140;
 
-test("60-3 釘住：面板常駐、細線不在，內文欄往左讓出面板，reload 後仍釘住", async ({ browser }) => {
+test("60-3 pin: the panel stays and the lines are gone, the body column yields to the panel on the left, and it is still pinned after reload", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
     await openPanel(page);
     const floatingBox = (await panel(page).boundingBox())!;
     await pinButton(page).click();
-    // 滑鼠移到側欄上：浮動面板會在收起延遲後收掉，釘住的不會。
+    // Mouse over the sidebar: a floating panel closes after the collapse delay, a pinned one does not.
     await page.mouse.move(10, 450);
     await expectPinnedPanel(page);
     // The pinned panel sits exactly where the floating one did.
@@ -297,7 +276,7 @@ test("60-3 釘住：面板常駐、細線不在，內文欄往左讓出面板，
   }
 });
 
-test("60-4 全寬筆記不能釘：只有細線，展開的面板沒有釘選鈕", async ({ browser }) => {
+test("60-4 a full-width note can't be pinned: only the lines, and the panel expanded on hover has no pin button", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, {
     storage: { [PINNED]: "1", [`note.width.${notes.longId.toLowerCase()}`]: "full" },
   });
@@ -313,7 +292,7 @@ test("60-4 全寬筆記不能釘：只有細線，展開的面板沒有釘選鈕
   }
 });
 
-test("60-5 1280 寬、側欄 320 放不下：退回細線、沒有釘選鈕；視窗拉到 1440 自動釘住", async ({ browser }) => {
+test("60-5 1280 wide with the sidebar at 320 doesn't fit: falls back to lines with no pin button; widening to 1440 pins automatically", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { viewport: { width: 1280, height: 800 }, storage: { [PINNED]: "1" } });
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
@@ -332,7 +311,7 @@ test("60-5 1280 寬、側欄 320 放不下：退回細線、沒有釘選鈕；�
   }
 });
 
-test("60-11 滾輪在細線與面板上：捲的是內文", async ({ browser }) => {
+test("60-11 wheel over the lines and the panel: the body scrolls", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });
@@ -342,7 +321,7 @@ test("60-11 滾輪在細線與面板上：捲的是內文", async ({ browser }) 
     await rail(page).hover();
     await page.mouse.wheel(0, 400);
     await expect.poll(scrollTop, { timeout: 5_000, message: "滾輪在細線上，內文往下捲" }).toBeGreaterThan(200);
-    // 面板清單放得下五項、不會自己捲：滾輪一樣交給內文。
+    // The panel list fits all five items and doesn't scroll itself: the wheel is still handed to the body.
     await expect(panel(page)).toBeVisible();
     const before = await scrollTop();
     await panelItem(page, "Usage").hover();
@@ -353,7 +332,7 @@ test("60-11 滾輪在細線與面板上：捲的是內文", async ({ browser }) 
   }
 });
 
-test("60-6 打字新增 H2：5 秒內細線多一條、面板裡有 New section", async ({ browser }) => {
+test("60-6 adding an H2 by typing: within 5 seconds the lines gain one and the panel has New section", async ({ browser }) => {
   const { context, page } = await openNote(browser, async (page) => (await createNoteVia(page, `Outline typing ${RUN} ${Date.now()}`, "# First\n\nfirst body\n\nlast line")).path);
   try {
     await expect(railLines(page)).toHaveCount(1, { timeout: 15_000 });
@@ -368,7 +347,7 @@ test("60-6 打字新增 H2：5 秒內細線多一條、面板裡有 New section"
   }
 });
 
-test("60-8 公開頁（未登入）：細線在，hover 點 Usage 捲到頂端", async ({ browser }) => {
+test("60-8 public page (logged out): the lines are there; hovering and clicking Usage scrolls to the top", async ({ browser }) => {
   const { context, page } = await newContext(browser);
   try {
     await page.goto(`/p/${notes.publicToken}`);
@@ -390,7 +369,6 @@ const bubble = (page: Page): Locator => page.getByRole("button", { name: /^Open 
 const moreButton = (page: Page): Locator => page.getByRole("button", { name: "More", exact: true });
 const headingText = (page: Page, text: string): Locator => page.locator('[data-content-type="heading"]').filter({ hasText: new RegExp(`^${text}$`) });
 
-/** 該標題頂端減手機上釘在頂端的筆記頁首下緣（px）。 */
 async function headingBelowHeader(page: Page, id: string): Promise<number> {
   return page.evaluate((id) => {
     const block = document.querySelector(`.bn-block-outer[data-id="${id}"]`)!;
@@ -400,8 +378,8 @@ async function headingBelowHeader(page: Page, id: string): Promise<number> {
 }
 
 /**
- * 捲一下讓泡泡出現，馬上點它，直到底部面板打開。泡泡停止捲動 1.5 秒就消失，慢的機器上捲完到點之間可能已經不在：整段重來。
- * 面板已經開著就不再捲、不再點（開著時頁面鎖住捲動，泡泡也在面板底下）。
+ * Scrolls a little so the bubble appears and taps it at once, until the bottom panel opens. The bubble disappears 1.5 seconds after scrolling stops and on a slow machine may already be gone between scrolling and the tap: the whole step is retried.
+ * Once the panel is open it neither scrolls nor taps again (while open the page locks scrolling, and the bubble is under the panel).
  */
 async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>, pointer: "tap" | "click" = "tap"): Promise<void> {
   await expect(async () => {
@@ -412,12 +390,12 @@ async function openSheetFromBubble(page: Page, scroll: () => Promise<unknown>, p
   }).toPass({ timeout: 15_000 });
 }
 
-/** 等兩個畫格：捲動事件與它造成的重繪都過去了。 */
+/** Waits two frames: the scroll event and the repaint it causes. */
 async function twoFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
-test("60-7a 手機 ⋮：Heading outline 開底部面板，點 Section D 捲到頁首下方", async ({ browser }) => {
+test("60-7a phone kebab: Heading outline opens the bottom panel, and clicking Section D scrolls below the header", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -429,7 +407,7 @@ test("60-7a 手機 ⋮：Heading outline 開底部面板，點 Section D 捲到�
     const id = await headingId(page, "Section D");
     await sheetItem(page, "Section D").click();
     await expect(sheet(page)).toBeHidden();
-    // 面板沒有觸發鈕：焦點交還 ⋮，不掉到 body。
+    // The panel has no trigger button: focus is returned to the kebab and doesn't fall to body.
     await expect(moreButton(page)).toBeFocused();
     await expect.poll(() => headingBelowHeader(page, id), { timeout: 5_000, message: "標題頂端與頁首下緣的差（px）" }).toBeGreaterThanOrEqual(-2);
     await expect.poll(() => headingBelowHeader(page, id), { timeout: 5_000, message: "標題頂端與頁首下緣的差（px）" }).toBeLessThanOrEqual(4);
@@ -439,7 +417,7 @@ test("60-7a 手機 ⋮：Heading outline 開底部面板，點 Section D 捲到�
   }
 });
 
-test("60-7b 手機泡泡：捲動時出現、停下約 1.5 秒後消失，點它開底部面板", async ({ browser }) => {
+test("60-7b phone bubble: appears while scrolling, disappears about 1.5 seconds after stopping, and tapping it opens the bottom panel", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -455,7 +433,7 @@ test("60-7b 手機泡泡：捲動時出現、停下約 1.5 秒後消失，點它
   }
 });
 
-test("60-7c 手機、沒有標題的筆記：⋮ 沒有 Heading outline，捲動後沒有泡泡", async ({ browser }) => {
+test("60-7c phone, a note without headings: the kebab has no Heading outline and no bubble appears after scrolling", async ({ browser }) => {
   const { context, page } = await openNote(
     browser,
     async (page) => (await createNoteVia(page, `Outline none ${RUN} ${Date.now()}`, filler("plain", 60))).path,
@@ -477,7 +455,7 @@ test("60-7c 手機、沒有標題的筆記：⋮ 沒有 Heading outline，捲動
   }
 });
 
-test("60-7d 公開頁手機：捲動容器出現泡泡，點它開面板，點 Usage 捲到頂端；沒有 ⋮", async ({ browser }) => {
+test("60-7d phone public page: the scroll container shows a bubble, tapping it opens the panel and clicking Usage scrolls to the top; no kebab", async ({ browser }) => {
   const { context, page } = await newContext(browser, { phone: true });
   try {
     await page.goto(`/p/${notes.publicToken}`);
@@ -498,7 +476,7 @@ test("60-7d 公開頁手機：捲動容器出現泡泡，點它開面板，點 U
   }
 });
 
-test("60-7e 手機編輯中：連按 Enter 讓文件跟著游標往下捲，泡泡不出現", async ({ browser }) => {
+test("60-7e phone while editing: pressing Enter repeatedly makes the document scroll with the caret and the bubble does not appear", async ({ browser }) => {
   const { context, page } = await openNote(
     browser,
     async (page) => (await createNoteVia(page, `Outline caret ${RUN} ${Date.now()}`, "# Top\n\nfirst line")).path,
@@ -506,7 +484,6 @@ test("60-7e 手機編輯中：連按 Enter 讓文件跟著游標往下捲，泡�
   );
   try {
     await expect(headingText(page, "Top")).toBeAttached({ timeout: 15_000 });
-    // 從這裡開始記：泡泡只要出現過一次就記下來。
     await page.evaluate(() => {
       const w = window as Window & { bubbleSeen?: boolean };
       w.bubbleSeen = false;
@@ -526,14 +503,14 @@ test("60-7e 手機編輯中：連按 Enter 讓文件跟著游標往下捲，泡�
   }
 });
 
-test("60-7f 手機編輯中：從泡泡開面板再直接關掉，焦點回到編輯器、工具列還在", async ({ browser }) => {
+test("60-7f phone while editing: opening the panel from the bubble and closing it directly returns focus to the editor and the toolbar stays", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { phone: true });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
     await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^intro filler paragraph 0$/ }));
     const toolbar = page.locator("[data-mobile-edit-toolbar]");
     await expect(toolbar).toBeVisible();
-    // 讀者自己捲（不是打字造成的）：泡泡才出現。點泡泡不搶焦點，工具列留著。
+    // The reader scrolls by themselves (not caused by typing): only then does the bubble appear. Tapping the bubble doesn't take focus and the toolbar stays.
     await openSheetFromBubble(page, () => page.evaluate(() => window.scrollBy(0, 300)));
     await page.keyboard.press("Escape");
     await expect(sheet(page)).toBeHidden();
@@ -544,13 +521,12 @@ test("60-7f 手機編輯中：從泡泡開面板再直接關掉，焦點回到�
   }
 });
 
-test("60-9 切換標題：收合後亮的換成切換標題；從面板點收起來的標題會展開並捲過去", async ({ browser }) => {
+test("60-9 toggle heading: after collapsing the lit one changes to the toggle heading; clicking a folded heading in the panel expands it and scrolls there", async ({ browser }) => {
   test.setTimeout(90_000);
   const md = ["# Top", filler("top"), "toggle anchor", filler("tail")].join("\n\n");
   const { context, page } = await openNote(browser, async (page) => (await createNoteVia(page, `Outline toggle ${RUN} ${Date.now()}`, md)).path);
   try {
     await expect(railLines(page)).toHaveCount(1, { timeout: 15_000 });
-    // 在「toggle anchor」之後用 `/` 選單建切換 H2，再按 Tab 把下一行縮進去、打成 H3。
     await clickEndOfParagraph(page, editorLocator(page).locator('[data-content-type="paragraph"]').filter({ hasText: /^toggle anchor$/ }));
     await page.keyboard.press("Enter");
     await page.keyboard.type("/toggle heading 2");
@@ -574,7 +550,7 @@ test("60-9 切換標題：收合後亮的換成切換標題；從面板點收起
     await scrollHeadingPastTop(page, innerId);
     await expectActiveLine(page, 2);
 
-    // 只點開合鈕（`click()`，沒有指標事件、也不捲動）：內容變矮，大綱靠尺寸變化重新量。
+    // Only click the toggle button (`click()`: no pointer events and no scrolling): the content gets shorter and the outline re-measures from the size change.
     await folded.locator("> .bn-block > .bn-block-content .bn-toggle-button").evaluate((el) => (el as HTMLElement).click());
     await expect(wrapper).toHaveAttribute("data-show-children", "false");
     await expect(page.locator(`.bn-block-outer[data-id="${innerId}"]`)).toBeHidden();
@@ -590,21 +566,20 @@ test("60-9 切換標題：收合後亮的換成切換標題；從面板點收起
   }
 });
 
-test("60-10 點最後一個標題：捲不到頂端也仍是它亮", async ({ browser }) => {
+test("60-10 clicking the last heading: it is still the lit one even though it can't reach the top", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.tail);
   try {
     await expect(railLines(page)).toHaveCount(2, { timeout: 15_000 });
     await openPanel(page);
     const id = await headingId(page, "Omega");
     await panelItem(page, "Omega").click();
-    // 捲到底了，Omega 仍在容器頂端之下。
     const scroller = scrollerOf(page);
     await expect
       .poll(() => scroller.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop), { timeout: 5_000, message: "捲到底" })
       .toBeLessThanOrEqual(1);
     expect(await headingOffset(page, id)).toBeGreaterThan(50);
     await expectActiveLine(page, 1);
-    // 等過幾個畫格（量測是逐畫格排程的），它不會被改回 Alpha。
+    // Wait a few frames (measurement is scheduled per frame): it must not revert to Alpha.
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
@@ -619,7 +594,7 @@ test("60-10 點最後一個標題：捲不到頂端也仍是它亮", async ({ br
   }
 });
 
-test("60-12 700 寬（640-767）：沒有細線；捲容器出現泡泡，開底部面板，點 Section D 捲到容器頂端", async ({ browser }) => {
+test("60-12 700 wide (640-767): no lines; the scroll container shows a bubble, which opens the bottom panel, and clicking Section D scrolls to the container top", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long, { viewport: { width: 700, height: 900 } });
   try {
     await expect(headingText(page, "Section D")).toBeAttached({ timeout: 15_000 });
@@ -673,7 +648,7 @@ test("60-12 700 寬（640-767）：沒有細線；捲容器出現泡泡，開底
   }
 });
 
-test("60-13 細線與面板的上緣＝第一行內文的上緣，捲動時不動；寬視窗裡面板蓋住細線", async ({ browser }) => {
+test("60-13 the top edge of the lines and panel equals the first body line's top edge and doesn't move while scrolling; in a wide viewport the panel covers the lines", async ({ browser }) => {
   const { context, page } = await openNote(browser, notes.long);
   try {
     await expect(railLines(page)).toHaveCount(5, { timeout: 15_000 });

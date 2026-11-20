@@ -13,7 +13,7 @@ describe("VersionsLazyBoundary", () => {
     vi.restoreAllMocks();
   });
 
-  it("chunk 載入失敗：用 versions 自己的額度 reload 一次，NotePage 的額度旗標不動", async () => {
+  it("chunk load failure: reloads once using versions' own allowance and NotePage's allowance flag is untouched", async () => {
     await i18n.changeLanguage("en");
     vi.spyOn(console, "error").mockImplementation(() => {});
     const reload = vi.fn();
@@ -27,7 +27,7 @@ describe("VersionsLazyBoundary", () => {
     expect(sessionStorage.getItem("knotebook:chunk-reload:notepage")).toBeNull();
   });
 
-  it("同一個 session 第二次失敗：不再 reload，就地顯示 inline 錯誤（不包 AppShell）", async () => {
+  it("second failure in the same session: no further reload, shows an inline error in place (not wrapped in AppShell)", async () => {
     await i18n.changeLanguage("en");
     vi.spyOn(console, "error").mockImplementation(() => {});
     sessionStorage.setItem("knotebook:chunk-reload:versions", "1");
@@ -42,7 +42,7 @@ describe("VersionsLazyBoundary", () => {
     expect(container.querySelector("main")).toBeNull();
   });
 
-  it("非 chunk 的 render 錯誤 → 顯示版本歷史自己的文案（不是 app.noteCrash 的「筆記崩潰」），且錯誤畫面包在呼叫端給的外框 class 裡；正常態沒有那層外框", async () => {
+  it("a non-chunk render error -> shows the version history's own text (not the note-crash text of app.noteCrash), with the error view wrapped in the frame class given by the caller; the normal state has no such frame", async () => {
     await i18n.changeLanguage("en");
     vi.spyOn(console, "error").mockImplementation(() => {});
     function Crash(): never {
@@ -68,7 +68,7 @@ describe("VersionsLazyBoundary", () => {
     expect(container).toBeDefined();
   });
 
-  it("#263：crashMessageKey 換掉非 chunk 錯誤的文案（框選 AI 預覽傳 ai.box.previewCrash）", async () => {
+  it("#263: crashMessageKey replaces the text for non-chunk errors (the selection AI preview passes ai.box.previewCrash)", async () => {
     await i18n.changeLanguage("en");
     vi.spyOn(console, "error").mockImplementation(() => {});
     function Crash(): never {
@@ -84,7 +84,7 @@ describe("VersionsLazyBoundary", () => {
     expect(alert).not.toHaveTextContent("Version history couldn't be shown.");
   });
 
-  it("成功載入：Suspense 內的 beacon 清掉 versions 的旗標", async () => {
+  it("successful load: the beacon inside Suspense clears versions' flag", async () => {
     sessionStorage.setItem("knotebook:chunk-reload:versions", "1");
     render(
       <VersionsLazyBoundary noteId="n1">

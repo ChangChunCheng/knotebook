@@ -1,8 +1,8 @@
 /**
- * 資料夾：併發（上）——刪資料夾與各操作（第三點、
- * 鎖序表）。以拋棄式 pg 實跑：一方卡在自己交易內的縫，另一方送出後以 `waitForLockWaiters` 確認它真的在等鎖，
- * 放行後斷言結果只會是指定的那一種。每組兩種先後（「刪先」與「對方先」）；每案都斷言沒有 409 `server_busy`（40P01 經
- * `isRetryableTxError` 會變成它）與資料一致（沒有指向不存在資料夾的筆記或放置、活筆記沒有快照）。
+ * Concurrency (part one): deleting a folder against each operation. Runs on throwaway pg: one side is held at a test hook inside its own transaction,
+ * the other is sent and `waitForLockWaiters` confirms it really waits on a lock; after release the result must be exactly the specified one. Each group runs both orders
+ * (delete first and the other side first); every case asserts no 409 `server_busy` (40P01 becomes it via `isRetryableTxError`) and consistent data
+ * (no note or placement pointing at a nonexistent folder, no live note with a snapshot).
  */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
@@ -46,7 +46,7 @@ function conflicted(r: Res): void {
   expect((r.json() as { error: { message: string } }).error.message).toBe(CHANGED);
 }
 
-/** 一次性測試縫（`trash-race.test.ts` 的慣例）：`hold` 登記的點第一次觸發時卡住，其餘觸發直接放行。 */
+/** One-shot test hooks (convention of `trash-race.test.ts`): the point registered by `hold` blocks the first time it fires, other firings pass straight through. */
 class Seams {
   private readonly handlers = new Map<string, () => Promise<void>>();
   on(name: GroupRacePoint, fn: () => Promise<void>): void {
@@ -58,7 +58,7 @@ class Seams {
     this.handlers.delete(name);
     await fn();
   }
-  /** 在 name 卡住：`entered` 在進縫時 resolve，`open()` 放行。 */
+  /** Blocks at name: `entered` resolves on entering the hook, `open()` releases. */
   hold(name: GroupRacePoint): { entered: Promise<void>; open: () => void } {
     let open!: () => void;
     let enter!: () => void;
@@ -73,12 +73,12 @@ class Seams {
   readonly group: GroupTestHook = point => this.fire(point);
 }
 
-/** 等請求走進縫；它若先回應了（沒走到縫）就直接失敗，不空等。 */
+/** Waits for the request to enter the hook; if it responds first (never reached the hook) it fails at once instead of waiting idly. */
 async function entered(seam: Promise<void>, req: Promise<Res>): Promise<void> {
   await Promise.race([seam, req.then(r => { throw new Error(`請求沒走到縫就回了 ${r.statusCode} ${r.body}`); })]);
 }
 
-/** 等 n 條連線卡在鎖上；逾時就先放行、讓在途請求收尾，再把逾時丟出去（不留懸著的請求）。 */
+/** Waits for n connections stuck on locks; on timeout releases first so the in-flight requests finish, then throws the timeout (no dangling requests). */
 async function blockedOrBail(pool: Pool, n: number, bail: () => void, inflight: Array<Promise<unknown>>): Promise<void> {
   try {
     await waitForLockWaiters(pool, n);
@@ -89,7 +89,7 @@ async function blockedOrBail(pool: Pool, n: number, bail: () => void, inflight: 
   }
 }
 
-/** 沒有 409 server_busy（40P01／55P03 的映射）、沒有 5xx。鎖序倒置（例：複製的資料夾 KS 排到來源之後）會以 server_busy 在這裡紅。 */
+/** No 409 server_busy (the mapping of 40P01/55P03) and no 5xx. A reversed lock order (e.g. a copy's folder KS queued after the source) turns red here as server_busy. */
 function noBusy(...rs: Res[]): void {
   for (const r of rs) {
     expect(errCode(r), r.body).not.toBe("server_busy");
@@ -103,7 +103,7 @@ interface Scene {
   db: Db;
   pool: Pool;
   seams: Seams;
-  /** 等每一次 `releaseDeletingGate` 跑完（release 是 fire-and-forget）。 */
+  /** Waits for every `releaseDeletingGate` to finish (release is fire-and-forget). */
   gatesSettled(): Promise<void>;
 }
 
@@ -124,9 +124,9 @@ async function scene(): Promise<Scene> {
 }
 
 /**
- * first 卡在 point；second 送出並確認在等鎖；放行。回 [first, second] 的回應，並斷言都不是 server_busy／5xx。
- * `holdSecondUntilFirstReplies`：second 拿到鎖、走到這個縫之後，等 first 回完應答才繼續——first commit 之後在鎖外重讀組回應，
- * 不讓 second 搶在重讀前 commit（那會讓 first 偶爾回成 404）。同 `trash-race-ops.test.ts` 的 `opFirst`。
+ * first is held at point; second is sent and confirmed to be waiting on a lock; released. Returns the responses [first, second] and asserts neither is server_busy/5xx.
+ * `holdSecondUntilFirstReplies`: after second gets the lock and reaches this hook, it waits until first has replied - first re-reads outside the lock after commit
+ * to build its response, and second must not commit ahead of that re-read (that would make first occasionally answer 404). Same as `opFirst` in `trash-race-ops.test.ts`.
  */
 async function race(
   s: Scene,
@@ -135,7 +135,7 @@ async function race(
   second: () => Promise<Res>,
   holdSecondUntilFirstReplies?: GroupRacePoint,
 ): Promise<[Res, Res]> {
-  // Seams 以點名為鍵：同一點後登記的會蓋掉 first 的 hold。
+  // Hooks are keyed by point name: one registered later on the same point overrides first's hold.
   if (holdSecondUntilFirstReplies === point) throw new Error(`holdSecondUntilFirstReplies 不能與 point 同為 ${point}`);
   const h = s.seams.hold(point);
   let replied!: () => void;
@@ -151,7 +151,7 @@ async function race(
   return out;
 }
 
-/** 全庫不變量：沒有筆記或放置指向不存在的資料夾；活筆記沒有路徑快照。 */
+/** Whole-database invariants: no note or placement points at a nonexistent folder; live notes have no path snapshot. */
 async function expectConsistent(pool: Pool): Promise<void> {
   const { rows } = await pool.query<{ dangling: number; dangling_pl: number; live_snap: number }>(`select
     (select count(*)::int from notes n where n.folder_id is not null and not exists (select 1 from folders f where f.id = n.folder_id)) as dangling,
@@ -179,7 +179,6 @@ async function expectFolders(pool: Pool, present: readonly string[], gone: reado
   for (const id of gone) expect(await folderRow(pool, id), id).toBeUndefined();
 }
 
-/** 由葉往根讀名稱路徑與根 id。 */
 async function pathOf(pool: Pool, folderId: string): Promise<{ names: string[]; rootId: string }> {
   const names: string[] = [];
   let cur: string | null = folderId;
@@ -199,7 +198,7 @@ async function countTitled(pool: Pool, title: string): Promise<number> {
   return rows[0]!.n;
 }
 
-/** 個人樹 F›G（F 在根層）、F 裡一篇活筆記 a。 */
+/** Personal tree F>G (F at root), one live note a in F. */
 async function personalTree(s: Scene) {
   const u = await seedUser(s.db);
   const [F, G] = await seedFolderChain(s.db, { personal: u.id }, ["F", "G"]);
@@ -207,8 +206,8 @@ async function personalTree(s: Scene) {
   return { u: u.id, F: F!, G: G!, a };
 }
 
-describe("RF-PL 刪資料夾與放置進子樹", () => {
-  it("刪先：放置 404 folder_not_found、筆記留在根層活著；刪 200", async () => {
+describe("delete folder vs placing into the subtree", () => {
+  it("delete first: placement 404 folder_not_found, the note stays live at root; delete 200", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const n = await noteIn(s, { ownerId: t.u }, null);
@@ -221,7 +220,7 @@ describe("RF-PL 刪資料夾與放置進子樹", () => {
     await expectConsistent(s.pool);
   });
 
-  it("放置先：放置 200；刪 409 conflict（新進的活筆記沒開閘門）、什麼都沒刪、閘門全收", async () => {
+  it("placement first: placement 200; delete 409 conflict (the newly arrived live note has no gate opened), nothing deleted, all gates released", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const n = await noteIn(s, { ownerId: t.u }, null);
@@ -237,8 +236,8 @@ describe("RF-PL 刪資料夾與放置進子樹", () => {
   });
 });
 
-describe("RF-PO 刪資料夾與放置出子樹", () => {
-  it("刪先：放置等筆記鎖、放行後那篇已在垃圾桶 → 404 not_found；刪 200 含它", async () => {
+describe("delete folder vs placing out of the subtree", () => {
+  it("delete first: placement waits on the note lock, after release that note is already in the trash -> 404 not_found; delete 200 includes it", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const H = (await seedFolder(s.db, { personal: t.u }, { name: "H" })).id;
@@ -250,7 +249,7 @@ describe("RF-PO 刪資料夾與放置出子樹", () => {
     await expectConsistent(s.pool);
   });
 
-  it("放置先：刪重評述詞、不再鎖到它 → 刪 200、trashedNoteIds 不含它、它的閘門被收、筆記在新位置活著", async () => {
+  it("placement first: delete re-evaluates the predicate and no longer locks it -> delete 200, trashedNoteIds doesn't contain it, its gate is taken back, the note is live at the new position", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const n = await noteIn(s, { ownerId: t.u }, t.G);
@@ -267,8 +266,8 @@ describe("RF-PO 刪資料夾與放置出子樹", () => {
   });
 });
 
-describe("RF-PI 刪資料夾與子樹內放置", () => {
-  it("刪先：放置 404 not_found（筆記已在垃圾桶）；刪 200、快照是原位置", async () => {
+describe("delete folder vs placement within the subtree", () => {
+  it("delete first: placement 404 not_found (the note is already in the trash); delete 200, snapshot is the original position", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const H = (await seedFolder(s.db, { personal: t.u }, { parentId: t.F, name: "H" })).id;
@@ -280,13 +279,13 @@ describe("RF-PI 刪資料夾與子樹內放置", () => {
     await expectConsistent(s.pool);
   });
 
-  it("放置先：放置 200；刪 200、筆記在子樹另一處一起進垃圾桶、快照是新位置", async () => {
+  it("placement first: placement 200; delete 200, the note goes to the trash together from another place in the subtree, snapshot is the new position", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const H = (await seedFolder(s.db, { personal: t.u }, { parentId: t.F, name: "H" })).id;
     const n = await noteIn(s, { ownerId: t.u }, t.G);
-    // 刪資料夾鎖完子樹筆記後停在 folder-delete-notes-locked 等放置回完應答，不和放置 commit 後的重讀競速
-    // （刪資料夾呼叫 `trashNotesInTx` 不帶 hook，note-trash-locked 不會觸發）。
+    // After locking the subtree notes, the folder delete stops at folder-delete-notes-locked and waits for the placement's response to finish, so it doesn't race the placement's post-commit re-read
+    // (folder delete calls `trashNotesInTx` without a hook, so note-trash-locked never fires).
     const [pr, dr] = await race(s, "note-folder-locked", () => place(s.app, t.u, n, H), () => delFolder(s.app, t.u, t.F), "folder-delete-notes-locked");
     expect(okJson<NoteDto>(pr, 200).folderId).toBe(H);
     expect(okJson<FolderDeleteResultDto>(dr, 200)).toEqual({ trashedNoteIds: sorted([t.a, n]), deletedFolderIds: sorted([t.F, t.G, H]) });
@@ -296,8 +295,8 @@ describe("RF-PI 刪資料夾與子樹內放置", () => {
   });
 });
 
-describe("RF-TR 刪資料夾與單篇移入垃圾桶", () => {
-  it("刪先：移入 404 not_found；刪 200 含它", async () => {
+describe("delete folder vs moving a single note to the trash", () => {
+  it("delete first: move 404 not_found; delete 200 includes it", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const n = await noteIn(s, { ownerId: t.u }, t.G);
@@ -308,7 +307,7 @@ describe("RF-TR 刪資料夾與單篇移入垃圾桶", () => {
     await expectConsistent(s.pool);
   });
 
-  it("移入先：移入 204；刪 200、那篇是垃圾桶組（不在 trashedNoteIds）、快照是刪除當下的路徑、folder_id 清掉", async () => {
+  it("move first: move 204; delete 200, that note is in the trash group (not in trashedNoteIds), snapshot is the path at deletion time, folder_id cleared", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const n = await noteIn(s, { ownerId: t.u }, t.G);
@@ -321,11 +320,11 @@ describe("RF-TR 刪資料夾與單篇移入垃圾桶", () => {
   });
 });
 
-describe("RF-PG 刪資料夾與多 id 永久刪除（含已還原回子樹的活 id 與子樹內的垃圾桶 id）", () => {
-  it("刪先：永久刪除等筆記鎖 → 垃圾桶的兩篇被刪、已還原的活 id 略過；刪 200、trashedNoteIds 不含被永久刪除的", async () => {
+describe("delete folder vs multi-id permanent delete (including a live id restored back into the subtree and a trashed id in the subtree)", () => {
+  it("delete first: permanent delete waits on the note lock -> the two trashed notes are deleted, the restored live id is skipped; delete 200, trashedNoteIds doesn't contain the permanently deleted", async () => {
     const s = await scene();
     const t = await personalTree(s);
-    // a 先移入再還原回子樹（活 id）。
+    // a is first moved to the trash then restored back into the subtree (a live id).
     await markTrashed(s.pool, t.a, t.u);
     await setSnapshot(s.pool, t.a, ["F"]);
     expect(okJson<TrashRestoreResultDto>(await restore(s.app, t.u, [t.a]), 200).restored.map(r => r.id)).toEqual([t.a]);
@@ -345,7 +344,7 @@ describe("RF-PG 刪資料夾與多 id 永久刪除（含已還原回子樹的活
     await expectConsistent(s.pool);
   });
 
-  it("永久刪除先（預判時在垃圾桶、鎖時已還原回子樹的活 id）：永久刪除 200（活 id not_in_trash、垃圾桶那篇刪掉）；刪 200 只含活的那篇", async () => {
+  it("permanent delete first (in the trash at pre-judgement, a live id restored back into the subtree by lock time): permanent delete 200 (live id not_in_trash, the trashed one deleted); delete 200 includes only the live one", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const tr = await noteIn(s, { ownerId: t.u }, t.G);
@@ -353,7 +352,7 @@ describe("RF-PG 刪資料夾與多 id 永久刪除（含已還原回子樹的活
       await markTrashed(s.pool, id, t.u);
       await setSnapshot(s.pool, id, path);
     }
-    // 還原 a 卡在鎖後 → 永久刪除 [a, tr] 預判通過、等 a 的鎖 → 還原 commit（a 回到 F）→ 永久刪除鎖到活的 a 與 tr、卡住 → 刪 F 等。
+    // Restore of a is held behind the lock -> permanent delete [a, tr] passes pre-judgement and waits for a's lock -> restore commits (a back in F) -> permanent delete locks the live a and tr, stuck -> delete of F waits.
     const rh = s.seams.hold("note-restore-locked");
     const ph = s.seams.hold("note-purge-locked");
     const restoring = restore(s.app, t.u, [t.a]);
@@ -377,8 +376,8 @@ describe("RF-PG 刪資料夾與多 id 永久刪除（含已還原回子樹的活
   });
 });
 
-describe("RF-RS 刪資料夾與還原（照路徑重建到子樹內）", () => {
-  /** r 在垃圾桶、原資料夾 F›G 的 G 已不在（folder_id NULL、快照 ["F","G"]）。 */
+describe("delete folder vs restore (rebuilt by path inside the subtree)", () => {
+  /** r is in the trash, G of its original folder F>G is gone (folder_id NULL, snapshot ["F","G"]). */
   async function setup(s: Scene) {
     const t = await personalTree(s);
     const r = await noteIn(s, { ownerId: t.u }, null);
@@ -388,7 +387,7 @@ describe("RF-RS 刪資料夾與還原（照路徑重建到子樹內）", () => {
     return { ...t, r };
   }
 
-  it("刪先：還原在結構鎖上等 → 刪 commit 後照快照重建出新的同名路徑、筆記活在新路徑上", async () => {
+  it("delete first: restore waits on the structure lock -> after the delete commits, rebuilds a new same-name path from the snapshot, the note lives on the new path", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, rr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.u, t.F), () => restore(s.app, t.u, [t.r]));
@@ -404,7 +403,7 @@ describe("RF-RS 刪資料夾與還原（照路徑重建到子樹內）", () => {
     await expectConsistent(s.pool);
   });
 
-  it("還原先：還原把 G 重建在 F 裡並 commit；刪拿到鎖後鎖到這篇沒開閘門的活筆記 → 409 conflict、什麼都沒刪、閘門全收", async () => {
+  it("restore first: restore rebuilds G inside F and commits; delete gets its lock and locks this live note with no gate opened -> 409 conflict, nothing deleted, all gates released", async () => {
     const s = await scene();
     const t = await setup(s);
     const [rr, dr] = await race(s, "note-restore-locked", () => restore(s.app, t.u, [t.r]), () => delFolder(s.app, t.u, t.F));
@@ -421,8 +420,8 @@ describe("RF-RS 刪資料夾與還原（照路徑重建到子樹內）", () => {
   });
 });
 
-describe("RF-SC 刪資料夾與建子資料夾", () => {
-  it("刪先：建立 404 folder_not_found、沒有建出資料夾；刪 200", async () => {
+describe("delete folder vs creating a subfolder", () => {
+  it("delete first: create 404 folder_not_found, no folder created; delete 200", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const [dr, cr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.u, t.F), () => createFolder(s.app, t.u, t.F, "S"));
@@ -433,7 +432,7 @@ describe("RF-SC 刪資料夾與建子資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("建立先：建立 201；刪 200、新子資料夾一起被刪", async () => {
+  it("create first: create 201; delete 200, the new subfolder is deleted too", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const [cr, dr] = await race(s, "folder-structure-locked", () => createFolder(s.app, t.u, t.F, "S"), () => delFolder(s.app, t.u, t.F));
@@ -444,7 +443,7 @@ describe("RF-SC 刪資料夾與建子資料夾", () => {
   });
 });
 
-describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () => {
+describe("delete folder vs moving a subfolder (out of / into the subtree)", () => {
   async function setup(s: Scene) {
     const t = await personalTree(s);
     const g = await noteIn(s, { ownerId: t.u }, t.G);
@@ -452,7 +451,7 @@ describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () =
     return { ...t, g, O };
   }
 
-  it("刪先：搬移 404 folder_not_found；刪 200 含 G 與其筆記", async () => {
+  it("delete first: move 404 folder_not_found; delete 200 includes G and its notes", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, mr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.u, t.F), () => patchFolder(s.app, t.u, t.G, { parentId: t.O }));
@@ -463,7 +462,7 @@ describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () =
     await expectConsistent(s.pool);
   });
 
-  it("搬先：搬移 200；刪 200、搬出去的子資料夾與其筆記不受影響（筆記的閘門被收）", async () => {
+  it("move first: move 200; delete 200, the moved-out subfolder and its notes are unaffected (the note's gate is taken back)", async () => {
     const s = await scene();
     const t = await setup(s);
     const [mr, dr] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.u, t.G, { parentId: t.O }), () => delFolder(s.app, t.u, t.F));
@@ -476,7 +475,7 @@ describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () =
     await expectConsistent(s.pool);
   });
 
-  it("搬進子樹，刪先：搬移 404 folder_not_found、X 與其筆記留在根層；刪 200 不含它們", async () => {
+  it("move into the subtree, delete first: move 404 folder_not_found, X and its notes stay at root; delete 200 doesn't include them", async () => {
     const s = await scene();
     const t = await setup(s);
     const x = await noteIn(s, { ownerId: t.u }, t.O);
@@ -488,7 +487,7 @@ describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () =
     await expectConsistent(s.pool);
   });
 
-  it("搬進子樹，搬先：搬移 200；刪 409 conflict（多出一整棵、裡面的活筆記沒開閘門）、什麼都沒刪、閘門全收", async () => {
+  it("move into the subtree, move first: move 200; delete 409 conflict (a whole extra tree whose live notes have no gate opened), nothing deleted, all gates released", async () => {
     const s = await scene();
     const t = await setup(s);
     const x = await noteIn(s, { ownerId: t.u }, t.O);
@@ -506,8 +505,8 @@ describe("RF-MV 刪資料夾與搬子資料夾（出子樹、進子樹）", () =
   });
 });
 
-describe("RF-RN 刪資料夾與改名子資料夾", () => {
-  /** G 裡一篇活筆記 a2、一篇垃圾桶筆記 tr（快照是舊名）。 */
+describe("delete folder vs renaming a subfolder", () => {
+  /** G has live note a2 and trashed note tr (snapshot has the old name). */
   async function setup(s: Scene) {
     const t = await personalTree(s);
     const a2 = await noteIn(s, { ownerId: t.u }, t.G);
@@ -517,7 +516,7 @@ describe("RF-RN 刪資料夾與改名子資料夾", () => {
     return { ...t, a2, tr };
   }
 
-  it("刪先：改名 404 folder_not_found；刪 200、快照用舊名", async () => {
+  it("delete first: rename 404 folder_not_found; delete 200, snapshot uses the old name", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, nr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.u, t.F), () => patchFolder(s.app, t.u, t.G, { name: "G2" }));
@@ -528,7 +527,7 @@ describe("RF-RN 刪資料夾與改名子資料夾", () => {
     await expectConsistent(s.pool);
   });
 
-  it("改名先：改名 200；刪 200、移入與刷新的快照都用新名", async () => {
+  it("rename first: rename 200; delete 200, both the moved-in and the refreshed snapshots use the new name", async () => {
     const s = await scene();
     const t = await setup(s);
     const [nr, dr] = await race(s, "folder-structure-locked", () => patchFolder(s.app, t.u, t.G, { name: "G2" }), () => delFolder(s.app, t.u, t.F));
@@ -540,7 +539,7 @@ describe("RF-RN 刪資料夾與改名子資料夾", () => {
   });
 });
 
-describe("RF-CP 刪資料夾與複製進子樹", () => {
+describe("delete folder vs copying into the subtree", () => {
   interface CpForm {
     name: string;
     setup(s: Scene): Promise<{ by: string; F: string; G: string; others: string[]; src: string; srcAt: string | null; title: string; body: { folderId: string; groupId?: string } }>;
@@ -578,7 +577,7 @@ describe("RF-CP 刪資料夾與複製進子樹", () => {
   ];
 
   for (const form of forms) {
-    it(`${form.name}：刪先 → 複製 404 folder_not_found、沒有建出副本；刪 200`, async () => {
+    it(`${form.name}: delete first -> copy 404 folder_not_found, no copy created; delete 200`, async () => {
       const s = await scene();
       const c = await form.setup(s);
       const [dr, cr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, c.by, c.F), () => copy(s.app, c.by, c.src, c.body));
@@ -590,10 +589,10 @@ describe("RF-CP 刪資料夾與複製進子樹", () => {
       await expectConsistent(s.pool);
     });
 
-    it(`${form.name}：複製先 → 複製 201 在 G；刪 409 conflict、什麼都沒刪、閘門全收`, async () => {
+    it(`${form.name}: copy first -> copy 201 in G; delete 409 conflict, nothing deleted, all gates released`, async () => {
       const s = await scene();
       const c = await form.setup(s);
-      // 停在來源 KS 之後（`note-copy-locked`）：資料夾 KS 若被排到來源之後，這裡就只持來源 → 與刪成環 → server_busy。
+      // Stopped after the source KS (`note-copy-locked`): if the folder KS were queued after the source, only the source would be held here -> forms a cycle with the delete -> server_busy.
       const [cr, dr] = await race(s, "note-copy-locked", () => copy(s.app, c.by, c.src, c.body), () => delFolder(s.app, c.by, c.F));
       const dup = okJson<NoteDto>(cr, 201);
       expect(dup.folderId).toBe(c.G);
@@ -609,8 +608,8 @@ describe("RF-CP 刪資料夾與複製進子樹", () => {
   }
 });
 
-describe("RF-CN 刪資料夾與在子樹資料夾建立筆記（POST /api/notes，無交易）", () => {
-  it("刪先：建立的 INSERT 在 FK KS 上等 → 23503 → 404 folder_not_found、沒有建出筆記；刪 200", async () => {
+describe("delete folder vs creating a note in a subtree folder (POST /api/notes, no transaction)", () => {
+  it("delete first: the create's INSERT waits on the FK KS -> 23503 -> 404 folder_not_found, no note created; delete 200", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const title = `RFCN-${t.u.slice(0, 8)}`;
@@ -621,7 +620,7 @@ describe("RF-CN 刪資料夾與在子樹資料夾建立筆記（POST /api/notes�
     await expectConsistent(s.pool);
   });
 
-  it("建立先（FD-C1 形：刪停在預讀與開閘門之後，建立整個完成再放行）：建立 201；刪 409 conflict、什麼都沒刪、閘門全收", async () => {
+  it("create first (the delete is stopped after its pre-read and gate opening; the create completes before the delete is released): create 201; delete 409 conflict, nothing deleted, all gates released", async () => {
     const s = await scene();
     const t = await personalTree(s);
     const title = `RFCN-${t.u.slice(0, 8)}`;
@@ -648,7 +647,7 @@ describe("RF-CN 刪資料夾與在子樹資料夾建立筆記（POST /api/notes�
   });
 });
 
-describe("RF-MG 刪群組資料夾與個人筆記移入群組子樹資料夾", () => {
+describe("delete group folder vs moving a personal note into a group subtree folder", () => {
   async function setup(s: Scene) {
     const g = await sixRoleScene(s.db);
     const [F, G] = await seedFolderChain(s.db, { group: g.groupId }, ["F", "G"]);
@@ -661,7 +660,7 @@ describe("RF-MG 刪群組資料夾與個人筆記移入群組子樹資料夾", (
     return rows[0];
   }
 
-  it("刪先：移入 404 folder_not_found、筆記仍是個人根層；刪 200", async () => {
+  it("delete first: move 404 folder_not_found, the note is still at personal root; delete 200", async () => {
     const s = await scene();
     const t = await setup(s);
     const [dr, mr] = await race(s, "folder-delete-notes-locked", () => delFolder(s.app, t.by, t.F), () => move(s.app, t.by, t.n, { groupId: t.groupId, folderId: t.G }));
@@ -673,7 +672,7 @@ describe("RF-MG 刪群組資料夾與個人筆記移入群組子樹資料夾", (
     await expectConsistent(s.pool);
   });
 
-  it("移入先：移入 200 到 G；刪 409 conflict、什麼都沒刪、閘門全收", async () => {
+  it("move first: move 200 into G; delete 409 conflict, nothing deleted, all gates released", async () => {
     const s = await scene();
     const t = await setup(s);
     const [mr, dr] = await race(s, "note-move-locked", () => move(s.app, t.by, t.n, { groupId: t.groupId, folderId: t.G }), () => delFolder(s.app, t.by, t.F));

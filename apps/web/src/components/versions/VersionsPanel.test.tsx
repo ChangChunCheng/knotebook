@@ -80,7 +80,7 @@ describe("VersionsPanel", () => {
     vi.useRealTimers();
   });
 
-  it("卡片 class：浮動（absolute、z-20、陰影、寬度夾在卡寬 - 3rem 內）＋ 固定（xl:relative xl:w-[var(--versions-panel-width)]）＋ cardSurface", async () => {
+  it("card classes: floating (absolute, z-20, shadow, width clamped to card width - 3rem) + fixed (xl:relative xl:w-[var(--versions-panel-width)]) + cardSurface", async () => {
     stub({ [FIRST]: { versions: [], current: cur(), nextBefore: null } });
     renderPanel();
     const panel = await screen.findByTestId("versions-panel");
@@ -90,7 +90,7 @@ describe("VersionsPanel", () => {
     expect(panel).not.toHaveClass("fixed");
   });
 
-  it("把手在浮動與固定段都在（right-full，沒有 max-md:hidden）", async () => {
+  it("the handle is present in both floating and fixed sections (right-full, no max-md:hidden)", async () => {
     stub({ [FIRST]: { versions: [], current: cur(), nextBefore: null } });
     renderPanel();
     const handle = await screen.findByRole("separator");
@@ -99,22 +99,22 @@ describe("VersionsPanel", () => {
     expect(handle).not.toHaveClass("max-xl:hidden");
   });
 
-  // #258：副標只看 current.baseSeq／dirty，與清單內容無關（清單可能被篩過、或根本是空的）。
+  // #258: the subtitle depends only on current.baseSeq / dirty, not on the list contents (the list may be filtered or empty).
   it.each([
-    ["沒有基底（清單空）", { versions: [], current: cur() }, "No base version"],
-    ["沒有基底版本", { versions: [v(2), v(1)], current: cur({ baseSeq: null, dirty: true, nextSeq: 3 }) }, "No base version"],
-    ["沿自 vN · 無修改", { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: false, nextSeq: 3 }) }, `Based on ${vlabel(2)} · no changes`],
-    ["沿自 vN · 有未儲存的修改（vN 是最新）", { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: true, nextSeq: 3 }) }, `Based on ${vlabel(2)} · unsaved changes`],
-    ["沿自 vN · 有未儲存的修改（vN 不是最新）", { versions: [v(2), v(1)], current: cur({ baseSeq: 1, dirty: true, nextSeq: 3 }) }, `Based on ${vlabel(1)} · unsaved changes`],
-    ["基底不在清單裡（被篩掉）", { versions: [v(2)], current: cur({ baseSeq: 7, dirty: false, nextSeq: 8 }) }, `Based on ${vlabel(7)} · no changes`],
-  ])("目前狀態副標：%s", async (_name, body, text) => {
+    ["no base (empty list)", { versions: [], current: cur() }, "No base version"],
+    ["no base version", { versions: [v(2), v(1)], current: cur({ baseSeq: null, dirty: true, nextSeq: 3 }) }, "No base version"],
+    ["based on vN, no changes", { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: false, nextSeq: 3 }) }, `Based on ${vlabel(2)} · no changes`],
+    ["based on vN, unsaved changes (vN is the latest)", { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: true, nextSeq: 3 }) }, `Based on ${vlabel(2)} · unsaved changes`],
+    ["based on vN, unsaved changes (vN is not the latest)", { versions: [v(2), v(1)], current: cur({ baseSeq: 1, dirty: true, nextSeq: 3 }) }, `Based on ${vlabel(1)} · unsaved changes`],
+    ["base not in the list (filtered out)", { versions: [v(2)], current: cur({ baseSeq: 7, dirty: false, nextSeq: 8 }) }, `Based on ${vlabel(7)} · no changes`],
+  ])("current-state subtitle: %s", async (_name, body, text) => {
     stub({ [FIRST]: { ...(body as Omit<VersionListDto, "nextBefore">), nextBefore: null } });
     renderPanel();
     const top = await screen.findByTestId("versions-current");
     expect(await within(top).findByText(text)).toBeInTheDocument();
   });
 
-  it("!autoEnabled → 副標下多一行「此空間已關閉自動儲存」；autoEnabled 時沒有", async () => {
+  it("!autoEnabled -> an extra line under the subtitle saying auto-save is off for this space; none when autoEnabled", async () => {
     stub({ [FIRST]: { versions: [v(1)], current: cur({ baseSeq: 1, autoEnabled: false, nextSeq: 2 }), nextBefore: null } });
     const { queryClient } = renderPanel();
     const top = await screen.findByTestId("versions-current");
@@ -129,7 +129,7 @@ describe("VersionsPanel", () => {
     expect(within(top).getByText(`Based on ${vlabel(1)} · no changes`)).toBeInTheDocument();
   });
 
-  it("列（#258）：沒有基底綠點、沒有「手動／自動」文字；只有自動版本有「Auto-saved」pill；第一行「名稱 (短 id)」；第二行 編輯者（agent）· 時間 · 沿自 …；刪除的使用者顯示替代字", async () => {
+  it("row (#258): no green base dot and no manual / auto text; only auto versions have the Auto-saved pill; first line 'name (short id)'; second line editors (agent), time, based-on; a deleted user shows a placeholder", async () => {
     stub({
       [FIRST]: {
         versions: [
@@ -154,11 +154,11 @@ describe("VersionsPanel", () => {
     expect(within(row2).getByTestId("auto-badge")).toHaveTextContent("Auto-saved");
     expect(within(row2).getByTestId("auto-badge")).toHaveClass("shrink-0", "rounded-full", "border", "border-border", "bg-muted", "text-foreground/70");
     expect(screen.getAllByTestId("auto-badge")).toHaveLength(2);
-    // 名稱很長時 pill 不被擠掉：名稱 truncate、pill shrink-0。
+    // With a long name the pill is not squeezed out: the name truncates and the pill is shrink-0.
     expect(within(row3).getByText(vlabel(3, "給客戶"))).toHaveClass("truncate");
   });
 
-  it("列內有編輯者頭貼群：有頭貼的出圖、沒有的首字；人與 agent 同 handle 只畫一個；可及名稱與文字不變", async () => {
+  it("a row has an editor avatar group: ones with an avatar show the picture, the rest the first letter; a person and an agent with the same handle are drawn once; the accessible name and text are unchanged", async () => {
     const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
     stub({
       [FIRST]: {
@@ -181,13 +181,13 @@ describe("VersionsPanel", () => {
     expect(row2.querySelectorAll("img")).toHaveLength(1);
     expect(row2.querySelectorAll("[data-editor-avatar]")).toHaveLength(2);
     expect(row2).toHaveTextContent("alice, alice (Claude), bob ·");
-    // 圖與首字都是裝飾，不進可及名稱。
+    // The image and the first letter are decorative and do not enter the accessible name.
     expect(screen.queryByRole("button", { name: /^[AB]\s/ })).toBeNull();
     expect(within(row2).queryByRole("img")).toBeNull();
     expect(row2.querySelector("[data-editor-avatar]")!.closest("[aria-hidden='true']")).not.toBeNull();
   });
 
-  it("點列＝切換預覽（startPreview 帶 seq 與 id）；選中列 bg-accent；再點另一列換過去", async () => {
+  it("clicking a row toggles the preview (startPreview carries seq and id); the selected row has bg-accent; clicking another row switches to it", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: vrow(1) }));
@@ -198,7 +198,7 @@ describe("VersionsPanel", () => {
     expect(state().preview).toEqual(vtarget(2));
   });
 
-  it("再點已選中的那一列 → 離開預覽（toggle）；再點一次又進預覽", async () => {
+  it("clicking the selected row again leaves the preview (toggle); clicking once more enters it again", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     const row1 = await screen.findByRole("button", { name: vrow(1) });
@@ -211,21 +211,19 @@ describe("VersionsPanel", () => {
     expect(state().preview).toEqual(vtarget(1));
   });
 
-  it("點清單空白處（<ul> 本身）→ 離開預覽；點列、點 ⋯ 都不算空白（不離開）", async () => {
+  it("clicking blank space in the list (the <ul> itself) leaves the preview; clicking a row or the ... button does not count as blank (does not leave)", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: vrow(1) }));
     expect(state().preview).toEqual(vtarget(1));
-    // 點另一列（事件冒泡到 <ul>）：換預覽、不離開。
     fireEvent.click(screen.getByRole("button", { name: vrow(2) }));
     expect(state().preview).toEqual(vtarget(2));
-    // 點 ⋯（冒泡到 <ul>）：預覽留著。
     fireEvent.click(screen.getByRole("button", { name: `Actions for ${vlabel(1)}` }));
     expect(state().preview).toEqual(vtarget(2));
-    // 點 <li> 列與 ⋯ 之間的空隙也不算（target 是 <li> 不是 <ul>）。
+    // A click in the gap between the <li> row and the ... button does not count either (the target is the <li>, not the <ul>).
     fireEvent.click(screen.getByRole("button", { name: vrow(1) }).closest("li")!);
     expect(state().preview).toEqual(vtarget(2));
-    // 按下與放開都在 <ul> 本身才算點空白。
+    // Only press and release both on the <ul> itself count as clicking blank space.
     const list = screen.getByRole("list");
     fireEvent.pointerDown(list);
     fireEvent.click(list);
@@ -233,23 +231,22 @@ describe("VersionsPanel", () => {
     expect(state().mode).toBe("panel");
   });
 
-  it("在列上按下、拖到列間縫放開（click 派到 <ul>）→ 不離開預覽；之後單獨一發 click 到 <ul> 也不算", async () => {
+  it("pressing on a row and releasing in the gap between rows (the click goes to <ul>) does not leave the preview; a later lone click on <ul> does not count either", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     const row1 = await screen.findByRole("button", { name: vrow(1) });
     fireEvent.click(row1);
     expect(state().preview).toEqual(vtarget(1));
     const list = screen.getByRole("list");
-    // 瀏覽器在按下與放開的元素不同時，click 派給兩者的共同祖先（這裡是 <ul>）。
+    // When press and release land on different elements, the browser dispatches click to their common ancestor (here the <ul>).
     fireEvent.pointerDown(row1);
     fireEvent.click(list);
     expect(state().preview).toEqual(vtarget(1));
-    // 上一發的記錄用過即清：沒有 pointerdown 的 click 不會沿用。
     fireEvent.click(list);
     expect(state().preview).toEqual(vtarget(1));
   });
 
-  it("面板 ✕ 關面板 → 一併離開預覽", async () => {
+  it("the panel's close button closes the panel -> the preview is left too", async () => {
     stub({ [FIRST]: { versions: [v(1)], current: cur({ baseSeq: 1, nextSeq: 2 }), nextBefore: null } });
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: vrow(1) }));
@@ -259,7 +256,7 @@ describe("VersionsPanel", () => {
     expect(state().preview).toBeNull();
   });
 
-  it("鍵盤：在列上按 ↓／↑ 移動焦點並切換預覽（預覽對象帶著那一列的名稱，#272）", async () => {
+  it("keyboard: Down / Up on a row moves focus and switches the preview (the preview target carries that row's name, #272)", async () => {
     stub({ [FIRST]: { versions: [v(3), v(2, { kind: "manual", name: "草稿" }), v(1)], current: cur({ baseSeq: 3, nextSeq: 4 }), nextBefore: null } });
     renderPanel();
     const row3 = await screen.findByRole("button", { name: vrow(3) });
@@ -272,11 +269,11 @@ describe("VersionsPanel", () => {
     expect(state().preview).toEqual(vtarget(3));
   });
 
-  it("底部鈕：沒有選中 → 套用 disabled；選中 seq 1 → 「Apply 名稱 (短 id)」可按；儲存在 dirty 或沒有基底時才亮", async () => {
+  it("bottom buttons: nothing selected -> apply disabled; seq 1 selected -> 'Apply name (short id)' is enabled; save is enabled only when dirty or there is no base", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: false, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     const footer = await screen.findByTestId("versions-footer");
-    // 先等清單落地：footer 在資料到之前就存在，此時 current 為 undefined、儲存鈕恆 disabled（斷言會空轉）。
+    // Wait for the list to land first: the footer exists before the data arrives, with current undefined and the save button always disabled (the assertion would spin idle).
     const row1 = await screen.findByRole("button", { name: vrow(1) });
     expect(within(footer).getByRole("button", { name: "Apply" })).toBeDisabled();
     expect(within(footer).getByRole("button", { name: "Save current version" })).toBeDisabled();
@@ -284,7 +281,7 @@ describe("VersionsPanel", () => {
     expect(within(footer).getByRole("button", { name: `Apply ${vlabel(1)}` })).toBeEnabled();
   });
 
-  it("底部「儲存當前版本」：有基底且 dirty → 亮", async () => {
+  it("bottom 'Save current version': enabled with a base and dirty", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, dirty: true, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     const footer = await screen.findByTestId("versions-footer");
@@ -292,7 +289,7 @@ describe("VersionsPanel", () => {
     await waitFor(() => expect(within(footer).getByRole("button", { name: "Save current version" })).toBeEnabled());
   });
 
-  it("底部「儲存當前版本」：沒有基底（即使乾淨）也亮，點了開儲存對話框", async () => {
+  it("bottom 'Save current version': enabled with no base even when clean, and clicking opens the save dialog", async () => {
     stub({ [FIRST]: { versions: [], current: cur({ baseSeq: null, dirty: false }), nextBefore: null } });
     renderPanel();
     const save = await within(await screen.findByTestId("versions-footer")).findByRole("button", { name: "Save current version" });
@@ -301,7 +298,7 @@ describe("VersionsPanel", () => {
     expect(state().dialog).toBe("save");
   });
 
-  it("⋯ 選單：套用、編輯版本名稱、刪除；基底版的刪除 disabled 並有看得見的說明", async () => {
+  it("... menu: apply, edit version name, delete; delete for the base version is disabled with a visible explanation", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     fireEvent.pointerDown(await screen.findByRole("button", { name: `Actions for ${vlabel(2)}` }), { button: 0, ctrlKey: false });
@@ -314,7 +311,7 @@ describe("VersionsPanel", () => {
     expect(state()).toMatchObject({ dialog: "rename", dialogSeq: 2 });
   });
 
-  it("⋯ 選單：非基底版的刪除可按 → 開刪除對話框", async () => {
+  it("... menu: delete for a non-base version is enabled -> opens the delete dialog", async () => {
     stub({ [FIRST]: { versions: [v(2), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
     renderPanel();
     fireEvent.pointerDown(await screen.findByRole("button", { name: `Actions for ${vlabel(1)}` }), { button: 0, ctrlKey: false });
@@ -322,7 +319,7 @@ describe("VersionsPanel", () => {
     expect(state()).toMatchObject({ dialog: "delete", dialogSeq: 1 });
   });
 
-  it("游標：有 nextBefore 時顯示「載入更早的版本」，按了接續第二頁", async () => {
+  it("cursor: with nextBefore the load-older-versions item is shown and pressing it continues with the second page", async () => {
     const calls = stub({
       [FIRST]: { versions: [v(52)], current: cur({ baseSeq: 52, nextSeq: 53 }), nextBefore: 52 },
       [`/api/notes/${NOTE}/versions?before=52&limit=50`]: { versions: [v(51)], current: cur({ baseSeq: 52, nextSeq: 53 }), nextBefore: null },
@@ -334,20 +331,20 @@ describe("VersionsPanel", () => {
     expect(screen.queryByRole("button", { name: "Load older versions" })).not.toBeInTheDocument();
   });
 
-  it("✕ 關閉面板（mode=null）", async () => {
+  it("the close button closes the panel (mode=null)", async () => {
     stub({ [FIRST]: { versions: [], current: cur(), nextBefore: null } });
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Close version history" }));
     expect(state().mode).toBeNull();
   });
 
-  it("面板開著時活文件 update → 去抖動 1 s 後重抓清單（只一次）；面板關掉後不再重抓", async () => {
+  it("a live-document update while the panel is open -> the list is refetched after a 1 s debounce (once); after the panel closes it is not refetched", async () => {
     const calls = stub({ [FIRST]: { versions: [], current: cur(), nextBefore: null } });
     const { doc, queryClient } = renderPanel();
     await screen.findByTestId("versions-current");
     await waitFor(() => expect(calls.filter((c) => c === FIRST)).toHaveLength(1));
-    // 不開 shouldAdvanceTime（真實時間會以 20 ms 為單位推假時鐘，「999 ms 時仍是 1 次」會間歇紅）。
-    // 清單落地後才切 fake、推到 1000 後切回真 timer 再 waitFor（react-query 的通知排程走 setTimeout）。
+    // Do not enable shouldAdvanceTime (real time would advance the fake clock in 20 ms steps and "still 1 at 999 ms" would turn red intermittently).
+    // Switch to fake timers after the list lands, advance to 1000, then switch back to real timers and waitFor (react-query's notification scheduling uses setTimeout).
     vi.useFakeTimers();
     doc.getText("t").insert(0, "a");
     doc.getText("t").insert(0, "b");
@@ -364,16 +361,16 @@ describe("VersionsPanel", () => {
     doc.getText("t").insert(0, "c");
     await new Promise((r) => setTimeout(r, 1100));
     expect(calls.filter((c) => c === FIRST)).toHaveLength(2);
-    // 卸載後沒有 observer，invalidate 只會把 query 標 stale、不會重抓——所以光看 fetch 次數抓不到「監聽沒拆」；
-    // 殘留的監聽會把 query 標成 invalidated，這裡直接看這個旗標。
+    // After unmount there is no observer, so invalidate only marks the query stale and does not refetch, so the fetch count alone cannot catch a listener that was not removed;
+    // a leftover listener marks the query invalidated, so check that flag directly.
     expect(queryClient.getQueryState(versionListKey(NOTE, "all"))?.isInvalidated).toBe(false);
   });
-  describe("篩選（#258）", () => {
+  describe("filter (#258)", () => {
     const manual = (seq: number) => v(seq, { kind: "manual" });
     const ALL = { versions: [manual(4), v(3), manual(2), v(1)], current: cur({ baseSeq: 4, nextSeq: 5 }), nextBefore: null };
     const ONLY = { versions: [manual(4), manual(2)], current: cur({ baseSeq: 4, nextSeq: 5 }), nextBefore: null };
 
-    it("清單上方有「All／Manual only」兩段切換（aria-pressed）；預設全部；按「Manual only」改打 kind=manual、清單只剩手動、按下態 PRESSED_CLASS", async () => {
+    it("above the list there is an All / Manual only two-way toggle (aria-pressed); the default is all; pressing Manual only requests kind=manual, the list shows only manual versions, and the pressed state has PRESSED_CLASS", async () => {
       const calls = stub({ [FIRST]: ALL, [FIRST_MANUAL]: ONLY });
       renderPanel();
       await screen.findByRole("button", { name: vrow(3) });
@@ -383,7 +380,6 @@ describe("VersionsPanel", () => {
       expect(allBtn).toHaveAttribute("aria-pressed", "true");
       expect(manualBtn).toHaveAttribute("aria-pressed", "false");
       expect(allBtn).toHaveClass("bg-brand/25");
-      // 位置：在「目前狀態」之後、清單之前。
       const order = [screen.getByTestId("versions-current"), group, screen.getByRole("list")];
       for (let i = 1; i < order.length; i += 1) expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       fireEvent.click(manualBtn);
@@ -394,11 +390,10 @@ describe("VersionsPanel", () => {
       expect(manualBtn).toHaveAttribute("aria-pressed", "true");
       expect(manualBtn).toHaveClass("bg-brand/25");
       expect(allBtn).toHaveAttribute("aria-pressed", "false");
-      // 「目前狀態」不受篩選影響。
       expect(within(screen.getByTestId("versions-current")).getByText(`Based on ${vlabel(4)} · no changes`)).toBeInTheDocument();
     });
 
-    it("篩選寫進 localStorage；初值讀 localStorage（不合法的值當全部）", async () => {
+    it("the filter is written to localStorage; the initial value is read from localStorage (an invalid value counts as all)", async () => {
       stub({ [FIRST]: ALL, [FIRST_MANUAL]: ONLY });
       const first = renderPanel();
       await screen.findByRole("button", { name: vrow(3) });
@@ -415,7 +410,7 @@ describe("VersionsPanel", () => {
       expect(await screen.findByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     });
 
-    it("localStorage 讀寫丟例外 → 不當掉：初值全部，切換本次照樣生效", async () => {
+    it("localStorage read/write throws -> no crash: the initial value is all and toggling still takes effect for this session", async () => {
       stub({ [FIRST]: ALL, [FIRST_MANUAL]: ONLY });
       const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
         throw new Error("denied");
@@ -436,7 +431,7 @@ describe("VersionsPanel", () => {
       }
     });
 
-    it("僅手動且沒有符合的版本 → 一行灰字空狀態（載入中不顯示）；切回全部就消失", async () => {
+    it("manual only with no matching version -> a one-line grey empty state (not shown while loading); it disappears when switching back to all", async () => {
       window.localStorage.setItem(KIND_FILTER_STORAGE_KEY, "manual");
       stub({ [FIRST_MANUAL]: { versions: [], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null }, [FIRST]: { versions: [v(2)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null } });
       renderPanel();
@@ -449,14 +444,14 @@ describe("VersionsPanel", () => {
       expect(screen.queryByTestId("versions-filter-empty")).not.toBeInTheDocument();
     });
 
-    it("全部且沒有任何版本 → 不顯示篩選空狀態", async () => {
+    it("all with no versions at all -> the filter empty state is not shown", async () => {
       stub({ [FIRST]: { versions: [], current: cur(), nextBefore: null } });
       renderPanel();
       await within(await screen.findByTestId("versions-current")).findByText("No base version");
       expect(screen.queryByTestId("versions-filter-empty")).not.toBeInTheDocument();
     });
 
-    it("預覽中的版本被篩掉：預覽不變（preview 不動）、底部「Apply vN」仍可按", async () => {
+    it("a previewed version is filtered out: the preview stays unchanged (preview untouched) and the bottom 'Apply vN' is still enabled", async () => {
       stub({ [FIRST]: ALL, [FIRST_MANUAL]: ONLY });
       renderPanel();
       fireEvent.click(await screen.findByRole("button", { name: vrow(3) }));
@@ -467,13 +462,12 @@ describe("VersionsPanel", () => {
       await waitFor(() => expect(screen.queryByRole("button", { name: vrow(3) })).not.toBeInTheDocument());
       expect(state().preview).toEqual(vtarget(3));
       expect(within(footer).getByRole("button", { name: `Apply ${vlabel(3)}` })).toBeEnabled();
-      // 再選別的版本 → 換成它。
       fireEvent.click(await screen.findByRole("button", { name: vrow(2) }));
       expect(within(footer).getByRole("button", { name: `Apply ${vlabel(2)}` })).toBeEnabled();
       expect(screen.queryByRole("button", { name: vrow(3) })).not.toBeInTheDocument();
     });
 
-    it("活文件 update 的去抖動 invalidate 以前綴同時標記兩種篩選的快取", async () => {
+    it("the debounced invalidate on a live-document update marks the caches of both filters by prefix", async () => {
       stub({ [FIRST]: ALL, [FIRST_MANUAL]: ONLY });
       const { queryClient } = renderPanel();
       await screen.findByRole("button", { name: vrow(3) });
@@ -486,7 +480,7 @@ describe("VersionsPanel", () => {
       expect(queryClient.getQueryState(versionListKey(NOTE, "manual"))?.isInvalidated).toBe(true);
     });
   });
-  it("#258 切筆記不關面板：新那篇的清單換上來，上一篇的列、選取（預覽／Apply）不殘留", async () => {
+  it("#258 switching notes does not close the panel: the new note's list replaces the old one and the previous note's rows and selection (preview / Apply) do not linger", async () => {
     const N2 = "n2";
     stub({
       [FIRST]: { versions: [v(2, { name: "舊筆記的版本" }), v(1)], current: cur({ baseSeq: 2, nextSeq: 3 }), nextBefore: null },
@@ -529,7 +523,7 @@ describe("VersionsPanel", () => {
     expect(within(screen.getByTestId("versions-current")).getByText(`Based on ${vlabel(9)} · no changes`)).toBeInTheDocument();
   });
 
-  it("#258：切篩選的瞬間（新鍵還沒資料）「目前狀態」副標與儲存鈕不消失，改讀另一個篩選已快取的 current；新資料到了以新的為準", async () => {
+  it("#258: at the moment of switching filters (the new key has no data yet) the current-state subtitle and save button do not disappear and read the current cached by the other filter; once new data arrives it takes precedence", async () => {
     let release!: () => void;
     const body = (current: VersionCurrentDto, versions: VersionDto[]): VersionListDto => ({ versions, current, nextBefore: null });
     vi.stubGlobal(
@@ -548,15 +542,14 @@ describe("VersionsPanel", () => {
     const save = within(screen.getByTestId("versions-footer")).getByRole("button", { name: "Save current version" });
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Manual only" }));
-    // 新鍵載入中：列空了，但副標還在、儲存鈕沒閃 disabled。
+    // The new key is loading: the list is empty but the subtitle remains and the save button does not flash disabled.
     await waitFor(() => expect(screen.queryByRole("button", { name: vrow(1) })).not.toBeInTheDocument());
     expect(within(top).getByText(`Based on ${vlabel(2)} · unsaved changes`)).toBeInTheDocument();
     expect(save).toBeEnabled();
     release();
-    // 新資料到了以新的為準。
     expect(await within(top).findByText(`Based on ${vlabel(2)} · no changes`)).toBeInTheDocument();
   });
-  it("#258 m-3：自己篩選的清單查詢失敗 → 不退回另一份可能過期的 current（副標消失、儲存鈕 disabled）", async () => {
+  it("#258: the query for its own filtered list fails -> it does not fall back to the other, possibly stale current (the subtitle disappears and the save button is disabled)", async () => {
     const body = (current: VersionCurrentDto, versions: VersionDto[]): VersionListDto => ({ versions, current, nextBefore: null });
     vi.stubGlobal(
       "fetch",
@@ -576,7 +569,7 @@ describe("VersionsPanel", () => {
     expect(within(screen.getByTestId("versions-footer")).getByRole("button", { name: "Save current version" })).toBeDisabled();
   });
 
-  it("#272（案 28／29 的 web 面）：列第二行——cookie 與網頁 AI 寫入只列 handle；token 寫入列「handle (agent)」", async () => {
+  it("#272: the row's second line - cookie and web AI writes list only the handle; token writes list 'handle (agent)'", async () => {
     stub({
       [FIRST]: {
         versions: [v(2, { editors: [{ handle: "ann", agentLabel: null, avatar: null }] }), v(1, { editors: [{ handle: "ann", agentLabel: "Claude Code", avatar: null }] })],
@@ -591,7 +584,7 @@ describe("VersionsPanel", () => {
     expect(screen.getByRole("button", { name: vrow(1) })).toHaveTextContent("ann (Claude Code) ·");
   });
 
-  it("#272：沿自的那一版已刪 →「推名 (短 id) (deleted)」（不用原名）；升級前就已刪 →「a deleted version」；目前狀態同規則", async () => {
+  it("#272: the based-on version was deleted -> 'derived name (short id) (deleted)' (not the original name); deleted before the upgrade -> 'a deleted version'; the current state follows the same rule", async () => {
     stub({
       [FIRST]: {
         versions: [

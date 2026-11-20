@@ -7,7 +7,7 @@ describe("#269 OutdatedClientBanner", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("zh-TW");
   });
-  it("role=alert、文案逐字、重新整理鈕呼叫 onReload", () => {
+  it("role=alert, text verbatim, the reload button calls onReload", () => {
     const onReload = vi.fn();
     render(<OutdatedClientBanner onReload={onReload} />);
     expect(screen.getByRole("alert")).toHaveTextContent(

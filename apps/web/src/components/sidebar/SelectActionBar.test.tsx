@@ -21,8 +21,7 @@ import type { FolderDto } from "@knotebook/shared";
 import { __resetFolderSortForTests } from "@/components/sidebar/folder-sort";
 import { mockWidePointer } from "@/test/wide-pointer";
 
-// 一般 tab 選取模式的動作列、目的地框、確認框與三種流程（#181，SA1–SA24b；含資料夾 SAf1–SAf16）。
-// 兩份外殼（同 AppShell 的靜態卡與抽屜）共用同一份選取；動作一律從第二份（shell 1）發起，找錯外殼焦點就會落到第一份。
+// Two shells (like AppShell's static card and drawer) share one selection; actions are always started from the second (shell 1), otherwise focus would land on the first.
 
 afterEach(() => {
   localStorage.clear();
@@ -52,9 +51,9 @@ const P2 = personalNote({ id: "p2", title: "p2" });
 const P3 = personalNote({ id: "p3", title: "p3" });
 const GA1 = groupNote({ id: "ga1", title: "ga1", group: GA });
 const GA2 = groupNote({ id: "ga2", title: "ga2", group: GA });
-/** 能刪不能編輯。 */
+/** Can delete but not edit. */
 const GA3 = groupNote({ id: "ga3", title: "ga3", group: GA, edit: false });
-/** 不能刪。 */
+/** Cannot delete. */
 const GA4 = groupNote({ id: "ga4", title: "ga4", group: GA, delete: false });
 const S1 = sharedNote({ id: "s1", title: "s1", role: "viewer" });
 const ALL = [P1, P2, P3, GA1, GA2, GA3, GA4, S1];
@@ -70,8 +69,8 @@ interface Call {
 }
 
 /**
- * 假 server：清單與群組照 `box`；DELETE／move／copy 預設成功並改 `box.notes`（下一次 GET 生效），restore 還回被刪的篇。
- * `fail(key, status, code)` 讓某支回錯誤；`hold(key)` 讓某支等放行才回（回傳放行函式）。
+ * Fake server: lists and groups follow `box`; DELETE/move/copy succeed by default and change `box.notes` (visible on the next GET), restore returns the deleted notes.
+ * `fail(key, status, code)` makes one endpoint fail; `hold(key)` makes one wait until released (returns the release function).
  */
 function stubServer(initial: { notes?: NoteDto[]; groups?: GroupDto[]; folders?: FolderDto[]; favorites?: FavoriteDto[] } = {}) {
   const box = { notes: [...(initial.notes ?? ALL)], groups: initial.groups ?? [GA], folders: [...(initial.folders ?? [])], favorites: [...(initial.favorites ?? [])] };
@@ -81,7 +80,7 @@ function stubServer(initial: { notes?: NoteDto[]; groups?: GroupDto[]; folders?:
   const gates = new Map<string, Promise<void>>();
   const listeners: ((key: string) => void)[] = [];
 
-  /** 資料夾子樹（含自己）的 id。 */
+  /** Ids of a folder subtree (including itself). */
   function subtree(folderId: string): Set<string> {
     const out = new Set([folderId]);
     let grew = true;
@@ -119,7 +118,7 @@ function stubServer(initial: { notes?: NoteDto[]; groups?: GroupDto[]; folders?:
         const ids = subtree(id);
         const inside = box.notes.filter((n) => n.folderId !== null && ids.has(n.folderId));
         box.folders = box.folders.filter((f) => !ids.has(f.id));
-        // 與我共享：資料夾只是自己的分類，移除後裡面的回最上層、不進垃圾桶。
+        // Shared with me: a folder is only the user's own grouping; after removal its contents go back to the top level and not to the trash.
         if (folder.space.kind === "shared") {
           box.notes = box.notes.map((n) => (inside.includes(n) ? { ...n, folderId: null } : n));
           return fakeResponse({ trashedNoteIds: [], deletedFolderIds: [...ids] });
@@ -199,7 +198,7 @@ function stubServer(initial: { notes?: NoteDto[]; groups?: GroupDto[]; folders?:
 
   return {
     box,
-    /** 非 GET 的請求（依送出順序）。 */
+    /** Non-GET requests (in send order). */
     keys: () => calls.map((call) => call.key),
     bodies: (key: string) => calls.filter((call) => call.key === key).map((call) => call.body),
     fail: (key: string, status: number, code: string) => {
@@ -238,7 +237,7 @@ interface RenderOpts {
   outside?: ReactNode;
 }
 
-/** NotePage 的替身：controls 可在測試中途換（同一個 NotePage 實例換篇＝同一個 leavingRef、noteId 換掉），也給測試一個 navigate。 */
+/** Stand-in for NotePage: `controls` can be swapped mid-test (the same NotePage instance changing note = the same leavingRef with a new noteId), and it gives the test a navigate. */
 interface PageHost {
   setControls: (controls: NotePageControls) => void;
   navigate: NavigateFunction;
@@ -291,7 +290,7 @@ function renderShells(opts: RenderOpts = {}) {
 const shell = (index: number) => screen.getByTestId(`shell-${index}`);
 const shellHeader = (index: number) => shell(index).querySelector("[data-sidebar-header]") as HTMLElement;
 const bar = (index = 1) => shell(index).querySelector("[data-select-action-bar]") as HTMLElement;
-/** 對話框開著時背景是 aria-hidden，一律 hidden: true。 */
+/** While a dialog is open the background is aria-hidden, so always use hidden: true. */
 const barButton = (name: string | RegExp, index = 1) => within(bar(index)).getByRole("button", { name, hidden: true });
 const selectButton = (index = 1) => within(shellHeader(index)).queryByRole("button", { name: "Select", hidden: true });
 const doneButton = (index = 1) => within(shellHeader(index)).getByRole("button", { name: "Done", hidden: true });
@@ -312,7 +311,6 @@ const settleTimers = () =>
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
-/** 等「選取」可按 → 按 → 等 lazy chunk 的標題列、勾選框與動作列。 */
 async function enterSelecting(index = 1): Promise<void> {
   await waitFor(() => expect(selectButton(index)).toBeEnabled());
   fireEvent.click(selectButton(index) as HTMLElement);
@@ -338,8 +336,8 @@ describe("SelectActionBar", () => {
     act(() => dismissAllToasts());
   });
 
-  describe("SA1 各 tab 的鈕", () => {
-    it("我的筆記：Move to、Copy to、Delete 0 selected items；0 篇全 disabled；勾一篇可按；樣式；底部沒有 New note", async () => {
+  describe("buttons per tab", () => {
+    it("my notes: Move to, Copy to, Delete 0 selected items; all disabled with 0 notes; pressable after ticking one; styling; no New note at the bottom", async () => {
       stubServer();
       renderShells();
       await enterSelecting();
@@ -359,11 +357,11 @@ describe("SelectActionBar", () => {
       expect(barButton("Copy to").querySelector('svg[data-icon="copy"]')).not.toBeNull();
       expect(del.querySelector('svg[data-icon="trash"]')).not.toBeNull();
       expect(del).toHaveClass("text-destructive", "border", "hover:bg-destructive/10");
-      // 不是 outline（它的 hover 填 brand-deep、active 混 brand-deep；hover:bg 被 twMerge 蓋掉，所以看整串）。
+      // Not outline (its hover fills brand-deep and its active mixes brand-deep; hover:bg is overridden by twMerge, so the whole class string is checked).
       expect(del.className).not.toContain("brand-deep");
       expect(del.className).not.toContain("hover:border-transparent");
       expect(within(shell(1)).queryByRole("button", { name: "New note" })).toBeNull();
-      // 版面契約：窄形每顆都只放圖示（沒有可見文字），可及名稱靠 aria-label；兩顆能縮（min-w-0）平分剩下的列寬，title 給全文。
+      // Layout contract: on narrow each button holds only an icon (no visible text) with the accessible name from aria-label; the two can shrink (min-w-0) and share the remaining row width, title carries the full text.
       for (const name of ["Move to", "Copy to"]) {
         const button = barButton(name);
         expect(button).toHaveClass("min-w-0", "flex-1", "px-1.5");
@@ -376,8 +374,8 @@ describe("SelectActionBar", () => {
       expect(del).toHaveClass("w-9", "shrink-0");
     });
 
-    // 最愛：第一個是 Remove from favorites，沒有 Move to；兩形都一樣。
-    it.each(["narrow", "wide"] as const)("最愛（%s）：Remove from favorites、Copy to、Delete；沒有 Move to；勾選後可按", async (form) => {
+    // Favorites: the first is Remove from favorites, no Move to; the same in both forms.
+    it.each(["narrow", "wide"] as const)("favorites (%s): Remove from favorites, Copy to, Delete; no Move to; pressable after ticking", async (form) => {
       mockWidePointer(form === "wide");
       stubServer({ favorites: FAVORITES });
       renderShells({ tab: "favorites" });
@@ -390,11 +388,10 @@ describe("SelectActionBar", () => {
       expect(barButton("Copy to")).toBeEnabled();
       expect(barButton("Delete 1 selected item")).toBeEnabled();
       expect(within(bar()).queryByRole("button", { name: "Move to", hidden: true })).toBeNull();
-      // 兩形都只放圖示，沒有可見文字。
       for (const button of within(bar()).getAllByRole("button", { hidden: true })) expect(button.textContent).toBe("");
     });
 
-    it("最愛：不能刪的筆記仍可移出最愛，Delete 維持 disabled", async () => {
+    it("favorites: a note that cannot be deleted can still be removed from favorites, Delete stays disabled", async () => {
       stubServer({ favorites: [{ noteId: "ga4", favoritedAt: "2026-03-01T00:00:00.000Z" }] });
       renderShells({ tab: "favorites" });
       await enterSelecting();
@@ -403,7 +400,7 @@ describe("SelectActionBar", () => {
       expect(barButton("Delete 1 selected item")).toBeDisabled();
     });
 
-    it("最愛：Copy to 的目的地沒有「建立副本」上半部", async () => {
+    it("favorites: the Copy to destinations have no \"make a copy\" upper half", async () => {
       stubServer({ favorites: FAVORITES });
       renderShells({ tab: "favorites" });
       await enterSelecting();
@@ -414,12 +411,12 @@ describe("SelectActionBar", () => {
       expect(within(picker).getByRole("button", { name: "My notes" })).toBeInTheDocument();
     });
 
-    // SAf1：群組、與我共享加 Move to；與我共享的刪除鈕只在選取全是資料夾時才有（0 項時沒有）。
+    // Group and shared-with-me tabs add Move to; the delete button of shared-with-me exists only when the selection is all folders (not with 0 items).
     it.each([
       ["recent" as const, ["Copy to", "Delete 0 selected items"]],
       ["workspace" as const, ["Move to", "Copy to", "Delete 0 selected items"]],
       ["shared" as const, ["Move to", "Copy to"]],
-    ])("%s：%j", async (tab, names) => {
+    ])("%s: %j", async (tab, names) => {
       stubServer();
       renderShells({ tab });
       await enterSelecting();
@@ -427,7 +424,7 @@ describe("SelectActionBar", () => {
     });
   });
 
-  it("SA2 沒有可移入的群組（只有只能新建的 B）→ Move to disabled", async () => {
+  it("no group to move into (only B, which can create only): Move to is disabled", async () => {
     stubServer({ groups: [GB] });
     renderShells();
     await enterSelecting();
@@ -436,7 +433,7 @@ describe("SelectActionBar", () => {
     expect(barButton("Move to")).toBeDisabled();
   });
 
-  it("SA3 移動：亂序勾 p2、p1 → A → 確認框篇數與四條通用句 → 依序送 → toast → 離開選取、焦點在同一份的 Select", async () => {
+  it("move: tick p2 then p1, pick A: the confirm shows the note count and the four general sentences, requests are sent in order, then toast, selection ends and focus is on the same shell's Select", async () => {
     const server = stubServer();
     renderShells();
     await enterSelecting();
@@ -465,7 +462,7 @@ describe("SelectActionBar", () => {
     expect(selectButton(1)).toHaveFocus();
   });
 
-  it("SA3b 選完目的地：開框鈕收到 0 次 focus、焦點在確認框內", async () => {
+  it("after choosing the destination: the button that opened the picker gets no focus call and focus is inside the confirm dialog", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -483,7 +480,7 @@ describe("SelectActionBar", () => {
     expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("SA3c 快照：第一支回來後清單少一篇，送出中描述仍是 2 篇、第二支照送", async () => {
+  it("snapshot: after the first request returns the list has one note fewer, the description still says 2 notes while sending and the second request is still sent", async () => {
     const server = stubServer();
     const releaseP2 = server.hold("POST /api/notes/p2/move");
     renderShells();
@@ -493,14 +490,14 @@ describe("SelectActionBar", () => {
     const confirm = await pickDestination("A");
     fireEvent.click(within(confirm).getByRole("button", { name: "Move into group" }));
     await waitFor(() => expect(server.keys()).toEqual(["POST /api/notes/p1/move", "POST /api/notes/p2/move"]));
-    // p1 已移入群組、清單重抓後不在我的筆記。
+    // p1 has moved into the group; after the list refetch it is no longer in my notes.
     await waitFor(() => expect(box("p1")).toBeNull());
     expect(screen.getByRole("dialog", { name: "Move into group" })).toHaveAccessibleDescription('Move 2 notes into "A"?');
     await releaseP2();
     expect(await screen.findByText('Moved 2 notes into "A"', { exact: true })).toBeInTheDocument();
   });
 
-  it("SA4 移動遇 server 略過（403）→ 1 篇成功 1 篇略過、離開選取", async () => {
+  it("move hits a server skip (403): 1 succeeded, 1 skipped, selection ends", async () => {
     const server = stubServer();
     server.fail("POST /api/notes/p2/move", 403, "forbidden");
     renderShells();
@@ -512,7 +509,7 @@ describe("SelectActionBar", () => {
     await waitFor(() => expect(selecting()).toBe(false));
   });
 
-  it("SA5 複製到我的筆記：確認框、body {}、toast", async () => {
+  it("copy to my notes: confirm dialog, body {}, toast", async () => {
     const server = stubServer();
     renderShells({ tab: "workspace" });
     await enterSelecting();
@@ -531,8 +528,8 @@ describe("SelectActionBar", () => {
     await waitFor(() => expect(selecting()).toBe(false));
   });
 
-  // 群組 tab 單一群組 A 的「複製到」上半部是 A 自己（建立副本），下半部不再列 A → 改從我的筆記複製到 A（同一組確認字與 body）。
-  it("SA5 複製到群組：body {groupId}、toast", async () => {
+  // In the group tab with a single group A, the upper half of Copy to is A itself (make a copy) and the lower half no longer lists A -> copy from my notes to A (same confirm text and body).
+  it("copy to a group: body {groupId}, toast", async () => {
     const server = stubServer();
     renderShells();
     await enterSelecting();
@@ -549,7 +546,7 @@ describe("SelectActionBar", () => {
     expect(server.bodies("POST /api/notes/p2/copy")).toEqual([{ groupId: "ga" }]);
   });
 
-  it("SA6 刪除：不確認、依清單順序兩支 DELETE、toast＋Undo → 還原整批", async () => {
+  it("delete: no confirmation, two DELETEs in list order, toast + Undo restores the whole batch", async () => {
     const server = stubServer();
     renderShells();
     await enterSelecting();
@@ -564,7 +561,7 @@ describe("SelectActionBar", () => {
     expect(server.bodies("POST /api/trash/restore")).toEqual([{ ids: ["p1", "p2"] }]);
   });
 
-  it("SA-F1 刪除依樹序送出（資料夾在前）：server 序 [根層 fp3, 資料夾 A 裡的 fp1] → DELETE fp1、fp3", async () => {
+  it("delete is sent in tree order (folders first): server order [root fp3, fp1 inside folder A] gives DELETE fp1 then fp3", async () => {
     const fp3 = personalNote({ id: "fp3", title: "fp3" });
     const fp1 = personalNote({ id: "fp1", title: "fp1", folderId: "A" });
     const server = stubServer({ notes: [fp3, fp1], folders: [folderDto({ id: "A", name: "A" })] });
@@ -578,7 +575,7 @@ describe("SelectActionBar", () => {
     __resetFolderSortForTests();
   });
 
-  it("SA7 最近 tab 刪除混共享：只送 p1、toast 報 1 篇略過、有 Undo", async () => {
+  it("delete in the recent tab with a shared note mixed in: only p1 is sent, the toast reports 1 skipped, Undo is present", async () => {
     const server = stubServer();
     renderShells({ tab: "recent" });
     await enterSelecting();
@@ -589,7 +586,7 @@ describe("SelectActionBar", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  /** 模擬 Chromium：握著焦點的元素被寫入 disabled 的當下，同步失焦（blur、focusout 照常觸發）。jsdom 不會自己這麼做。 */
+  /** Simulates Chromium: an element holding focus loses it synchronously (blur and focusout still fire) the moment it is written disabled. jsdom does not do this itself. */
   function blurOnDisable(): () => void {
     const original = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function (this: Element, name: string, value: string) {
@@ -601,7 +598,7 @@ describe("SelectActionBar", () => {
     };
   }
 
-  it("最近 tab 全部刪除、清單空了：焦點不掉到 body，改落在面板（停用時同步失焦的瀏覽器）", async () => {
+  it("recent tab all deleted and the list empty: focus does not fall to body but lands on the panel (in a browser that blurs synchronously on disable)", async () => {
     const restore = blurOnDisable();
     try {
       stubServer({ notes: [personalNote({ id: "d1", title: "d1" }), personalNote({ id: "d2", title: "d2" })] });
@@ -619,7 +616,7 @@ describe("SelectActionBar", () => {
     }
   });
 
-  it("「選取」鈕失焦但沒停用、或焦點被使用者移到別處：不搶焦點", async () => {
+  it("the Select button blurs without being disabled, or the user moved focus elsewhere: focus is not stolen", async () => {
     stubServer({ notes: [personalNote({ id: "d1", title: "d1" })] });
     renderShells({ tab: "recent" });
     const other = document.createElement("button");
@@ -628,14 +625,14 @@ describe("SelectActionBar", () => {
       await waitFor(() => expect(selectButton(1)).toBeEnabled());
       const button = selectButton(1) as HTMLButtonElement;
       const panel = within(screen.getByTestId("shell-1")).getByRole("tabpanel");
-      // 鈕還可用時失焦（點到別處）：焦點留在 body，不交給面板。
+      // Blurred while the button is still usable (clicking elsewhere): focus stays on body, not handed to the panel.
       button.focus();
       button.blur();
       await act(async () => {
         await Promise.resolve();
       });
       expect(panel).not.toHaveFocus();
-      // 焦點已被使用者移到別的元素，之後鈕才停用：不動。
+      // Focus was moved to another element by the user, and the button is disabled afterwards: nothing moves.
       button.focus();
       other.focus();
       button.setAttribute("disabled", "");
@@ -648,7 +645,7 @@ describe("SelectActionBar", () => {
     }
   });
 
-  it("停用的「選取」鈕發出 focusout：relatedTarget 非空、或焦點已在別的元素 → 各自都不搶焦點", async () => {
+  it("a disabled Select button emits focusout: with a non-null relatedTarget, or with focus already on another element, focus is not stolen in either case", async () => {
     stubServer({ notes: [personalNote({ id: "d1", title: "d1" })] });
     renderShells({ tab: "recent" });
     const other = document.createElement("button");
@@ -661,19 +658,19 @@ describe("SelectActionBar", () => {
         act(async () => {
           await Promise.resolve();
         });
-      // 鈕沒握著焦點就被停用（不會觸發失焦），焦點在 body。
+      // The button was disabled without holding focus (no blur fires), focus is on body.
       button.setAttribute("disabled", "");
-      // 焦點在 body、focusout 帶了 relatedTarget：這是焦點正要移往他處，不交給面板。
+      // Focus is on body and focusout carries a relatedTarget: focus is moving elsewhere, so it is not handed to the panel.
       button.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: other }));
       await flush();
       expect(panel).not.toHaveFocus();
       expect(document.body).toHaveFocus();
-      // relatedTarget 為空、但焦點已在別的元素：不動。
+      // relatedTarget is empty but focus is already on another element: nothing moves.
       other.focus();
       button.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
       await flush();
       expect(other).toHaveFocus();
-      // 對照：relatedTarget 為空且焦點在 body → 交給面板。
+      // Contrast: empty relatedTarget and focus on body hands focus to the panel.
       other.blur();
       button.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
       await flush();
@@ -683,7 +680,7 @@ describe("SelectActionBar", () => {
     }
   });
 
-  it("SA8 一篇都不能刪 → 刪除 disabled；再勾一篇可刪的 → enabled", async () => {
+  it("no deletable note: Delete is disabled; ticking one deletable note enables it", async () => {
     stubServer();
     renderShells({ tab: "workspace" });
     await enterSelecting();
@@ -694,7 +691,7 @@ describe("SelectActionBar", () => {
     expect(barButton("Delete 2 selected items")).toBeEnabled();
   });
 
-  it("SA8 最近 tab 只勾共享（viewer）→ 刪除 disabled、Copy to enabled", async () => {
+  it("recent tab with only shared (viewer) notes ticked: Delete is disabled, Copy to is enabled", async () => {
     stubServer();
     renderShells({ tab: "recent" });
     await enterSelecting();
@@ -703,7 +700,7 @@ describe("SelectActionBar", () => {
     expect(barButton("Copy to")).toBeEnabled();
   });
 
-  it("SA9 兩篇都能編輯＋刪除 → 有 Undo", async () => {
+  it("both notes editable and deletable: Undo is present", async () => {
     stubServer();
     renderShells({ tab: "workspace" });
     await enterSelecting();
@@ -713,7 +710,7 @@ describe("SelectActionBar", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
-  it("SA10 混一篇能刪不能編輯 → 沒有 Undo、帶說明句", async () => {
+  it("one note that can be deleted but not edited mixed in: no Undo, with an explanatory sentence", async () => {
     stubServer();
     renderShells({ tab: "workspace" });
     await enterSelecting();
@@ -724,7 +721,7 @@ describe("SelectActionBar", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
-  it("SA11 複製遇 429：停在第二篇、錯誤 toast＋已完成 1 篇、留在選取只留未處理的兩篇", async () => {
+  it("copy hits 429: stops at the second note, error toast + 1 completed, selection stays with only the two unprocessed notes", async () => {
     const server = stubServer();
     server.fail("POST /api/notes/p2/copy", 429, "too_many_requests");
     renderShells();
@@ -742,7 +739,7 @@ describe("SelectActionBar", () => {
     expect(checkedIds()).toEqual(["p2", "p3"]);
   });
 
-  it("SA12 移動第一篇就 404 group_not_found：0 篇完成、兩篇仍勾", async () => {
+  it("move gets 404 group_not_found on the first note: 0 completed, both notes stay ticked", async () => {
     const server = stubServer();
     server.fail("POST /api/notes/p1/move", 404, "group_not_found");
     renderShells();
@@ -755,11 +752,11 @@ describe("SelectActionBar", () => {
     expect(server.keys()).toEqual(["POST /api/notes/p1/move"]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(checkedIds()).toEqual(["p1", "p2"]);
-    // 停下：焦點回開框鈕（Move to 已恢復可用）。
+    // Stopped: focus returns to the button that opened the picker (Move to is usable again).
     expect(barButton("Move to")).toHaveFocus();
   });
 
-  it("SA13 刪除第二篇 500：錯誤句當標題、已完成 1 篇、仍帶 Undo（只還原第一篇）、2 selected", async () => {
+  it("delete gets 500 on the second note: the error sentence is the title, 1 completed, Undo still present (restoring only the first), 2 selected", async () => {
     const server = stubServer();
     server.fail("DELETE /api/notes/p2", 500, "internal");
     renderShells();
@@ -777,7 +774,7 @@ describe("SelectActionBar", () => {
     expect(server.bodies("POST /api/trash/restore")).toEqual([{ ids: ["p1"] }]);
   });
 
-  it("SA13b 停下時焦點已移到外部輸入框 → 不搬回刪除鈕", async () => {
+  it("when it stops with focus already moved to an outside input: focus is not moved back to the delete button", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     server.fail("DELETE /api/notes/p2", 500, "internal");
@@ -794,14 +791,14 @@ describe("SelectActionBar", () => {
     expect(probe).toHaveFocus();
   });
 
-  describe("開著的那篇", () => {
+  describe("the currently open note", () => {
     function controlsFor(state: CollabState) {
       const leavingRef = { current: false };
       const controls: NotePageControls = { noteId: "p2", state, leavingRef, openEdits: () => {} };
       return { controls, leavingRef };
     }
 
-    it("SA14 排到最後、送它前設 leavingRef；一則 toast、導回首頁；Undo 還原三篇並導回它", async () => {
+    it("it is ordered last and leavingRef is set before sending it; one toast, navigates home; Undo restores three notes and navigates back to it", async () => {
       const server = stubServer();
       const { controls, leavingRef } = controlsFor({ phase: "connected", role: "owner" });
       const leavingAt: Record<string, boolean> = {};
@@ -815,7 +812,7 @@ describe("SelectActionBar", () => {
       expect(await screen.findByText("Moved 3 notes to the trash", { exact: true })).toBeInTheDocument();
       expect(server.keys()).toEqual(["DELETE /api/notes/p1", "DELETE /api/notes/p3", "DELETE /api/notes/p2"]);
       expect(leavingAt).toEqual({ "DELETE /api/notes/p1": false, "DELETE /api/notes/p3": false, "DELETE /api/notes/p2": true });
-      // 參考（不是守衛：NotePage 沒掛，不會有它的終態 toast）。
+      // Reference only (NotePage is not mounted, so its terminal toast does not occur).
       expect(document.querySelectorAll("li[data-swipe-direction]")).toHaveLength(1);
       await waitFor(() => expect(location()).toBe("/"));
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
@@ -824,7 +821,7 @@ describe("SelectActionBar", () => {
       await waitFor(() => expect(location()).toBe("/n/tester/note-p2"));
     });
 
-    it("SA15 開著的那篇失敗、共編非終態 → leavingRef 撥回 false、不導頁", async () => {
+    it("the open note fails with collaboration non-terminal: leavingRef is reset to false, no navigation", async () => {
       const server = stubServer();
       server.fail("DELETE /api/notes/p2", 500, "internal");
       const { controls, leavingRef } = controlsFor({ phase: "connected", role: "owner" });
@@ -839,7 +836,7 @@ describe("SelectActionBar", () => {
       expect(location()).toBe("/n/tester/note-p2");
     });
 
-    it("SA15 開著的那篇失敗、共編已終態（deleted）→ 導回首頁、只有批次那一則 toast", async () => {
+    it("the open note fails with collaboration terminal (deleted): navigates home, only the batch's one toast", async () => {
       const server = stubServer();
       server.fail("DELETE /api/notes/p2", 500, "internal");
       const { controls, leavingRef } = controlsFor({ phase: "deleted" });
@@ -853,7 +850,7 @@ describe("SelectActionBar", () => {
       expect(document.querySelectorAll("li[data-swipe-direction]")).toHaveLength(1);
     });
 
-    it("SA14b 批次中途在同一個 NotePage 換到別篇：送原那篇時不設（已屬於新篇的）leavingRef、成功後不導回首頁", async () => {
+    it("mid-batch the same NotePage switches to another note: sending the original note does not set leavingRef (it now belongs to the new note) and success does not navigate home", async () => {
       const server = stubServer();
       const releaseP1 = server.hold("DELETE /api/notes/p1");
       const { controls, leavingRef } = controlsFor({ phase: "connected", role: "owner" });
@@ -866,7 +863,7 @@ describe("SelectActionBar", () => {
       tick("p1", "p2");
       fireEvent.click(barButton("Delete 2 selected items"));
       await waitFor(() => expect(server.keys()).toEqual(["DELETE /api/notes/p1"]));
-      // Ctrl+K／wikilink 換篇：NotePage 不重掛，同一個 leavingRef、noteId 換成 p9。
+      // Switching note via Ctrl+K / a wikilink: NotePage does not remount, the same leavingRef with noteId changed to p9.
       act(() => {
         void host.current?.navigate("/n/tester/note-p9");
         host.current?.setControls({ ...controls, noteId: "p9" });
@@ -881,7 +878,7 @@ describe("SelectActionBar", () => {
       expect(location()).toBe("/n/tester/note-p9");
     });
 
-    it("SA14c 換篇後原那篇失敗：不動新篇的 leavingRef（新篇自己的單篇刪除正在走閘門）", async () => {
+    it("the original note fails after switching note: the new note's leavingRef is untouched (its own single-note delete is going through the gate)", async () => {
       const server = stubServer();
       const releaseP1 = server.hold("DELETE /api/notes/p1");
       server.fail("DELETE /api/notes/p2", 500, "internal");
@@ -899,7 +896,7 @@ describe("SelectActionBar", () => {
     });
   });
 
-  it("SA16 焦點在 Copy to 按 Esc → 離開選取、焦點在同一份的 Select", async () => {
+  it("Esc with focus on Copy to: selection ends and focus is on the same shell's Select", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -911,7 +908,7 @@ describe("SelectActionBar", () => {
     expect(selectButton(1)).toHaveFocus();
   });
 
-  it("SA16b 目的地框開著按 Esc → 只關框、仍在選取", async () => {
+  it("Esc with the picker open: only the picker closes, the selection stays", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -924,7 +921,7 @@ describe("SelectActionBar", () => {
     expect(checkedIds()).toEqual(["p1"]);
   });
 
-  it("SA17 確認框 Cancel → 仍在選取、沒有請求、焦點回開框鈕", async () => {
+  it("confirm dialog Cancel: selection stays, no request, focus returns to the button that opened it", async () => {
     const server = stubServer();
     renderShells();
     await enterSelecting();
@@ -939,7 +936,7 @@ describe("SelectActionBar", () => {
     expect(barButton("Move to")).toHaveFocus();
   });
 
-  it("SA17b 目的地框 Cancel → 焦點回 Move to（setTimeout 之後仍在）", async () => {
+  it("picker Cancel: focus returns to Move to (still there after setTimeout)", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -952,7 +949,7 @@ describe("SelectActionBar", () => {
     expect(barButton("Move to")).toHaveFocus();
   });
 
-  it("SA18 刪除進行中再按 → 只跑一輪", async () => {
+  it("pressing delete again while it runs: only one round runs", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     renderShells();
@@ -966,7 +963,7 @@ describe("SelectActionBar", () => {
     expect(server.keys()).toEqual(["DELETE /api/notes/p1", "DELETE /api/notes/p2"]);
   });
 
-  it("SA19 zh-TW：移動到、複製到、刪除選取的 2 項、已移到垃圾桶 2 篇", async () => {
+  it("zh-TW: the move-to, copy-to and delete-2-selected-items labels and the moved-to-trash-2 toast", async () => {
     await i18n.changeLanguage("zh-TW");
     stubServer();
     renderShells();
@@ -982,7 +979,7 @@ describe("SelectActionBar", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("SA20 進度：Working… 0 of 3 → 1 of 3 → 完成消失；aria-busy、三顆鈕 disabled", async () => {
+  it("progress: Working... 0 of 3 -> 1 of 3 -> disappears when done; aria-busy, three buttons disabled", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     const releaseP2 = server.hold("DELETE /api/notes/p2");
@@ -993,7 +990,7 @@ describe("SelectActionBar", () => {
     await waitFor(() => expect(within(bar()).getByRole("status")).toHaveTextContent("Working… 0 of 3"));
     expect(bar()).toHaveAttribute("aria-busy", "true");
     for (const name of ["Move to", "Copy to", "Delete 3 selected items"]) expect(barButton(name)).toBeDisabled();
-    // 另一份動作列也顯示（同一個 provider）。
+    // the other action bar shows it too (same provider)
     expect(within(bar(0)).getByRole("status")).toHaveTextContent("Working… 0 of 3");
     await releaseP1();
     await waitFor(() => expect(within(bar()).getByRole("status")).toHaveTextContent("Working… 1 of 3"));
@@ -1003,7 +1000,7 @@ describe("SelectActionBar", () => {
     expect(shell(1).querySelector("[data-select-action-bar]")).toBeNull();
   });
 
-  it("SA20 進度列結束後消失（停下仍在選取時）、aria-busy 回 false", async () => {
+  it("the progress row disappears at the end (when stopped and still selecting), aria-busy returns to false", async () => {
     const server = stubServer();
     server.fail("DELETE /api/notes/p2", 500, "internal");
     renderShells();
@@ -1015,7 +1012,7 @@ describe("SelectActionBar", () => {
     expect(bar()).toHaveAttribute("aria-busy", "false");
   });
 
-  it("SA21 全被 server 略過（兩支 403）→ Nothing was done…（destructive）、沒有 Undo、離開選取", async () => {
+  it("everything skipped by the server (two 403s): Nothing was done... (destructive), no Undo, selection ends", async () => {
     const server = stubServer();
     server.fail("DELETE /api/notes/p1", 403, "forbidden");
     server.fail("DELETE /api/notes/p2", 403, "forbidden");
@@ -1030,7 +1027,7 @@ describe("SelectActionBar", () => {
     await waitFor(() => expect(selecting()).toBe(false));
   });
 
-  it("SA22 送出中確認框關不掉（Esc、✕、點框外）、框內有進度；放行後才關、toast、離開選取、焦點在 Select", async () => {
+  it("while submitting the confirm dialog cannot be closed (Esc, the X, clicking outside) and shows progress; after release it closes, toast, selection ends, focus on Select", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("POST /api/notes/p1/copy");
     renderShells();
@@ -1049,7 +1046,7 @@ describe("SelectActionBar", () => {
     await settleTimers();
     expect(screen.getByRole("dialog", { name: "Make a copy" })).toBe(confirm);
 
-    // 點框外：送出中由 progress 包裝（onOpenChange(false) 一律忽略）與 dismissOnOutside={false} 兩道都擋；後者單獨由 SA22c 守。
+    // Clicking outside: while submitting it is blocked by both the progress wrapper (onOpenChange(false) is always ignored) and dismissOnOutside={false}; the latter alone is covered by the next case (clicking outside before submitting).
     await clickOutside();
     expect(screen.getByRole("dialog", { name: "Make a copy" })).toBe(confirm);
     expect(within(confirm).getByRole("button", { name: "Make a copy" })).toBeDisabled();
@@ -1065,7 +1062,7 @@ describe("SelectActionBar", () => {
     expect(selectButton(1)).toHaveFocus();
   });
 
-  it("SA22c 送出前點確認框外面不關框（dismissOnOutside={false}）；Cancel 才關", async () => {
+  it("before submitting, clicking outside the confirm dialog does not close it (dismissOnOutside={false}); Cancel does", async () => {
     const server = stubServer();
     renderShells();
     await enterSelecting();
@@ -1079,7 +1076,7 @@ describe("SelectActionBar", () => {
     expect(server.keys()).toEqual([]);
   });
 
-  it("SA22b 成功時焦點已移到外部輸入框 → 選取結束、焦點仍在外部", async () => {
+  it("success with focus already moved to an outside input: selection ends and focus stays outside", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     renderShells({ outside: <main><input aria-label="probe" /></main> });
@@ -1095,7 +1092,7 @@ describe("SelectActionBar", () => {
     expect(probe).toHaveFocus();
   });
 
-  it("SA22d 中途按 Done（動作列卸載）後焦點移到同一側欄的筆記連結 → 成功結束時不搶焦點（mountedRef）", async () => {
+  it("after pressing Done midway (the bar unmounts) and moving focus to a note link in the same sidebar: success does not steal focus (mountedRef)", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     renderShells();
@@ -1113,7 +1110,7 @@ describe("SelectActionBar", () => {
     expect(link).toHaveFocus();
   });
 
-  it("SA25 批次中途丟例外：鎖照樣釋放、確認框關掉、動作列恢復（收尾在 finally）", async () => {
+  it("an exception mid-batch: the lock is still released, the confirm dialog closes and the bar recovers (cleanup is in finally)", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("POST /api/notes/p1/copy");
     const { queryClient } = renderShells();
@@ -1122,7 +1119,7 @@ describe("SelectActionBar", () => {
     fireEvent.click(barButton("Copy to"));
     fireEvent.click(within(await pickDestination("Make a copy")).getByRole("button", { name: "Make a copy" }));
     await waitFor(() => expect(within(bar()).getByRole("status", { hidden: true })).toHaveTextContent("Working… 0 of 1"));
-    // 批次自己的 finally（整批失效）丟例外 → runBatch reject；拿走 vitest 的 unhandledRejection 監聽、只收這一個。
+    // The batch's own finally (invalidating everything) throws -> runBatch rejects; take vitest's unhandledRejection listener away and collect only this one.
     const boom = new Error("boom");
     vi.spyOn(queryClient, "invalidateQueries").mockImplementation(() => {
       throw boom;
@@ -1148,7 +1145,7 @@ describe("SelectActionBar", () => {
     expect(selecting()).toBe(true);
   });
 
-  it("SA24 中途 Done 又 Select、勾 p3 → 舊那輪停下也不覆蓋新的選取", async () => {
+  it("Done then Select midway and tick p3: the old round stopping does not overwrite the new selection", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     server.fail("DELETE /api/notes/p2", 429, "too_many_requests");
@@ -1168,7 +1165,7 @@ describe("SelectActionBar", () => {
     expect(checkedIds()).toEqual(["p3"]);
   });
 
-  it("SA24b Done→Select 後新掛的動作列在舊那輪跑完前顯示進度、不能按；放行後恢復", async () => {
+  it("after Done -> Select the newly mounted bar shows progress and cannot be pressed until the old round finishes; it recovers after release", async () => {
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
     renderShells();
@@ -1187,7 +1184,7 @@ describe("SelectActionBar", () => {
     expect(server.keys()).toEqual(["DELETE /api/notes/p1"]);
     await releaseP1();
     expect(await screen.findByText("Moved 2 notes to the trash", { exact: true })).toBeInTheDocument();
-    // 舊那輪的 session 已換：新選取不被結束；鈕恢復可按。
+    // The old round's session has been replaced: the new selection is not ended; the buttons are pressable again.
     await waitFor(() => expect(within(bar()).queryByRole("status")).toBeNull());
     expect(selecting()).toBe(true);
     expect(checkedIds()).toEqual(["p3"]);
@@ -1196,9 +1193,8 @@ describe("SelectActionBar", () => {
   });
 });
 
-// ── 資料夾與筆記同列的動作（SAf1–SAf16） ──
 
-/** 我的筆記：A（p1、p2）、A1、B 三個根層資料夾；p3、p4 在根層。群組 G（admin）有資料夾 GF、GF2。 */
+/** My notes: three root folders A (p1, p2), A1 and B; p3, p4 at the root. Group G (admin) has folders GF and GF2. */
 const FG: GroupDto = groupDto({ id: "G", name: "G" }, adminRole());
 const FH: GroupDto = groupDto({ id: "H", name: "H" }, adminRole());
 const FA = folderDto({ id: "A", name: "A" });
@@ -1222,14 +1218,14 @@ async function openPicker(name: "Move to" | "Copy to"): Promise<HTMLElement> {
   fireEvent.click(barButton(name));
   return screen.findByRole("dialog", { name });
 }
-/** 目的地框這一層的項目（可及名稱；分隔線記 "—"）。 */
+/** Items on this level of the picker (accessible names; a separator is recorded as an em dash). */
 const levelNames = (picker: HTMLElement) =>
   Array.from(picker.querySelectorAll("ul > li")).map((li) =>
     li.getAttribute("role") === "separator" ? "—" : li.querySelector("button")?.getAttribute("aria-label"),
   );
 const barNames = () => within(bar()).getAllByRole("button", { hidden: true }).map((b) => b.getAttribute("aria-label") ?? b.textContent);
 const openToasts = () => document.querySelectorAll('li[data-swipe-direction][data-state="open"]');
-/** aria-describedby 指到的元素的字（`toHaveAccessibleDescription` 在描述元素不存在時會退回 title，守不住 sr-only 那份）。 */
+/** The text of the element aria-describedby points to (`toHaveAccessibleDescription` falls back to title when the description element is absent, which would not cover the sr-only copy). */
 const describedText = (el: HTMLElement) => document.getElementById(el.getAttribute("aria-describedby") ?? "")?.textContent ?? null;
 
 async function waitFolders(...ids: string[]): Promise<void> {
@@ -1238,7 +1234,7 @@ async function waitFolders(...ids: string[]): Promise<void> {
   });
 }
 
-describe("SelectActionBar（資料夾）", () => {
+describe("SelectActionBar (folders)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -1250,25 +1246,25 @@ describe("SelectActionBar（資料夾）", () => {
     __resetFolderSortForTests();
   });
 
-  describe("SAf1 各 tab 的鈕", () => {
-    // 四個 tab 都要有列可選（「選取」才可按）：再加一篇群組筆記、一篇共享筆記。
+  describe("buttons per tab", () => {
+    // Every one of the four tabs needs a row to select (so Select is pressable): add one group note and one shared note.
     const everyTab = { ...MY, notes: [...MY.notes, groupNote({ id: "g9", title: "g9", group: FG }), sharedNote({ id: "s9", title: "s9" })] };
 
-    it.each(["myNotes" as const, "workspace" as const, "shared" as const])("%s 有 Move to", async (tab) => {
+    it.each(["myNotes" as const, "workspace" as const, "shared" as const])("%s has Move to", async (tab) => {
       stubServer(everyTab);
       renderShells({ tab });
       await enterSelecting();
       expect(barNames()).toContain("Move to");
     });
 
-    it("最近沒有 Move to", async () => {
+    it("recent has no Move to", async () => {
       stubServer(everyTab);
       renderShells({ tab: "recent" });
       await enterSelecting();
       expect(barNames()).not.toContain("Move to");
     });
 
-    it("與我共享：只勾筆記時沒有刪除鈕；只勾資料夾時有「Remove 1 selected folder」", async () => {
+    it("shared with me: no delete button when only notes are ticked; \"Remove 1 selected folder\" when only folders are ticked", async () => {
       const s2 = sharedNote({ id: "s2", title: "s2" });
       stubServer({ notes: [s2], groups: [FG], folders: [SF] });
       renderShells({ tab: "shared" });
@@ -1283,7 +1279,7 @@ describe("SelectActionBar（資料夾）", () => {
     });
   });
 
-  it("SAf2 同空間：勾 p3、A1 → B → 沒有確認框、依序 PATCH A1、PUT p3 → toast 帶 Undo → 離開選取、焦點在 Select；先收合的 folder:B 被展開", async () => {
+  it("same space: tick p3 and A1, move to B: no confirm dialog, PATCH A1 then PUT p3, toast with Undo, selection ends and focus is on Select; the previously collapsed folder:B is expanded", async () => {
     setCollapsed("folder:B", true);
     const server = stubServer(MY);
     renderShells();
@@ -1304,7 +1300,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(isCollapsed("folder:B")).toBe(false);
   });
 
-  it("SAf3 按 Undo → 依序送回原處（{parentId:null}、{folderId:null}）、全部成功不另出 toast", async () => {
+  it("pressing Undo sends them back in order ({parentId:null}, {folderId:null}); if all succeed no extra toast", async () => {
     const server = stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1323,7 +1319,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(openToasts()).toHaveLength(0);
   });
 
-  it("SAf4 Undo 第 2 項 429 → 錯誤 toast＋「1 item was moved back; the rest weren't.」", async () => {
+  it("Undo gets 429 on the second item: error toast + \"1 item was moved back; the rest weren't.\"", async () => {
     const server = stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1341,7 +1337,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("PATCH /api/folders/A1")).toEqual([{ parentId: "B" }, { parentId: null }]);
   });
 
-  it("SAf5 移回根層：全在根層時第一層沒有 Top level；p1（在 A）→ Top level → {folderId:null}", async () => {
+  it("moving back to the root: when all are at the root the first level has no Top level; p1 (in A) -> Top level -> {folderId:null}", async () => {
     const server = stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1361,7 +1357,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("PUT /api/notes/p1/folder")).toEqual([{ folderId: null }]);
   });
 
-  it("SAf6 個人筆記移入群組資料夾：p3 → G, open → GF → 確認框描述含「G › GF」→ body {groupId:G, folderId:GF}", async () => {
+  it("a personal note moved into a group folder: p3 -> G, open -> GF -> the confirm description contains the group folder path -> body {groupId:G, folderId:GF}", async () => {
     const server = stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1378,7 +1374,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("POST /api/notes/p3/move")).toEqual([{ groupId: "G", folderId: "GF" }]);
   });
 
-  it("SAf6 同時勾了資料夾 → 下半部的 G disabled", async () => {
+  it("a folder ticked as well: G in the lower half is disabled", async () => {
     stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1389,8 +1385,8 @@ describe("SelectActionBar（資料夾）", () => {
     expect(within(picker).getByRole("button", { name: "G" })).toBeDisabled();
   });
 
-  // 反灰原因改 aria-disabled（不是 disabled，hover 提示才出得來）。
-  it("SAf7 群組 tab 跨群組：Move to aria-disabled＋title／可及描述「…different groups…」；Copy to 可按、第一層沒有 Make a copy", async () => {
+  // The greyed-out reason uses aria-disabled (not disabled, so the hover hint can appear).
+  it("group tab across groups: Move to is aria-disabled with title / accessible description \"...different groups...\"; Copy to is pressable and the first level has no Make a copy", async () => {
     const g1 = groupNote({ id: "g1", title: "g1", group: FG });
     const h1 = groupNote({ id: "h1", title: "h1", group: FH });
     stubServer({ notes: [g1, h1], groups: [FG, FH], folders: [GF] });
@@ -1408,7 +1404,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(levelNames(picker)[0]).toBe("My notes");
   });
 
-  it("SAf8 群組 tab 單群組：g2（在 GF2）→ 第一層只有 G 的根目錄與資料夾、無分隔線 → GF → PUT {folderId:GF}", async () => {
+  it("group tab with a single group: g2 (in GF2): the first level has only G's root and folders with no separator -> GF -> PUT {folderId:GF}", async () => {
     const g2 = groupNote({ id: "g2", title: "g2", group: FG, folderId: "GF2" });
     const server = stubServer({ notes: [g2], groups: [FG, FH], folders: [GF, GF2] });
     renderShells({ tab: "workspace" });
@@ -1424,7 +1420,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("PUT /api/notes/g2/folder")).toEqual([{ folderId: "GF" }]);
   });
 
-  it("SAf9 與我共享：s2 → 第一層只有 SF → PUT {folderId:SF}", async () => {
+  it("shared with me: s2: the first level has only SF -> PUT {folderId:SF}", async () => {
     const s2 = sharedNote({ id: "s2", title: "s2" });
     const server = stubServer({ notes: [s2], groups: [FG], folders: [SF] });
     renderShells({ tab: "shared" });
@@ -1438,7 +1434,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("PUT /api/notes/s2/folder")).toEqual([{ folderId: "SF" }]);
   });
 
-  it("SAf9 與我共享：沒有共享資料夾、選的都在根 → Move to disabled（第一層為空）", async () => {
+  it("shared with me: no shared folder and everything selected is at the root: Move to is disabled (the first level is empty)", async () => {
     const s2 = sharedNote({ id: "s2", title: "s2" });
     stubServer({ notes: [s2], groups: [FG] });
     renderShells({ tab: "shared" });
@@ -1449,7 +1445,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(barButton("Copy to")).toBeEnabled();
   });
 
-  it("SAf10 刪除含資料夾：A＋p3 → 彙總確認框 → DELETE 資料夾先、筆記後 → toast＋Undo（三個 id）；開著的 p2 在 A 裡 → 送 A 時設 leavingRef、導回首頁、一則 toast", async () => {
+  it("delete with a folder: A + p3 -> summary confirm -> DELETE folder first then note -> toast + Undo (three ids); with the open p2 inside A: leavingRef is set when sending A, navigates home, one toast", async () => {
     const server = stubServer(MY);
     const leavingRef = { current: false };
     const controls: NotePageControls = { noteId: "p2", state: { phase: "connected", role: "owner" }, leavingRef, openEdits: () => {} };
@@ -1464,7 +1460,7 @@ describe("SelectActionBar（資料夾）", () => {
     tick("p3");
     fireEvent.click(barButton("Delete 2 selected items"));
     const confirm = await screen.findByRole("dialog", { name: "Delete 1 folder?" });
-    // 附加句也在可及描述裡（開框時一起唸）。
+    // The appended sentence is also in the accessible description (read out when the dialog opens).
     expect(confirm).toHaveAccessibleDescription(
       "These folders and their subfolders will be deleted, and 2 notes will move to the trash. The 1 selected note will also move to the trash.",
     );
@@ -1486,7 +1482,7 @@ describe("SelectActionBar（資料夾）", () => {
     await waitFor(() => expect(location()).toBe("/n/tester/note-p2"));
   });
 
-  it("SAf11 與我共享移除：SF（含開著的 s1）→「Remove 1 folder?」→ 一般 toast、沒有 Undo、不設 leavingRef、不導頁", async () => {
+  it("shared-with-me removal: SF (containing the open s1) -> \"Remove 1 folder?\" -> ordinary toast, no Undo, leavingRef not set, no navigation", async () => {
     const s1 = sharedNote({ id: "s1", title: "s1", folderId: "SF" });
     const s2 = sharedNote({ id: "s2", title: "s2" });
     const server = stubServer({ notes: [s1, s2], groups: [FG], folders: [SF] });
@@ -1516,7 +1512,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(location()).toBe("/n/someone/note-s1");
   });
 
-  it("SAf12 擋下（預先排除）與已不在（server 404）：只送 B、p3；標題恰為 trashed 句＋blocked＋gone 後綴", async () => {
+  it("blocked (excluded beforehand) and already gone (server 404): only B and p3 are sent; the title is the trashed sentence + blocked + gone suffixes", async () => {
     const blocked = folderDto({ id: "A", name: "A", permissions: { manage: true, deleteNotes: false, createNote: true } });
     const server = stubServer({ notes: [FP1, FP3], groups: [FG], folders: [blocked, FB] });
     server.fail("DELETE /api/folders/B", 404, "folder_not_found");
@@ -1533,8 +1529,8 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.keys()).toEqual(["DELETE /api/folders/B", "DELETE /api/notes/p3"]);
   });
 
-  // 同 SAf7，反灰原因改 aria-disabled。
-  it("SAf13 複製：勾資料夾 → Copy to aria-disabled＋「Folders can't be copied」；只勾 p1（在 A）→ Make a copy → copyLeadMakeCopy → body {folderId:A}", async () => {
+  // Same as the group-tab case above: the greyed-out reason uses aria-disabled.
+  it("copy: a ticked folder makes Copy to aria-disabled with \"Folders can't be copied\"; only p1 (in A) ticked: Make a copy -> copyLeadMakeCopy -> body {folderId:A}", async () => {
     const server = stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1558,7 +1554,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(server.bodies("POST /api/notes/p1/copy")).toEqual([{ folderId: "A" }]);
   });
 
-  it("SAf14 放置中途 404 folder_not_found → 「Folder not found.」＋「1 item was done…」、[folders] 失效、仍在選取只留未處理的", async () => {
+  it("placement gets 404 folder_not_found midway: \"Folder not found.\" + \"1 item was done...\", [folders] is invalidated, selection stays with only the unprocessed ones", async () => {
     const server = stubServer(MY);
     server.fail("PUT /api/notes/p3/folder", 404, "folder_not_found");
     const { queryClient } = renderShells();
@@ -1571,7 +1567,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(await screen.findByText("Folder not found.", { exact: true })).toBeInTheDocument();
     expect(toastRoot("Folder not found.")).toHaveClass("bg-destructive");
     expect(screen.getByText("1 item was done; the rest weren't processed.", { exact: true })).toBeInTheDocument();
-    // 已有項目完成：停下的錯誤 toast 也帶「復原」（把已完成的送回）。
+    // Some items are already done: the stop error toast also carries Undo (sends the completed ones back).
     expect(within(toastRoot("Folder not found.")).getByRole("button", { name: "Undo" })).toBeInTheDocument();
     expect(server.keys()).toEqual(["PATCH /api/folders/A1", "PUT /api/notes/p3/folder"]);
     expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters?.queryKey) === '["folders"]')).toBe(true);
@@ -1581,7 +1577,7 @@ describe("SelectActionBar（資料夾）", () => {
     invalidate.mockRestore();
   });
 
-  it("SAf14b 同空間只有筆記、中途停下 → 描述仍以「項」計（與結果句 movedItems 一致）", async () => {
+  it("same space with only notes, stopped midway: the description still counts in items (consistent with the result sentence movedItems)", async () => {
     const server = stubServer(MY);
     server.fail("PUT /api/notes/p4/folder", 429, "too_many_requests");
     renderShells();
@@ -1595,7 +1591,7 @@ describe("SelectActionBar（資料夾）", () => {
     await waitFor(() => expect(checkedIds()).toEqual(["p4"]));
   });
 
-  it("SAf17 在 A › X1 時 X1 被刪（folders 重抓）→ 顯示 A 那層；按 Back 恰退一層到第一層（比照 NM-I7）", async () => {
+  it("at A > X1, X1 is deleted (folders refetch): the A level shows; pressing Back goes back one level to the first level", async () => {
     const A = folderDto({ id: "A", name: "A" });
     const X1 = folderDto({ id: "X1", name: "X1", parentId: "A" });
     const X2 = folderDto({ id: "X2", name: "X2", parentId: "X1" });
@@ -1617,7 +1613,7 @@ describe("SelectActionBar（資料夾）", () => {
     await waitFor(() => expect(levelNames(picker)).toEqual(["A", "B", "—", "G"]));
   });
 
-  it("SAf15 目的地框 → 確認框：開框鈕收到 0 次 focus、焦點在確認框內；取消 → 焦點回開框鈕", async () => {
+  it("picker -> confirm dialog: the button that opened the picker gets no focus call and focus is inside the confirm dialog; cancel returns focus to that button", async () => {
     stubServer(MY);
     renderShells();
     await enterSelecting();
@@ -1639,7 +1635,7 @@ describe("SelectActionBar（資料夾）", () => {
     expect(moveTo).toHaveFocus();
   });
 
-  describe("SAf16 zh-TW", () => {
+  describe("zh-TW", () => {
     afterEach(async () => {
       await i18n.changeLanguage("en");
     });
@@ -1651,7 +1647,7 @@ describe("SelectActionBar（資料夾）", () => {
       await waitFor(() => expect(bar()).not.toBeNull());
     }
 
-    it("同空間結果「已移 2 項到「B」」", async () => {
+    it("same-space result: the moved-2-items-to-B text", async () => {
       await i18n.changeLanguage("zh-TW");
       stubServer(MY);
       renderShells();
@@ -1665,7 +1661,7 @@ describe("SelectActionBar（資料夾）", () => {
       expect(await screen.findByText("已移 2 項到「B」", { exact: true })).toBeInTheDocument();
     });
 
-    it("刪資料夾確認框「刪除 1 個資料夾？」", async () => {
+    it("folder delete confirm dialog: the delete-1-folder text", async () => {
       await i18n.changeLanguage("zh-TW");
       stubServer(MY);
       renderShells();
@@ -1679,12 +1675,12 @@ describe("SelectActionBar（資料夾）", () => {
   });
 });
 
-// ── 寬螢幕一列工具列、窄形「移動到」outline、反灰原因（SB1–SB10） ──
-// 元件測試預設是窄（jsdom 的 matchMedia 恆 false）；寬形一律 `mockWidePointer(true)`。動作一律從 shell 1 發起。
+// Wide one-row toolbar, narrow "Move to" outline, greyed-out reasons.
+// Component tests default to narrow (jsdom's matchMedia is always false); wide cases always call `mockWidePointer(true)`. Actions are always started from shell 1.
 
 const exitButton = (index = 1) => within(shellHeader(index)).queryByRole("button", { name: "Exit selection", hidden: true });
 const selectAllBox = (index = 1) => within(shellHeader(index)).getByRole("checkbox", { name: "Select all", hidden: true }) as HTMLInputElement;
-/** 勾選樹裡已勾的鍵（不含標題列的全選框；DOM 序）。 */
+/** Keys ticked in the selection tree (excluding the header's select-all box; DOM order). */
 const selectedKeys = (index = 1) =>
   Array.from(shell(index).querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-selection-key]'))
     .filter((input) => input.checked)
@@ -1698,7 +1694,7 @@ const allState = (index = 1) => {
   return all.indeterminate ? "some" : all.checked ? "all" : "none";
 };
 
-/** 寬形：等「選取」可按 → 按 → 等 ✕、勾選樹與標題列裡的動作列（批次中數量位是進度，不能等「0 selected」）。 */
+/** Wide: waits for Select to be pressable, presses it, and waits for the X, the selection tree and the action bar in the header (during a batch the count slot shows progress, so it cannot wait for "0 selected"). */
 async function enterWide(index = 1): Promise<void> {
   await waitFor(() => expect(selectButton(index)).toBeEnabled());
   fireEvent.click(selectButton(index) as HTMLElement);
@@ -1709,7 +1705,7 @@ async function enterWide(index = 1): Promise<void> {
 
 const enterForm = (form: "narrow" | "wide") => (form === "wide" ? enterWide() : enterSelecting());
 
-describe("寬螢幕一列工具列", () => {
+describe("wide-screen one-row toolbar", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -1721,7 +1717,7 @@ describe("寬螢幕一列工具列", () => {
     __resetFolderSortForTests();
   });
 
-  it("SB1 寬：標題列依序 ✕、全選框、0 selected、三顆圖示鈕；每份實例恰一個動作列且在標題列裡；沒有 Done、Select all 文字鈕、New note", async () => {
+  it("wide: the header has in order the X, the select-all box, 0 selected, three icon buttons; each instance has one action bar and it is inside the header; no Done, Select all text button or New note", async () => {
     mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1760,7 +1756,7 @@ describe("寬螢幕一列工具列", () => {
     expect(within(shell(1)).queryByRole("button", { name: "New note", hidden: true })).toBeNull();
   });
 
-  it("SB1 窄（預設）：標題列 0 selected＋Select all＋Done 文字鈕、沒有 ✕ 與全選框；每份實例恰一個動作列且在標題列外", async () => {
+  it("narrow (default): the header has 0 selected + Select all + Done text buttons, no X or select-all box; each instance has one action bar and it is outside the header", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -1775,7 +1771,7 @@ describe("寬螢幕一列工具列", () => {
     }
   });
 
-  it("SB2 寬：按 Select → 焦點在 ✕；按 ✕ → 選取結束、焦點在同一份的 Select", async () => {
+  it("wide: pressing Select puts focus on the X; pressing the X ends the selection with focus on the same shell's Select", async () => {
     mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1787,7 +1783,7 @@ describe("寬螢幕一列工具列", () => {
     expect(selectButton(1)).toHaveFocus();
   });
 
-  it("SB3 寬：選取中在 body 上按 Esc → 結束、焦點在 Select", async () => {
+  it("wide: Esc on body while selecting ends it with focus on Select", async () => {
     mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1795,11 +1791,11 @@ describe("寬螢幕一列工具列", () => {
     tick("p1");
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(exitButton()).toBeNull());
-    // document 層的 Esc 由先掛上的那一份處理（它 preventDefault 後另一份讓路），焦點回那一份的 Select。
+    // A document-level Esc is handled by the shell mounted first (it preventDefaults and the other yields); focus returns to that shell's Select.
     expect(document.activeElement).toHaveAttribute("data-sidebar-select");
   });
 
-  it("SB3 寬：焦點在 ✕、對 ✕ 按 Esc → 結束、焦點在同一份的 Select；批次執行中（數量位是進度）同樣成立", async () => {
+  it("wide: Esc with focus on the X ends it with focus on the same shell's Select; the same holds while a batch runs (the count slot is progress)", async () => {
     mockWidePointer(true);
     const server = stubServer(MY);
     const release = server.hold("PUT /api/notes/p3/folder");
@@ -1825,7 +1821,7 @@ describe("寬螢幕一列工具列", () => {
     expect(await screen.findByText("Moved 1 item to “B”", { exact: true })).toBeInTheDocument();
   });
 
-  it("SB4 寬：三態全選框只看可見列；空／半勾點下去全選可見列，全勾點下去清空全部；收合子樹裡勾的保留", async () => {
+  it("wide: the three-state select-all box looks only at visible rows; empty/partial selects all visible rows, all-ticked clears everything; ticks inside a collapsed subtree are kept", async () => {
     mockWidePointer(true);
     stubServer({ notes: [FP1, FP3], groups: [FG], folders: [FA] });
     renderShells();
@@ -1834,7 +1830,7 @@ describe("寬螢幕一列工具列", () => {
     await waitFor(() => expect(box("p1")).not.toBeNull());
     expect(allState()).toBe("none");
     expect(selectAllBox()).toHaveAttribute("title", "Select all");
-    // 外層 24px 那格也帶同字 title（框旁滑過也有提示）。
+    // The outer 24px cell carries the same title (hovering beside the box shows the hint too).
     expect(selectAllBox().parentElement?.parentElement).toHaveAttribute("title", "Select all");
     tick("p3");
     expect(allState()).toBe("some");
@@ -1847,7 +1843,7 @@ describe("寬螢幕一列工具列", () => {
     expect(selectedKeys()).toEqual([]);
     expect(allState()).toBe("none");
 
-    // 先展開勾 p1 再收合 A：可見列（A、p3）都沒勾 → 空框；點下去全選可見列、p1 仍勾。
+    // Expand and tick p1, then collapse A: the visible rows (A, p3) are unticked -> empty box; clicking selects all visible rows and p1 stays ticked.
     tick("p1");
     fireEvent.click(folderToggle("A"));
     expect(box("p1")).toBeNull();
@@ -1860,7 +1856,7 @@ describe("寬螢幕一列工具列", () => {
     expect(selectedKeys()).toEqual(["folder:A", "note:p1", "note:p3"]);
   });
 
-  it("SB4 寬：群組 tab 群組全收合（沒有可見列）→ 全選框 disabled；展開後可按", async () => {
+  it("wide: group tab with all groups collapsed (no visible rows): the select-all box is disabled; pressable after expanding", async () => {
     mockWidePointer(true);
     stubServer({ notes: [groupNote({ id: "g1", title: "g1", group: FG })], groups: [FG], folders: [] });
     renderShells({ tab: "workspace" });
@@ -1874,7 +1870,7 @@ describe("寬螢幕一列工具列", () => {
     expect(selectAllBox()).toBeEnabled();
   });
 
-  it("SB5 寬：批次中按 ✕ 再開新選取 → 放行前數量位仍是進度、三顆鈕 disabled；放行後 0 selected、仍在選取、結果 toast 恰一則", async () => {
+  it("wide: pressing the X mid-batch and starting a new selection: before release the count slot is still progress and three buttons are disabled; after release 0 selected, still selecting, one result toast", async () => {
     mockWidePointer(true);
     const server = stubServer(MY);
     const release = server.hold("PATCH /api/folders/A1");
@@ -1896,7 +1892,7 @@ describe("寬螢幕一列工具列", () => {
     fireEvent.click(selectButton(1) as HTMLElement);
     await waitFor(() => expect(exitButton()).not.toBeNull());
     await waitFor(() => expect(bar()).not.toBeNull());
-    // select-run 以 actions 為鍵：舊那輪還在跑，新選取的數量位仍是進度。
+    // select-run is keyed by actions: the old round is still running, so the new selection's count slot is still progress.
     expect(within(shellHeader(1)).getByRole("status")).toHaveTextContent("Working… 0 of 2");
     for (const name of ["Move to", "Copy to", "Delete 0 selected items"]) expect(barButton(name)).toBeDisabled();
 
@@ -1909,7 +1905,7 @@ describe("寬螢幕一列工具列", () => {
     expect(openToasts()).toHaveLength(1);
   });
 
-  it("SB6 選取中寬→窄：標題列換回 1 selected＋Select all＋Done、底部出現動作列、勾選保留、開著的目的地框關掉", async () => {
+  it("wide -> narrow while selecting: the header switches back to 1 selected + Select all + Done, the action bar appears at the bottom, ticks are kept and an open picker closes", async () => {
     const mq = mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1932,7 +1928,7 @@ describe("寬螢幕一列工具列", () => {
     expect(selectedKeys()).toEqual(["note:p1"]);
   });
 
-  it("SB6b 選取中跨判準、焦點在標題列的鈕上：✕ → 翻窄 → 焦點在「完成」；完成 → 翻寬 → 焦點在 ✕（不掉到 body）", async () => {
+  it("crossing the criterion while selecting with focus on a header button: the X -> flip to narrow -> focus on Done; Done -> flip to wide -> focus on the X (does not fall to body)", async () => {
     const mq = mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1944,7 +1940,7 @@ describe("寬螢幕一列工具列", () => {
     expect(exitButton()).toHaveFocus();
   });
 
-  it("SB6c 選取中跨判準、翻轉前焦點已在 body（不在標題列）→ 不搶焦點、仍在 body", async () => {
+  it("crossing the criterion while selecting with focus on body before the flip (not in the header): focus is not stolen and stays on body", async () => {
     const mq = mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1956,7 +1952,7 @@ describe("寬螢幕一列工具列", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it("SB7 寬：點 Move to 圖示 → 目的地框；取消 → 焦點回圖示鈕", async () => {
+  it("wide: clicking the Move to icon opens the picker; cancel returns focus to the icon button", async () => {
     mockWidePointer(true);
     stubServer();
     renderShells();
@@ -1971,7 +1967,7 @@ describe("寬螢幕一列工具列", () => {
     expect(shellHeader(1).contains(document.activeElement)).toBe(true);
   });
 
-  it("SB8 窄：Move to 不是主色（沒有 bg-brand*）、class 與 Copy to 相同", async () => {
+  it("narrow: Move to is not the primary color (no bg-brand*) and has the same class as Copy to", async () => {
     stubServer();
     renderShells();
     await enterSelecting();
@@ -1985,7 +1981,7 @@ describe("寬螢幕一列工具列", () => {
   const NO_FOLDER_COPY = "Folders can't be copied";
 
   it.each(["narrow", "wide"] as const)(
-    "SB9 %s：群組 tab 跨群組 → Move to aria-disabled（沒有 disabled）＋title／描述；點了不開框；窄出 toast、寬沒有；兩顆鈕 class 相同",
+    "%s: group tab across groups: Move to is aria-disabled (not disabled) with title / description; clicking opens no picker; narrow shows a toast and wide does not; both buttons have the same class",
     async (form) => {
       mockWidePointer(form === "wide");
       const g1 = groupNote({ id: "g1", title: "g1", group: FG });
@@ -2014,7 +2010,7 @@ describe("寬螢幕一列工具列", () => {
   );
 
   it.each(["narrow", "wide"] as const)(
-    "SB9 %s：勾資料夾 → Copy to aria-disabled（沒有 disabled）＋「Folders can't be copied」；點了不開框；窄出 toast、寬沒有",
+    "%s: a ticked folder: Copy to is aria-disabled (not disabled) with \"Folders can't be copied\"; clicking opens no picker; narrow shows a toast and wide does not",
     async (form) => {
       mockWidePointer(form === "wide");
       const server = stubServer(MY);
@@ -2037,7 +2033,7 @@ describe("寬螢幕一列工具列", () => {
     },
   );
 
-  it.each(["narrow", "wide"] as const)("SB10 %s：0 項時三顆鈕、最近 tab 只勾不能刪的篇時的刪除 → 真的 disabled、沒有 aria-disabled、點了沒有 toast", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: with 0 items the three buttons, and Delete in the recent tab with only undeletable notes ticked, are truly disabled with no aria-disabled and clicking shows no toast", async (form) => {
     mockWidePointer(form === "wide");
     stubServer();
     renderShells({ tab: "recent" });
@@ -2056,7 +2052,7 @@ describe("寬螢幕一列工具列", () => {
     expect(openToasts()).toHaveLength(0);
   });
 
-  it.each(["narrow", "wide"] as const)("SB10 %s：批次執行中三顆鈕真的 disabled、沒有 aria-disabled、點了沒有 toast", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: while a batch runs the three buttons are truly disabled with no aria-disabled and clicking shows no toast", async (form) => {
     mockWidePointer(form === "wide");
     const server = stubServer();
     const releaseP1 = server.hold("DELETE /api/notes/p1");
@@ -2077,7 +2073,7 @@ describe("寬螢幕一列工具列", () => {
     expect(await screen.findByText("Moved 2 notes to the trash", { exact: true })).toBeInTheDocument();
   });
 
-  it.each(["narrow", "wide"] as const)("SB10 %s：優先序——選了資料夾又在跑批次（busy 與反灰原因同時成立）→ Copy to 真的 disabled、沒有 aria-disabled、點了沒有 toast", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: precedence - a folder selected while a batch runs (busy and the greyed-out reason both hold): Copy to is truly disabled with no aria-disabled and clicking shows no toast", async (form) => {
     mockWidePointer(form === "wide");
     const server = stubServer(MY);
     const release = server.hold("PATCH /api/folders/A1");
@@ -2100,10 +2096,9 @@ describe("寬螢幕一列工具列", () => {
   });
 });
 
-// ── 最愛 tab 的批次移出 ──
 
-describe("最愛 tab 的批次移出", () => {
-  /** 四篇最愛（樹序＝加入時間新到舊：p2、ga1、p1、p3）。 */
+describe("batch removal in the favorites tab", () => {
+  /** Four favorites (tree order = newest added first: p2, ga1, p1, p3). */
   const FAV4: FavoriteDto[] = [...FAVORITES, { noteId: "p3", favoritedAt: "2026-02-01T00:00:00.000Z" }];
   const unfavoriteButton = () => barButton("Remove from favorites");
   const favoritesGets = () =>
@@ -2120,7 +2115,7 @@ describe("最愛 tab 的批次移出", () => {
     act(() => dismissAllToasts());
   });
 
-  it.each(["narrow", "wide"] as const)("%s：移出最愛是 star-off 圖示、刪除是 trash 圖示且名稱與一般 tab 相同；寬形的圖示鈕用同一組 class", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: remove-from-favorites is the star-off icon and delete the trash icon with the same name as in the ordinary tabs; in the wide form the icon buttons use the same class set", async (form) => {
     mockWidePointer(form === "wide");
     stubServer({ favorites: FAV4 });
     renderShells({ tab: "favorites" });
@@ -2133,7 +2128,7 @@ describe("最愛 tab 的批次移出", () => {
     if (form === "wide") expect(unfavoriteButton().className).toBe(barButton("Copy to").className);
   });
 
-  it.each(["narrow", "wide"] as const)("%s：按移出最愛先開確認框（標題帶篇數、還沒送請求）；Cancel → 沒有請求、選取不變、焦點回開框鈕", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: pressing remove-from-favorites opens a confirm dialog first (title carries the count, no request yet); Cancel: no request, selection unchanged, focus returns to the opener", async (form) => {
     mockWidePointer(form === "wide");
     const server = stubServer({ favorites: FAV4 });
     renderShells({ tab: "favorites" });
@@ -2155,7 +2150,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(unfavoriteButton()).toHaveFocus();
   });
 
-  it("確認 → 依序送 DELETE，每篇完成後最愛快取少一篇；送出中框關不掉；結束重抓一次、toast 帶篇數、沒有 Undo、離開選取", async () => {
+  it("confirm: DELETEs are sent in order and the favorites cache loses one note after each; the dialog cannot be closed while sending; at the end one refetch, the toast carries the count, no Undo, selection ends", async () => {
     const server = stubServer({ favorites: FAV4 });
     const releaseGa1 = server.hold("DELETE /api/favorites/ga1");
     const { queryClient } = renderShells({ tab: "favorites" });
@@ -2166,7 +2161,7 @@ describe("最愛 tab 的批次移出", () => {
     fireEvent.click(unfavoriteButton());
     const confirm = await screen.findByRole("dialog", { name: "Remove 3 notes from favorites?" });
     fireEvent.click(within(confirm).getByRole("button", { name: "Remove" }));
-    // 第一篇已完成、第二篇卡在 server：快取只少了第一篇。
+    // The first note is done and the second is stuck at the server: the cache lost only the first.
     await waitFor(() => expect(within(confirm).getByRole("status")).toHaveTextContent("Working… 1 of 3"));
     expect(server.keys()).toEqual(["DELETE /api/favorites/p2", "DELETE /api/favorites/ga1"]);
     expect(cacheIds(queryClient)).toEqual(["ga1", "p1", "p3"]);
@@ -2188,7 +2183,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(selectButton(1)).toHaveFocus();
   });
 
-  it("最愛全部移出、清單空了：「Select」鈕已停用，焦點改落在該份側欄的面板，不掉到 body", async () => {
+  it("all favorites removed and the list empty: the Select button is disabled and focus lands on that sidebar's panel, not on body", async () => {
     const server = stubServer({ favorites: FAV4 });
     const { queryClient } = renderShells({ tab: "favorites" });
     await enterSelecting();
@@ -2206,7 +2201,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(document.body).not.toHaveFocus();
   });
 
-  it("第二篇 429 → 停下：第一篇已濾掉、第二三篇仍勾著、錯誤 toast＋已完成 1 篇", async () => {
+  it("429 on the second note stops it: the first is filtered out, the second and third stay ticked, error toast + 1 completed", async () => {
     const server = stubServer({ favorites: FAV4 });
     server.fail("DELETE /api/favorites/ga1", 429, "too_many_requests");
     const { queryClient } = renderShells({ tab: "favorites" });
@@ -2227,7 +2222,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(within(shellHeader(1)).getByText("2 selected")).toBeInTheDocument();
   });
 
-  it.each(["narrow", "wide"] as const)("%s：批次執行中移出最愛、複製到、刪除真的 disabled、沒有 aria-disabled、點了沒有 toast 也沒有第二個框", async (form) => {
+  it.each(["narrow", "wide"] as const)("%s: while a batch runs remove-from-favorites, copy to and delete are truly disabled with no aria-disabled, and clicking shows no toast and no second dialog", async (form) => {
     mockWidePointer(form === "wide");
     const server = stubServer({ favorites: FAV4 });
     const releaseP2 = server.hold("DELETE /api/favorites/p2");
@@ -2252,7 +2247,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(await screen.findByText("Removed 2 notes from favorites", { exact: true })).toBeInTheDocument();
   });
 
-  it("zh-TW：確認框標題與送出鈕、結果 toast", async () => {
+  it("zh-TW: the confirm dialog title and submit button, and the result toast", async () => {
     await i18n.changeLanguage("zh-TW");
     stubServer({ favorites: FAV4 });
     renderShells({ tab: "favorites" });
@@ -2268,7 +2263,7 @@ describe("最愛 tab 的批次移出", () => {
     expect(await screen.findByText("已移出最愛 2 篇", { exact: true })).toBeInTheDocument();
   });
 
-  it.each(["recent", "myNotes", "workspace", "shared"] as const)("%s：選取模式沒有移出最愛鈕；GET /api/favorites 只有清單訂的那一次", async (tab) => {
+  it.each(["recent", "myNotes", "workspace", "shared"] as const)("%s: selection mode has no remove-from-favorites button; GET /api/favorites happens only for the list's own subscription", async (tab) => {
     stubServer();
     renderShells({ tab });
     await enterSelecting();

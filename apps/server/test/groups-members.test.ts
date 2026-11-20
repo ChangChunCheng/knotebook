@@ -11,7 +11,7 @@ import {
   waitForBlockedOrSettled, type MatrixActor,
 } from "./group-helpers.js";
 
-/** 成員目前角色的 `builtin`（自訂角色為 null；不是成員為 undefined）。 */
+/** `builtin` of the member's current role (null for a custom role; undefined if not a member). */
 async function roleOf(db: Db, groupId: string, userId: string): Promise<string | null | undefined> {
   const [row] = await db
     .select({ builtin: groupRoles.builtin })
@@ -21,7 +21,7 @@ async function roleOf(db: Db, groupId: string, userId: string): Promise<string |
   return row?.builtin;
 }
 
-/** 內建管理員人數（S1 數的就是這個——自訂角色勾滿七旗標也不算）。 */
+/** Number of built-in admins (what the last-admin rule counts - a custom role with all seven flags doesn't count). */
 async function adminCount(db: Db, groupId: string): Promise<number> {
   const rows = await db
     .select({ userId: groupMembers.userId })
@@ -31,8 +31,8 @@ async function adminCount(db: Db, groupId: string): Promise<number> {
   return rows.length;
 }
 
-describe("#103／#175 成員異動：授權矩陣", () => {
-  it("PUT …/members", async () => {
+describe("#103/#175 member changes: authorization matrix", () => {
+  it("PUT .../members", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "PUT",
@@ -42,9 +42,9 @@ describe("#103／#175 成員異動：授權矩陣", () => {
     });
   });
 
-  it("PATCH …/members/:userId", async () => {
-    // `runGroupAuthMatrix` 的 payload 是同步函式、拿不到場景群組的角色 id（`{roleId}` 必須是那個群組的角色），
-    // 這支在本檔自己跑同一張矩陣：每個 actor 一個全新的場景、三種 404 逐位元組相同。
+  it("PATCH .../members/:userId", async () => {
+    // The payload of `runGroupAuthMatrix` is a synchronous function and can't get the role id of the scenario's group (`{roleId}` must be that group's role);
+    // this test runs the same matrix itself: a fresh scenario per actor, the three 404s byte-for-byte identical.
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const expected: Record<MatrixActor, number> = { anon: 401, nonMember: 404, member: 403, admin: 200, siteAdmin: 200, badId: 404, missing: 404 };
     const notFoundBodies: string[] = [];
@@ -70,7 +70,7 @@ describe("#103／#175 成員異動：授權矩陣", () => {
     expect(JSON.parse(notFoundBodies[0]!)).toEqual({ error: { code: "not_found", message: "No group with that id." } });
   });
 
-  it("DELETE …/members/:userId（刪別人）", async () => {
+  it("DELETE .../members/:userId (removing someone else)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     await runGroupAuthMatrix(app, db, {
       method: "DELETE",
@@ -79,7 +79,7 @@ describe("#103／#175 成員異動：授權矩陣", () => {
     });
   });
 
-  it(":userId 非 UUID／不是成員 → 404，與群組 404 逐位元組相同", async () => {
+  it(":userId non-UUID/not a member -> 404, byte-for-byte identical to the group 404", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const stranger = await seedUser(db);
@@ -97,8 +97,8 @@ describe("#103／#175 成員異動：授權矩陣", () => {
   });
 });
 
-describe("#103／#175 PUT …/members", () => {
-  it("email 不分大小寫、停用帳號照樣加、預設掛內建一般成員／可指定 roleId；找不到 email → 404 user_not_found；roleId 不合法／別群組的 → 404 role_not_found；舊鍵 role → 400", async () => {
+describe("#103/#175 PUT .../members", () => {
+  it("email is case-insensitive, disabled accounts can still be added, defaults to the built-in regular member / roleId can be given; email not found -> 404 user_not_found; invalid roleId / a role of another group -> 404 role_not_found; old key role -> 400", async () => {
     const hooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: hooks });
     const admin = await seedUser(db);
@@ -130,10 +130,10 @@ describe("#103／#175 PUT …/members", () => {
     expect(legacy.statusCode).toBe(400);
     expect(legacy.json().error.code).toBe("invalid_body");
     expect(await roleOf(db, g.id, third.id)).toBeUndefined();
-    expect(hooks.onGroupAccessChanged).not.toHaveBeenCalled(); // 加人不踢線
+    expect(hooks.onGroupAccessChanged).not.toHaveBeenCalled(); // adding a member doesn't kick connections
   });
 
-  it("只新增：已是成員 → 409 already_member，且既有管理員的角色不變", async () => {
+  it("add only: already a member -> 409 already_member, and the existing admin's role is unchanged", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }]);
@@ -143,7 +143,7 @@ describe("#103／#175 PUT …/members", () => {
     expect(await roleOf(db, g.id, admin.id)).toBe("admin");
   });
 
-  it("管理員送壞 body → 400 invalid_body：PUT …/members 的非 email；PATCH …/members/:userId 的 roleId 型別錯、舊鍵 role；PATCH roleId 非 UUID／別群組的 → 404 role_not_found", async () => {
+  it("admin sending a bad body -> 400 invalid_body: non-email in PUT .../members; wrong-typed roleId or old key role in PATCH .../members/:userId; non-UUID / other group's roleId in PATCH -> 404 role_not_found", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const member = await seedUser(db);
@@ -167,8 +167,8 @@ describe("#103／#175 PUT …/members", () => {
   });
 });
 
-describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
-  it("最後一位內建管理員退出／被站台 admin 移除／被降級 → 409 last_admin；兩位管理員時都可以", async () => {
+describe("#103/#175 every group has at least one built-in admin", () => {
+  it("the last built-in admin leaving / being removed by a site admin / being demoted -> 409 last_admin; all allowed with two admins", async () => {
     const hooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: hooks });
     const a1 = await seedUser(db);
@@ -195,7 +195,7 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     expect(leaveOk.statusCode).toBe(204);
   });
 
-  it("S1 只數內建管理員：勾滿七旗標的自訂角色不算——唯一的內建管理員降級／退出仍 409", async () => {
+  it("only built-in admins count: a custom role with all seven flags doesn't - the only built-in admin demoting / leaving is still 409", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const a1 = await seedUser(db);
     const full = await seedUser(db);
@@ -212,7 +212,7 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     expect(await adminCount(db, g.id)).toBe(1);
   });
 
-  it("不防升權：只勾 canManageMembers（不可讀）的自訂角色可把自己換成內建管理員；只勾 canManageGroup 的自訂角色可以建立（兩旗標獨立）", async () => {
+  it("no guard against privilege escalation: a custom role with only canManageMembers (unreadable) can swap itself into the built-in admin; a custom role with only canManageGroup can create (the two flags are independent)", async () => {
     const { app, db } = await buildTestApp({ collabHooks: spyCollabHooks() });
     const admin = await seedUser(db);
     const x = await seedUser(db);
@@ -228,7 +228,7 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     expect(await adminCount(db, g.id)).toBe(2);
   });
 
-  it("踢線：一般成員自行退出、管理員移人 → 204，換角色（升降皆）→ 200，都以（群組所有筆記, [那一人]）呼叫 onGroupAccessChanged；換成同一個角色、加人不呼叫", async () => {
+  it("kick: a regular member leaving on their own or an admin removing someone -> 204, changing role (up or down) -> 200, all call onGroupAccessChanged with (all notes of the group, [that one person]); changing to the same role and adding don't call it", async () => {
     const hooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: hooks });
     const admin = await seedUser(db);
@@ -238,7 +238,7 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     const g = await seedGroup(db, "G", [{ userId: admin.id, role: "admin" }, { userId: leaver.id, role: "member" }, { userId: removed.id, role: "member" }]);
     const n1 = await seedNote(db, { groupId: g.id });
     const n2 = await seedNote(db, { groupId: g.id });
-    await seedNote(db, { ownerId: admin.id }); // 群組外的筆記不在名單裡
+    await seedNote(db, { ownerId: admin.id }); // a note outside the group isn't in the list
     const groupNotes = [n1.id, n2.id].sort();
     const adminCookies = await cookieOf(admin.id);
     const expectLastCall = (userId: string): void => {
@@ -268,7 +268,7 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     expectLastCall(removed.id);
   });
 
-  it("#240 一般成員以大寫的自己 id 退出群組 → 204、成員列刪除、踢線名單是小寫 id", async () => {
+  it("#240 a regular member leaving the group with their own id in uppercase -> 204, member row deleted, the kick list has the lowercase id", async () => {
     const hooks = spyCollabHooks();
     const { app, db } = await buildTestApp({ collabHooks: hooks });
     const admin = await seedUser(db);
@@ -281,13 +281,13 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
     expect(hooks.onGroupAccessChanged.mock.calls.at(-1)![1]).toEqual([leaver.id]);
   });
 
-  it("並發：兩位管理員同時退出 → 恰一個 204、一個 409 last_admin；群組最後剩一位內建管理員", async () => {
+  it("concurrency: two admins leaving at the same time -> exactly one 204 and one 409 last_admin; exactly one built-in admin is left", async () => {
     let groupId = "";
     let second: Promise<LightMyRequestResponse> | undefined;
     let secondCookies: Record<string, string> = {};
     let secondUrl = "";
     let interleave: "blocked" | "settled" | undefined;
-    // hook 只在 `built` 賦值之後的請求裡被呼叫，閉包引用後宣告的 const 不會撞 TDZ。
+    // The hook is only called in requests after `built` is assigned, so the closure referencing a later-declared const doesn't hit the TDZ.
     const hook: GroupTestHook = async (point, ctx) => {
       if (point !== "group-members-checked" || ctx.groupId !== groupId || second) return;
       second = built.app.inject({ method: "DELETE", url: secondUrl, cookies: secondCookies });
@@ -311,14 +311,14 @@ describe("#103／#175 S1：每個群組至少一位內建管理員", () => {
   });
 });
 
-describe("#175 並發 C2", () => {
-  it("C2a：恰兩位管理員同時把對方降成一般成員 → 恰一個 200、一個 409 last_admin；最後恰一位內建管理員", async () => {
+describe("#175 concurrency", () => {
+  it("exactly two admins demote each other to regular member at the same time -> exactly one 200 and one 409 last_admin; exactly one built-in admin left", async () => {
     let groupId = "";
-    // `fire` 只賦值一次（在 `built` 之後）——放進 holder，`let` 會被 prefer-const 擋。
+    // `fire` is assigned only once (after `built`) - put in a holder, since `let` would be blocked by prefer-const.
     const race: { fire?: () => Promise<LightMyRequestResponse> } = {};
     let second: Promise<LightMyRequestResponse> | undefined;
     let interleave: "blocked" | "settled" | undefined;
-    // 第一個請求（換角色）在「鎖已取得、計數完、寫入前」發出第二個，並等它卡在 lockGroup 上（或已結束）。
+    // The first request (role change) fires the second at "lock acquired, counted, before write" and waits for it to get stuck on lockGroup (or finish).
     const hook: GroupTestHook = async (point, ctx) => {
       if (point !== "group-members-checked" || ctx.groupId !== groupId || second || !race.fire) return;
       second = race.fire();
@@ -343,7 +343,7 @@ describe("#175 並發 C2", () => {
     expect(interleave).toBe("blocked");
   });
 
-  it("C2b：持 canManageMembers 的自訂角色降級管理員 alice，同時另一位管理員 bob 退出 → 降級 200、退出 409 last_admin；最後恰一位內建管理員", async () => {
+  it("a custom role holding canManageMembers demotes admin alice while another admin bob leaves -> demote 200, leave 409 last_admin; exactly one built-in admin left", async () => {
     let groupId = "";
     const race: { fire?: () => Promise<LightMyRequestResponse> } = {};
     let second: Promise<LightMyRequestResponse> | undefined;

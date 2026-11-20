@@ -1,11 +1,7 @@
 /**
- * #132：`GET /oauth/authorize`。
- *
- * 這一族守的是三條承重紀律：
- * ① **限流擋在任何 DB 存取之前**，且是 consume-always（每一發通過 T1 的都計數）；
- * ② **只有「redirect_uri 不可信」才不導回**（RFC 6749 §4.1.2.1），其餘一律 302 帶
- *    結構化錯誤回 client——否則 client 只會停在一頁純文字等逾時；
- * ③ 不可信那條的 400 頁**全靜態、不回聲任何請求參數**（無認證方控制的字串）。
+ * Rate limiting sits before any DB access and is consume-always. Only an untrusted redirect_uri is not redirected to (RFC 6749 §4.1.2.1);
+ * everything else is a 302 with a structured error back to the client, otherwise the client sits on a plain-text page until it times out.
+ * The 400 page for the untrusted case is fully static and echoes no request parameter.
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -17,7 +13,6 @@ const CHALLENGE = "a".repeat(43);
 const ISSUER = testConfig.publicUrl.origin;
 const RESOURCE = `${ISSUER}/api/mcp`;
 
-/** 註冊一個 client，回它的 client_id。 */
 async function seedClient(app: TestApp["app"], redirectUri: string): Promise<string> {
   const res = await app.inject({
     method: "POST",
@@ -44,7 +39,7 @@ function baseParams(clientId: string, redirectUri: string): Record<string, strin
 }
 
 describe("GET /oauth/authorize", () => {
-  it("全部合法 → 建 pending request 並 302 到 SPA 同意頁", async () => {
+  it("all valid -> creates a pending request and 302s to the SPA consent page", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -54,12 +49,12 @@ describe("GET /oauth/authorize", () => {
       });
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toMatch(/^\/authorize\?req=[A-Za-z0-9_-]{22}$/);
-      // 中介快取住「302 → /authorize?req=<id>」正是不該發生的事
+      // Caching this 302 -> /authorize?req=<id> in an intermediary must not happen
       expect(res.headers["cache-control"]).toBe("no-store");
 
       const [row] = await db.select().from(oauthRequests);
       expect(row!.clientId).toBe(clientId);
-      // 存的是**本次**送來的完整值（含 ephemeral port），不是註冊值
+      // Stores the full value sent this time (including the ephemeral port), not the registered value
       expect(row!.redirectUri).toBe("http://127.0.0.1:5678/cb");
       expect(row!.scope).toBe("notes:read notes:write");
       expect(row!.state).toBe("st");
@@ -69,7 +64,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("scope 省略 → 落庫最小權限（notes:read）", async () => {
+  it("scope omitted -> stored with least privilege (notes:read)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -83,15 +78,15 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  // #239：搬移只在同時要了編輯時才算數（normalizeScope）。
+  // A move only counts when edit is requested too (normalizeScope) (#239).
   it.each([
     ["notes:read notes:write notes:move", "notes:read notes:write notes:move"],
     ["notes:read notes:move", "notes:read"],
-    // #181 OA：刪除同樣要搭編輯；順序無關、落庫固定 read → write → move → delete。
+    // Delete also needs edit; order doesn't matter, storage is always read -> write -> move -> delete (#181).
     ["notes:read notes:write notes:delete", "notes:read notes:write notes:delete"],
     ["notes:delete notes:move notes:write", "notes:read notes:write notes:move notes:delete"],
     ["notes:read notes:delete", "notes:read"],
-  ])("#239 scope=%s → 落庫 %s", async (requested, stored) => {
+  ])("#239 scope=%s -> stored %s", async (requested, stored) => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -107,7 +102,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("#181 OA：要求讀寫搬移刪除 → 同意頁的 request 端點 scopes 是切詞陣列（含 notes:delete）", async () => {
+  it("#181: requesting read/write/move/delete -> the consent page's request endpoint returns scopes as a split array (including notes:delete)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -128,7 +123,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("未註冊的 client_id 與不匹配的 redirect_uri → 400 靜態純文字，不導回、不回聲參數", async () => {
+  it("unregistered client_id and non-matching redirect_uri -> 400 static plain text, no redirect back, no parameter echo", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -141,18 +136,18 @@ describe("GET /oauth/authorize", () => {
         expect(res.statusCode).toBe(400);
         expect(res.headers["content-type"]).toBe("text/plain; charset=utf-8");
         expect(res.body).toContain("重新加入");
-        // 無認證方控制的字串一律不回聲（不出 HTML 就沒有 CSP 問題，但仍不回聲）
+        // Strings controlled by an unauthenticated party are never echoed (no HTML means no CSP issue, still not echoed)
         expect(res.body).not.toContain(params.client_id);
         expect(res.body).not.toContain(params.redirect_uri);
       }
-      // 不可信的請求不建 pending request
+      // An untrusted request creates no pending request
       expect(await db.select().from(oauthRequests)).toHaveLength(0);
     } finally {
       await close();
     }
   });
 
-  it("T1：client_id 或 redirect_uri 缺席／超長 → 400 且 body 不含送入的字串", async () => {
+  it("client_id or redirect_uri missing/too long -> 400 and the body doesn't contain the submitted strings", async () => {
     const { app, close } = await buildTestApp();
     try {
       const longId = "c".repeat(65);
@@ -165,13 +160,13 @@ describe("GET /oauth/authorize", () => {
         const res = await app.inject({ method: "GET", url: authorizeUrl(params) });
         expect(res.statusCode).toBe(400);
         expect(res.headers["content-type"]).toBe("text/plain; charset=utf-8");
-        // 必須是 T1 的訊息：拿掉長度上限後會落到步驟 1 的「註冊已失效」說明頁，
-        // 那頁同樣 400／text-plain／不含送入字串，只有這一條分得出來。
+        // Must be the early-parameter message: without the length cap it would land on the client-lookup "registration no longer valid"
+        // explainer page, which is also 400/text-plain/without the submitted string; this assertion tells them apart.
         expect(res.body).toContain("缺少必要參數");
         expect(res.body).not.toContain(longId);
         expect(res.body).not.toContain(longUri);
       }
-      // 完全缺參數
+      // No parameters at all
       for (const params of [{}, { client_id: "x" }, { redirect_uri: "http://127.0.0.1/cb" }]) {
         const res = await app.inject({ method: "GET", url: authorizeUrl(params as Record<string, string>) });
         expect(res.statusCode).toBe(400);
@@ -181,9 +176,9 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  // client_id 進的是 SQL 述詞（不是 INSERT）：帶 NUL 的 bind 參數會讓 PG 22021，
-  // 冒到 error handler 就是無認證端點的 500。
-  it("client_id 含 NUL → 400 說明頁，不是 500", async () => {
+  // client_id goes into a SQL predicate (not an INSERT): a bind parameter containing NUL makes PG raise 22021, which reaching
+  // the error handler would be a 500 on an unauthenticated endpoint.
+  it("client_id containing NUL -> 400 explainer page, not 500", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await app.inject({
@@ -198,7 +193,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("授權時的 port 與註冊時不同仍放行（RFC 8252 §7.3）", async () => {
+  it("port at authorization differing from registration is still allowed (RFC 8252 section 7.3)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -213,7 +208,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("T2 錯誤一律 302 帶結構化 error 回 redirect_uri，含 iss 與原樣 state", async () => {
+  it("errors after the redirect_uri is trusted are always a 302 with a structured error back to redirect_uri, carrying iss and the original state", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -238,14 +233,14 @@ describe("GET /oauth/authorize", () => {
         expect(url.searchParams.get("iss"), expected).toBe(ISSUER);
         expect(url.searchParams.get("error_description"), expected).toBeTruthy();
       }
-      // T2 失敗不建 pending request
+      // Such failures create no pending request
       expect(await db.select().from(oauthRequests)).toHaveLength(0);
     } finally {
       await close();
     }
   });
 
-  it("resource 缺席 → invalid_target（RFC 8707 §2.1，與無效同碼）", async () => {
+  it("resource missing -> invalid_target (RFC 8707 section 2.1, same code as invalid)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -259,7 +254,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("resource 大小寫不同的 scheme/host 仍接受", async () => {
+  it("resource with different-case scheme/host is still accepted", async () => {
     const { app, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -277,7 +272,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("state 2048 字元原樣回；2049 字元 → invalid_request 且不回聲 state", async () => {
+  it("state of 2048 chars returned as is; 2049 chars -> invalid_request and state not echoed", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -289,7 +284,7 @@ describe("GET /oauth/authorize", () => {
       expect(okRes.statusCode).toBe(302);
       expect(okRes.headers.location).toMatch(/^\/authorize\?req=/);
       const [row] = await db.select().from(oauthRequests);
-      expect(row!.state).toBe(ok); // 原樣存，禁止截斷
+      expect(row!.state).toBe(ok); // stored as is, no truncation
 
       const tooLong = "s".repeat(2049);
       const badRes = await app.inject({
@@ -299,7 +294,7 @@ describe("GET /oauth/authorize", () => {
       expect(badRes.statusCode).toBe(302);
       const url = new URL(badRes.headers.location as string);
       expect(url.searchParams.get("error")).toBe("invalid_request");
-      // 失敗原因就是 state 超長 → 不回聲它
+      // The failure reason is the over-long state -> not echoed
       expect(url.searchParams.has("state")).toBe(false);
       expect(url.searchParams.get("iss")).toBe(ISSUER);
     } finally {
@@ -307,7 +302,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("scope／resource 超長 → invalid_request", async () => {
+  it("over-long scope/resource -> invalid_request", async () => {
     const { app, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -328,12 +323,11 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  // state 是這條路上唯一沒有其他字元守衛的落庫字串（text 欄存不下 NUL → 22021 →
-  // 無認證端點的 500）。拒收時同樣不回聲它。
-  //
-  // ⚠ 只測 NUL：落單代理經 query string 傳不進來（URLSearchParams 會把它編碼成
-  // U+FFFD），實作仍擋是為了與 redirect_uri 共用同一道述詞——那條經 jsonb 真的可達。
-  it("state 含 NUL → invalid_request，且不回聲 state、不進 DB", async () => {
+  // state is the only string on this path with no other character guard (a text column can't store NUL -> 22021 -> 500 on an
+  // unauthenticated endpoint); rejected without echoing it. Only NUL is tested: a lone surrogate can't arrive through the query
+  // string (URLSearchParams encodes it as U+FFFD); the implementation still blocks it to share one predicate with redirect_uri,
+  // which can really carry it via jsonb.
+  it("state containing NUL -> invalid_request, state not echoed, nothing in the DB", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -352,8 +346,8 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  // 正對照：成對代理是合法 astral 字元，不能被誤擋
-  it("state 含 emoji（成對代理）仍原樣存回", async () => {
+  // Positive control: a paired surrogate is a legal astral character and must not be blocked
+  it("state containing emoji (paired surrogates) is stored and returned as is", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -370,7 +364,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("state 含 & 與 # 時編碼正確（一律 URL API，不字串串接）", async () => {
+  it("state containing & and # is encoded correctly (always the URL API, no string concatenation)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
@@ -391,7 +385,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("consume-always：合法請求也計數，超限回 429 純文字且不進 DB", async () => {
+  it("consume-always: a valid request is counted too; over the limit -> 429 plain text and nothing in the DB", async () => {
     const { app, db, close } = await buildTestApp({
       limiters: freshLimiters({ authorize: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }),
     });
@@ -406,11 +400,11 @@ describe("GET /oauth/authorize", () => {
       expect(limited.statusCode).toBe(429);
       expect(limited.headers["content-type"]).toBe("text/plain; charset=utf-8");
       const after = await db.select({ id: oauthRequests.id }).from(oauthRequests);
-      expect(after).toHaveLength(before.length); // 超限的請求不進 DB
+      expect(after).toHaveLength(before.length); // an over-limit request doesn't reach the DB
 
-      // 鑑別「限流擋在**任何 DB 存取**之前」：不存在的 client_id 在超限狀態下必須拿到
-      // 429，而不是步驟 1 查表後才發現的 400 說明頁。少了這一發，把 consume 移到機會性清理（`runOauthCleanup`）與
-      // client 查表之後（每發超限請求都跑 5 條全表掃描）這條測試照樣綠。
+      // Discriminates "limiting happens before any DB access": a nonexistent client_id over the limit must get 429, not the 400
+      // explainer page found only after the client lookup. Without this request, moving consume after the opportunistic cleanup
+      // (`runOauthCleanup`) and the client lookup (every over-limit request would run 5 full-table scans) would stay green.
       const unknownClient = await app.inject({
         method: "GET",
         url: authorizeUrl(baseParams("nosuchclient", "http://127.0.0.1:1234/cb")),
@@ -421,14 +415,14 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("T1 失敗不吃限流額度（擋在 consume 之前）", async () => {
+  it("early-parameter failures don't spend limiter quota (rejected before consume)", async () => {
     const { app, close } = await buildTestApp({
       limiters: freshLimiters({ authorize: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }),
     });
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");
-      // 三發 T1 失敗——若它們吃了額度，後面兩發合法請求就會 429。缺參數與超長兩種
-      // 形都要有：只測缺參數的話，長度上限那半段被拿掉也不會紅。
+      // Three early-parameter failures: if they consumed quota, the two valid requests after would get 429. Both the
+      // missing-parameter and over-long forms are needed: with only missing parameters, removing the length cap would stay green.
       for (let i = 0; i < 3; i += 1) {
         expect((await app.inject({ method: "GET", url: "/oauth/authorize" })).statusCode).toBe(400);
       }
@@ -448,7 +442,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("機會性清理排在 client 查表之前：25 小時前的殭屍 client 落說明頁而不是 500", async () => {
+  it("opportunistic cleanup runs before the client lookup: a zombie client from 25 hours ago lands on the explainer page, not a 500", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       await db.insert(oauthClients).values({
@@ -469,7 +463,7 @@ describe("GET /oauth/authorize", () => {
     }
   });
 
-  it("pending request 有 10 分鐘到期", async () => {
+  it("a pending request expires after 10 minutes", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const clientId = await seedClient(app, "http://127.0.0.1:1234/cb");

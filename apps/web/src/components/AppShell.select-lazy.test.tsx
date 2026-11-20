@@ -11,12 +11,8 @@ import { personalNote } from "@/test/select-fixtures";
 import { AppShell } from "./AppShell";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
-// 一般 tab 選取模式的 lazy chunk（SelectLazy）還沒到時，AppShell 裡清單與底部的佔位（#181）：讓 SelectLazy 的
-// 載入卡在手動放行的 promise 上（照 AppShell.trash-lazy.test.tsx）。
-// ⚠ gate 只擋得住 SidebarFooter 與 NoteList 的第一支 import（標題列）：NoteList 同一次 render 對 SelectLazy 發兩支 `import()`，
-// vitest 3.2.7 同一個 importer 的並發 import 有一支繞過 factory、直接載真模組（同 AppShell.select-lazy-error.test.tsx 檔頭），
-// 所以清單那支**不受 gate 控制**。放行前「清單是平常的列」成立，只是因為真 import 要走好幾輪才到、撐不過一次 act flush——
-// **放行前不要加任何等待（waitFor／find*／計時）**，否則清單會先換成勾選樹，斷言變紅或變成空真。
+// Placeholders in the list and bottom while the SelectLazy chunk (normal-tab selection mode) is pending (#181): its load is held on a manually released promise (as in AppShell.trash-lazy.test.tsx).
+// The gate only holds SidebarFooter and NoteList's first import (title row): NoteList issues two `import()`s of SelectLazy in one render and vitest 3.2.7 lets one of two concurrent imports from the same importer bypass the factory and load the real module (see AppShell.select-lazy-error.test.tsx), so the list's import is not gated. Before release "the list is ordinary rows" holds only because the real import needs several rounds and doesn't survive one act flush: add no wait (waitFor/find*/timers) before release, or the list swaps to the checkbox tree and the assertion turns red or vacuous.
 
 const gate = vi.hoisted(() => {
   let release!: () => void;
@@ -72,7 +68,7 @@ function stubFetch() {
 const aside = () => document.querySelector("aside") as HTMLElement;
 const header = () => aside().querySelector("[data-sidebar-header]") as HTMLElement;
 
-describe("AppShell — 一般 tab 選取 chunk 載入中的佔位", () => {
+describe("AppShell - placeholders while the normal-tab selection chunk loads", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
@@ -81,7 +77,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入中的佔位", () => {
     vi.unstubAllGlobals();
   });
 
-  it("chunk 還沒到：清單是平常的列、底部是同高空位（沒有 New note）；放行後換成勾選框與動作列", async () => {
+  it("chunk pending: list shows ordinary rows, bottom is a same-height blank (no New note); after release it becomes checkboxes and the action bar", async () => {
     stubFetch();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -98,7 +94,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入中的佔位", () => {
     );
     await within(aside()).findByRole("link", { name: "p1" });
     fireEvent.click(within(header()).getByRole("button", { name: "Select" }));
-    // 只 flush 一次（見檔頭 ⚠）：清單那支 import 繞過 gate，多等就會載到真的勾選樹。
+    // Flush once (see the file header): the list's import bypasses the gate, so waiting longer would load the real checkbox tree.
     await act(async () => {});
 
     const panel = within(aside()).getByRole("tabpanel");
@@ -106,7 +102,7 @@ describe("AppShell — 一般 tab 選取 chunk 載入中的佔位", () => {
     expect(within(panel).getByRole("link", { name: "p2" })).toBeInTheDocument();
     expect(within(panel).queryAllByRole("checkbox")).toHaveLength(0);
     expect(within(header()).queryByRole("button", { name: "Done" })).toBeNull();
-    // SidebarFooter 的佔位：與動作列同高的空位，不是「新增筆記」
+    // SidebarFooter's placeholder: a blank the height of the action bar.
     expect(aside().querySelector(":scope > div.m-2.h-8")).not.toBeNull();
     expect(within(aside()).queryByRole("button", { name: "New note" })).toBeNull();
 

@@ -11,7 +11,7 @@ import { sealCookieJson } from "../../src/auth/sealed-cookie.js";
 
 const secret = "a".repeat(64);
 
-/** #187：payload 帶新必要欄位。覆寫型別刻意只收 base 欄位與 next——intent 擴成兩支後這裡不必改。 */
+/** #187: the payload carries new required fields. The override type deliberately accepts only the base fields and next, so it needn't change when intent grows to two forms. */
 function payload(overrides: Partial<OidcStateBase> & { next?: string } = {}): OidcStatePayload {
   return {
     state: "state-abc",
@@ -25,45 +25,45 @@ function payload(overrides: Partial<OidcStateBase> & { next?: string } = {}): Oi
   };
 }
 
-/** `OidcStatePayload` 是聯集（prove 形沒有 next）：讀 next 一律經這個收窄 helper。 */
+/** `OidcStatePayload` is a union (the prove form has no next): read next only through this narrowing helper. */
 function nextOf(p: OidcStatePayload | null): string | undefined {
   return p !== null && p.intent === "login" ? p.next : undefined;
 }
 
-describe("auth/oidc-state：OIDC state cookie 的 seal/unseal（AES-256-GCM，server 端 exp 驗證）", () => {
-  it("OIDC_STATE_TTL_SECONDS 為 600（10 分鐘）", () => {
+describe("auth/oidc-state: seal/unseal of the OIDC state cookie (AES-256-GCM, exp verified on the server)", () => {
+  it("OIDC_STATE_TTL_SECONDS is 600 (10 minutes)", () => {
     expect(OIDC_STATE_TTL_SECONDS).toBe(600);
   });
 
-  it("OIDC_STATE_COOKIE_PATH 為 /api/auth/oidc", () => {
+  it("OIDC_STATE_COOKIE_PATH is /api/auth/oidc", () => {
     expect(OIDC_STATE_COOKIE_PATH).toBe("/api/auth/oidc");
   });
 
-  it("往返相等（seal→unseal 同 payload）", () => {
+  it("round-trips (seal -> unseal gives the same payload)", () => {
     const p = payload();
     const sealed = sealOidcState(secret, p);
     expect(unsealOidcState(secret, sealed, 1_000_000)).toEqual(p);
   });
 
-  it("exp 明確早於 now（payload.exp < now）→ 回 null", () => {
+  it("exp clearly before now (payload.exp < now) -> null", () => {
     const p = payload({ exp: 1_000_000 });
     const sealed = sealOidcState(secret, p);
     expect(unsealOidcState(secret, sealed, 1_000_601)).toBeNull();
   });
 
-  it("exp 恰好等於 now（<= 邊界）→ 視為已逾期，回 null", () => {
+  it("exp exactly equal to now (<= boundary) -> treated as expired, null", () => {
     const p = payload({ exp: 1_000_000 });
     const sealed = sealOidcState(secret, p);
     expect(unsealOidcState(secret, sealed, 1_000_000)).toBeNull();
   });
 
-  it("exp 未到（now 小於 exp）→ 正常回 payload", () => {
+  it("exp not reached (now below exp) -> the payload is returned normally", () => {
     const p = payload({ exp: 1_000_100 });
     const sealed = sealOidcState(secret, p);
     expect(unsealOidcState(secret, sealed, 1_000_099)).toEqual(p);
   });
 
-  it("竄改密文（翻 ct 一個 bit）→ 回 null", () => {
+  it("tampered ciphertext (flip one bit of ct) -> null", () => {
     const sealed = sealOidcState(secret, payload());
     const [ivPart, ctPart, tagPart] = sealed.split(".");
     const ctBytes = Buffer.from(ctPart ?? "", "base64url");
@@ -72,7 +72,7 @@ describe("auth/oidc-state：OIDC state cookie 的 seal/unseal（AES-256-GCM，se
     expect(unsealOidcState(secret, tampered, 1_000_000)).toBeNull();
   });
 
-  it("竄改 tag（換 tag）→ 回 null", () => {
+  it("tampered tag (replace the tag) -> null", () => {
     const sealed = sealOidcState(secret, payload());
     const [ivPart, ctPart, tagPart] = sealed.split(".");
     const tagBytes = Buffer.from(tagPart ?? "", "base64url");
@@ -81,72 +81,72 @@ describe("auth/oidc-state：OIDC state cookie 的 seal/unseal（AES-256-GCM，se
     expect(unsealOidcState(secret, tampered, 1_000_000)).toBeNull();
   });
 
-  it("亂字串（格式完全不對）→ 回 null，不 throw", () => {
+  it("garbage string (wrong format entirely) -> null, doesn't throw", () => {
     expect(unsealOidcState(secret, "not-a-sealed-value", 1_000_000)).toBeNull();
   });
 
-  it("空字串 → 回 null，不 throw", () => {
+  it("empty string -> null, doesn't throw", () => {
     expect(unsealOidcState(secret, "", 1_000_000)).toBeNull();
   });
 
-  it("不同 appSecret unseal → 回 null", () => {
+  it("unseal with a different appSecret -> null", () => {
     const sealed = sealOidcState(secret, payload());
     expect(unsealOidcState("b".repeat(64), sealed, 1_000_000)).toBeNull();
   });
 
-  it("iv 每次不同（不重用 nonce）", () => {
+  it("iv differs every time (nonce isn't reused)", () => {
     const a = sealOidcState(secret, payload());
     const b = sealOidcState(secret, payload());
     expect(a.split(".")[0]).not.toBe(b.split(".")[0]);
   });
 });
 
-// ⚠ 這個檔已有模組層的 `const secret = "a".repeat(64)` 與 `payload(overrides)` factory
-// （exp 是 1_000_000 + OIDC_STATE_TTL_SECONDS）——沿用它們，不要另宣告同名變數。now 一律
-// 傳 1_000_000（照抄既有案），傳 Date.now() 會直接過期、整組紅。
-describe("#131 next 欄位", () => {
-  it("帶 next 封裝 → 解出來逐字相同", () => {
+// This file already has a module-level `const secret = "a".repeat(64)` and a `payload(overrides)` factory (exp is 1_000_000 + OIDC_STATE_TTL_SECONDS):
+// reuse them, don't declare same-named variables. now is always passed as 1_000_000 (copied from the existing cases); passing Date.now() would be
+// expired immediately and turn the whole group red.
+describe("#131 the next field", () => {
+  it("sealed with next -> unsealed verbatim identical", () => {
     const sealed = sealOidcState(secret, payload({ next: "/n/alice/my-note?x=1" }));
     expect(nextOf(unsealOidcState(secret, sealed, 1_000_000))).toBe("/n/alice/my-note?x=1");
   });
 
-  it("不帶 next → 解出來是 undefined（欄位可選，不是空字串）", () => {
+  it("without next -> unsealed as undefined (the field is optional, not an empty string)", () => {
     const sealed = sealOidcState(secret, payload());
     const opened = unsealOidcState(secret, sealed, 1_000_000);
     expect(opened).not.toBeNull();
-    // 先釘住是 login 形——否則 nextOf 對 prove 形也回 undefined，本案會假綠。
+    // Pin first that it is the login form: otherwise nextOf also returns undefined for the prove form and this case would pass vacuously.
     expect(opened?.intent).toBe("login");
     expect(nextOf(opened)).toBeUndefined();
   });
 
-  it("next 型別不對（數字）→ 整顆 payload 視為無效（型別守衛，不是 as-cast）", () => {
-    // 封章保證「這是我們封的」，不保證欄位型別對——unseal 後的 payload 會被當成
-    // OidcStatePayload 使用，所以每個欄位都要真的檢查。
+  it("next of the wrong type (a number) -> the whole payload is invalid (type guard, not an as-cast)", () => {
+    // Sealing guarantees "we sealed this", not that the field types are right: the unsealed payload is used as an OidcStatePayload,
+    // so every field has to be really checked.
     const sealed = sealOidcState(secret, { ...payload(), next: 42 } as unknown as OidcStatePayload);
     expect(unsealOidcState(secret, sealed, 1_000_000)).toBeNull();
   });
 
-  it("next 是 null → 同樣視為無效（null 的 typeof 是 object，不是漏網的 undefined）", () => {
+  it("next is null -> also invalid (typeof null is object, not an undefined that slipped through)", () => {
     const sealed = sealOidcState(secret, { ...payload(), next: null } as unknown as OidcStatePayload);
     expect(unsealOidcState(secret, sealed, 1_000_000)).toBeNull();
   });
 });
 
-describe("#187 新必要欄位（providerId／configVersion／intent）", () => {
-  // 三案各缺一欄、其餘齊全——只拿掉其中一道檢查時恰有對應那一案紅（三欄全缺的舊格式會被任何一道擋下，單獨用它沒有鑑別力）。
-  it("缺 providerId → null；部署前封的舊格式（三欄都缺）→ null", () => {
+describe("#187 new required fields (providerId/configVersion/intent)", () => {
+  // Three cases each missing one field with the rest complete, so removing a single check turns the matching case red (the old format missing all three fields is blocked by any one check, so on its own it can't tell the checks apart).
+  it("missing providerId -> null; the old format sealed before deployment (all three fields missing) -> null", () => {
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", { ...payload(), providerId: undefined }), 1_000_000)).toBeNull();
     const old = sealCookieJson(secret, "oidc-state", { state: "s", nonce: "n", codeVerifier: "v", exp: 1_000_600 });
     expect(unsealOidcState(secret, old, 1_000_000)).toBeNull();
   });
 
-  it("configVersion 不是整數（1.5、字串 \"1\"）→ null", () => {
+  it("configVersion is not an integer (1.5, the string '1') -> null", () => {
     for (const configVersion of [1.5, "1"]) {
       expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", { ...payload(), configVersion }), 1_000_000)).toBeNull();
     }
   });
 
-  it("intent: \"link\"：帶 linkUserId → 收；缺 linkUserId 或不是字串 → null；帶了 next 也丟掉", () => {
+  it("intent link: with linkUserId -> accepted; missing linkUserId or not a string -> null; a next that is passed is dropped", () => {
     const base = { ...payload(), intent: "link" };
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", base), 1_000_000)).toBeNull();
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", { ...base, linkUserId: 7 }), 1_000_000)).toBeNull();
@@ -155,20 +155,20 @@ describe("#187 新必要欄位（providerId／configVersion／intent）", () => 
     expect(opened).not.toHaveProperty("next");
   });
 
-  it("intent: \"link\" 也驗 exp", () => {
+  it("intent link also verifies exp", () => {
     const expired = { ...payload({ exp: 999_999 }), intent: "link", linkUserId: "u1" };
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", expired), 1_000_000)).toBeNull();
   });
 });
 
-describe("#187：prove 形", () => {
-  /** 欄位齊全的 prove payload；覆寫用 `undefined` 表示「缺這一欄」（JSON.stringify 會丟掉它）。 */
+describe("#187: prove form", () => {
+  /** A prove payload with all fields; overriding with `undefined` means "this field is missing" (JSON.stringify drops it). */
   const prove = (over: Record<string, unknown> = {}) => ({
     state: "s", nonce: "n", codeVerifier: "v", exp: 1_000_600, providerId: "p1", configVersion: 1,
     intent: "prove", pendingId: "pid-1", proveUserId: "u1", ...over,
   });
 
-  it("prove 形往返：pendingId、proveUserId 原樣", () => {
+  it("prove form round-trips: pendingId and proveUserId unchanged", () => {
     const sealed = sealOidcState(secret, {
       state: "s", nonce: "n", codeVerifier: "v", exp: 1_000_600, providerId: "p1", configVersion: 1,
       intent: "prove", pendingId: "pid-1", proveUserId: "u1",
@@ -176,12 +176,12 @@ describe("#187：prove 形", () => {
     expect(unsealOidcState(secret, sealed, 1_000_000)).toEqual(prove());
   });
 
-  it("prove 缺 pendingId → null；缺 proveUserId → null", () => {
+  it("prove missing pendingId -> null; missing proveUserId -> null", () => {
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", prove({ pendingId: undefined })), 1_000_000)).toBeNull();
     expect(unsealOidcState(secret, sealCookieJson(secret, "oidc-state", prove({ proveUserId: undefined })), 1_000_000)).toBeNull();
   });
 
-  it("prove 帶 next 也不採用：解出的物件沒有 next 鍵（next 留在 pending cookie）", () => {
+  it("prove with next isn't adopted either: the unsealed object has no next key (next stays in the pending cookie)", () => {
     const opened = unsealOidcState(secret, sealCookieJson(secret, "oidc-state", prove({ next: "/n/alice/x" })), 1_000_000);
     expect(opened).not.toBeNull();
     expect(opened!.intent).toBe("prove");

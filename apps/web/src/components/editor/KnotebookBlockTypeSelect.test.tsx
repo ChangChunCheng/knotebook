@@ -5,12 +5,12 @@ import { createTestEditor, renderAiHost, selectInBlock, selectWholeBlocks, stubA
 import { IMG, P } from "@/test/columns-fixtures";
 import { SelectionAiController } from "@/components/ai/SelectionAiController";
 
-// 桌機格式工具列的區塊類型選單：多區塊選取時只改本身是項目類型的區塊（#464）。掛法照 `ai/AiToolbar.test.tsx`。
+// Block type menu of the desktop formatting toolbar: with a multi-block selection only blocks that are themselves item types change (#464). Mounted like `ai/AiToolbar.test.tsx`.
 
 const TABLE = { id: "t", type: "table", content: { type: "tableContent", rows: [{ cells: ["x", "y"] }, { cells: ["z", "w"] }] } } as never;
 
 const toolbar = () => document.querySelector(".bn-formatting-toolbar");
-// 區塊類型選單的觸發鈕：下拉按鈕裡唯一沒有 aria-label 的（顏色鈕等下拉都有）。
+// Trigger of the block type menu: picked as the dropdown button without an aria-label (the color button and other dropdowns have one).
 const SELECT_TRIGGER = ".bn-formatting-toolbar button[aria-haspopup]:not([aria-label])";
 const selectTrigger = () => document.querySelector<HTMLElement>(SELECT_TRIGGER);
 
@@ -33,7 +33,7 @@ describe("KnotebookBlockTypeSelect", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("多區塊選取（段落＋表格）：套用 Heading 1 → 段落變標題、表格內容不變", async () => {
+  it("multi-block selection (paragraph + table): applying Heading 1 turns the paragraph into a heading and leaves the table content unchanged", async () => {
     const editor = mount([P("alice", "a"), TABLE, P("bob", "b")]);
     const tableBefore = JSON.stringify(editor.getBlock("t")!.content);
     act(() => selectWholeBlocks(editor, "a", "b"));
@@ -45,8 +45,8 @@ describe("KnotebookBlockTypeSelect", () => {
     expect(JSON.stringify(editor.getBlock("t")!.content)).toBe(tableBefore);
   });
 
-  // 選取跨過程式碼區塊時 BlockNote 整條格式工具列都不出現，所以這條路徑碰不到；同類「不能換類型」的區塊改用圖片守。
-  it("多區塊選取（段落＋圖片）：圖片不變", async () => {
+  // When the selection spans a code block BlockNote hides the whole formatting toolbar, so this path is unreachable; an image stands in for the same kind of non-convertible block.
+  it("multi-block selection (paragraph + image): the image is unchanged", async () => {
     const editor = mount([P("alice", "a"), IMG("img"), P("bob", "b")]);
     const imageBefore = JSON.stringify(editor.getBlock("img")!.props);
     act(() => selectWholeBlocks(editor, "a", "b"));
@@ -57,7 +57,7 @@ describe("KnotebookBlockTypeSelect", () => {
     expect(JSON.stringify(editor.getBlock("img")!.props)).toBe(imageBefore);
   });
 
-  it("選取開頭是表格：選單不出現，工具列其餘按鈕仍在", async () => {
+  it("selection starting in a table: the menu is absent and the toolbar's other buttons remain", async () => {
     const editor = mount([TABLE, P("alice", "a")]);
     act(() => selectWholeBlocks(editor, "a", "a"));
     await waitFor(() => expect(toolbar()).not.toBeNull());
@@ -70,7 +70,7 @@ describe("KnotebookBlockTypeSelect", () => {
     expect(withParagraphButtons).toBeGreaterThan(0);
   });
 
-  it("單一段落：選單出現，換成 Heading 2 生效、相鄰段落不變", async () => {
+  it("single paragraph: the menu appears and switching to Heading 2 works, the adjacent paragraph is unchanged", async () => {
     const editor = mount([P("alice", "a"), P("bob", "b")]);
     act(() => selectInBlock(editor, "a", 0, 3));
     await chooseItem("Heading 2");
@@ -79,14 +79,14 @@ describe("KnotebookBlockTypeSelect", () => {
     expect(editor.getBlock("b")!.type).toBe("paragraph");
   });
 
-  it("單一段落：選單的目前項目是 Paragraph", async () => {
+  it("single paragraph: the menu's current item is Paragraph", async () => {
     const editor = mount([P("alice", "a")]);
     act(() => selectInBlock(editor, "a", 0, 3));
     await waitFor(() => expect(selectTrigger()).not.toBeNull());
     expect(selectTrigger()!.textContent).toContain("Paragraph");
   });
 
-  it("唯讀編輯器：選單不出現", async () => {
+  it("read-only editor: the menu is absent", async () => {
     const editor = mount([P("alice", "a")]);
     act(() => selectInBlock(editor, "a", 0, 3));
     await waitFor(() => expect(selectTrigger()).not.toBeNull());

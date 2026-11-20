@@ -8,9 +8,9 @@ import { EditorSession } from "../../src/notes/editing/session.js";
 const BASE = "http://localhost/";
 const OTHER = "11111111-1111-4111-8111-111111111111";
 
-describe("blocksFromSnapshot（不 mount、不取 lease、同一個同步區段）", () => {
-  it("runtime 剛重建過全域之後照樣讀得到；wikilink 的 targetNoteId 保留；區塊 id 與快照相同；不 mount、不佔 lease", async () => {
-    const rt = new EditingRuntime({ baseUrl: BASE, rebuildEvery: 1 }); // 第一次 mount 就排定重建、release 時換掉全域
+describe("blocksFromSnapshot (no mount, no lease, one synchronous section)", () => {
+  it("still readable right after the runtime rebuilt its globals; the wikilink's targetNoteId is kept; block ids equal the snapshot's; no mount, no lease held", async () => {
+    const rt = new EditingRuntime({ baseUrl: BASE, rebuildEvery: 1 }); // the first mount schedules a rebuild, and release swaps the globals
     rt.installGlobals();
     const src = new Y.Doc();
     const s = await EditorSession.open(rt, src);
@@ -32,11 +32,11 @@ describe("blocksFromSnapshot（不 mount、不取 lease、同一個同步區段�
     expect(rt.inFlight).toBe(0);
   });
 
-  it("真空快照 → []（交給 replace_all 留一顆空段落）", () => {
+  it("truly empty snapshot -> [] (left to replace_all to keep one empty paragraph)", () => {
     expect(blocksFromSnapshot(BASE, Y.encodeStateAsUpdate(new Y.Doc()))).toEqual([]);
   });
 
-  it("量測（server 側；回報、不斷言上限）：2000 區塊快照轉 blocks", () => {
+  it("timing (server side; reported, no upper bound asserted): converting a snapshot of 2000 blocks to blocks", () => {
     const doc = new Y.Doc();
     const g = new Y.XmlElement("blockGroup");
     doc.getXmlFragment(YDOC_FRAGMENT).insert(0, [g]);

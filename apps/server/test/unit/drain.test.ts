@@ -5,13 +5,11 @@ import { MAX_UPLOAD_BYTES } from "@knotebook/shared";
 import { drainWithCap } from "../../src/http/drain.js";
 
 /**
- * `drainWithCap` 只用到 `request.raw`（`.on("data", …)` + `.resume()` + `.destroy()`）
- * ——不需要一個真的 `http.IncomingMessage`，一個掛得上 `EventEmitter` 介面的假物件
- * 即可（比照 `http/rate-limit.ts` 的純函式單元測試慣例，不需要 `buildTestApp`／DB）。
- * `.resume()` 這裡刻意也是假的（no-op mock）——這支單元測試用 `raw.emit("data", …)`
- * 直接模擬資料到達，不依賴真實 `Readable` 的 flowing/paused 狀態機（那條分支是
- * `drainWithCap` 為何要顯式呼叫 `resume()` 的理由，見 `http/drain.ts` 說明；此處只
- * 驗證計數/冪等/destroy 的邏輯，不是驗證 Node stream 的 flowing 語意本身）。
+ * `drainWithCap` only uses `request.raw` (`.on("data", ...)` + `.resume()` + `.destroy()`), so a fake object with an `EventEmitter` interface
+ * is enough instead of a real `http.IncomingMessage` (same convention as the pure-function unit tests of `http/rate-limit.ts`; no
+ * `buildTestApp`/DB). `.resume()` is deliberately a no-op mock: `raw.emit("data", ...)` simulates data arrival without depending on a real
+ * `Readable`'s flowing/paused state machine (that is why `drainWithCap` must call `resume()` explicitly, see `http/drain.ts`); this test
+ * only checks counting, idempotency and destroy.
  */
 function fakeRequest(): {
   request: FastifyRequest;
@@ -23,8 +21,8 @@ function fakeRequest(): {
   return { request: { raw } as unknown as FastifyRequest, raw };
 }
 
-describe("drainWithCap（安全 backlog ③）", () => {
-  it("累計位元組數 <= cap（MAX_UPLOAD_BYTES * 2）：不 destroy() 底層連線", () => {
+describe("drainWithCap", () => {
+  it("cumulative bytes <= cap (MAX_UPLOAD_BYTES * 2): does not destroy() the underlying connection", () => {
     const { request, raw } = fakeRequest();
     drainWithCap(request);
 
@@ -34,7 +32,7 @@ describe("drainWithCap（安全 backlog ③）", () => {
     expect(raw.destroy).not.toHaveBeenCalled();
   });
 
-  it("累計位元組數 > cap：destroy() 底層連線（超限＝放棄結構化 body，明文取捨）", () => {
+  it("cumulative bytes > cap: destroy() the underlying connection (over the limit = give up on a structured body, an explicit trade-off)", () => {
     const { request, raw } = fakeRequest();
     drainWithCap(request);
 
@@ -44,7 +42,7 @@ describe("drainWithCap（安全 backlog ③）", () => {
     expect(raw.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("裸位元組累計精確：剛好等於 cap 不 destroy，多 1 byte 才 destroy（`>` 不是 `>=`）", () => {
+  it("exact byte accounting: exactly cap does not destroy, one more byte does (`>` not `>=`)", () => {
     const exact = fakeRequest();
     drainWithCap(exact.request);
     exact.raw.emit("data", Buffer.alloc(MAX_UPLOAD_BYTES * 2));
@@ -56,13 +54,13 @@ describe("drainWithCap（安全 backlog ③）", () => {
     expect(over.raw.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it("顯式呼叫 resume()（不能只靠掛 data listener 的自動 resume——busboy unpipe() 後 flowing 會被顯式釘成 false，見 drain.ts 說明）", () => {
+  it("calls resume() explicitly (the automatic resume from attaching a data listener is not enough: after busboy's unpipe() flowing is explicitly pinned to false, see drain.ts)", () => {
     const { request, raw } = fakeRequest();
     drainWithCap(request);
     expect(raw.resume).toHaveBeenCalledTimes(1);
   });
 
-  it("冪等：同一個 request 重複呼叫只掛一個 data listener，不疊加計數", () => {
+  it("idempotent: repeated calls on the same request attach one data listener and counts do not stack", () => {
     const { request, raw } = fakeRequest();
     drainWithCap(request);
     drainWithCap(request);
@@ -70,13 +68,13 @@ describe("drainWithCap（安全 backlog ③）", () => {
 
     expect(raw.listenerCount("data")).toBe(1);
 
-    // 若疊了 3 個 listener，同一個 chunk 會被計 3 次，MAX_UPLOAD_BYTES 一個 chunk
-    // 就會誤判成超限（3 * MAX_UPLOAD_BYTES > cap）；冪等成立則不會。
+    // With 3 stacked listeners the same chunk would be counted 3 times and a single MAX_UPLOAD_BYTES chunk would be misjudged as over
+    // the limit (3 * MAX_UPLOAD_BYTES > cap); idempotency avoids that.
     raw.emit("data", Buffer.alloc(MAX_UPLOAD_BYTES));
     expect(raw.destroy).not.toHaveBeenCalled();
   });
 
-  it("不同 request 各自獨立計數，互不干擾", () => {
+  it("different requests are counted independently", () => {
     const a = fakeRequest();
     const b = fakeRequest();
     drainWithCap(a.request);

@@ -1,7 +1,3 @@
-/**
- * 刪群組・轉移的配額（S3（轉移形）、S5（轉移形）、S14（刪群組））；
- * 另有空間鎖先於 slug 寫入的縫順序／advisory 鎖探測，與轉移路由的 `storageLockTimeoutMs` 透傳（比照上傳）。
- */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import { buildTestApp } from "./helpers.js";
@@ -9,7 +5,7 @@ import { cookieOf, noteState, seedGroup, seedNote, seedUser } from "./group-help
 import { giveGroupQuota, giveUserQuota, quotaBody, seedAttachment, upload, usedOf } from "./storage-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// In this file the default space-lock limit is 60 s (5000 ms in production), so the wall-clock bound of "the injected short limit took effect" stays far from both ends - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -21,8 +17,8 @@ const deleteAll = async (app: FastifyInstance, groupId: string, userId: string) 
   app.inject({ method: "DELETE", url: `/api/groups/${groupId}`, cookies: await cookieOf(userId), payload: { mode: "delete" } });
 const groupExists = async (pool: import("pg").Pool, id: string) => (await pool.query("select count(*)::int n from groups where id = $1", [id])).rows[0].n === 1;
 
-describe("轉移（S3、S5）", () => {
-  it("接收者放不下 → 409，什麼都不發生（群組、筆記歸屬、轉址都原封）", async () => {
+describe("transfer", () => {
+  it("recipient cannot fit -> 409, nothing happens (group, note ownership, redirects all intact)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const b = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: b.id, role: "admin" }]);
@@ -40,7 +36,7 @@ describe("轉移（S3、S5）", () => {
     expect((await db.$client.query("select count(*)::int n from note_redirects")).rows[0].n).toBe(0);
   });
 
-  it("放得下 → 204；接收者用量＝原＋群組附件總和（含無附件筆記、多篇）", async () => {
+  it("fits -> 204; recipient usage = own + sum of the group's attachments (including notes without attachments, several notes)", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const b = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: b.id, role: "admin" }]);
@@ -56,7 +52,7 @@ describe("轉移（S3、S5）", () => {
     expect(await usedOf(db.$client, { kind: "user", id: b.id })).toBe(600);
   });
 
-  it("S3：操作者（manageGroup）不是接收者 → 只有 incomingBytes；站台 admin 操作 → 三數", async () => {
+  it("operator (manageGroup) is not the recipient -> incomingBytes only; site admin operating -> three numbers", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const [op, b, site] = await Promise.all([seedUser(db), seedUser(db), seedUser(db, { isAdmin: true })]);
     const g = await seedGroup(db, "G", [{ userId: op.id, role: "admin" }, { userId: b.id, role: "admin" }]);
@@ -67,7 +63,7 @@ describe("轉移（S3、S5）", () => {
     expect((await transfer(app, g.id, site.id, b.id)).json()).toEqual(quotaBody({ incomingBytes: 11, usedBytes: 0, quotaBytes: 10 }));
   });
 
-  it("S5：接收者已超額 → 有附件的轉移 409；群組沒有附件 → 204；全刪 → 群組用量隨之消失", async () => {
+  it("recipient already over quota -> transfer with attachments 409; group without attachments -> 204; delete-all -> group usage disappears with it", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const b = await seedUser(db);
     await giveUserQuota(db, b.id, 10);
@@ -87,9 +83,9 @@ describe("轉移（S3、S5）", () => {
   });
 });
 
-describe("busy 映射（S14 刪群組）", () => {
+describe("busy mapping (group delete)", () => {
   for (const code of ["40P01", "55P03"]) {
-    it(`轉移：縫 storage-space-locked 拋 ${code} → 409 server_busy、群組原封`, async () => {
+    it(`transfer: test hook storage-space-locked throws ${code} -> 409 server_busy, group intact`, async () => {
       const { app, db, uploadsDir } = await buildTestApp({
         groupTestHook: async point => { if (point === "storage-space-locked") throw Object.assign(new Error(code), { code }); },
       });
@@ -104,7 +100,7 @@ describe("busy 映射（S14 刪群組）", () => {
     });
   }
 
-  it("全刪：group-delete-locked 拋 55P03 → 409 server_busy（既有映射加認 55P03）", async () => {
+  it("delete-all: group-delete-locked throws 55P03 -> 409 server_busy (the existing mapping now also recognises 55P03)", async () => {
     const { app, db } = await buildTestApp({
       groupTestHook: async point => { if (point === "group-delete-locked") throw Object.assign(new Error("55P03"), { code: "55P03" }); },
     });
@@ -116,14 +112,14 @@ describe("busy 映射（S14 刪群組）", () => {
   });
 });
 
-describe("轉移的空間鎖：位置與等待上限", () => {
-  it("空間鎖先於 slug 寫入：folder-structure-locked、storage-space-locked 依序在第一個 group-transfer-slug-candidate 之前；slug 探測當下本庫已持有 3 把 advisory 鎖", async () => {
+describe("the transfer's space lock: position and wait limit", () => {
+  it("space lock before the slug write: folder-structure-locked and storage-space-locked come in that order before the first group-transfer-slug-candidate; at the slug probe this DB already holds 3 advisory locks", async () => {
     const points: string[] = [];
     const advisoryAtSlug: number[] = [];
     const built = await buildTestApp({
       groupTestHook: async point => {
         if (point === "group-transfer-slug-candidate") {
-          // 只算本測試資料庫的 advisory 鎖（同一台 PG 上可能有其他測試庫）。
+          // Count only this test database's advisory locks (other test databases may exist on the same PG).
           const { rows } = await built.db.$client.query(
             "select count(*)::int n from pg_locks where locktype = 'advisory' and granted and database = (select oid from pg_database where datname = current_database())",
           );
@@ -140,16 +136,16 @@ describe("轉移的空間鎖：位置與等待上限", () => {
     await seedAttachment(db, uploadsDir, gn.id, b.id, 5);
     expect((await transfer(app, g.id, b.id, b.id)).statusCode).toBe(204);
     expect(points).toEqual(["group-delete-locked", "folder-structure-locked", "storage-space-locked", "group-transfer-slug-candidate"]);
-    // slug 探測當下本庫持有 3 把 advisory 鎖＝群組與接收者個人空間的 2 把結構鎖＋1 把容量鎖。
+    // At the slug probe this DB holds 3 advisory locks = 2 structure locks (the group and the recipient's personal space) + 1 capacity lock.
     expect(advisoryAtSlug).toEqual([3]);
   });
 
-  it("storageLockTimeoutMs=200：上傳 A 持接收者個人空間鎖（停在縫上）時轉移 → 真的 55P03 → 409 server_busy（< 20 s：注入值有傳到轉移交易，不是本檔預設 60 s）、群組原封；A 之後 201", async () => {
+  it("storageLockTimeoutMs=200: transfer while upload A (stopped at the hook) holds the recipient's personal space lock -> a real 55P03 -> 409 server_busy (< 20 s: the injected value reached the transfer transaction, not this file's default 60 s), group intact; A is 201 afterwards", async () => {
     const holder: { app?: FastifyInstance; groupId?: string; userId?: string; noteId?: string; t?: LightMyRequestResponse; tMs?: number } = {};
     const { app, db, uploadsDir } = await buildTestApp({
       storageLockTimeoutMs: 200,
       groupTestHook: async (point, ctx) => {
-        // 只在上傳 A（ctx.noteId＝接收者的個人筆記）停在縫上時發一次轉移；轉移在取鎖那句就逾時，到不了這個縫。
+        // Fire one transfer only while upload A (ctx.noteId = the recipient's personal note) is stopped at the hook; the transfer times out at its lock statement and never reaches this hook.
         if (point !== "storage-space-locked" || ctx.noteId !== holder.noteId || holder.t) return;
         const t0 = Date.now();
         holder.t = await transfer(holder.app!, holder.groupId!, holder.userId!, holder.userId!);
@@ -166,7 +162,7 @@ describe("轉移的空間鎖：位置與等待上限", () => {
     const a = await upload(app, bn.id, b.id, 10);
     expect(holder.t!.statusCode).toBe(409);
     expect(holder.t!.json().error.code).toBe("server_busy");
-    // 200 ms 與本檔預設 60 s 之間的界線放 20 s：路由若沒把 deps.storageLockTimeoutMs 傳進交易（落回預設），轉移要等約 60 s 才逾時 → 紅
+    // The 20 s bound sits between 200 ms and this file's default 60 s: if the route did not pass deps.storageLockTimeoutMs into the transaction (falling back to the default), the transfer would wait about 60 s before timing out -> red.
     expect(holder.tMs!).toBeLessThan(INJECTED_LOCK_TIMEOUT_BOUND_MS);
     expect(await groupExists(db.$client, g.id)).toBe(true);
     expect(a.statusCode).toBe(201);

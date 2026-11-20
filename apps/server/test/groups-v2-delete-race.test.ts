@@ -1,11 +1,11 @@
 /**
- * #175 刪群組兩模式的交錯案：C9a／C9b（轉移 × 成員異動）、C10（轉移的 savepoint 重試）、
- * C12／C12b／C12c（全刪 × gate 之後才進群組的筆記）、C17（全刪 gate 之後被轉移）、C20a–d（複製／移動／PATCH × 刪群組）、
- * C13 反向（token PUT × 轉移）、C21（別名 PUT × 轉移＋接手者重開 token，三方形）、C22（全刪持 L 時的上傳；#188 起 `deleteGroupWithNotesInTx` 與 `deleteNotesInTx` 的 `FOR UPDATE` 任一把都守得住這條）。
- * 要證明「測到的是交錯」的案在注入縫裡呼叫 `waitForBlockedOrSettled`，最後斷言 `"blocked"`；標「序列」的案在縫裡
- * `await` 一次完整的請求（窗在授權／gate 之後、交易或 UPDATE 之前，序列即可）。
- * 同一個舊網址兩次寫入轉址的案不寫：轉移只寫 `/g/<被刪群組>/<現行 slug>` 鍵；移動與 0012 只寫 `/n/` 鍵；同群組的現行 slug
- * 由群組內 slug 唯一而互異、群組轉移後即不存在——結構上不會同鍵。
+ * Interleavings of the two group-delete modes: transfer x member changes, transfer's savepoint retry, delete-all x notes entering the group after the gate,
+ * delete-all x transfer after the gate, copy/move/PATCH x group delete, token PUT x transfer, alias PUT x transfer + the recipient reopening the token (three-party shape),
+ * and uploads while delete-all holds the group notes lock (the lock delete-all takes on the group notes is what blocks the upload).
+ * Cases that must prove "an interleaving was tested" call `waitForBlockedOrSettled` inside the test hook and finally assert `"blocked"`; cases marked "sequential" `await` one complete request
+ * inside the hook (the window is after authorization/the gate and before the transaction or UPDATE, so a sequence is enough).
+ * No case writes the same old URL as a redirect twice: a transfer only writes the `/g/<deleted group>/<current slug>` key; a move and 0012 only write the `/n/` key; a group's current slugs are
+ * unique within the group and the group no longer exists after the transfer - structurally they can't hit the same key.
  */
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
@@ -32,7 +32,7 @@ const move = async (app: FastifyInstance, noteId: string, userId: string, groupI
   app.inject({ method: "POST", url: `/api/notes/${noteId}/move`, cookies: await cookieOf(userId), payload: { groupId } });
 
 const BOUNDARY = "kbDeleteRaceBoundary";
-/** 單一 PNG file part 的 multipart body（同 `uploads.test.ts` 的手組形）。 */
+/** Multipart body with a single PNG file part (hand-built like `uploads.test.ts`). */
 function pngMultipart(): Buffer {
   return Buffer.concat([
     Buffer.from(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`, "utf-8"),
@@ -66,7 +66,7 @@ const ALIAS_REJECTED_BODY = {
 
 type RaceState = { fire?: () => Promise<LightMyRequestResponse>; second?: Promise<LightMyRequestResponse>; interleave?: string };
 
-/** 在 `point` 第一次出現時發第二個請求，並等到它卡在鎖上（或沒被擋就結束）。 */
+/** On the first occurrence of `point` sends a second request and waits until it is stuck on a lock (or finishes if not blocked). */
 function raceHook(point: GroupRacePoint, state: RaceState, holder: { pool?: Pool }) {
   return async (p: GroupRacePoint) => {
     if (p !== point || !state.fire || state.second) return;
@@ -75,7 +75,7 @@ function raceHook(point: GroupRacePoint, state: RaceState, holder: { pool?: Pool
   };
 }
 
-/** 在 `point` 第一次出現時 `await` 一次完整的請求（序列案：窗在 gate／授權之後、交易之前，不需要 blocked）。 */
+/** On the first occurrence of `point` `await`s one complete request (sequential cases: the window is after the gate/authorization and before the transaction, no blocked needed). */
 function serialHook(point: GroupRacePoint, state: { fire?: () => Promise<LightMyRequestResponse>; done?: LightMyRequestResponse; fired?: boolean }) {
   return async (p: GroupRacePoint) => {
     if (p !== point || !state.fire || state.fired) return;
@@ -84,7 +84,7 @@ function serialHook(point: GroupRacePoint, state: { fire?: () => Promise<LightMy
   };
 }
 
-/** `spyCollabHooks` 再把 `beforeNoteDeleted` 換成「每個 gate 一個 `release` spy」的版本。 */
+/** `spyCollabHooks` with `beforeNoteDeleted` replaced by a version with one `release` spy per gate. */
 function gatedHooks() {
   const gates: Array<{ noteId: string; release: ReturnType<typeof vi.fn<() => void>> }> = [];
   const hooks = {
@@ -98,8 +98,8 @@ function gatedHooks() {
   return { hooks, gates };
 }
 
-describe("#175 轉移 × 成員異動（C9a／C9b）", () => {
-  it("C9a transferTo 被降級先拿到 lockGroup（group-members-checked）→ 轉移的 lockGroup 等它 → 降級 200、轉移 409 not_admin；群組與筆記原封不動", async () => {
+describe("#175 transfer x member changes", () => {
+  it("transferTo is demoted first and gets lockGroup (group-members-checked) -> the transfer's lockGroup waits -> demote 200, transfer 409 not_admin; group and notes untouched", async () => {
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
     const built = await buildTestApp({ collabHooks: spyCollabHooks(), groupTestHook: raceHook("group-members-checked", state, holder) });
@@ -123,7 +123,7 @@ describe("#175 轉移 × 成員異動（C9a／C9b）", () => {
     expect(await db.select().from(noteRedirects)).toEqual([]);
   });
 
-  it("C9b 轉移先持鎖（group-delete-locked）→ transferTo 退出的 lockGroup 等它 → 轉移 204、退出 404 not_found（群組已不在）", async () => {
+  it("transfer holds the lock first (group-delete-locked) -> transferTo's leave lockGroup waits -> transfer 204, leave 404 not_found (the group is gone)", async () => {
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
     const built = await buildTestApp({ collabHooks: spyCollabHooks(), groupTestHook: raceHook("group-delete-locked", state, holder) });
@@ -146,8 +146,8 @@ describe("#175 轉移 × 成員異動（C9a／C9b）", () => {
   });
 });
 
-describe("#175 轉移的 slug 重試（C10）", () => {
-  it("C10 轉移探測到候選 x 之後（group-transfer-slug-candidate）transferTo 的個人範圍被另一連線佔走 x → savepoint 撞 notes_owner_slug_idx 重試 → x-2；外層交易 commit、轉址 /g/<g>/x 指向轉移的那篇", async () => {
+describe("#175 transfer slug retry", () => {
+  it("after the transfer probes candidate x (group-transfer-slug-candidate), transferTo's personal scope has x taken by another connection -> savepoint hits notes_owner_slug_idx and retries -> x-2; the outer transaction commits, redirect /g/<g>/x points to the transferred note", async () => {
     const holder: { db?: Parameters<typeof seedNote>[0]; ownerId?: string; seeded?: Promise<{ id: string; slug: string }>; interleave?: string } = {};
     const candidates: string[] = [];
     const built = await buildTestApp({
@@ -156,7 +156,7 @@ describe("#175 轉移的 slug 重試（C10）", () => {
         if (p !== "group-transfer-slug-candidate") return;
         candidates.push(ctx.slug!);
         if (ctx.slug !== "x" || holder.seeded) return;
-        // 另一條 pool 連線、自動提交：插入不碰轉移持有的任何鎖（轉移還沒寫 (B, x)）——序列，所以期望 "settled"。
+        // Another pool connection, autocommit: the insert touches no lock the transfer holds (the transfer hasn't written (B, x) yet) - sequential, so "settled" is expected.
         holder.seeded = seedNote(holder.db!, { ownerId: holder.ownerId! }, { slug: "x" });
         holder.interleave = await waitForBlockedOrSettled(holder.db!.$client, holder.seeded);
       },
@@ -181,8 +181,8 @@ describe("#175 轉移的 slug 重試（C10）", () => {
   });
 });
 
-describe("#175 全刪 × gate 之後才進群組的筆記（C12／C12b／C12c）", () => {
-  it("C12 全刪：gate 之後（group-delete-gated）才在群組建的筆記 → 不經 gate 被刪；onGroupAccessChanged 恰一次 (那一篇, 全體成員)；beforeNoteDeleted 只對原本那批筆記呼叫", async () => {
+describe("#175 delete-all x notes entering the group after the gate", () => {
+  it("delete-all: a note created in the group after the gate (group-delete-gated) -> deleted without going through the gate; onGroupAccessChanged exactly once (that note, all members); beforeNoteDeleted only called for the original batch of notes", async () => {
     const state: { fire?: () => Promise<LightMyRequestResponse>; done?: LightMyRequestResponse; fired?: boolean } = {};
     const { hooks, gates } = gatedHooks();
     const built = await buildTestApp({ collabHooks: hooks, groupTestHook: serialHook("group-delete-gated", state) });
@@ -208,7 +208,7 @@ describe("#175 全刪 × gate 之後才進群組的筆記（C12／C12b／C12c）
     expect(sorted(userIds)).toEqual(sorted([a.id, m1.id, m2.id]));
   });
 
-  it("C12b 全刪：lockGroup 之後（group-delete-locked）才到的建立 → 卡在 FK KEY SHARE → 刪除 204、建立 404 group_not_found、沒有孤兒", async () => {
+  it("delete-all: a create arriving after lockGroup (group-delete-locked) -> stuck on the FK KEY SHARE -> delete 204, create 404 group_not_found, no orphans", async () => {
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
     const { hooks } = gatedHooks();
@@ -232,7 +232,7 @@ describe("#175 全刪 × gate 之後才進群組的筆記（C12／C12b／C12c）
     expect(hooks.onGroupAccessChanged).not.toHaveBeenCalled();
   });
 
-  it("C12c 全刪：gate 之後（group-delete-gated）才複製進群組的筆記 → 不經 gate 被刪；onGroupAccessChanged 含那一篇", async () => {
+  it("delete-all: a note copied into the group after the gate (group-delete-gated) -> deleted without going through the gate; onGroupAccessChanged includes that note", async () => {
     const state: { fire?: () => Promise<LightMyRequestResponse>; done?: LightMyRequestResponse; fired?: boolean } = {};
     const { hooks } = gatedHooks();
     const built = await buildTestApp({ collabHooks: hooks, groupTestHook: serialHook("group-delete-gated", state) });
@@ -258,8 +258,8 @@ describe("#175 全刪 × gate 之後才進群組的筆記（C12／C12b／C12c）
   });
 });
 
-describe("#175 全刪 × 轉移（C17）", () => {
-  it("C17 全刪開完 gate 之後（group-delete-gated），另一位管理員的轉移先完成 → 全刪 404 not_found、每個 gate release；筆記以 transferTo 的個人筆記存活", async () => {
+describe("#175 delete-all x transfer", () => {
+  it("after delete-all has opened all gates (group-delete-gated), another admin's transfer completes first -> delete-all 404 not_found, every gate released; the notes survive as transferTo's personal notes", async () => {
     const state: { fire?: () => Promise<LightMyRequestResponse>; done?: LightMyRequestResponse; fired?: boolean } = {};
     const { hooks, gates } = gatedHooks();
     const built = await buildTestApp({ collabHooks: hooks, groupTestHook: serialHook("group-delete-gated", state) });
@@ -282,8 +282,8 @@ describe("#175 全刪 × 轉移（C17）", () => {
   });
 });
 
-describe("#175 複製／移動 × 刪群組（C20a／C20b／C20c）", () => {
-  it("C20a 複製（群組筆記 → 個人）持來源 KEY SHARE（note-copy-locked）時全刪 → 全刪的 FOR UPDATE 等複製 commit → 複製 201（副本是複製者的個人筆記、附件獨立）、全刪 204、來源消失", async () => {
+describe("#175 copy/move x group delete", () => {
+  it("copy (group note -> personal) holding the source KEY SHARE (note-copy-locked) while delete-all runs -> delete-all's FOR UPDATE waits for the copy to commit -> copy 201 (the copy is the copier's personal note, attachments independent), delete-all 204, source gone", async () => {
     const holder: { app?: FastifyInstance; pool?: Pool; groupId?: string; adminId?: string; del?: Promise<LightMyRequestResponse>; interleave?: string } = {};
     const { hooks } = gatedHooks();
     const built = await buildTestApp({
@@ -302,9 +302,8 @@ describe("#175 複製／移動 × 刪群組（C20a／C20b／C20c）", () => {
     const u1 = await seedUpload(db, uploadsDir, src.id, a.id);
     await seedDoc(db, src.id, imageDoc([`/api/uploads/${u1}`]));
 
-    // 註：拿掉 `deleteGroupWithNotesInTx` 的 FOR UPDATE 時本案仍綠——等待改由 deleteNotesInTx 取得（#188 起是它第一步的 FOR UPDATE，之前是 DELETE notes）
-    // （同樣要等複製持有的 KEY SHARE），複製在自己的快照讀附件、磁碟檔在全刪 commit 後才刪，結果逐項相同，屬等價。
-    // FOR UPDATE 的承重由 C22 守（#188 起 `deleteNotesInTx` 也取 FOR UPDATE，與 C22 亦等價；見 C22 的註）。
+    // The copy holds KEY SHARE on the source, so the delete-all's FOR UPDATE waits for the copy to commit; the copy reads attachments in its own snapshot and the disk files
+    // are only deleted after delete-all commits, so the copy's attachments survive.
     const copied = await copy(app, src.id, m.id);
     const del = await holder.del!;
 
@@ -321,7 +320,7 @@ describe("#175 複製／移動 × 刪群組（C20a／C20b／C20c）", () => {
     expect(existsSync(uploadFilePath(uploadsDir, u1))).toBe(false);
   });
 
-  it("C20b 同群組複製持 (g) 目標 groups KEY SHARE（note-copy-target-locked）時轉移 → lockGroup 等它 → 兩邊完成、沒有 40P01；副本也被轉給 transferTo", async () => {
+  it("same-group copy holding the target groups KEY SHARE (note-copy-target-locked) while a transfer runs -> lockGroup waits -> both complete, no 40P01; the copy is also handed to transferTo", async () => {
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
     const built = await buildTestApp({ collabHooks: spyCollabHooks(), groupTestHook: raceHook("note-copy-target-locked", state, holder) });
@@ -344,7 +343,7 @@ describe("#175 複製／移動 × 刪群組（C20a／C20b／C20c）", () => {
     for (const r of rows) expect(r).toMatchObject({ ownerId: a.id, groupId: null });
   });
 
-  it("C20c 移動（個人 → G）持筆記 FOR UPDATE＋groups KEY SHARE（note-move-locked）時轉移 G → lockGroup 等它 → 移動 200、轉移把它撈進去；/n/<mover>/<s> 與 /g/<g>/<s> 兩條轉址都指向它", async () => {
+  it("move (personal -> G) holding note FOR UPDATE + groups KEY SHARE (note-move-locked) while G is transferred -> lockGroup waits -> move 200, the transfer picks it up; the redirects /n/<mover>/<s> and /g/<g>/<s> both point to it", async () => {
     const state: RaceState = {};
     const holder: { pool?: Pool } = {};
     const built = await buildTestApp({ collabHooks: spyCollabHooks(), groupTestHook: raceHook("note-move-locked", state, holder) });
@@ -371,8 +370,8 @@ describe("#175 複製／移動 × 刪群組（C20a／C20b／C20c）", () => {
   });
 });
 
-describe("#175 授權之後群組被轉移（C20d／C13 反向）", () => {
-  it("C20d 自訂 slug PATCH 授權之後（slugPatchTestHook authorized）群組被轉移 → PATCH 409 conflict；slug 未寫", async () => {
+describe("#175 group transferred after authorization", () => {
+  it("after custom slug PATCH authorization (slugPatchTestHook authorized) the group is transferred -> PATCH 409 conflict; slug not written", async () => {
     const state: { noteId?: string; fire?: () => Promise<LightMyRequestResponse>; moved?: LightMyRequestResponse } = {};
     const built = await buildTestApp({
       collabHooks: spyCollabHooks(),
@@ -398,7 +397,7 @@ describe("#175 授權之後群組被轉移（C20d／C13 反向）", () => {
     ]);
   });
 
-  it("C13 反向 token PUT 授權之後（public-link-authorized）群組被轉移 → PUT 409 conflict；token 仍為 null（轉移已清、遲到的 PUT 沒有在接手者的個人筆記上重新開出公開連結）", async () => {
+  it("token PUT authorized (public-link-authorized), then the group is transferred -> PUT 409 conflict; token still null (the transfer cleared it, and the late PUT didn't reopen a public link on the recipient's personal note)", async () => {
     const state: { noteId?: string; fire?: () => Promise<LightMyRequestResponse>; moved?: LightMyRequestResponse } = {};
     const built = await buildTestApp({
       collabHooks: spyCollabHooks(),
@@ -422,8 +421,8 @@ describe("#175 授權之後群組被轉移（C20d／C13 反向）", () => {
   });
 });
 
-describe("#175 全刪 × 上傳（C22）", () => {
-  /** 等到這個測試 DB 上至少有 `n` 條連線在等鎖，或 `other` 已結束。 */
+describe("#175 delete-all x upload", () => {
+  /** Waits until at least `n` connections on this test DB are waiting on locks, or `other` has finished. */
   async function waitForWaiters(pool: Pool, n: number, other?: Promise<unknown>, timeoutMs = 5_000): Promise<"blocked" | "settled"> {
     let settled = false;
     void other?.then(() => { settled = true; }, () => { settled = true; });
@@ -439,18 +438,13 @@ describe("#175 全刪 × 上傳（C22）", () => {
     throw new Error(`waitForWaiters(${n}) 逾時（${timeoutMs}ms）`);
   }
 
-  it("C22 全刪持 L（群組筆記 FOR UPDATE）時上傳到其中一篇 → 上傳交易的筆記 KEY SHARE 讀等全刪 commit → 刪除 204、上傳 404 not_found（讀到 0 列 → TxAbort，路由已 unlink）；uploads 0 列、磁碟沒有孤兒檔", async () => {
-    // 把全刪停在「已持 L、`deleteNotesInTx` 的 DELETE uploads 還沒做完」：另一條連線先對該篇既有的附件列 u0 取 FOR UPDATE，
-    // 全刪的 DELETE uploads 就卡在 u0 上（此時 L 已到手）。在這個窗裡發上傳：有 L 時上傳交易（`insertUploadInTx`）對 notes 列的
-    // `FOR KEY SHARE` 讀 → 與 FOR UPDATE 互斥 → 等全刪 commit 後讀到 0 列 → TxAbort 404（儲存配額功能以前是 INSERT 的 FK 檢查
-    // 取同一把鎖、撞 23503 → 404）；沒有 L 時上傳直接成功（201），之後 DELETE uploads 的快照看不到它、
-    // DELETE notes 以 CASCADE 帶走它的列——它不在回傳的 uploadIds 裡，磁碟檔就成了孤兒（最小 schema 的實測形）。
-    // 鑑別：拿掉 `deleteGroupWithNotesInTx` 的 FOR UPDATE 時，本案先紅在 interleave 斷言（上傳沒被擋、得 201），
-    // 跑不到最後的 readdir；孤兒檔本身是靠測試側變體（拿掉 interleave 斷言後）才實際看到——readdir 那條不是對應的守衛。
-    // #188 起 `deleteNotesInTx` 在 DELETE uploads 之前也對 L 取 FOR UPDATE：單拿掉其中一把，本案都仍綠（等價）；
-    // 兩把都拿掉才紅在 interleave。#181 起單篇 DELETE 改為移入垃圾桶、不再走 `deleteNotesInTx`；那一把在三個呼叫端都冗餘
-    // （永久刪除先 `lockNotes`、清理先 `FOR UPDATE SKIP LOCKED`、全刪先鎖 L），沒有案能單獨殺掉它（等價）。
-    // 上傳交易被拒（0 列 TxAbort；防禦縱深的 FK 23503 同）時路由先 unlink 再回 404 not_found；本案的 readdir 斷言同時守住「先 unlink」。
+  it("delete-all holding L (group notes FOR UPDATE) while uploading to one of them -> the upload transaction's note KEY SHARE read waits for the delete-all commit -> delete 204, upload 404 not_found (reads 0 rows -> TxAbort, the route already unlinked); 0 rows in uploads, no orphan file on disk", async () => {
+    // The delete-all is stopped at "L held, the DELETE uploads of `deleteNotesInTx` not finished": another connection first takes FOR UPDATE on that note's existing attachment row u0,
+    // so the delete-all's DELETE uploads blocks on u0 (with L already held). An upload sent inside that window: with L, the upload transaction (`insertUploadInTx`)'s `FOR KEY SHARE` read on the
+    // notes row conflicts with FOR UPDATE -> waits for the delete-all commit, reads 0 rows -> TxAbort 404 (before the storage quota feature, the INSERT's FK check took the same lock and hit 23503 -> 404);
+    // without L the upload succeeds (201), the snapshot of the later DELETE uploads doesn't see it and DELETE notes takes its row with CASCADE - it isn't in the returned uploadIds, so the disk file becomes an orphan.
+    // The interleave assertion proves the upload was blocked behind the delete-all's lock (not run before it); the readdir assertion proves that when the upload transaction is rejected
+    // (0-row TxAbort; the defence-in-depth FK 23503 likewise) the route unlinks the file first and then returns 404 not_found, so no orphan is left on disk.
     const holder: {
       app?: FastifyInstance; pool?: Pool; noteId?: string; userId?: string; u0?: string;
       up?: Promise<LightMyRequestResponse>; locker?: Promise<void>; t7Blocked?: string; interleave?: string;
@@ -462,7 +456,7 @@ describe("#175 全刪 × 上傳（C22）", () => {
         const c = await holder.pool!.connect();
         await c.query("begin");
         await c.query("select id from uploads where id = $1 for update", [holder.u0]);
-        // 不 await：讓全刪繼續走到 L 與 DELETE uploads（卡在 u0），在那個窗裡發上傳，量完再放開 u0。
+        // Don't await: let delete-all continue to L and DELETE uploads (stuck on u0), send the upload in that window, release u0 after measuring.
         holder.locker = (async () => {
           try {
             holder.t7Blocked = await waitForWaiters(holder.pool!, 1);
@@ -490,7 +484,7 @@ describe("#175 全刪 × 上傳（C22）", () => {
     expect(holder.interleave).toBe("blocked");
     expect(del.statusCode).toBe(204);
     expect(up.statusCode).toBe(404);
-    // 與「筆記本來就不存在」的 404 逐位元組相同（uploads.test.ts 的 404 案同形）。
+    // Byte-for-byte identical to the 404 for "the note never existed" (same shape as the 404 case of uploads.test.ts).
     const missing = await upload(app, "22222222-2222-2222-2222-222222222222", a.id);
     expect(missing.statusCode).toBe(404);
     expect(up.body).toBe(missing.body);
@@ -500,10 +494,10 @@ describe("#175 全刪 × 上傳（C22）", () => {
   });
 });
 
-describe("#175 別名 PUT 授權之後群組被轉移、接手者重開公開連結（C21）", () => {
-  // 轉移已清 token，兩方形（只轉移）被既有述詞 `public_token IS NOT NULL` 擋下；要接手者重開 token 的三方形
-  // 才會讓舊述詞 `group_id IS NULL` 放行、把前成員選的名字寫進接手者的 `/p/<B>/…` 命名空間。
-  it("C21 別名 PUT 授權之後（public-link-authorized）：群組被轉移給 B、B 重新開公開連結 → M 遲到的別名 PUT 400 invalid_body；B 那篇的 public_slug 仍 NULL、token 是 B 剛開的那個", async () => {
+describe("#175 alias PUT after authorization, group transferred, recipient reopens the public link", () => {
+  // The transfer has cleared the token, so the two-party shape (transfer only) is blocked by the existing predicate `public_token IS NOT NULL`; only the three-party shape where the recipient reopens
+  // the token lets the old predicate `group_id IS NULL` through and writes the name chosen by the former member into the recipient's `/p/<B>/...` namespace.
+  it("after alias PUT authorization (public-link-authorized): group transferred to B and B reopens the public link -> M's late alias PUT 400 invalid_body; B's note public_slug is still NULL and the token is the one B just opened", async () => {
     const state: {
       noteId?: string;
       fired?: boolean;
@@ -515,7 +509,7 @@ describe("#175 別名 PUT 授權之後群組被轉移、接手者重開公開連
     const built = await buildTestApp({
       collabHooks: spyCollabHooks(),
       groupTestHook: async (point, ctx) => {
-        // 只在第一次（M 的別名 PUT）介入；B 重開 token 的 PUT 也會經過同一個點，`fired` 先立起來讓它直接放行。
+        // Intervenes only the first time (M's alias PUT); B's PUT reopening the token passes through the same point too, so `fired` is set first to let it straight through.
         if (point !== "public-link-authorized" || ctx.noteId !== state.noteId || state.fired) return;
         state.fired = true;
         state.moved = await state.fire!();

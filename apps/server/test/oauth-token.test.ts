@@ -1,11 +1,7 @@
 /**
- * #132：`POST /oauth/token`。
- *
- * 這一族守的是：①authorization_code 分支的步驟 1–6 是**單一 tx**，任何失敗都回捲
- * （不留下「code 被吃掉卻沒 token」的死狀態，也不留下「I7 刪了舊 grant 卻沒發新的」）；
- * ②code 單次、refresh 輪替、同 (user, client) 單一 grant；③錯誤碼分流——
- * `invalid_target` 不能寫成 `invalid_grant`（client 會誤判 code 壞掉重跑整輪）；
- * ④form 端點：送 JSON → 415、壞 form → 400、所有錯誤都是 400 且 no-store。
+ * The exchange steps of the authorization_code branch are a **single transaction** and any failure rolls back (leaving neither
+ * "code eaten but no token" nor "old grant deleted without issuing a new one"); `invalid_target` must not be written as
+ * `invalid_grant` (the client would misjudge the code as broken and rerun the whole flow).
  */
 import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -18,8 +14,8 @@ import { ISSUER, RESOURCE, authorizeAndConsent, codeGrant, exchange, obtainCode 
 
 const NUL = String.fromCharCode(0);
 
-describe("POST /oauth/token — authorization_code", () => {
-  it("換發成功：回 access／refresh／scope，header 帶 no-store 與 pragma", async () => {
+describe("POST /oauth/token - authorization_code", () => {
+  it("exchange succeeds: returns access/refresh/scope, headers carry no-store and pragma", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -35,7 +31,7 @@ describe("POST /oauth/token — authorization_code", () => {
       expect(body.expires_in).toBe(86400);
       expect(body.scope).toBe("notes:read notes:write");
 
-      // grant 落庫：kind=oauth、name 是 client_name 快照、明文不落庫、access 24h
+      // grant stored: kind=oauth, name is the client_name snapshot, plaintext not stored, access 24 h
       const [row] = await db.select().from(apiTokens);
       expect(row!.kind).toBe("oauth");
       expect(row!.name).toBe("Test client");
@@ -45,14 +41,14 @@ describe("POST /oauth/token — authorization_code", () => {
       const ttl = row!.accessExpiresAt!.getTime() - Date.now();
       expect(ttl).toBeGreaterThan(23 * 3600_000);
       expect(ttl).toBeLessThanOrEqual(24 * 3600_000);
-      // code 已被消費
+      // code consumed
       expect(await db.select().from(oauthCodes)).toHaveLength(0);
     } finally {
       await close();
     }
   });
 
-  it("換來的 access token 可以打允許清單的路由；client 的 last_used_at 被更新", async () => {
+  it("the exchanged access token can hit allowlisted routes; the client's last_used_at is updated", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -61,8 +57,8 @@ describe("POST /oauth/token — authorization_code", () => {
       await db.update(oauthClients).set({ lastUsedAt: stale }).where(sql`${oauthClients.clientId} = ${c.clientId}`);
 
       const token = (await exchange(app, codeGrant(c))).json().access_token as string;
-      // 斷言要在 Bearer 那一發**之前**：Bearer 路徑（touchLastUsed）也會更新這個欄位，
-      // 放後面的話，token 端點最後那條 UPDATE 拿掉也照樣綠。
+      // Assert before the Bearer request: the Bearer path (touchLastUsed) also updates this column, so asserting after would stay
+      // green with the token endpoint's final UPDATE removed.
       const [client] = await db.select().from(oauthClients);
       expect(client!.lastUsedAt.getTime()).toBeGreaterThan(stale.getTime());
 
@@ -73,9 +69,9 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  // 全流程鏈的最後一段：oauth grant 也能從設定頁撤銷，撤了立刻失效。
-  // #130 只對 PAT 測過這個端點（查詢是 kind-agnostic，但沒有守衛就會漂）。
-  it("撤銷 oauth grant → 該 access token 立刻 401", async () => {
+  // The last link of the whole flow: oauth grants can also be revoked from the settings page and are invalid at once. This case covers an oauth grant
+  // (the query is kind-agnostic, but without a case it could drift).
+  it("revoking an oauth grant -> that access token is 401 at once", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -95,7 +91,7 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  it("code 二次使用 → invalid_grant", async () => {
+  it("code used twice -> invalid_grant", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -104,15 +100,15 @@ describe("POST /oauth/token — authorization_code", () => {
       const replay = await exchange(app, codeGrant(c));
       expect(replay.statusCode).toBe(400);
       expect(replay.json()).toEqual({ error: "invalid_grant", error_description: "The authorization code is invalid." });
-      // 重放不撤銷已簽的 grant（刻意不做）
+      // Replay doesn't revoke the already signed grant (deliberately not done)
       expect(await db.select().from(apiTokens)).toHaveLength(1);
     } finally {
       await close();
     }
   });
 
-  // 失敗的兌換整個 tx 回捲＝**不消費 code**。同一支 code 修正參數後可重試。
-  it("PKCE 不符／client_id 不符／redirect_uri 不符 → invalid_grant，且 code 仍在（tx 回捲）", async () => {
+  // A failed exchange rolls back the whole transaction = **doesn't consume the code**; the same code can be retried with corrected parameters.
+  it("PKCE mismatch / client_id mismatch / redirect_uri mismatch -> invalid_grant, and the code remains (transaction rolled back)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -121,7 +117,7 @@ describe("POST /oauth/token — authorization_code", () => {
         { code_verifier: randomBytes(32).toString("base64url") },
         { client_id: "someone-else" },
         { redirect_uri: "http://127.0.0.1:5678/other" },
-        // 註冊時 port 不同沒關係，但 code 綁的是 authorize 當次的完整值（含 port）
+        // A different port from registration is fine, but the code is bound to the full value from that authorize (including the port)
         { redirect_uri: "http://127.0.0.1:1234/cb" },
       ];
       for (const override of overrides) {
@@ -131,14 +127,14 @@ describe("POST /oauth/token — authorization_code", () => {
         expect(await db.select().from(oauthCodes), JSON.stringify(override)).toHaveLength(1);
         expect(await db.select().from(apiTokens), JSON.stringify(override)).toHaveLength(0);
       }
-      // 正對照：同一支 code 修正參數後仍可換發
+      // Positive control: the same code, parameters corrected, can still be exchanged
       expect((await exchange(app, codeGrant(c))).statusCode).toBe(200);
     } finally {
       await close();
     }
   });
 
-  it("resource 錯或缺 → invalid_target（不是 invalid_grant），且 code 未被消費", async () => {
+  it("wrong or missing resource -> invalid_target (not invalid_grant), and the code isn't consumed", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -150,14 +146,14 @@ describe("POST /oauth/token — authorization_code", () => {
       void _dropped;
       const missing = await exchange(app, withoutResource);
       expect(missing.json().error).toBe("invalid_target");
-      // resource 檢查在 tx 之前，code 完全沒動
+      // the resource check runs before the transaction, the code is untouched
       expect(await db.select().from(oauthCodes)).toHaveLength(1);
     } finally {
       await close();
     }
   });
 
-  it("過期的 code → invalid_grant", async () => {
+  it("expired code -> invalid_grant", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -171,9 +167,10 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  // 不走 gate 快取：兌換在 tx 內直接讀 users 列，所以停權後**不 invalidate** 也必須拒——
-  // 這一案同時釘住「tx 內不回頭用 pool」（改回 gate.checkUser 會讀到 60s 快取的 ok 而變綠）。
-  it("使用者被停用 → invalid_grant，且 code 未被消費（不經 gate 快取）", async () => {
+  // Doesn't use the gate cache: the exchange reads the users row directly inside the transaction, so a disabled user must be refused
+  // **without invalidate**; this case also pins "don't go back to the pool inside the transaction" (switching back to
+  // gate.checkUser would read the 60 s cached ok and go green).
+  it("user disabled -> invalid_grant, code not consumed (bypassing the gate cache)", async () => {
     const { db } = await freshDb();
     const gate = new UserGate(db);
     const { app, close } = await buildTestApp({ db, gate });
@@ -191,9 +188,9 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  // 承重案：額度不足時整個 tx 必須 ROLLBACK。若 tx 內用回傳值表達失敗（drizzle 只在
-  // throw 時 rollback），I7 的 DELETE 會被提交＝舊授權被吞掉卻沒發新 token。
-  it("額度不足而拒發時，該 client 既有的 grant 必須原封不動（tx 回捲）", async () => {
+  // Load-bearing: when quota is insufficient the whole transaction must ROLLBACK. If failure were expressed as a return value inside
+  // the transaction (drizzle rolls back only on throw), the DELETE of the old grant would be committed = the old authorization swallowed without a new token.
+  it("refusing to issue for insufficient quota leaves the client's existing grant untouched (transaction rolled back)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
@@ -201,12 +198,12 @@ describe("POST /oauth/token — authorization_code", () => {
       const firstBody = (await exchange(app, codeGrant(first))).json();
       expect(firstBody.access_token).toMatch(/^knb_/);
 
-      // 對同一個 client 再走一輪授權（此時額度還沒滿，decision 才過得了）
+      // Run another authorization round for the same client (quota isn't full yet, so decision passes)
       const second = await authorizeAndConsent(app, cookie, first.clientId, first.redirectUri);
 
-      // ⚠ 額度**必須在同意之後、兌換之前**才填滿。額度規則讓 decision 與 token 兩側的額度
-      // 查詢等價，所以沒有任何 PAT 數量能讓 decision 過而 token 拒——
-      // 「token 側拒發」唯一到得了的路徑就是同意與兌換之間額度被吃掉。
+      // The quota **must be filled after consent and before the exchange**: the quota rule makes decision's and token's quota queries
+      // equivalent, so no PAT count lets decision pass while token refuses; the only reachable path for "token side refuses" is the
+      // quota being consumed between consent and exchange.
       await db.insert(apiTokens).values(
         Array.from({ length: 20 }, (_, i) => ({
           userId,
@@ -222,7 +219,7 @@ describe("POST /oauth/token — authorization_code", () => {
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error).toBe("invalid_grant");
       expect(rejected.json().error_description).toMatch(/^Token limit reached: you already have \d+ active tokens\. Revoke one first\.$/);
-      // 關鍵：舊 grant 還在，舊 access 仍可用，code 也還在
+      // Key: the old grant is still there, the old access still works, and the code remains
       const survivors = await db.select().from(apiTokens).where(sql`${apiTokens.clientId} = ${first.clientId}`);
       expect(survivors).toHaveLength(1);
       expect(await db.select().from(oauthCodes)).toHaveLength(1);
@@ -237,14 +234,14 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  // 跨功能案：20 支且其中一支屬本 client → 兩側的額度扣除等價，重新授權仍成功
-  it("20 支且其中一支屬本 client：重新授權仍成功，該 client 仍只有一列，舊 access 401", async () => {
+  // Cross-feature case: 20 grants with one belonging to this client -> the quota deductions on both sides are equivalent and re-authorization still succeeds
+  it("20 grants where one belongs to this client: re-authorization still succeeds, the client still has exactly one row, the old access is 401", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie, userId } = await createUserAndLogin(db);
       const first = await obtainCode(app, cookie);
       const firstBody = (await exchange(app, codeGrant(first))).json();
-      // 再補 19 支 PAT → 計入額度的 grant 共 20 支（含本 client 那一支）
+      // Add 19 more PATs -> 20 counted grants (including this client's)
       await db.insert(apiTokens).values(
         Array.from({ length: 19 }, (_, i) => ({
           userId,
@@ -255,26 +252,26 @@ describe("POST /oauth/token — authorization_code", () => {
           accessExpiresAt: null,
         }))
       );
-      // decision 側的扣除述詞（authorizeAndConsent 內會斷言 200）
+      // decision side's deduction predicate (authorizeAndConsent asserts 200 inside)
       const second = await authorizeAndConsent(app, cookie, first.clientId, first.redirectUri);
-      // token 側的「先刪後計」
+      // token side's "delete first, then count"
       const res = await exchange(app, codeGrant({ ...first, ...second }));
       expect(res.statusCode).toBe(200);
 
       const oauthRows = await db.select().from(apiTokens).where(sql`${apiTokens.clientId} = ${first.clientId}`);
-      expect(oauthRows).toHaveLength(1); // I7：沒有累積成兩列
+      expect(oauthRows).toHaveLength(1); // no accumulation into two rows
       const old = await app.inject({
         method: "GET",
         url: "/api/notes",
         headers: { authorization: `Bearer ${firstBody.access_token}` },
       });
-      expect(old.statusCode).toBe(401); // 舊 access 已被取代
+      expect(old.statusCode).toBe(401); // the old access has been replaced
     } finally {
       await close();
     }
   });
 
-  it("I7：同一 client 二次授權只留一列，舊 access 立刻 401、新的 200", async () => {
+  it("a second authorization for the same client leaves one row; the old access is 401 at once, the new one 200", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -291,13 +288,13 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  it("成功後跑機會性清理：25 小時前的殭屍 client 在這一發後消失", async () => {
+  it("after success the opportunistic cleanup runs: a zombie client from 25 hours ago disappears after this request", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
       const c = await obtainCode(app, cookie);
-      // ⚠ zombie 必須在 obtainCode **之後**才插：DCR／authorize／decision 各跑一次機會性清理，
-      // 插在前面會被它們清掉，token 端點的機會性清理拿掉也照樣綠（假綠）。
+      // The zombie must be inserted **after** obtainCode: DCR/authorize/decision each run the opportunistic cleanup, so inserting
+      // earlier would get it cleaned by them and removing the token endpoint's own cleanup would stay green (false green).
       await db.insert(oauthClients).values({
         clientId: "zombie",
         clientName: "Zombie",
@@ -305,7 +302,7 @@ describe("POST /oauth/token — authorization_code", () => {
         createdAt: sql`now() - interval '25 hours'`,
       });
       expect((await exchange(app, codeGrant(c))).statusCode).toBe(200);
-      // 機會性清理（`runOauthCleanup`）是 fire-and-forget：有 deadline 的輪詢，固定 sleep 在 WSL 容器上會 flaky
+      // The opportunistic cleanup (`runOauthCleanup`) is fire-and-forget: poll with a deadline, a fixed sleep is flaky on WSL containers
       await expect
         .poll(async () => (await db.select({ id: oauthClients.clientId }).from(oauthClients)).map(r => r.id), {
           timeout: 3_000,
@@ -317,10 +314,10 @@ describe("POST /oauth/token — authorization_code", () => {
     }
   });
 
-  it("改名後再授權（authorization_code 換發，I7 先刪後插）→ 新列 agent_label 仍是改過的值", async () => {
+  it("re-authorization after a rename (authorization_code exchange, delete-then-insert) -> the new row's agent_label is still the renamed value", async () => {
     const { app, db, close } = await buildTestApp();
     try {
-      const { cookie } = await createUserAndLogin(db); // 這個 helper 回的是完整 cookie 字串
+      const { cookie } = await createUserAndLogin(db); // this helper returns the complete cookie string
       const first = await obtainCode(app, cookie);
       expect((await exchange(app, codeGrant(first))).statusCode).toBe(200);
       const [row0] = await db.select({ id: apiTokens.id }).from(apiTokens);
@@ -335,23 +332,23 @@ describe("POST /oauth/token — authorization_code", () => {
         ).statusCode
       ).toBe(200);
 
-      // ⚠ 第二次授權**必須重用第一次的 client_id**（只跑 authorizeAndConsent，不再跑一次 DCR）。
-      //    換一個 client_id 就不是 I7「先刪後插」這條路徑了，這一案什麼都守不到。
+      // The second authorization **must reuse the first client_id** (only authorizeAndConsent, no second DCR): with a different
+      // client_id this wouldn't be the delete-then-insert path and the case guards nothing.
       const second = await authorizeAndConsent(app, cookie, first.clientId, first.redirectUri);
       expect((await exchange(app, codeGrant({ ...first, ...second }))).statusCode).toBe(200);
 
       const rows = await db.select({ id: apiTokens.id, label: apiTokens.agentLabel }).from(apiTokens);
-      expect(rows).toHaveLength(1); // I7：沒有累積成兩列
-      expect(rows[0]!.id).not.toBe(row0!.id); // 確實是新列（不是原列被 UPDATE）
-      expect(rows[0]!.label).toBe("my-agent"); // 使用者改的名字被搬過來了
+      expect(rows).toHaveLength(1); // no accumulation into two rows
+      expect(rows[0]!.id).not.toBe(row0!.id); // really a new row (not the original updated)
+      expect(rows[0]!.label).toBe("my-agent"); // the name the user set was carried over
     } finally {
       await close();
     }
   });
 });
 
-describe("POST /oauth/token — refresh_token", () => {
-  it("輪替成功；舊 refresh 立刻 invalid_grant；scope 沿用", async () => {
+describe("POST /oauth/token - refresh_token", () => {
+  it("rotation succeeds; the old refresh is invalid_grant at once; scope carries over", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -371,8 +368,8 @@ describe("POST /oauth/token — refresh_token", () => {
       expect(rotated.json().access_token).not.toBe(first.access_token);
       expect(rotated.json().scope).toBe("notes:read notes:write");
       expect(rotated.json().expires_in).toBe(86400);
-      expect(await db.select().from(apiTokens)).toHaveLength(1); // 輪替不是新列
-      // 輪替是機會性清理 ① 的「使用」之一（refresh 步驟 4）
+      expect(await db.select().from(apiTokens)).toHaveLength(1); // rotation isn't a new row
+      // Rotation is one of the "uses" counted by idle-client delete (the refresh path updates last_used_at)
       const [client] = await db.select().from(oauthClients);
       expect(client!.lastUsedAt.getTime()).toBeGreaterThan(stale.getTime());
 
@@ -383,7 +380,7 @@ describe("POST /oauth/token — refresh_token", () => {
       });
       expect(replay.statusCode).toBe(400);
       expect(replay.json().error).toBe("invalid_grant");
-      // 舊 access 也隨輪替失效（一次換兩把）
+      // The old access is invalidated by the rotation too (two tokens exchanged at once)
       const oldAccess = await app.inject({
         method: "GET",
         url: "/api/notes",
@@ -395,8 +392,8 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  // #239（迴歸守衛）：exchange 回的是 decision 夾出來的授予值；refresh 不碰 scope——列上被改過的值原樣回傳。
-  it("#239：要求讀寫搬移、只勾讀寫 → exchange 回讀寫；列改成讀寫搬移後 refresh 回讀寫搬移、列 id 不變", async () => {
+  // (#239 regression guard) exchange returns the grant decision clamped; refresh doesn't touch scope: a value changed on the row is returned as is.
+  it("#239: requested read/write/move, ticked only read/write -> exchange returns read/write; after the row is changed to read/write/move, refresh returns read/write/move and the row id is unchanged", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -421,8 +418,8 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  // #181 OT：讀寫刪除照原值換發、refresh 輪替不動 scope。
-  it("#181：要求並勾讀寫刪除 → exchange 回讀寫刪除、列也是；refresh 輪替後仍是讀寫刪除", async () => {
+  // read/write/delete is issued as is and refresh rotation leaves scope alone (#181).
+  it("#181: requesting and ticking read/write/delete -> exchange returns read/write/delete and so does the row; still read/write/delete after refresh rotation", async () => {
     const RWD = "notes:read notes:write notes:delete";
     const { app, db, close } = await buildTestApp();
     try {
@@ -445,8 +442,8 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  // #181 OD 的端到端那一半：要求讀寫搬移、勾讀寫刪除 → 交集讀寫，token 回應與列都是讀寫。
-  it("#181：要求讀寫搬移、勾讀寫刪除 → exchange 回讀寫、列也是讀寫", async () => {
+  // The end-to-end half of the grant rule (#181): requested read/write/move, ticked read/write/delete -> intersection read/write, token response and row are both read/write.
+  it("#181: requested read/write/move, ticked read/write/delete -> exchange returns read/write, row too", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -463,7 +460,7 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  it("access 過期後 refresh 仍可換發，新 access 立即可用（Bearer 段）", async () => {
+  it("refresh still works after access has expired, and the new access is usable at once (Bearer part)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -493,7 +490,7 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  it("client_id 不符、前綴不對、查無、使用者停用 → invalid_grant；resource 給錯 → invalid_target", async () => {
+  it("client_id mismatch, wrong prefix, not found, user disabled -> invalid_grant; wrong resource -> invalid_target", async () => {
     const { db } = await freshDb();
     const gate = new UserGate(db);
     const { app, close } = await buildTestApp({ db, gate });
@@ -504,8 +501,8 @@ describe("POST /oauth/token — refresh_token", () => {
 
       const wrongClient = await exchange(app, { grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: "other" });
       expect(wrongClient.json().error).toBe("invalid_grant");
-      // access token 當 refresh 送：前綴不對，不進 DB → invalid_grant（畸形憑證不是
-      // invalid_request——長度表刻意不設下限，見 TOKEN_FIELD_LIMITS 的說明）
+      // An access token sent as refresh: wrong prefix, never reaches the DB -> invalid_grant (a malformed credential isn't
+      // invalid_request: the length table deliberately has no lower bound, see the note on TOKEN_FIELD_LIMITS)
       const accessAsRefresh = await exchange(app, { grant_type: "refresh_token", refresh_token: first.access_token, client_id: c.clientId });
       expect(accessAsRefresh.json().error).toBe("invalid_grant");
       const unknown = await exchange(app, { grant_type: "refresh_token", refresh_token: `knbr_${"x".repeat(43)}`, client_id: c.clientId });
@@ -517,7 +514,7 @@ describe("POST /oauth/token — refresh_token", () => {
         resource: `${ISSUER}/api/other`,
       });
       expect(wrongResource.json().error).toBe("invalid_target");
-      // 停用：checkUser 失敗 → invalid_grant，且沒有輪替（refresh hash 不變）
+      // disabled: checkUser fails -> invalid_grant, with no rotation (refresh hash unchanged)
       await db.update(users).set({ disabledAt: new Date() }).where(sql`${users.id} = ${userId}`);
       gate.invalidate(userId);
       const disabled = await exchange(app, { grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: c.clientId });
@@ -529,7 +526,7 @@ describe("POST /oauth/token — refresh_token", () => {
     }
   });
 
-  it("client_id 含 NUL → invalid_grant，不是 500（不變量 S）", async () => {
+  it("client_id containing NUL -> invalid_grant, not 500 (unstorable strings rejected before SQL)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -545,17 +542,17 @@ describe("POST /oauth/token — refresh_token", () => {
   });
 });
 
-describe("POST /oauth/token — 通則", () => {
-  it("未知 grant_type → unsupported_grant_type；缺參數／長度不合 → invalid_request", async () => {
+describe("POST /oauth/token - general", () => {
+  it("unknown grant_type -> unsupported_grant_type; missing parameter / bad length -> invalid_request", async () => {
     const { app, close } = await buildTestApp();
     try {
       expect((await exchange(app, { grant_type: "client_credentials" })).json().error).toBe("unsupported_grant_type");
-      // 缺 grant_type 是 "missing a required parameter"（RFC 6749 §5.2）→ invalid_request
+      // A missing grant_type is "missing a required parameter" (RFC 6749 §5.2) -> invalid_request
       expect((await exchange(app, {})).json().error).toBe("invalid_request");
       expect((await exchange(app, { grant_type: "refresh_token", client_id: "c" })).json().error).toBe("invalid_request");
       const tooLong = await exchange(app, { grant_type: "refresh_token", refresh_token: "r".repeat(64), client_id: "c" });
       expect(tooLong.json().error).toBe("invalid_request");
-      // code_verifier 有下限 43：太短要回 invalid_request，不是 PKCE 失敗的 invalid_grant
+      // code_verifier has a lower bound of 43: too short must be invalid_request, not the invalid_grant of a PKCE failure
       const shortVerifier = await exchange(app, {
         grant_type: "authorization_code",
         code: "c".repeat(43),
@@ -565,8 +562,8 @@ describe("POST /oauth/token — 通則", () => {
         resource: RESOURCE,
       });
       expect(shortVerifier.json().error).toBe("invalid_request");
-      // 長度對但字元集錯（RFC 7636 §4.1 只收 unreserved）：拿掉 CODE_VERIFIER_RE 會變成
-      // PKCE 失敗的 invalid_grant，client 會誤判 code 壞掉重跑整輪
+      // Right length but wrong character set (RFC 7636 §4.1 accepts only unreserved): without CODE_VERIFIER_RE this would become a
+      // PKCE-failure invalid_grant and the client would misjudge the code as broken and rerun the whole flow
       const badCharset = await exchange(app, {
         grant_type: "authorization_code",
         code: "c".repeat(43),
@@ -581,9 +578,9 @@ describe("POST /oauth/token — 通則", () => {
     }
   });
 
-  // 不變量 S（code 分支）：所有請求字串都不進 SQL 述詞——code 先 hashToken、client_id／
-  // redirect_uri 只在 JS 端與 DB 列比對、verifier 只進 sha256。帶 NUL 一律是 400 業務錯誤。
-  it("code 分支的 client_id／code／verifier 含 NUL → 400（不是 500）", async () => {
+  // Code branch: strings Postgres can't store (NUL, lone surrogates) never reach a SQL predicate: code goes through hashToken first, client_id/redirect_uri
+  // are compared with DB rows only in JS, the verifier only goes into sha256. NUL is always a 400 business error.
+  it("client_id/code/verifier containing NUL in the code branch -> 400 (not 500)", async () => {
     const { app, db, close } = await buildTestApp();
     try {
       const { cookie } = await createUserAndLogin(db);
@@ -599,20 +596,18 @@ describe("POST /oauth/token — 通則", () => {
         expect(res.headers["content-type"], JSON.stringify(override)).toContain("application/json");
         expect(res.json().error, JSON.stringify(override)).toBe(expected);
       }
-      // 都沒消費 code（tx 回捲或根本沒進 tx）
+      // None consumed the code (transaction rolled back or never entered)
       expect(await db.select().from(oauthCodes)).toHaveLength(1);
     } finally {
       await close();
     }
   });
 
-  // 「壞掉的 form body → 400」一案落不了地——@fastify/formbody 用
-  // fast-querystring，`%%%` 之類不會丟例外、只會 parse 成 `{"%%%": ""}`，落到
-  // unsupported_grant_type。scoped error handler「保留 formbody 的 415」那條因此仍無守衛。
-
-  // 留下的假綠缺口：那時 /oauth 下沒有路由，`FORM_EXEMPT_ROUTES` 的查表是死碼，
-  // 把 `wantsForm` 改成恆 false 也全綠。這兩案是唯一能釘住「守衛真的去查豁免清單」的地方。
-  it("送 form → 過得了守衛（落 400 業務錯誤，不是 415）；送 JSON → 415 RFC 形", async () => {
+  // A "broken form body -> 400" case can't be made: @fastify/formbody uses fast-querystring, where `%%%` doesn't throw and just parses
+  // to `{"%%%": ""}`, landing on unsupported_grant_type; so that branch of the scoped error handler ("keep formbody's 415") can't be exercised this way.
+  // These two cases pin that the guard really consults the `FORM_EXEMPT_ROUTES` list (changing `wantsForm` to
+  // always false would otherwise stay green).
+  it("form passes the guard (lands on a 400 business error, not 415); JSON -> 415 RFC-shaped", async () => {
     const { app, close } = await buildTestApp();
     try {
       const form = await exchange(app, { grant_type: "bogus" });
@@ -627,7 +622,7 @@ describe("POST /oauth/token — 通則", () => {
     }
   });
 
-  it("GET 該路由 → 404 RFC 形（錯 method 也走 prefix notFound）", async () => {
+  it("GET on this route -> 404 RFC-shaped (a wrong method also goes through the prefix notFound)", async () => {
     const { app, close } = await buildTestApp();
     try {
       const notFound = await app.inject({ method: "GET", url: "/oauth/token" });
@@ -638,7 +633,7 @@ describe("POST /oauth/token — 通則", () => {
     }
   });
 
-  it("所有錯誤都是 HTTP 400（RFC 6749 §5.2）且帶 no-store／pragma", async () => {
+  it("all errors are HTTP 400 (RFC 6749 section 5.2) with no-store/pragma", async () => {
     const { app, close } = await buildTestApp();
     try {
       const res = await exchange(app, {
@@ -658,7 +653,7 @@ describe("POST /oauth/token — 通則", () => {
     }
   });
 
-  it("超過 TOKEN_ENDPOINT 額度 → 429 RFC 形", async () => {
+  it("over the TOKEN_ENDPOINT quota -> 429 RFC-shaped", async () => {
     const { app, close } = await buildTestApp({
       limiters: freshLimiters({ tokenEndpoint: new FixedWindowLimiter({ limit: 2, windowMs: 60_000 }) }),
     });

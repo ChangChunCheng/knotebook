@@ -28,11 +28,11 @@ afterEach(() => {
 });
 
 const ids = (list: readonly { id: string }[]) => list.map((item) => item.id);
-/** 測試用的筆記空間：群組筆記 → group:<id>、其餘 → personal（產品碼由 tree.ts 的 noteSpaceKey 給）。 */
+/** Test note space: group notes -> group:<id>, everything else -> personal (product code: noteSpaceKey in tree.ts). */
 const spaceOf = (note: NoteDto): FolderSpaceKey => (note.groupId === null ? "personal" : `group:${note.groupId}`);
 
 describe("indexFolders", () => {
-  it("FI1 三空間各兩層、輸入打亂 → children 依名稱（numeric：第 2 章在第 10 章前；sensitivity base：a／A 相等時維持輸入序）", () => {
+  it("three spaces with two levels each, shuffled input -> children ordered by name (numeric: chapter 2 before chapter 10; sensitivity base: a and A compare equal and keep input order)", () => {
     const index = indexFolders([
       folderDto({ id: "p10", name: "第 10 章" }),
       sharedFolder({ id: "sZ", name: "Zed" }),
@@ -49,7 +49,7 @@ describe("indexFolders", () => {
       groupFolder({ id: "gChildA", name: "Alpha", groupId: "g1", parentId: "gZ" }),
       sharedFolder({ id: "sChildA", name: "Alpha", parentId: "sA" }),
     ]);
-    // zh-Hant collator：漢字排在拉丁字母前
+    // zh-Hant collator: Han characters sort before Latin letters.
     expect(ids(index.children("personal", null))).toEqual(["p2", "p10", "pUpper", "pLower"]);
     expect(ids(index.children("personal", "p2"))).toEqual(["c1", "c2"]);
     expect(ids(index.children("group:g1", null))).toEqual(["gA", "gZ"]);
@@ -59,19 +59,19 @@ describe("indexFolders", () => {
     expect(index.byId.get("c1")?.name).toBe("Alpha");
   });
 
-  it("FI2 parentId 指向不存在的 id → 出現在該空間根層", () => {
+  it("parentId pointing at a missing id -> appears at that space's root", () => {
     const index = indexFolders([folderDto({ id: "root", name: "Root" }), folderDto({ id: "lost", name: "Lost", parentId: "missing" })]);
     expect(ids(index.children("personal", null))).toEqual(["lost", "root"]);
   });
 
-  it("FI3 parentId 指向別空間的資料夾 → 根層（不掛在別空間的父層下）", () => {
+  it("parentId pointing at a folder in another space -> root (not attached under the other space's parent)", () => {
     const index = indexFolders([groupFolder({ id: "gf", name: "Group folder", groupId: "g1" }), folderDto({ id: "mine", name: "Mine", parentId: "gf" })]);
     expect(ids(index.children("personal", null))).toEqual(["mine"]);
     expect(ids(index.children("group:g1", "gf"))).toEqual([]);
     expect(ids(index.children("personal", "gf"))).toEqual([]);
   });
 
-  it("FI4 環（A.parent=B、B.parent=A）：不掛；folderPath 名稱不重複、subtreeFolderIds id 不重複，長度 ≤ 資料夾數", () => {
+  it("cycle (A.parent=B, B.parent=A): not attached; folderPath names are unique, subtreeFolderIds ids are unique, and lengths are at most the folder count", () => {
     const folders = [folderDto({ id: "cA", name: "Cyc A", parentId: "cB" }), folderDto({ id: "cB", name: "Cyc B", parentId: "cA" })];
     const index = indexFolders(folders);
     const path = folderPath(index, "cA");
@@ -85,21 +85,21 @@ describe("indexFolders", () => {
     expect(subtree[0]).toBe("cA");
   });
 
-  it("EMPTY_FOLDER_INDEX：沒有資料夾、任何 children 都是 []", () => {
+  it("EMPTY_FOLDER_INDEX: no folders, every children lookup is []", () => {
     expect(EMPTY_FOLDER_INDEX.byId.size).toBe(0);
     expect(EMPTY_FOLDER_INDEX.children("personal", null)).toEqual([]);
   });
 });
 
-describe("folderPath／subtreeFolderIds／liveNotesUnder", () => {
-  it("FI5 三層 → [A, B, C]；不存在 → null", () => {
+describe("folderPath / subtreeFolderIds / liveNotesUnder", () => {
+  it("three levels -> [A, B, C]; missing -> null", () => {
     const index = indexFolders(folderChain("L", 3).map((folder, i) => ({ ...folder, name: ["A", "B", "C"][i]! })));
     expect(folderPath(index, "L3")).toEqual(["A", "B", "C"]);
     expect(folderPath(index, "L1")).toEqual(["A"]);
     expect(folderPath(index, "nope")).toBeNull();
   });
 
-  it("FI6 subtreeFolderIds：含自己、含孫、不含兄弟", () => {
+  it("subtreeFolderIds: includes itself and grandchildren, excludes siblings", () => {
     const index = indexFolders([
       folderDto({ id: "A", name: "A" }),
       folderDto({ id: "B", name: "B", parentId: "A" }),
@@ -113,7 +113,7 @@ describe("folderPath／subtreeFolderIds／liveNotesUnder", () => {
     expect(subtreeFolderIds(index, "B")).toEqual(["B", "C"]);
   });
 
-  it("FI7 liveNotesUnder：子樹內兩篇＋孫資料夾一篇 → 三篇；子樹外與根層不算", () => {
+  it("liveNotesUnder: two in the subtree plus one in a grandchild folder -> three; notes outside the subtree and at the root do not count", () => {
     const index = indexFolders([
       folderDto({ id: "A", name: "A" }),
       folderDto({ id: "B", name: "B", parentId: "A" }),
@@ -130,7 +130,7 @@ describe("folderPath／subtreeFolderIds／liveNotesUnder", () => {
     expect(ids(liveNotesUnder(index, "A", notes, spaceOf))).toEqual(["inA", "inB", "inC"]);
   });
 
-  it("FI7b liveNotesUnder 比對空間：筆記空間與資料夾空間不符（快取錯亂）→ 不算（與樹的兜底一致）", () => {
+  it("liveNotesUnder compares spaces: a note space that differs from the folder space (inconsistent cache) does not count (consistent with the tree's fallback)", () => {
     const index = indexFolders([groupFolder({ id: "gf", name: "Group folder", groupId: "g1" })]);
     const notes = [
       baseNote({ id: "groupIn", title: "group in", groupId: "g1", group: { id: "g1", name: "G1" }, folderId: "gf" }),
@@ -139,8 +139,8 @@ describe("folderPath／subtreeFolderIds／liveNotesUnder", () => {
     expect(ids(liveNotesUnder(index, "gf", notes, spaceOf))).toEqual(["groupIn"]);
   });
 
-  it("FI9 環與自指：斷環後 parentOf、folderPath、expandFolderChain 一致（環入口當根層、其餘照原父層）", () => {
-    // D 先出現：從 D 往上走，第一個重複的是 cA → 在 cA 斷開；D 仍掛在 cA 下
+  it("cycles and self-reference: after breaking the cycle parentOf, folderPath and expandFolderChain agree (the cycle entry is treated as root, the rest keep their parents)", () => {
+    // D appears first: walking up from D, the first repeat is cA, so the cycle is cut at cA and D stays under cA.
     const index = indexFolders([
       folderDto({ id: "D", name: "D", parentId: "cA" }),
       folderDto({ id: "cA", name: "Cyc A", parentId: "cB" }),
@@ -166,7 +166,7 @@ describe("folderPath／subtreeFolderIds／liveNotesUnder", () => {
 });
 
 describe("expandFolderChain", () => {
-  it("FI8 三層都收合 → 呼叫後三層皆展開、兄弟不受影響；id 不在索引 → 只寫自己那把鍵、不丟錯", () => {
+  it("all three levels collapsed -> all expanded after the call, siblings unaffected; id not in the index -> writes only its own key, no throw", () => {
     const index = indexFolders([...folderChain("L", 3), folderDto({ id: "sib", name: "Sibling", parentId: "L1" })]);
     for (const id of ["L1", "L2", "L3", "sib"]) setCollapsed(`folder:${id}`, true);
     expandFolderChain(index, "L3");
@@ -182,18 +182,17 @@ describe("expandFolderChain", () => {
   });
 });
 
-// FI-R4「不出 toast」：expandAfterRestore 不該碰 toast；包一層計數、行為照原本。
+// expandAfterRestore must not touch toast; wrapped only to count calls, behavior unchanged.
 vi.mock("@/components/ui/toast", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui/toast")>();
   return { ...actual, toast: vi.fn(actual.toast) };
 });
 
-describe("expandAfterRestore（資料夾還原後展開）", () => {
+describe("expandAfterRestore (expand after folder restore)", () => {
   function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
   }
 
-  /** 只接 `GET /api/folders`；記下次數。 */
   function stubFolders(reply: () => Response) {
     const gets: string[] = [];
     vi.stubGlobal(
@@ -219,8 +218,8 @@ describe("expandAfterRestore（資料夾還原後展開）", () => {
     vi.mocked(toast).mockClear();
   });
 
-  it("FI-R1 ['folders'] 沒有 observer、快取是舊的（不含新重建的資料夾與祖先）→ 發 GET /api/folders、新資料夾與祖先都展開", async () => {
-    const chain = folderChain("R", 3); // R1 ⊃ R2 ⊃ R3（還原時照原路徑重建）
+  it("['folders'] has no observer and its cache is stale (missing the rebuilt folder and ancestors) -> issues GET /api/folders and expands the new folder and its ancestors", async () => {
+    const chain = folderChain("R", 3); // R1 > R2 > R3 (restore rebuilds the original path)
     const gets = stubFolders(() => json({ folders: [folderDto({ id: "old", name: "Old" }), ...chain] }));
     const qc = client();
     qc.setQueryData(FOLDERS_QUERY_KEY, [folderDto({ id: "old", name: "Old" })]);
@@ -235,7 +234,7 @@ describe("expandAfterRestore（資料夾還原後展開）", () => {
     expect(isCollapsed("folder:old")).toBe(true);
   });
 
-  it("FI-R3 restored 全部 folderId: null（或空陣列）→ 不發 GET /api/folders", async () => {
+  it("restored all folderId: null (or an empty array) -> no GET /api/folders", async () => {
     const gets = stubFolders(() => json({ folders: [] }));
     const qc = client();
     await expandAfterRestore(qc, [note("n1", null), note("n2", null)]);
@@ -243,7 +242,7 @@ describe("expandAfterRestore（資料夾還原後展開）", () => {
     expect(gets).toHaveLength(0);
   });
 
-  it("FI-R4 GET /api/folders 回 500 → promise 正常 resolve、沒有 unhandled rejection、不出 toast", async () => {
+  it("GET /api/folders returns 500 -> the promise resolves normally, no unhandled rejection, no toast", async () => {
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);
     try {
@@ -262,26 +261,26 @@ describe("expandAfterRestore（資料夾還原後展開）", () => {
   });
 });
 
-describe("深度與子樹", () => {
-  it("FI-D1 folderDepth：根層 1、第 3 層 3、不存在 0", () => {
+describe("depth and subtree", () => {
+  it("folderDepth: root level 1, third level 3, missing 0", () => {
     const index = indexFolders(folderChain("A", 3));
     expect(folderDepth(index, "A1")).toBe(1);
     expect(folderDepth(index, "A3")).toBe(3);
     expect(folderDepth(index, "nope")).toBe(0);
   });
 
-  it("FI-D2 subtreeHeight：葉 1、3 層鏈的根 3、較淺的兄弟不影響", () => {
+  it("subtreeHeight: leaf 1, root of a 3-level chain 3, a shallower sibling does not affect it", () => {
     const index = indexFolders([...folderChain("A", 3), folderDto({ id: "S", name: "S", parentId: "A1" })]);
     expect(subtreeHeight(index, "A3")).toBe(1);
     expect(subtreeHeight(index, "S")).toBe(1);
     expect(subtreeHeight(index, "A1")).toBe(3);
   });
 
-  it("FI-D2b subtreeHeight：id 不在索引＝1（當成葉）", () => {
+  it("subtreeHeight: id not in the index = 1 (treated as a leaf)", () => {
     expect(subtreeHeight(indexFolders(folderChain("A", 2)), "nope")).toBe(1);
   });
 
-  it("FI-D3 isInSubtree：自己與孫 true；兄弟與祖先 false", () => {
+  it("isInSubtree: itself and grandchildren true; siblings and ancestors false", () => {
     const index = indexFolders([...folderChain("A", 3), folderDto({ id: "S", name: "S", parentId: "A1" })]);
     expect(isInSubtree(index, "A2", "A2")).toBe(true);
     expect(isInSubtree(index, "A1", "A3")).toBe(true);

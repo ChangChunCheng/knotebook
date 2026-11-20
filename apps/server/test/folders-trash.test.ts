@@ -1,7 +1,4 @@
-/**
- * 資料夾：垃圾桶整合（表「還原」列）——
- * 移入寫路徑快照、`GET /api/trash` 的 `folderPath`、還原照路徑重建。組合字元一律以 `String.fromCharCode` 組字。
- */
+/** Combining characters are always built with `String.fromCharCode`. */
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
@@ -18,7 +15,7 @@ import { buildTestApp, freshDb } from "./helpers.js";
 import { inject, markTrashed, sixRoleScene, trashCols } from "./trash-helpers.js";
 import { INJECTED_LOCK_TIMEOUT_BOUND_MS } from "./lock-timeout-bound.js";
 
-// 預設空間鎖上限在本檔換成 60 s（產品值 5000），「注入的短上限有生效」的牆鐘界線才能離兩邊都遠——見 ./lock-timeout-bound.ts。
+// The default space-lock limit is set to 60 s in this file (product value 5000) so the wall-clock bound for "the injected short limit took effect" is far from both - see ./lock-timeout-bound.ts.
 vi.mock("../src/storage/tx/quota.js", async () => ({
   ...(await vi.importActual<typeof import("../src/storage/tx/quota.js")>("../src/storage/tx/quota.js")),
   DEFAULT_STORAGE_LOCK_TIMEOUT_MS: (await import("./lock-timeout-bound.js")).SLOW_DEFAULT_LOCK_TIMEOUT_MS,
@@ -48,13 +45,12 @@ async function restore(app: FastifyInstance, userId: string, ids: string[]): Pro
 }
 
 type FolderLite = { id: string; parent_id: string | null; name: string; kind: string; owner_id: string | null; group_id: string | null; created_by: string | null };
-/** 某空間全部資料夾（依 created 順序無保證，呼叫端自己找）。 */
+/** All folders of a space (created order isn't guaranteed; the caller finds its own). */
 async function foldersOf(pool: Pool, space: { ownerId: string } | { groupId: string }): Promise<FolderLite[]> {
   const [col, id] = "ownerId" in space ? ["owner_id", space.ownerId] : ["group_id", space.groupId];
   const { rows } = await pool.query<FolderLite>(`select id, parent_id, name, kind, owner_id, group_id, created_by from folders where ${col} = $1`, [id]);
   return rows;
 }
-/** 由葉往根讀名稱路徑。 */
 async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   const out: string[] = [];
   let cur: string | null = folderId;
@@ -67,8 +63,8 @@ async function pathOf(pool: Pool, folderId: string): Promise<string[]> {
   return out;
 }
 
-describe("資料夾與垃圾桶：移入與清單", () => {
-  it("TRF-1 移入寫快照：C 裡那篇 folder_id 不清、快照 [A,B,C]；根層那篇快照 NULL；同人同資料夾的活筆記快照仍 NULL", async () => {
+describe("folders and trash: move to trash and list", () => {
+  it("move to trash writes the snapshot: the note in C keeps folder_id and gets snapshot [A,B,C]; the root note's snapshot is NULL; a live note of the same person in the same folder keeps NULL", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -87,7 +83,7 @@ describe("資料夾與垃圾桶：移入與清單", () => {
     expect(await noteFolderCols(pool, sibling.id)).toEqual({ folder_id: c, trash_folder_path: null });
   });
 
-  it("TRF-2 清單 folderPath：即時路徑（改名跟著變）、資料夾已不在用快照、根層 []、群組筆記走群組資料夾；key 集合含 folderPath；即時路徑的外層欄帶表名", async () => {
+  it("list folderPath: live path (follows renames), snapshot when the folder is gone, [] at root, group notes use the group folder; key set includes folderPath; the outer column of the live path carries the table name", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -129,8 +125,8 @@ describe("資料夾與垃圾桶：移入與清單", () => {
   });
 });
 
-describe("資料夾與垃圾桶：還原", () => {
-  it("TRF-3 原資料夾還在（期間 B 改名 B2）→ 回到 C、不照舊快照另建、快照清空；回應 folderId＝C；沒還原的另一篇快照不動", async () => {
+describe("folders and trash: restore", () => {
+  it("original folder still exists (B renamed to B2 meanwhile) -> back into C, no new one built from the old snapshot, snapshot cleared; response folderId = C; the other note not restored keeps its snapshot", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -151,7 +147,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(await foldersOf(pool, { ownerId: o.id })).toHaveLength(3);
   });
 
-  it("TRF-4 原資料夾不在 → 照快照重建三層（created_by＝還原者）；同快照的第二篇併進同一串；旁觀的垃圾桶筆記位置不動；別的空間的同名 A 不被沿用", async () => {
+  it("original folder gone -> rebuilds three levels from the snapshot (created_by = the restorer); a second note with the same snapshot merges into the same chain; a bystander trash note's position unchanged; a same-named A in another space isn't reused", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -181,7 +177,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(await noteFolderCols(pool, bystander.id)).toEqual({ folder_id: null, trash_folder_path: ["A", "B", "C"] });
   });
 
-  it("TRF-5 部分在、大小寫與 NFC：既有 Docs、快照 [docs, e+組合重音] → 沿用 Docs、底下建 é（NFC）；之後 [Docs, é] 併進同一個", async () => {
+  it("partially present, case and NFC: existing Docs, snapshot [docs, e + combining accent] -> reuses Docs, builds e-acute (NFC) under it; later [Docs, e-acute] merges into the same one", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -204,7 +200,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect((await noteFolderCols(pool, n2.id))!.folder_id).toBe(child.id);
   });
 
-  it("TRF-6 不受上限擋：快照 7 層 → 重建 7 層；空間已有 1000 個資料夾 → 照樣重建", async () => {
+  it("not blocked by limits: a 7-level snapshot -> rebuilds 7 levels; a space that already has 1000 folders -> still rebuilds", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -229,7 +225,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(await pathOf(pool, (await noteFolderCols(pool, full.id))!.folder_id!)).toEqual(["New"]);
   });
 
-  it("TRF-7 群組筆記：editDelete 還原（快照、資料夾不在）→ 重建在群組空間", async () => {
+  it("group note: editDelete restores (snapshot, folder gone) -> rebuilt in the group space", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const s = await sixRoleScene(db);
@@ -245,7 +241,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(await pathOf(pool, leaf)).toEqual(["GA", "GB"]);
   });
 
-  it("TRF-8 無快照、folder_id NULL → 根層、快照仍 NULL、不建資料夾；快照是空陣列或含非字串段（不該出現的形）→ 同樣留在根層、快照清掉", async () => {
+  it("no snapshot, folder_id NULL -> root, snapshot still NULL, no folder built; a snapshot that is an empty array or contains non-string segments (shapes that shouldn't occur) -> also stays at root, snapshot cleared", async () => {
     const { app, db } = await buildTestApp();
     const pool = db.$client;
     const o = await seedUser(db);
@@ -265,7 +261,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(await foldersOf(pool, { ownerId: o.id })).toHaveLength(0);
   });
 
-  it("TRF-9 鎖序字面：groups FOR KEY SHARE → 結構鎖 → notes FOR UPDATE", async () => {
+  it("lock order literally: groups FOR KEY SHARE -> structure lock -> notes FOR UPDATE", async () => {
     const { db, pool } = await freshDb();
     const admin = await seedUser(db);
     const g = await seedGroup(db, "TRF9", [{ userId: admin.id, role: "admin" }]);
@@ -287,7 +283,7 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(notesAt).toBeGreaterThan(advisoryAt);
   });
 
-  it("TRF-10 預讀後歸屬改變：預讀後群組被轉移給還原者 → 還原 200、成他的個人筆記、在根層、不在他的空間建資料夾、快照清掉", async () => {
+  it("ownership changes after the pre-read: the group is transferred to the restorer after the pre-read -> restore 200, becomes his personal note, at root, no folder built in his space, snapshot cleared", async () => {
     let armed: { point: GroupRacePoint; fn: () => Promise<void> } | null = null;
     const hook = async (point: GroupRacePoint) => {
       if (armed && armed.point === point) {
@@ -312,7 +308,7 @@ describe("資料夾與垃圾桶：還原", () => {
           method: "DELETE", url: `/api/groups/${g.id}`, cookies: await cookieOf(admin.id), payload: { mode: "transfer", transferTo: admin.id },
         });
         expect(res.statusCode, res.body).toBe(204);
-        // 轉移本身可能建「{群組名}」頂層，那是轉移的事；這裡只比還原前後。
+        // The transfer itself may create a top level named after the group; that's the transfer's business, here only before vs after the restore is compared.
         before = (await foldersOf(pool, { ownerId: admin.id })).length;
       },
     };
@@ -321,12 +317,12 @@ describe("資料夾與垃圾桶：還原", () => {
     expect(out.restored.map(r => [r.id, r.folderId])).toEqual([[gn.id, null]]);
     const { rows } = await pool.query("select owner_id, group_id, deleted_at from notes where id = $1", [gn.id]);
     expect(rows[0]).toEqual({ owner_id: admin.id, group_id: null, deleted_at: null });
-    // 接受的已知損失：預讀之後被轉移的那篇不重建，轉移接上的快照前綴（["{群組名}", …]）也一併清掉。
+    // Accepted known loss: a note transferred after the pre-read isn't rebuilt, and the snapshot prefix the transfer attached (["{group name}", ...]) is cleared too.
     expect(await noteFolderCols(pool, gn.id)).toEqual({ folder_id: null, trash_folder_path: null });
     expect((await foldersOf(pool, { ownerId: admin.id })).length).toBe(before);
   });
 
-  it("TRF-11 結構鎖等太久（另一條連線持住同空間的鎖、lock_timeout 300 ms）：還原 409 server_busy（< 20 s：注入值有生效，不是本檔預設 60 s）、什麼都沒變；鎖放掉後重試照常重建", async () => {
+  it("structure lock waits too long (another connection holds the same space's lock, lock_timeout 300 ms): restore 409 server_busy (< 20 s: the injected value took effect, not this file's default 60 s), nothing changed; after the lock is released a retry rebuilds as usual", async () => {
     const { app, db } = await buildTestApp({ storageLockTimeoutMs: 300 });
     const pool = db.$client;
     const o = await seedUser(db);

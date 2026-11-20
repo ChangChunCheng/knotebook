@@ -1,14 +1,10 @@
 /**
- * #387：沒有自訂文字的 wikilink（顯示目標的現行標題）——agent 讀到之後目標改名，agent 照讀到的文字用 `edit_note`（或 `create_note`）
- * 寫回，連結不得被凍結成自訂文字（`notes/editing/shown-link-texts.ts`）。批次寫回的同一件事是 #385（`transfer-write-linklabel.test.ts`）。
+ * #387: a wikilink without custom text (showing the target's current title): after the agent reads it the target is renamed, and when the agent writes back with
+ * `edit_note` (or `create_note`) using the text it read, the link must not freeze into custom text (`notes/editing/shown-link-texts.ts`). The batch write-back equivalent
+ * is #385 (`transfer-write-linklabel.test.ts`).
  *
- * N1 是 issue 的情境；N2 是「agent 真的改了文字」；N3 其他會寫連結的 op（insert_after／append／replace_all，含寫進另一篇）；
- * N4 記憶是每個人自己的，REST `GET /content` 讀到的也算；N5 讀到同一段文字的自訂文字連結 → 不當成沒有自訂文字；N6 `create_note`；
- * N7 agent 自己寫的連結（沒讀過）、目標改名後用回覆的指紋原樣寫回；N8／N9 REST `/edits` 與撤回 409 的 `current` 也算讀到；
- * N11 自己寫的自訂文字連結原樣寫回仍是自訂文字；N12 合併失敗的寫入不記（m-a）；N13 被清掉的原文字隨寫入延長期限（m-b）。
- *
- * ⚠ scene 用 `seedBlocks` 直接種連結（不經寫入）：寫入也會記在寫入者名下，用 `edit_note` 種的話 N1／N3／N6 不讀也會過，
- * 就守不到「讀出會記」了。
+ * The scene seeds links with `seedBlocks` (not through a write): writes are also recorded under the writer, so seeding with `edit_note` would let the tests pass without
+ * reading and no longer guard "reads are recorded".
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -40,7 +36,7 @@ type Wl = { targetNoteId: string; label: string; snapshotTitle: string };
 async function links(ctx: Awaited<ReturnType<typeof buildCollabTestApp>>, noteId: string): Promise<Wl[]> {
   const doc = await loadDoc(ctx.db, noteId);
   const out: Wl[] = [];
-  if (doc === null) return out; // 從未寫進過內容的筆記沒有 note_states 列
+  if (doc === null) return out; // a note whose content was never written has no note_states row
   for (const n of doc.getXmlFragment(YDOC_FRAGMENT).createTreeWalker(x => x instanceof Y.XmlElement && x.nodeName === "wikilink")) {
     const a = (n as Y.XmlElement).getAttributes() as Partial<Wl>;
     out.push({ targetNoteId: a.targetNoteId ?? "", label: a.label ?? "", snapshotTitle: a.snapshotTitle ?? "" });
@@ -55,7 +51,7 @@ async function scene(extra: unknown[] = [], opts: Parameters<typeof buildCollabT
   const target = await ctx.createNote(owner.id, "Target v1");
   const host = await ctx.createNote(owner.id, "Host");
   const href = `/notes/${target.id}`;
-  // 直接種（不經寫入、不經讀出）：這之後 owner 沒有讀到過、也沒有寫過任何連結。
+  // Seeded directly (neither a write nor a read): afterwards the owner has neither read nor written any link.
   await seedBlocks(ctx.db, host.id, [
     { type: "paragraph", content: [{ type: "text", text: "Para links ", styles: {} }, { type: "wikilink", props: { targetNoteId: target.id, snapshotTitle: "Target v1", label: "" } }, { type: "text", text: " here.", styles: {} }] },
     ...extra,
@@ -64,14 +60,14 @@ async function scene(extra: unknown[] = [], opts: Parameters<typeof buildCollabT
   return { ctx, owner, token, target, host, href, rename };
 }
 
-describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", () => {
-  it("N1 讀到 → 目標改名 → 舊指紋 replace_section、連結文字沒動 → label 仍空、snapshotTitle 是現行標題；之後再改名仍跟著變", async () => {
+describe("#387 edit_note keeps a wikilink without custom text when writing back", () => {
+  it("read -> target renamed -> replace_section with the old fingerprint and the link text untouched -> label stays empty, snapshotTitle is the current title; a later rename still follows", async () => {
     const s = await scene();
     expect((await links(s.ctx, s.host.id)).map(l => l.label)).toEqual([""]);
     const read = await readTop(s.ctx.app, s.token, s.host.id);
     expect(read.markdown).toContain(`[Target v1](${s.href})`);
     await s.rename("Target v2");
-    // 目標改名不動這篇的指紋，所以舊指紋照樣通過（issue 的第 3 步）。
+    // Renaming the target doesn't change this note's fingerprint, so the old fingerprint still passes.
     await call(s.ctx.app, s.token, "edit_note", { note_id: s.host.id, op: "replace_section", section_id: "_top", if_match: read.fingerprint, markdown: read.markdown.replace("Para links", "Para edited links") });
     expect(await links(s.ctx, s.host.id)).toEqual([{ targetNoteId: s.target.id, label: "", snapshotTitle: "Target v2" }]);
     expect((await readTop(s.ctx.app, s.token, s.host.id)).markdown).toContain(`Para edited links [Target v2](${s.href}) here.`);
@@ -79,7 +75,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await readTop(s.ctx.app, s.token, s.host.id)).markdown).toContain(`Para edited links [Target v3](${s.href}) here.`);
   });
 
-  it("N2 agent 把連結文字改成別的字（目標讀後也改了名）→ 存成自訂文字；改成讀出沒出現過的舊名也算自訂", async () => {
+  it("agent changes the link text to another word (target also renamed after the read) -> stored as custom text; changing to an old name never seen in a read also counts as custom", async () => {
     for (const text of ["My own words", "Target v0"]) {
       const s = await scene();
       const read = await readTop(s.ctx.app, s.token, s.host.id);
@@ -91,7 +87,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     }
   });
 
-  it("N3 insert_after、append（寫進另一篇）、replace_all 照讀到的文字寫連結 → 全都沒有自訂文字", async () => {
+  it("insert_after, append (into another note) and replace_all writing links with the text as read -> none has custom text", async () => {
     const s = await scene();
     const other = await s.ctx.createNote(s.owner.id, "Other");
     const read = await readTop(s.ctx.app, s.token, s.host.id);
@@ -104,7 +100,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, other.id)).map(l => [l.label, l.snapshotTitle])).toEqual([["", "Target v2"], ["", "Target v2"]]);
   });
 
-  it("N4 記下的是每個人自己讀到的：別人沒讀過 → 照舊存成自訂文字；經 REST GET /content 讀到的也算", async () => {
+  it("what is recorded is what each person read: someone who never read it -> still stored as custom text; a read via REST GET /content counts too", async () => {
     const s = await scene();
     const restReader = await s.ctx.createUser({ email: `r-${randomUUID()}@example.com`, password: PASSWORD });
     const stranger = await s.ctx.createUser({ email: `s-${randomUUID()}@example.com`, password: PASSWORD });
@@ -114,7 +110,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     await s.ctx.share(s.host.id, stranger.id, "editor");
     const { token: restToken } = await seedTokenForUser(s.ctx.db, restReader.id, "notes:read notes:write");
     const { token: strangerToken } = await seedTokenForUser(s.ctx.db, stranger.id, "notes:read notes:write");
-    await readTop(s.ctx.app, s.token, s.host.id); // owner 讀過——不算到別人頭上
+    await readTop(s.ctx.app, s.token, s.host.id); // the owner has read it; doesn't count for anyone else
     const rest = await getContent(s.ctx.app, s.host.id, restToken);
     expect(rest.statusCode).toBe(200);
     expect((rest.json() as { markdown: string }).markdown).toContain(`[Target v1](${s.href})`);
@@ -124,9 +120,9 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, s.host.id)).map(l => l.label)).toEqual(["", "Target v1", ""]);
   });
 
-  it("N5 讀到同一個目標、同一段文字的自訂文字連結 → 寫回時照舊是那個自訂文字（最後讀到的算數）", async () => {
+  it("custom-text link read for the same target and same text -> written back it is still that custom text (the last read counts)", async () => {
     const s = await scene();
-    await readTop(s.ctx.app, s.token, s.host.id); // 記下 (目標, "Target v1") 沒有自訂文字
+    await readTop(s.ctx.app, s.token, s.host.id); // records (target, "Target v1") as having no custom text
     await s.rename("Target v2");
     const custom = await s.ctx.createNote(s.owner.id, "Custom");
     await seedBlocks(s.ctx.db, custom.id, [
@@ -138,7 +134,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, custom.id)).map(l => l.label)).toEqual(["Target v1"]);
   });
 
-  it("N6 create_note 的 content 照讀到的文字寫連結 → 沒有自訂文字", async () => {
+  it("create_note content writes links with the text as read -> no custom text", async () => {
     const s = await scene();
     await readTop(s.ctx.app, s.token, s.host.id);
     await s.rename("Target v2");
@@ -146,7 +142,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect(await links(s.ctx, r.note.id)).toEqual([{ targetNoteId: s.target.id, label: "", snapshotTitle: "Target v2" }]);
   });
 
-  it("N7 agent 自己 append 的連結（沒讀過）→ 目標改名 → 用回覆的指紋 replace_all 原樣寫回 → 仍沒有自訂文字", async () => {
+  it("a link the agent appended itself (never read) -> target renamed -> replace_all with the returned fingerprint writes it back unchanged -> still no custom text", async () => {
     const s = await scene();
     const other = await s.ctx.createNote(s.owner.id, "Other");
     const a = (await call(s.ctx.app, s.token, "edit_note", { note_id: other.id, op: "append", markdown: `Mine [Target v1](${s.href})` })) as { fingerprint: string };
@@ -156,7 +152,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect(await links(s.ctx, other.id)).toEqual([{ targetNoteId: s.target.id, label: "", snapshotTitle: "Target v2" }]);
   });
 
-  it("N10 create_note 寫下的連結（沒讀過）→ 目標改名 → 同樣的文字 append 進另一篇 → 沒有自訂文字（create 那條）", async () => {
+  it("a link written by create_note (never read) -> target renamed -> the same text appended to another note -> no custom text (the create path)", async () => {
     const s = await scene();
     await call(s.ctx.app, s.token, "create_note", { title: "Made", content: `see [Target v1](${s.href})` });
     await s.rename("Target v2");
@@ -164,7 +160,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, s.host.id)).map(l => [l.label, l.snapshotTitle])).toEqual([["", "Target v1"], ["", "Target v2"]]);
   });
 
-  it("N8 REST `POST /edits` 舊指紋 409 → 目標改名 → 照 `current` 寫回 → 仍沒有自訂文字", async () => {
+  it("REST POST /edits with an old fingerprint 409 -> target renamed -> write back per `current` -> still no custom text", async () => {
     const s = await scene();
     const stale = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.host.id}/edits`, headers: bearer(s.token), payload: { op: "replace_all", markdown: "x", if_match: "0000000000000000" } });
     expect(stale.statusCode).toBe(409);
@@ -175,9 +171,9 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect(await links(s.ctx, s.host.id)).toEqual([{ targetNoteId: s.target.id, label: "", snapshotTitle: "Target v2" }]);
   });
 
-  it("N9 REST 撤回 409 stale 的 `current` → 目標改名 → 照 `current` 寫回 → 仍沒有自訂文字", async () => {
+  it("REST undo 409 stale `current` -> target renamed -> write back per `current` -> still no custom text", async () => {
     const s = await scene([{ type: "heading", props: { level: 2 }, content: "Tail" }]);
-    // 另一位編輯者做出一筆之後被改掉的修改（他的讀寫記在他自己名下，不算到 owner 頭上）。
+    // Another editor makes an edit that is later changed (his reads and writes are recorded under himself and don't count for the owner).
     const writer = await s.ctx.createUser({ email: `w-${randomUUID()}@example.com`, password: PASSWORD });
     await s.ctx.share(s.host.id, writer.id, "editor");
     const { token: wt } = await seedTokenForUser(s.ctx.db, writer.id, "notes:read notes:write");
@@ -194,7 +190,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect(await links(s.ctx, s.host.id)).toEqual([{ targetNoteId: s.target.id, label: "", snapshotTitle: "Target v2" }]);
   });
 
-  it("N11 agent 自己寫的自訂文字連結 → 用回覆的指紋 replace_all 原樣寫回 → 仍是那個自訂文字", async () => {
+  it("a custom-text link the agent wrote itself -> replace_all with the returned fingerprint writes it back unchanged -> still that custom text", async () => {
     const s = await scene();
     const other = await s.ctx.createNote(s.owner.id, "Other");
     const a = (await call(s.ctx.app, s.token, "edit_note", { note_id: other.id, op: "append", markdown: `Mine [My own words](${s.href})` })) as { fingerprint: string };
@@ -203,7 +199,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, other.id)).map(l => l.label)).toEqual(["My own words"]);
   });
 
-  it("N12 合併前失敗的寫入不記：edit_note append 失敗 → 目標改名 → 再寫同樣文字 → 照舊存成自訂文字", async () => {
+  it("a write that fails before the merge is not recorded: edit_note append fails -> target renamed -> the same text written again -> stored as custom text as before", async () => {
     let failNext = true;
     const s = await scene([], { editingTestHooks: { beforeMerge: async () => { if (failNext) { failNext = false; throw new Error("probe: merge refused"); } } } });
     const other = await s.ctx.createNote(s.owner.id, "Other");
@@ -215,14 +211,14 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
     expect((await links(s.ctx, other.id)).map(l => l.label)).toEqual(["Target v1"]);
   });
 
-  it("N13 寫回時被清掉的原文字也隨這次寫入延長期限（edit_note 與 create_note）", async () => {
+  it("original text cleared on write-back also gets its expiry extended with the write (edit_note and create_note)", async () => {
     for (const via of ["edit_note", "create_note"] as const) {
       let now = 0;
       const shownLinks = new ShownLinkTexts({ ttlMs: 1000, now: () => now });
       const s = await scene([], { shownLinks });
-      const read = await readTop(s.ctx.app, s.token, s.host.id); // 記下 (目標, "Target v1")，到期 1000
+      const read = await readTop(s.ctx.app, s.token, s.host.id); // records (target, "Target v1"), expires at 1000
       await s.rename("Target v2");
-      now = 900; // 照讀到的文字寫回（被清成沒有自訂文字）——原文字的期限要延長到 1900
+      now = 900; // write back the text as read (cleared to no custom text): the original text's expiry must be extended to 1900
       if (via === "edit_note") {
         await call(s.ctx.app, s.token, "edit_note", { note_id: s.host.id, op: "replace_section", section_id: "_top", if_match: read.fingerprint, markdown: read.markdown.replace("Para links", "Para edited links") });
         expect((await links(s.ctx, s.host.id)).map(l => l.label)).toEqual([""]);
@@ -230,7 +226,7 @@ describe("#387 edit_note 寫回時保住「沒有自訂文字」的 wikilink", (
         const made = (await call(s.ctx.app, s.token, "create_note", { title: "Made", content: `see [Target v1](${s.href})` })) as { note: { id: string } };
         expect((await links(s.ctx, made.note.id)).map(l => l.label)).toEqual([""]);
       }
-      now = 1500; // 讀出那筆已過期；只剩寫入那次記下的
+      now = 1500; // the entry from the read has expired; only the one recorded by the write remains
       const other = await s.ctx.createNote(s.owner.id, "Other");
       await call(s.ctx.app, s.token, "edit_note", { note_id: other.id, op: "append", markdown: `Again [Target v1](${s.href})` });
       expect((await links(s.ctx, other.id)).map(l => l.label), via).toEqual([""]);

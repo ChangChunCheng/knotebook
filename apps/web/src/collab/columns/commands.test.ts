@@ -3,8 +3,6 @@ import { collabUndoManager } from "@/collab/undo";
 import { P, cursorOf, integrity, mountEditor, row, shape, textPos, withChildren, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { canInsertColumns, insertColumns, isInColumn, ungroupColumns } from "./commands";
 
-// `/grid N`、取消並排、撤銷步。
-
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
@@ -24,7 +22,7 @@ const typeAtEnd = (editor: AnyEditor, id: string, text: string) => {
 };
 
 describe("insertColumns", () => {
-  it("GC1：游標在空段落 → 換成 3 欄新列、各欄 width 1、游標在第 1 欄段落開頭", () => {
+  it("insert into an empty paragraph -> replaced by a new 3-column row, each column width 1, caret at the start of the first column's paragraph", () => {
     const editor = mount([P("x", "x0"), P("", "e0"), P("z", "z0")]);
     editor.setTextCursorPosition("e0", "start");
     const id = insertColumns(editor, 3);
@@ -37,7 +35,7 @@ describe("insertColumns", () => {
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("GC2：游標在非空段落 → 新列插在它後面", () => {
+  it("caret in a non-empty paragraph -> new row inserted after it", () => {
     const editor = mount([P("x", "x0"), P("y", "y0"), P("z", "z0")]);
     editor.setTextCursorPosition("y0", "end");
     insertColumns(editor, 2);
@@ -46,7 +44,7 @@ describe("insertColumns", () => {
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("GC3：新列成為最後一個 block → 後面補一個空段落（插入與取代兩種）", () => {
+  it("new row becomes the last block -> an empty paragraph is added after it (both insert and replace)", () => {
     const a = mount([P("x", "x0")]);
     a.setTextCursorPosition("x0", "end");
     insertColumns(a, 2);
@@ -60,14 +58,14 @@ describe("insertColumns", () => {
     expect(integrity(b)).toEqual(CLEAN);
   });
 
-  it("GC6：空段落但有子 block → 不換掉（免得子 block 跟著消失），新列插在後面", () => {
+  it("empty paragraph with child blocks -> not replaced (so the children don't vanish), new row inserted after", () => {
     const editor = mount([P("x", "x0"), withChildren(P("", "e0"), [P("k", "k0")]), P("z", "z0")]);
     editor.setTextCursorPosition("e0", "start");
     insertColumns(editor, 2);
     expect(shape(editor)).toBe("paragraph:x  paragraph{paragraph:k}  ROW[COL(paragraph) | COL(paragraph)]  paragraph:z");
   });
 
-  it("GC5：一次撤銷（共編）——先打字不 stopCapturing 再建列，undo 一次只拿掉列、字還在", () => {
+  it("one undo (collab): typing without stopCapturing then creating a row, one undo removes only the row, the text stays", () => {
     const editor = mount([P("x", "x0"), P("y", "y0"), P("z", "z0")], { collab: true });
     const manager = collabUndoManager(editor)!;
     expect(manager).toBeDefined();
@@ -80,7 +78,7 @@ describe("insertColumns", () => {
 });
 
 describe("canInsertColumns", () => {
-  it("GC4：頂層段落 true；欄內、子 block、頂層表格格子 false", () => {
+  it("top-level paragraph true; inside a column, child block, top-level table cell false", () => {
     const editor = mount([
       P("x", "x0"),
       row([[P("a", "a1")], [P("b", "b1")]], "r"),
@@ -101,7 +99,7 @@ describe("canInsertColumns", () => {
 });
 
 describe("ungroupColumns", () => {
-  it("UG1：順序＝第 1 欄全部、第 2 欄全部…，空段落丟掉，游標在第一個保留 block 開頭", () => {
+  it("order = all of column 1, all of column 2, ...; empty paragraphs dropped, caret at the start of the first kept block", () => {
     const editor = mount([P("x", "x0"), row([[P("a", "a1"), P("", "e1")], [P("", "e2")], [P("b", "b1"), P("c", "c1")]], "r"), P("z", "z0")]);
     expect(isInColumn(editor, "b1")).toBe(true);
     expect(ungroupColumns(editor, "b1")).toBe(true);
@@ -110,13 +108,13 @@ describe("ungroupColumns", () => {
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("UG1b：第 1 欄有兩顆時先排完第 1 欄（不是逐列交錯）", () => {
+  it("with two blocks in column 1 it finishes column 1 first (not interleaved row by row)", () => {
     const editor = mount([P("x", "x0"), row([[P("a", "a1"), P("q", "q1")], [P("b", "b1")]], "r"), P("z", "z0")]);
     expect(ungroupColumns(editor, "a1")).toBe(true);
     expect(shape(editor)).toBe("paragraph:x  paragraph:a  paragraph:q  paragraph:b  paragraph:z");
   });
 
-  it("UG2：全空的列 → 留一個空段落", () => {
+  it("all-empty row -> one empty paragraph left", () => {
     const editor = mount([P("x", "x0"), row([[P("", "e1")], [P("", "e2")]], "r"), P("z", "z0")]);
     expect(ungroupColumns(editor, "e2")).toBe(true);
     expect(shape(editor)).toBe("paragraph:x  paragraph  paragraph:z");
@@ -124,21 +122,21 @@ describe("ungroupColumns", () => {
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("UG2b：列是唯一的 block 且全空 → 留一個空段落", () => {
+  it("row is the only block and all empty -> one empty paragraph left", () => {
     const editor = mount([row([[P("", "e1")], [P("", "e2")]], "r")]);
     expect(ungroupColumns(editor, "e1")).toBe(true);
     expect(shape(editor)).toBe("paragraph");
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("UG3：欄內 block 的子 block 保留", () => {
+  it("child blocks of blocks inside columns are kept", () => {
     const editor = mount([row([[withChildren(P("a", "a1"), [P("k", "k1")])], [P("b", "b1")]], "r")]);
     expect(ungroupColumns(editor, "a1")).toBe(true);
     expect(shape(editor)).toBe("paragraph:a{paragraph:k}  paragraph:b");
     expect(integrity(editor)).toEqual(CLEAN);
   });
 
-  it("UG4：不在欄內的 block → 回 false、文件不變", () => {
+  it("block not inside a column -> returns false, document unchanged", () => {
     const editor = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r"), withChildren(P("p", "p0"), [P("k", "k0")])]);
     const before = shape(editor);
     expect(isInColumn(editor, "x0")).toBe(false);
@@ -147,7 +145,7 @@ describe("ungroupColumns", () => {
     expect(shape(editor)).toBe(before);
   });
 
-  it("UG5：一次撤銷（共編）——先打字不 stopCapturing 再取消並排，undo 一次回到原列、字還在", () => {
+  it("one undo (collab): typing without stopCapturing then ungrouping, one undo returns to the original row, the text stays", () => {
     const editor = mount([P("x", "x0"), row([[P("a", "a1")], [P("b", "b1")]], "r"), P("z", "z0")], { collab: true });
     const manager = collabUndoManager(editor)!;
     expect(manager).toBeDefined();

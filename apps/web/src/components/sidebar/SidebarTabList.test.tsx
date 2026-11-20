@@ -24,7 +24,7 @@ describe("SidebarTabList", () => {
     await i18n.changeLanguage("en");
   });
 
-  it("TL1：tablist 名、六顆 tab 的名稱／title／圖示／預設選中", () => {
+  it("tablist name, and the six tabs' names, titles, icons and default selection", () => {
     renderList();
     expect(screen.getByRole("tablist", { name: "Sidebar sections" })).toBeInTheDocument();
     const tabs = screen.getAllByRole("tab");
@@ -50,12 +50,12 @@ describe("SidebarTabList", () => {
     expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "false", "true", "false", "false", "false"]);
   });
 
-  it("TL2 roving：只有選中那顆 tabIndex 0", () => {
+  it("roving tabindex: only the selected tab has tabIndex 0", () => {
     renderList();
     expect(screen.getAllByRole("tab").map((tab) => tab.tabIndex)).toEqual([-1, -1, 0, -1, -1, -1]);
   });
 
-  it("TL3 點擊：切選中、tabIndex、並寫進 localStorage", () => {
+  it("click: switches selection and tabIndex, and writes to localStorage", () => {
     renderList();
     fireEvent.click(screen.getByRole("tab", { name: "Groups" }));
     expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute("aria-selected", "true");
@@ -65,7 +65,7 @@ describe("SidebarTabList", () => {
     expect(localStorage.getItem("sidebar.tab")).toBe("workspace");
   });
 
-  it("TL4 鍵盤：方向鍵循環、Home／End、preventDefault、其他鍵不處理", () => {
+  it("keyboard: arrow keys wrap around, Home/End, preventDefault, other keys ignored", () => {
     renderList();
     const tab = (name: string) => screen.getByRole("tab", { name });
     const selected = () => screen.getAllByRole("tab").find((el) => el.getAttribute("aria-selected") === "true");
@@ -76,7 +76,6 @@ describe("SidebarTabList", () => {
     expect(tab("Groups")).toHaveFocus();
 
     expect(fireEvent.keyDown(tab("Groups"), { key: "ArrowLeft" })).toBe(false);
-    // 我的筆記的左邊是最愛，再左才是最近。
     expect(fireEvent.keyDown(tab("My notes"), { key: "ArrowLeft" })).toBe(false);
     expect(selected()).toBe(tab("Favorites"));
     expect(tab("Favorites")).toHaveFocus();
@@ -84,7 +83,6 @@ describe("SidebarTabList", () => {
     expect(selected()).toBe(tab("Recent"));
     expect(tab("Recent")).toHaveFocus();
 
-    // 循環：第一顆往左 → 最後一顆；最後一顆往右 → 第一顆。
     expect(fireEvent.keyDown(tab("Recent"), { key: "ArrowLeft" })).toBe(false);
     expect(selected()).toBe(tab("Trash"));
     expect(tab("Trash")).toHaveFocus();
@@ -109,14 +107,14 @@ describe("SidebarTabList", () => {
     expect(selected()).toBe(tab("Recent"));
   });
 
-  it("TL5 a11y 關聯：id 與 aria-controls 以 idBase 組成", () => {
+  it("a11y: id and aria-controls are built from idBase", () => {
     renderList();
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((tab) => tab.id)).toEqual(TAB_IDS.map((id) => `x-tab-${id}`));
     for (const tab of tabs) expect(tab).toHaveAttribute("aria-controls", "x-panel");
   });
 
-  it("TL6 class：選中／未選的配色與共用的高度、焦點環", () => {
+  it("classes: selected/unselected colors plus the shared height and focus ring", () => {
     renderList();
     expect(screen.getByRole("tab", { name: "My notes" })).toHaveClass("border-brand", "text-brand-on-soft");
     for (const name of ["Recent", "Favorites", "Groups", "Shared with me", "Trash"]) {
@@ -128,10 +126,10 @@ describe("SidebarTabList", () => {
     }
   });
 
-  it("TL6b 窄寬：六顆均分 tablist、不帶固定寬或左右內距，200 px 側欄也排得下", () => {
-    // jsdom 沒有版面，這裡守住寬度的來源：每顆 `flex-1` 均分、內容只有 16 px 圖示。
-    // 200 px 側欄扣掉卡片邊框與 tablist 的 `mx-2` 剩 182 px，六顆各約 30 px；任何一顆加了固定寬、最小寬或左右內距
-    // （含任何斷點前綴與 ps／pe），或 tablist 加了間距或內距，六顆的最小寬加總就可能超過 182 px。真瀏覽器量測在 e2e。
+  it("narrow width: the six tabs split the tablist evenly with no fixed width or horizontal padding, so they fit a 200 px sidebar", () => {
+    // jsdom has no layout, so this pins where the width comes from: each tab is `flex-1` and its content is only a 16 px icon.
+    // A 200 px sidebar minus the card border and the tablist's `mx-2` leaves 182 px, about 30 px per tab; a fixed width, min width or horizontal padding
+    // on any tab (any breakpoint prefix, ps/pe included), or spacing or padding on the tablist, can push the summed minimum widths past 182 px.
     renderList();
     const tablist = screen.getByRole("tablist");
     expect(tablist).toHaveClass("mx-2", "flex");
@@ -147,12 +145,12 @@ describe("SidebarTabList", () => {
     }
   });
 
-  it("TL6c 標題列動作：六個 tab 都宣告選取；最愛 tab 只有選取（沒有新增）", () => {
+  it("header actions: all six tabs declare select; the favorites tab has select only (no add)", () => {
     expect(tabSpec("favorites").actions).toEqual(["selectMode"]);
     for (const id of TAB_IDS) expect(tabSpec(id).actions).toContain("selectMode");
   });
 
-  it("TL7 zh-TW：tablist 與 tab 名", async () => {
+  it("zh-TW: tablist and tab names", async () => {
     await i18n.changeLanguage("zh-TW");
     renderList();
     expect(screen.getByRole("tablist", { name: "側欄分類" })).toBeInTheDocument();

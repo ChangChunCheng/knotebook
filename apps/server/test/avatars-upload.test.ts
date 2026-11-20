@@ -1,7 +1,4 @@
-/**
- * `POST /api/auth/avatars`（上傳即選用）與 `GET /api/auth/avatars`（候選清單）。
- * 上傳走真路由；用量與鎖序走真交易；並發案用 `avatarTestHooks.afterUserLock` 把第一條請求停在持有 users 列鎖之後。
- */
+/** Concurrency cases use `avatarTestHooks.afterUserLock` to hold the first request right after it takes the users row lock. */
 import { readFile, readdir } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -24,12 +21,12 @@ const MIB = 1_048_576;
 const rowsOf = async (db: Awaited<ReturnType<typeof buildTestApp>>["db"], userId: string) =>
   db.select().from(userAvatars).where(eq(userAvatars.userId, userId)).orderBy(asc(userAvatars.createdAt));
 
-describe("POST /api/auth/avatars：成功", () => {
-  it("201 回候選 DTO；DB 一列目前頭貼、avatar_auto 關掉；原圖落在 uploads 目錄且位元組相等、沒有暫存殘檔；/me 立刻反映", async () => {
+describe("POST /api/auth/avatars: success", () => {
+  it("201 returns the candidate DTO; DB has one current avatar row, avatar_auto turned off; original lands in the uploads directory with equal bytes and no temp leftovers; /me reflects it immediately", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const cookies = await cookieOf(alice.id);
-    // 先讀一次 /me，讓閘門的 60 秒快取裝著「沒有頭貼」；上傳之後若沒 invalidate，下一次讀仍會是 null。
+    // Read /me once so the gate's 60 s cache holds "no avatar"; without invalidate after the upload the next read would still be null.
     const before = await app.inject({ method: "GET", url: "/api/auth/me", cookies });
     expect(before.json().avatar).toBeNull();
     const [{ avatarAuto }] = await db.select({ avatarAuto: users.avatarAuto }).from(users).where(eq(users.id, alice.id));
@@ -69,7 +66,7 @@ describe("POST /api/auth/avatars：成功", () => {
     expect(me.json().avatar).toEqual({ id: row.id, v: 1, pending: false });
   });
 
-  it("第二張上傳：第一張變非目前、第二張是目前；清單新到舊、兩張都在；別人的目前頭貼不受影響", async () => {
+  it("second upload: the first becomes non-current, the second is current; list newest first with both present; others' current avatars unaffected", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -92,8 +89,8 @@ describe("POST /api/auth/avatars：成功", () => {
   });
 });
 
-describe("POST /api/auth/avatars：大小與格式", () => {
-  it("原圖上限跟站台限制：把上限設 1 MiB → 1.5 MiB 原圖 413 file_too_large、0.9 MiB 成功；413 不留檔不留列", async () => {
+describe("POST /api/auth/avatars: size and format", () => {
+  it("original size limit follows the site limit: with the limit set to 1 MiB -> a 1.5 MiB original gets 413 file_too_large, 0.9 MiB succeeds; the 413 leaves no file and no row", async () => {
     const ctx = await buildTestApp();
     const admin = await seedUser(ctx.db, { isAdmin: true });
     const alice = await seedUser(ctx.db);
@@ -111,7 +108,7 @@ describe("POST /api/auth/avatars：大小與格式", () => {
     expect(await rowsOf(ctx.db, alice.id)).toHaveLength(1);
   });
 
-  it("顯示圖超過上限一個位元組 → 413 file_too_large；剛好等於上限成功", async () => {
+  it("display image one byte over the limit -> 413 file_too_large; exactly at the limit succeeds", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const over = await uploadAvatar(app, alice.id, { display: webpOf(MAX_AVATAR_DISPLAY_BYTES + 1) });
@@ -123,7 +120,7 @@ describe("POST /api/auth/avatars：大小與格式", () => {
     expect(exact.statusCode, exact.body).toBe(201);
   });
 
-  it("GIF（原圖或顯示圖）、不是圖的文字（含副檔名假裝成 png）→ 415 unsupported_media_type；不留檔不留列", async () => {
+  it("GIF (original or display image), non-image text (including one pretending to be png by extension) -> 415 unsupported_media_type; no file, no row left", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>', "utf-8");
@@ -143,7 +140,7 @@ describe("POST /api/auth/avatars：大小與格式", () => {
     expect(await rowsOf(db, alice.id)).toEqual([]);
   });
 
-  it("缺 original／display／crop、crop 越界或負數或非整數或 size 為 0 或含 NUL 或不是 JSON → 400 invalid_body；不留檔不留列", async () => {
+  it("missing original/display/crop, crop out of bounds or negative or non-integer or size 0 or containing NUL or not JSON -> 400 invalid_body; no file, no row left", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     const c = DEFAULT_CROP;
@@ -177,8 +174,8 @@ describe("POST /api/auth/avatars：大小與格式", () => {
   });
 });
 
-describe("POST /api/auth/avatars：配額", () => {
-  it("空間已滿 → 預檢 409 storage_quota_exceeded（本人看得到三數，incomingBytes 為 null）；不留檔不留列", async () => {
+describe("POST /api/auth/avatars: quota", () => {
+  it("space full -> precheck 409 storage_quota_exceeded (the owner sees the three numbers, incomingBytes is null); no file, no row left", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     await giveUserQuota(db, alice.id, 1000);
@@ -193,7 +190,7 @@ describe("POST /api/auth/avatars：配額", () => {
     expect(await rowsOf(db, alice.id)).toHaveLength(1);
   });
 
-  it("預檢在讀 body 之前回應：真 socket 送 9 MB 原圖，409 在 body 送完前就到", async () => {
+  it("the precheck responds before the body is read: a real socket sending a 9 MB original gets the 409 before the body finishes", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     await giveUserQuota(db, alice.id, 0);
@@ -251,7 +248,7 @@ describe("POST /api/auth/avatars：配額", () => {
     await app.close();
   }, 30_000);
 
-  it("沒滿但放不下 → 交易內 409（incomingBytes 是原圖＋顯示圖）；不留檔、不留新列，原本的目前頭貼仍是目前", async () => {
+  it("not full but doesn't fit -> 409 inside the transaction (incomingBytes is original + display); no file, no new row, the previous current avatar stays current", async () => {
     const { app, db, uploadsDir } = await buildTestApp();
     const alice = await seedUser(db);
     await giveUserQuota(db, alice.id, 1000);
@@ -267,7 +264,7 @@ describe("POST /api/auth/avatars：配額", () => {
     expect(avatarAuto).toBe(true);
   });
 
-  it("恰好放得下（等於上限）→ 201", async () => {
+  it("exactly fits (equal to the limit) -> 201", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     await giveUserQuota(db, alice.id, 1100);
@@ -276,8 +273,8 @@ describe("POST /api/auth/avatars：配額", () => {
   });
 });
 
-describe("POST /api/auth/avatars：限流", () => {
-  it("每人每窗口一次時第二次 429；與筆記附件共用同一桶（先傳附件再傳頭貼 → 429）", async () => {
+describe("POST /api/auth/avatars: rate limit", () => {
+  it("second request in the same window per person -> 429; shares one bucket with note attachments (attachment then avatar -> 429)", async () => {
     const { app, db } = await buildTestApp({ limiters: freshLimiters({ upload: new FixedWindowLimiter({ limit: 1, windowMs: 60_000 }) }) });
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -292,8 +289,8 @@ describe("POST /api/auth/avatars：限流", () => {
   });
 });
 
-describe("POST /api/auth/avatars：同一人的並發", () => {
-  it("第一條請求持 users 列鎖暫停時，同一人的第二條請求被擋住；放行後兩張都在、恰一張是目前", async () => {
+describe("POST /api/auth/avatars: concurrency of the same person", () => {
+  it("while the first request is paused holding the users row lock, the same person's second request is blocked; after release both are present and exactly one is current", async () => {
     let entered = 0;
     let release!: () => void;
     const held = new Promise<void>(r => (release = r));
@@ -332,18 +329,18 @@ describe("POST /api/auth/avatars：同一人的並發", () => {
     const rows = await rowsOf(db, alice.id);
     expect(rows).toHaveLength(2);
     expect(rows.filter(r => r.isCurrent)).toHaveLength(1);
-    // 後拿到鎖的那條上傳最後寫入，所以是目前頭貼。
+    // The upload that gets the lock later writes last, so it is the current avatar.
     expect(rows.find(r => r.isCurrent)!.originalSize).toBe(1600);
   });
 });
 
 describe("GET /api/auth/avatars", () => {
-  it("refreshable：已連結、有最後看到的圖片網址、沒有它的候選、且對得到啟用中的登入服務才列；providerName 是服務顯示名", async () => {
+  it("refreshable: listed only if linked, with a last seen picture URL, no candidate for it, and matching an enabled login provider; providerName is the provider's display name", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
     await seedAuthProvider(db, { issuerUrl: "https://sso-a.example", displayName: "Company SSO", sortOrder: 0 });
-    // issuer 取 resolved 值：比對的是 effective issuer，不是設定的網址。
+    // issuer uses the resolved value: the comparison is on the effective issuer, not the configured URL.
     await seedAuthProvider(db, { issuerUrl: "https://sso-b.example/start", resolvedIssuer: "https://sso-b.example", displayName: "Partner SSO", sortOrder: 1 });
     await seedAuthProvider(db, { issuerUrl: "https://sso-off.example", displayName: "Retired SSO", enabled: false, sortOrder: 2 });
 
@@ -360,7 +357,7 @@ describe("GET /api/auth/avatars", () => {
     await ident(bob.id, "https://sso-a.example", "https://pics.example/bob.png");
     await seedAuthProvider(db, { issuerUrl: "https://sso-c.example", displayName: "Third SSO", sortOrder: 3 });
     const candidate = await seedAvatarRow(db, { userId: alice.id, originalSize: 70, displaySize: 0, identityId: hasCandidate });
-    // bob 的目前頭貼與候選不會出現在 alice 的清單裡。
+    // bob's row must not appear in alice's list
     await seedAvatarRow(db, { userId: bob.id, originalSize: 500, displaySize: 50, isCurrent: true });
 
     const res = await app.inject({ method: "GET", url: "/api/auth/avatars", cookies: await cookieOf(alice.id) });
@@ -388,7 +385,7 @@ describe("GET /api/auth/avatars", () => {
     });
   });
 
-  it("沒有任何東西時回空清單；bob 的候選不會出現在 alice 的清單", async () => {
+  it("empty list when there is nothing; bob's candidates don't appear in alice's list", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const bob = await seedUser(db);
@@ -398,8 +395,8 @@ describe("GET /api/auth/avatars", () => {
   });
 });
 
-describe("頭貼上傳與清單的存取界線", () => {
-  it("未登入 401；只帶 Bearer（API token）401；跨源 Origin 的上傳 403", async () => {
+describe("access boundaries of avatar upload and list", () => {
+  it("not signed in 401; Bearer only (API token) 401; upload with cross-origin Origin 403", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const { token } = await seedTokenForUser(db, alice.id);
@@ -413,7 +410,7 @@ describe("頭貼上傳與清單的存取界線", () => {
     expect(await rowsOf(db, alice.id)).toEqual([]);
   });
 
-  it("頭貼不進附件讀取路徑：候選 id 與原圖檔名都讀不到（404）", async () => {
+  it("avatars don't enter the attachment read path: candidate id and original file name both can't be read (404)", async () => {
     const { app, db } = await buildTestApp();
     const alice = await seedUser(db);
     const res = await uploadAvatar(app, alice.id);

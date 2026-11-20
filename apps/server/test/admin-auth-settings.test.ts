@@ -31,7 +31,7 @@ async function identity(db: Built["db"], userId: string, issuer: string, sub: st
 const patchProvider = (b: Built, id: string, payload: object) =>
   b.app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${id}`, cookies: b.cookies, payload });
 
-/** 等到這個測試 DB 上至少 `n` 條連線在等鎖（`waitForBlockedOrSettled` 只認 ≥1；兩條真請求都要卡住時用這個）。 */
+/** Waits until at least `n` connections on this test DB are waiting on locks (`waitForBlockedOrSettled` only accepts >= 1; use this when two real requests must both be blocked). */
 async function waitForLockWaiters(pool: Built["db"]["$client"], n: number, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -45,9 +45,9 @@ async function waitForLockWaiters(pool: Built["db"]["$client"], n: number, timeo
 }
 
 /**
- * 兩邊都是真路由的交錯：holder 只持 `auth_providers` 的 ACCESS EXCLUSIVE 表鎖（任何讀它的語句都會卡住），讓 `first` 在
- * 交易中途（已取得它的站台設定列鎖／FOR SHARE 之後、讀 `auth_providers` 時）停住；再送 `second`，等它也卡住（卡在 `first`
- * 持有的列鎖上）；放掉表鎖後 `first` 先提交、`second` 接著跑。holder 不模擬任何一方的寫入。
+ * Interleaving where both sides are real routes: the holder holds only an ACCESS EXCLUSIVE table lock on `auth_providers` (any statement reading it blocks),
+ * halting `first` mid-transaction (after it took its site-settings row lock / FOR SHARE, while reading `auth_providers`); `second` is then sent and also blocks
+ * (on the row lock `first` holds); after the table lock is released `first` commits first and `second` runs. The holder simulates neither side's writes.
  */
 async function interleave<T, U>(b: Built, first: () => Promise<T>, second: () => Promise<U>): Promise<[T, U]> {
   const holder = await holderFor(b.db);
@@ -65,14 +65,14 @@ async function interleave<T, U>(b: Built, first: () => Promise<T>, second: () =>
   }
 }
 
-describe("GET /api/admin/auth/settings（#187）", () => {
-  it("只給站台管理員（GET 與 PATCH）", async () => {
+describe("GET /api/admin/auth/settings (#187)", () => {
+  it("site admins only (GET and PATCH)", async () => {
     const b = await adminApp();
     await expectAdminOnly(b.app, b.db, "GET", "/api/admin/auth/settings");
     await expectAdminOnly(b.app, b.db, "PATCH", "/api/admin/auth/settings", { registrationEnabled: true });
   });
 
-  it("預設形：DB 值、passwordLoginForced 分開；impact 三欄", async () => {
+  it("default shape: DB values and passwordLoginForced are separate; three impact fields", async () => {
     const b = await adminApp();
     expect((await get(b)).json()).toEqual({
       registrationEnabled: true,
@@ -85,7 +85,7 @@ describe("GET /api/admin/auth/settings（#187）", () => {
     expect((await get(forced)).json()).toMatchObject({ passwordLoginEnabled: false, passwordLoginForced: true });
   });
 
-  it("usersWithoutSso：有身分但其 provider 停用 → 計入；無斜線身分＋尾斜線 provider 且 resolved_issuer 已寫 → 不計；停用帳號不計", async () => {
+  it("usersWithoutSso: identity whose provider is disabled counts; slash-less identity + trailing-slash provider with resolved_issuer written doesn't count; disabled accounts don't count", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     await seedAuthProvider(b.db, { issuerUrl: "https://off.example", enabled: false, clientSecret: null });
@@ -96,11 +96,11 @@ describe("GET /api/admin/auth/settings（#187）", () => {
     const linkedSlash = await seedUser(b.db);
     await identity(b.db, linkedSlash.id, B, "y");
     await seedUser(b.db, { disabled: true });
-    // admin（無身分）＋ linkedOff ＝ 2；linkedSlash 不計；disabled 不計
+    // admin (no identity) + linkedOff = 2; linkedSlash and disabled don't count
     expect((await get(b)).json().passwordLoginImpact).toEqual({ usersWithoutSso: 2, actingAdminHasSso: false, enabledProviders: 2 });
   });
 
-  it("讀不到 site_settings 列 → registration false、passwordLogin true＋error log（不回 500）", async () => {
+  it("site_settings row unreadable -> registration false, passwordLogin true + error log (not a 500)", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     await b.db.delete(siteSettings);
@@ -111,15 +111,15 @@ describe("GET /api/admin/auth/settings（#187）", () => {
   });
 });
 
-describe("PATCH /api/admin/auth/settings（#187）", () => {
-  it("body：{} → 400；多欄 → 400；非 boolean → 400", async () => {
+describe("PATCH /api/admin/auth/settings (#187)", () => {
+  it("body: {} -> 400; extra fields -> 400; non-boolean -> 400", async () => {
     const b = await adminApp();
     for (const body of [{}, { registrationEnabled: true, x: 1 }, { passwordLoginEnabled: "false" }]) {
       expect((await patch(b, body)).json().error.code).toBe("invalid_body");
     }
   });
 
-  it("只改 registrationEnabled → 200、回 GET 同形；不驗防自鎖守衛（DB 已關、管理員無 SSO 也 200，DB 值仍關）", async () => {
+  it("changing only registrationEnabled -> 200, same shape as GET; the self-lockout guard is not evaluated (DB already off, admin without SSO still 200, DB value stays off)", async () => {
     const b = await adminApp();
     await b.db.update(siteSettings).set({ passwordLoginEnabled: false });
     const res = await patch(b, { registrationEnabled: false });
@@ -128,7 +128,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(await dbSettings(b)).toMatchObject({ registrationEnabled: false, passwordLoginEnabled: false });
   });
 
-  it("①零個啟用 provider → 409 sso_provider_required、DB 不變", async () => {
+  it("zero enabled providers -> 409 sso_provider_required, DB unchanged", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A, enabled: false, clientSecret: null });
     const res = await patch(b, { passwordLoginEnabled: false });
@@ -137,7 +137,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect((await dbSettings(b)).passwordLoginEnabled).toBe(true);
   });
 
-  it("②操作者無可用身分（無身分／身分的 provider 停用）→ 409 admin_sso_link_required；③兩者皆滿足 → 200", async () => {
+  it("operator has no usable identity (no identity / identity's provider disabled) -> 409 admin_sso_link_required; with both conditions satisfied -> 200", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     expect((await patch(b, { passwordLoginEnabled: false })).json().error.code).toBe("admin_sso_link_required");
@@ -150,7 +150,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(ok.json()).toMatchObject({ passwordLoginEnabled: false, passwordLoginImpact: { actingAdminHasSso: true, enabledProviders: 1 } });
   });
 
-  it("⑦env 強制期間結果相同（以 DB 值判）；⑧開啟永遠 200（零 provider 也行）", async () => {
+  it("same result while env forces it (decided by the DB value); turning on is always 200 (even with zero providers)", async () => {
     const b = await adminApp({ config: { ...testConfig, passwordLoginForceEnable: true } });
     expect((await patch(b, { passwordLoginEnabled: false })).json().error.code).toBe("sso_provider_required");
     await b.db.update(siteSettings).set({ passwordLoginEnabled: false });
@@ -158,14 +158,14 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect((await dbSettings(b)).passwordLoginEnabled).toBe(true);
   });
 
-  it("⑪DB 已關、管理員無 SSO、冪等重送 false → 409 admin_sso_link_required", async () => {
+  it("DB already off, admin without SSO, idempotent resend of false -> 409 admin_sso_link_required", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     await b.db.update(siteSettings).set({ passwordLoginEnabled: false });
     expect((await patch(b, { passwordLoginEnabled: false })).json().error.code).toBe("admin_sso_link_required");
   });
 
-  it("一次改兩個、帳密那半被擋 → 409，註冊開關也不變（整筆回滾）", async () => {
+  it("changing two switches where the password half is blocked -> 409, the registration switch is unchanged too (whole request rolled back)", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     const res = await patch(b, { registrationEnabled: false, passwordLoginEnabled: false });
@@ -173,7 +173,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(await dbSettings(b)).toMatchObject({ registrationEnabled: true, passwordLoginEnabled: true });
   });
 
-  it("以密碼 session 關閉後，同一個 session 仍有效、可再開回；開回後密碼登入成功", async () => {
+  it("after turning it off from a password session, that session stays valid and can turn it back on; password login works after turning it back on", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     const pw = await insertPasswordUser(b.db, { password: "correct-horse-battery-staple" });
@@ -188,7 +188,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect((await b.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: pw.email, password: pw.password } })).statusCode).toBe(200);
   });
 
-  it("稽核 log：passwordLoginEnabled 有變才記一行（操作者、新值、passwordLoginForced）；沒變不記", async () => {
+  it("audit log: one line only when passwordLoginEnabled changes (operator, new value, passwordLoginForced); nothing when unchanged", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     await seedAuthProvider(b.db, { issuerUrl: A });
@@ -200,7 +200,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(lines.map(l => l.obj)).toEqual([expect.objectContaining({ userId: b.admin.id, passwordLoginEnabled: false, passwordLoginForced: false })]);
   });
 
-  it("讀不到 site_settings 列 → 500＋log.error", async () => {
+  it("site_settings row unreadable -> 500 + log.error", async () => {
     const logs = captureLogs();
     const b = await adminApp({}, logs.options);
     await b.db.delete(siteSettings);
@@ -208,7 +208,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(logs.lines.some(l => l.level === "error" && l.msg === SITE_SETTINGS_MISSING_MESSAGE)).toBe(true);
   });
 
-  it("P2 以 effective issuer 比：身分＝resolved_issuer、provider 的 issuer_url 帶尾斜線 → 關閉 200、actingAdminHasSso true（絕對值，不只是逐格一致）", async () => {
+  it("compared by effective issuer: identity = resolved_issuer, provider's issuer_url has a trailing slash -> turning off gives 200, actingAdminHasSso true (absolute value, not just cell-by-cell consistency)", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: `${B}/` });
     await b.db.execute(sql`update auth_providers set resolved_issuer = ${B} where id = ${p.id}`);
@@ -218,7 +218,7 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
     expect(res.json()).toMatchObject({ passwordLoginEnabled: false, passwordLoginImpact: { actingAdminHasSso: true, usersWithoutSso: 0 } });
   });
 
-  it("actingAdminHasSso=false ⇔ 關閉 PATCH 回 admin_sso_link_required（同一個函式，逐格一致）", async () => {
+  it("actingAdminHasSso=false <=> turning off PATCH returns admin_sso_link_required (same function, consistent cell by cell)", async () => {
     const cells: Array<[string, (b: Built) => Promise<void>]> = [
       ["無身分", async () => {}],
       ["身分的 provider 停用", async b => { await seedAuthProvider(b.db, { issuerUrl: B, enabled: false, clientSecret: null }); await identity(b.db, b.admin.id, B, "x"); }],
@@ -241,8 +241,8 @@ describe("PATCH /api/admin/auth/settings（#187）", () => {
   });
 });
 
-describe("並發（#187）", () => {
-  it("P4 lost update：另一連線持鎖把 registration_enabled 改 false（未提交）→ 這邊只改 passwordLoginEnabled:true 等它提交 → registration 仍 false", async () => {
+describe("concurrency (#187)", () => {
+  it("lost update: another connection holds the lock and sets registration_enabled false (uncommitted) -> this side changes only passwordLoginEnabled:true and waits for the commit -> registration still false", async () => {
     const b = await adminApp();
     const holder = await holderFor(b.db);
     try {
@@ -259,7 +259,7 @@ describe("並發（#187）", () => {
     expect(await dbSettings(b)).toMatchObject({ registrationEnabled: false, passwordLoginEnabled: true });
   });
 
-  it("另一連線停用最後一個 provider（持站台設定列鎖、未提交）→ 關閉帳密等它提交 → 409 sso_provider_required", async () => {
+  it("another connection disables the last provider (holding the site-settings row lock, uncommitted) -> turning off password login waits for the commit -> 409 sso_provider_required", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A });
     await identity(b.db, b.admin.id, A, "a");
@@ -278,7 +278,7 @@ describe("並發（#187）", () => {
     expect((await dbSettings(b)).passwordLoginEnabled).toBe(true);
   });
 
-  it("關閉先拿到鎖（未提交）→ 解除「有密碼＋最後一個身分」等它提交 → 讀到關 → 409 last_login_method", async () => {
+  it("turning off takes the lock first (uncommitted) -> unlinking 'password + last identity' waits for the commit -> reads off -> 409 last_login_method", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     const u = await insertPasswordUser(b.db);
@@ -299,7 +299,7 @@ describe("並發（#187）", () => {
     }
   });
 
-  it("解除先拿到 FOR SHARE（未提交、已刪管理員唯一身分）→ 關閉等它提交 → 防自鎖判斷看得到身分已刪 → 409 admin_sso_link_required", async () => {
+  it("unlink takes FOR SHARE first (uncommitted, the admin's only identity deleted) -> turning off waits for the commit -> the self-lockout check sees the identity gone -> 409 admin_sso_link_required", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     const idA = await identity(b.db, b.admin.id, A, "admin-a");
@@ -320,8 +320,8 @@ describe("並發（#187）", () => {
   });
 });
 
-describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何一方）", () => {
-  it("真形：settings PATCH 關閉先拿到站台設定列鎖 → provider PATCH 停用最後一個 provider 等它提交 → 409 sso_provider_required", async () => {
+describe("concurrency: both sides are real routes (holder only holds a table lock, simulates neither side)", () => {
+  it("real shape: settings PATCH turning off takes the site-settings row lock first -> provider PATCH disabling the last provider waits for the commit -> 409 sso_provider_required", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A });
     await identity(b.db, b.admin.id, A, "a");
@@ -333,7 +333,7 @@ describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何
     expect((await b.db.execute<{ n: number }>(sql`select count(*)::int as n from auth_providers where enabled`)).rows[0]!.n).toBe(1);
   });
 
-  it("真形：DB 關；provider PATCH 停用 p1 先拿到鎖 → 另一個停用 p2 等它提交 → 409，終態 p2 仍啟用", async () => {
+  it("real shape: DB off; provider PATCH disabling p1 takes the lock first -> another request disabling p2 waits for the commit -> 409, p2 still enabled at the end", async () => {
     const b = await adminApp();
     const p1 = await seedAuthProvider(b.db, { issuerUrl: A });
     const p2 = await seedAuthProvider(b.db, { issuerUrl: B });
@@ -348,7 +348,7 @@ describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何
     expect(enabled).toEqual([p2.id]);
   });
 
-  it("真形：provider PATCH 停用最後一個先拿到鎖（DB 開、不驗）→ settings PATCH 關閉等它提交 → 409 sso_provider_required", async () => {
+  it("real shape: provider PATCH disabling the last provider takes the lock first (DB on, not checked) -> settings PATCH turning off waits for the commit -> 409 sso_provider_required", async () => {
     const b = await adminApp();
     const p = await seedAuthProvider(b.db, { issuerUrl: A });
     await identity(b.db, b.admin.id, A, "a");
@@ -359,7 +359,7 @@ describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何
     expect((await dbSettings(b)).passwordLoginEnabled).toBe(true);
   });
 
-  it("P4 lost update 真形：settings PATCH（關註冊＋關帳密）先拿到鎖 → 另一個只開帳密等它提交 → 註冊仍關、帳密開", async () => {
+  it("lost update, real shape: settings PATCH (registration off + password login off) takes the lock first -> another request turning only password login on waits for the commit -> registration stays off, password login on", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     await identity(b.db, b.admin.id, A, "a");
@@ -373,7 +373,7 @@ describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何
     expect(await dbSettings(b)).toMatchObject({ registrationEnabled: false, passwordLoginEnabled: true });
   });
 
-  it("真形：settings PATCH 關閉先拿到鎖 → 解除「有密碼＋最後一個身分」等它提交 → 讀到關 → 409 last_login_method", async () => {
+  it("real shape: settings PATCH turning off takes the lock first -> unlinking 'password + last identity' waits for the commit -> reads off -> 409 last_login_method", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     await identity(b.db, b.admin.id, A, "admin-a");
@@ -390,7 +390,7 @@ describe("並發：兩邊都是真路由（holder 只持表鎖、不模擬任何
     expect(unlink.json().error.code).toBe("last_login_method");
   });
 
-  it("真形：解除（管理員有密碼、刪唯一身分）先拿到 FOR SHARE → settings PATCH 關閉等它提交 → 409 admin_sso_link_required", async () => {
+  it("real shape: unlink (admin has a password, deleting the only identity) takes FOR SHARE first -> settings PATCH turning off waits for the commit -> 409 admin_sso_link_required", async () => {
     const b = await adminApp();
     await seedAuthProvider(b.db, { issuerUrl: A });
     await b.db.update(users).set({ passwordHash: "not-a-real-hash" }).where(sql`id = ${b.admin.id}`);

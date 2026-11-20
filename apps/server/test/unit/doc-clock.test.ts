@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { docClock } from "../../src/collab/store.js";
 
-describe("docClock（Y.decodeStateVector(Y.encodeStateVector(doc)) 各 client seq 總和）", () => {
-  it("空 doc → 0", () => {
+describe("docClock (sum of per-client seq from Y.decodeStateVector(Y.encodeStateVector(doc)))", () => {
+  it("empty doc -> 0", () => {
     expect(docClock(new Y.Doc())).toBe(0);
   });
 
-  it("單一 client：每次編輯後嚴格遞增，增量等於該次寫入的 op 長度", () => {
+  it("single client: strictly increases after each edit, by the length of the written op", () => {
     const doc = new Y.Doc();
     expect(docClock(doc)).toBe(0);
 
@@ -21,25 +21,25 @@ describe("docClock（Y.decodeStateVector(Y.encodeStateVector(doc)) 各 client se
     expect(docClock(doc)).toBe(8);
   });
 
-  it("多 client：合併另一個 clientID 的更新後，clock 是兩者總和（遞增，非取代）", () => {
+  it("multiple clients: after merging an update from another clientID the clock is the sum of both (increases, not replaced)", () => {
     const docA = new Y.Doc();
-    docA.getText("t").insert(0, "abc"); // clientA clock = 3
+    docA.getText("t").insert(0, "abc");
     expect(docClock(docA)).toBe(3);
 
     const docB = new Y.Doc();
-    docB.getText("t").insert(0, "de"); // clientB（不同隨機 clientID）clock = 2
+    docB.getText("t").insert(0, "de");
     expect(docClock(docB)).toBe(2);
 
-    // 把 docB 的更新併進 docA：模擬 remote sync，docA 現在同時持有兩個 client 的貢獻。
+    // Merge docB's update into docA to simulate a remote sync: docA now holds both clients' contributions.
     Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB));
     expect(docClock(docA)).toBe(5);
 
-    // 反向合併也成立：docB 併入 docA 全量更新後兩邊收斂到同一個總和。
+    // The reverse merge also works: after docB takes docA's full update both converge on the same sum.
     Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
     expect(docClock(docB)).toBe(5);
   });
 
-  it("encodeStateAsUpdate/applyUpdate 往返：clock 不變", () => {
+  it("encodeStateAsUpdate/applyUpdate round trip: clock unchanged", () => {
     const doc = new Y.Doc();
     doc.getText("t").insert(0, "hello world");
     const before = docClock(doc);
@@ -50,19 +50,19 @@ describe("docClock（Y.decodeStateVector(Y.encodeStateVector(doc)) 各 client se
     expect(docClock(restored)).toBe(before);
   });
 
-  it("刪除內容觸發 tombstone/GC 合併後，clock 不減（維持刪除前的總和）", () => {
+  it("clock does not decrease after tombstone/GC merging triggered by deletes (stays at the pre-delete sum)", () => {
     const doc = new Y.Doc();
-    doc.getText("t").insert(0, "hello world"); // 單一 client、單一 insert，clock = 11
+    doc.getText("t").insert(0, "hello world");
     const beforeDelete = docClock(doc);
     expect(beforeDelete).toBe(11);
 
-    // 刪除只是把既有 item 標記為已刪除（可能連帶把它切成兩段），不消耗新的 clock 額度。
+    // Deleting only marks existing items as deleted (possibly splitting one in two); it consumes no new clock.
     doc.getText("t").delete(0, 5);
     expect(docClock(doc)).toBeGreaterThanOrEqual(beforeDelete);
 
-    // 經一次 encodeStateAsUpdate/applyUpdate 往返（gc 預設開啟，deleted item 會被壓縮成
-    // GC struct）：clock 仍不得低於刪除前的總和——GC 只影響「保留哪些內容」，不影響
-    // 「每個 client 已知涵蓋到哪個 clock」這個判定基準。
+    // After one encodeStateAsUpdate/applyUpdate round trip (gc is on by default, deleted items are compressed into GC structs) the clock
+    // still must not drop below the pre-delete sum: GC only affects which content is kept, not the basis for "which clock each client is
+    // known up to".
     const restored = new Y.Doc();
     Y.applyUpdate(restored, Y.encodeStateAsUpdate(doc));
     expect(docClock(restored)).toBeGreaterThanOrEqual(beforeDelete);

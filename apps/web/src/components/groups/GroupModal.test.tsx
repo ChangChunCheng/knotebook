@@ -24,7 +24,7 @@ import {
 
 const NOT_FOUND = "We couldn't find what you were looking for.";
 
-describe("GroupModal（/groups/:id/*，#247）", () => {
+describe("GroupModal (/groups/:id/*, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -33,7 +33,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("G1 四項導覽（nav 的可及名稱＝群組名）：Members／Roles／Storage／About，href 依序；在 /groups/:id 時 Members 是 aria-current", async () => {
+  it("four-item navigation (nav accessible name = group name): Members/Roles/Storage/About, hrefs in order; at /groups/:id Members is aria-current", async () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, groupFetch(() => [GROUP_ADMIN], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE)]));
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     const nav = within(dialog).getByRole("navigation", { name: "Team Alpha" });
@@ -47,24 +47,24 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     expect(within(nav).getByRole("link", { name: "Members" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("G2 Members 帶 end：在 /groups/:id/roles 時 Members 不是 aria-current（Roles 才是）", async () => {
+  it("Members carries end: at /groups/:id/roles Members is not aria-current (Roles is)", async () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id}/roles`, groupFetch(() => [GROUP_ADMIN]));
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
-    // 先等角色頁的 h1：證明 roles route 已掛上（沒有它會被 splat 轉回成員頁；轉址前那一瞬 aria-current 也會暫時對）。
+    // Wait for the roles page's h1 first: it proves the roles route is mounted (without it the splat would redirect back to the members page; at the moment before the redirect aria-current also happens to be right).
     await within(dialog).findByRole("heading", { level: 1, name: "Roles" });
     const nav = within(dialog).getByRole("navigation", { name: "Team Alpha" });
     expect(within(nav).getByRole("link", { name: "Roles" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "Members" })).not.toHaveAttribute("aria-current");
   });
 
-  it("G3 標題＝群組名、副文字＝我的角色（roleLabel：內建一般成員顯示 Member）；成員頁 h1 是 Members", async () => {
+  it("title = group name, subtext = my role (roleLabel: built-in member shows Member); the members page h1 is Members", async () => {
     renderGroupRoute(`/groups/${GROUP_MEMBER.id}`, groupFetch(() => [GROUP_MEMBER]));
     const dialog = await screen.findByRole("dialog", { name: "Team Beta" });
     expect(within(dialog).getByText("Member", { selector: "span, p, div" })).toBeInTheDocument();
     expect(await within(dialog).findByRole("heading", { level: 1, name: "Members" })).toBeInTheDocument();
   });
 
-  it("G4 找不到（非成員／不存在／id 不合法同形）：右卡 errors.not_found、標題是備用字「Group」、無副文字；外殼與導覽照常", async () => {
+  it("not found (non-member / nonexistent / invalid id, all the same shape): right card errors.not_found, the title is the fallback \"Group\", no subtext; shell and navigation as usual", async () => {
     for (const path of [`/groups/${GROUP_MEMBER.id}`, "/groups/not-a-real-id"]) {
       const view = renderGroupRoute(path, groupFetch(() => [GROUP_ADMIN]));
       const dialog = await screen.findByRole("dialog", { name: "Group" });
@@ -77,7 +77,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     }
   });
 
-  it("G5 群組清單載入中：右卡「Loading…」、標題「Group」；載入失敗（首次就 500）：右卡錯誤字、標題「Group」", async () => {
+  it("groups list loading: right card \"Loading...\", title \"Group\"; load failure (500 on first fetch): right card error text, title \"Group\"", async () => {
     const view = renderGroupRoute(
       `/groups/${GROUP_ADMIN.id}`,
       groupFetch(() => [GROUP_ADMIN], () => [], (url, method) => (url === "/api/groups" && method === "GET" ? new Promise<Response>(() => {}) : null)),
@@ -96,7 +96,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     expect(within(errored).queryByRole("heading", { level: 1, name: "Members" })).not.toBeInTheDocument();
   });
 
-  it("G6 /groups/:id 渲染成員頁、網址不變（不是轉址迴圈）；/groups/:id/xyz → /groups/:id 並轉傳 backgroundLocation", async () => {
+  it("/groups/:id renders the members page with the URL unchanged (not a redirect loop); /groups/:id/xyz -> /groups/:id forwarding backgroundLocation", async () => {
     const view = renderGroupRoute(`/groups/${GROUP_ADMIN.id}`, groupFetch(() => [GROUP_ADMIN]));
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     expect(await within(dialog).findByRole("heading", { level: 1, name: "Members" })).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     expect(JSON.parse(locationText().split("|")[1])).toEqual({ backgroundLocation: BG_NOTE });
   });
 
-  it("G7 Esc 與 ✕ 關閉 → navigate(backgroundLocation)；深連結（無 state）→ /", async () => {
+  it("Esc and the close button -> navigate(backgroundLocation); a deep link (no state) -> /", async () => {
     const view = renderGroupRoute({ pathname: `/groups/${GROUP_ADMIN.id}`, state: { backgroundLocation: BG_NOTE } }, groupFetch(() => [GROUP_ADMIN]));
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -123,12 +123,12 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     await waitFor(() => expect(locationText().startsWith("/|")).toBe(true));
   });
 
-  it("G8 網址的群組 id 是大寫 → 仍解析到同一個群組（不分大小寫比對）", async () => {
+  it("an uppercase group id in the URL still resolves to the same group (case-insensitive match)", async () => {
     renderGroupRoute(`/groups/${GROUP_ADMIN.id.toUpperCase()}`, groupFetch(() => [GROUP_ADMIN]));
     expect(await screen.findByRole("dialog", { name: "Team Alpha" })).toBeInTheDocument();
   });
 
-  it("G9 已顯示群組後 ['groups'] refetch 失敗 → 右卡內容留著（不換成錯誤字）", async () => {
+  it("after the group has been shown, a failing ['groups'] refetch leaves the right card content (not replaced by the error text)", async () => {
     let failGroups = false;
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE)], (url, method) =>
       url === "/api/groups" && method === "GET" && failGroups ? fail(500, "internal") : null,
@@ -137,7 +137,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
     const dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     await within(dialog).findByRole("heading", { level: 1, name: "Members" });
     failGroups = true;
-    // 加人觸發 ['groups'] 失效重抓（useAddMember → invalidate）
+    // Adding a member invalidates and refetches ['groups'] (useAddMember -> invalidate)
     fetchMock.mockImplementationOnce(() => Promise.resolve(ok(member("u-x", "x@example.com", "X", ADMIN_ROLE), 201)));
     fireEvent.change(within(dialog).getByLabelText("Email address"), { target: { value: "x@example.com" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
@@ -148,7 +148,7 @@ describe("GroupModal（/groups/:id/*，#247）", () => {
   });
 });
 
-describe("GroupAboutSection（/groups/:id/about，#247）", () => {
+describe("GroupAboutSection (/groups/:id/about, #247)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     dismissAllToasts();
@@ -166,7 +166,7 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     return dialog;
   }
 
-  it("A1 canManageGroup：名稱可改（PATCH、toast）；資訊區有建立時間與成員數；有「Delete group」outline 鈕（不塗紅）", async () => {
+  it("canManageGroup: the name can be edited (PATCH, toast); the info area has creation time and member count; there is an outline \"Delete group\" button (not red)", async () => {
     let group = { ...GROUP_ADMIN };
     const fetchMock = groupFetch(() => [group], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE), member("u-bob", "bob@example.com", "Bob", MEMBER_ROLE)], (url, method) => {
       if (url === `/api/groups/${GROUP_ADMIN.id}` && method === "PATCH") {
@@ -187,7 +187,7 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     expect(del.className).not.toMatch(/(^|\s)(bg-destructive|text-destructive)(\s|$)/);
   });
 
-  it("A2 沒有 canManageGroup：名稱唯讀（純文字、無輸入框、無 Save name）；沒有 Delete group；項次四個照舊（不隱藏）", async () => {
+  it("without canManageGroup: the name is read-only (plain text, no input, no Save name); no Delete group; the four nav items are unchanged (not hidden)", async () => {
     const dialog = await openAbout(
       `/groups/${GROUP_MEMBER.id}/about`,
       groupFetch(() => [GROUP_MEMBER], () => [member("u-a", "a@example.com", "A", ADMIN_ROLE), member(ME.id, ME.email, "Me", MEMBER_ROLE)]),
@@ -195,13 +195,13 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     );
     expect(within(dialog).queryByLabelText("Group name")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Save name" })).not.toBeInTheDocument();
-    // `:not(.sr-only)`：外殼的 sr-only DialogDescription 預設＝標題，也是一個內容為群組名的 <p>（ManagementShell）
+    // `:not(.sr-only)`: the shell's sr-only DialogDescription defaults to the title and is also a <p> whose content is the group name (ManagementShell)
     expect(within(dialog).getByText("Team Beta", { selector: "p:not(.sr-only)" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Delete group" })).not.toBeInTheDocument();
     expect(within(within(dialog).getByRole("navigation", { name: "Team Beta" })).getAllByRole("link")).toHaveLength(4);
   });
 
-  it("A3 退出後的去處（三案）：背景是別頁 → 回背景；背景是本群組筆記（含大寫 id）→ /；無背景 → /；從不導到 /settings/*", async () => {
+  it("where to go after leaving (three cases): background is another page -> back to the background; background is this group's note (including an uppercase id) -> /; no background -> /; never to /settings/*", async () => {
     const members = [member("u-a", "a@example.com", "A", ADMIN_ROLE), member(ME.id, ME.email, "Me", MEMBER_ROLE)];
     const cases: Array<[unknown, string]> = [
       [{ backgroundLocation: BG_NOTE }, BG_NOTE.pathname],
@@ -225,7 +225,7 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     }
   });
 
-  it("A4 刪除群組後的去處：背景是本群組筆記 → /；背景是別頁 → 回背景（DELETE {mode:'delete'}）", async () => {
+  it("where to go after deleting the group: background is this group's note -> /; background is another page -> back to the background (DELETE {mode:'delete'})", async () => {
     for (const [bg, expected] of [
       [BG_GROUP_NOTE(GROUP_ADMIN.id), "/"],
       [BG_NOTE, BG_NOTE.pathname],
@@ -253,7 +253,7 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     }
   });
 
-  it("A5 刪除 409 not_admin → toast、確認框留著、不導頁（自 main 版 SettingsGroupDetailSection.test.tsx:413 搬來）", async () => {
+  it("delete 409 not_admin: toast, the confirm dialog stays, no navigation", async () => {
     const fetchMock = groupFetch(() => [GROUP_ADMIN], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE)], (url, method) =>
       url === `/api/groups/${GROUP_ADMIN.id}` && method === "DELETE" ? fail(409, "not_admin") : null,
     );
@@ -269,11 +269,11 @@ describe("GroupAboutSection（/groups/:id/about，#247）", () => {
     expect(locationText().startsWith(`/groups/${GROUP_ADMIN.id}/about|`)).toBe(true);
   });
 
-  it("A6 退出區：最後一位管理員看不到；兩位管理員之一看得到；成員名單載入中不渲染；409 last_admin → toast、不導頁（自 main 版 :433 後半、:499、:522 搬來）", async () => {
+  it("leave section: the last admin does not see it; one of two admins does; not rendered while the member list is loading; 409 last_admin -> toast, no navigation", async () => {
     const lone = renderGroupRoute(`/groups/${GROUP_ADMIN.id}/about`, groupFetch(() => [GROUP_ADMIN], () => [member(ME.id, ME.email, "Me", ADMIN_ROLE)]));
     let dialog = await screen.findByRole("dialog", { name: "Team Alpha" });
     await within(dialog).findByRole("button", { name: "Delete group" });
-    // 等成員名單落地（退出區要名單到了才判得出是不是最後一位管理員），否則「看不到 Leave group」恆真
+    // Wait for the member list to land (the leave section needs it to know whether this is the last admin), otherwise "does not see Leave group" is always true
     await within(dialog).findByText("1 member");
     expect(within(dialog).queryByRole("button", { name: "Leave group" })).not.toBeInTheDocument();
     lone.unmount();
