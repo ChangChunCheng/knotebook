@@ -1,4 +1,5 @@
--- #388 網頁登入改伺服器端 session：只建 sessions 表（id、user_id FK 串刪、created_at、expires_at）與兩個索引；單一交易、無非交易式 DDL、不回填。升級後舊 cookie（JWT 沒有 sid）一律視為未登入，所有人重新登入一次。回滾到前一版：舊碼不讀這張表，照舊只驗簽章與 tv。
+-- Server-side web sessions. After the upgrade, old cookies (JWT without sid) count as logged out, so everyone signs in once.
+-- Rollback: old code doesn't read this table and verifies only the signature and tv.
 CREATE TABLE "sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,

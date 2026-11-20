@@ -1,4 +1,3 @@
--- 登入服務圖示：auth_providers 加四欄與四條 CHECK。單一交易（drizzle migrator 整批），無非交易式 DDL（migrate.test.ts 有輔助 grep）。
 ALTER TABLE "auth_providers" ADD COLUMN "icon_kind" text DEFAULT 'template' NOT NULL;--> statement-breakpoint
 ALTER TABLE "auth_providers" ADD COLUMN "icon_data" "bytea";--> statement-breakpoint
 ALTER TABLE "auth_providers" ADD COLUMN "icon_mime" text;--> statement-breakpoint

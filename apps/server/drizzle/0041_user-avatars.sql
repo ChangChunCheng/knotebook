@@ -1,4 +1,5 @@
--- #404 使用者頭貼：建 user_avatars（候選頭貼：原圖檔名、顯示圖 bytea、裁切範圍、is_current 部分唯一索引等），並加 users.avatar_auto、user_identities.last_picture_url、user_identities.picture_dismissed_url 三欄。單一交易、無非交易式 DDL、不回填；avatar_auto 預設 true，所以已用 OIDC 登入的人下次登入會自動帶入頭貼。不動 users.avatar_url。回滾到前一版：舊碼不讀這張表和這三欄，留著無害；之後再升回來，表裡的資料重新生效。
+-- avatar_auto defaults to true, so users who already sign in via OIDC get their picture on next login. users.avatar_url is not touched.
+-- Rollback: old code ignores the new table and columns; leaving them is harmless, and after re-upgrading their data takes effect again.
 CREATE TABLE "user_avatars" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,

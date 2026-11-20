@@ -1,4 +1,5 @@
--- #334 最愛：只建 note_favorites（每人每篇至多一列：PK (user_id, note_id)；user_id、note_id 兩條 FK 都 ON DELETE CASCADE；note_id 索引支撐永久刪筆記時的 cascade；created_at 預設存整毫秒）；單一交易、無非交易式 DDL、不回填。回滾到前一版：舊碼不讀這張表，表留著無害；之後再升回來，表裡的紀錄照舊生效。
+-- The note_id index backs the cascade when a note is permanently deleted.
+-- Rollback: old code doesn't read the table, which is harmless left in place; after re-upgrading, its rows take effect again.
 CREATE TABLE "note_favorites" (
 	"user_id" uuid NOT NULL,
 	"note_id" uuid NOT NULL,
