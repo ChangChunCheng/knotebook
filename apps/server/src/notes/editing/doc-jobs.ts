@@ -214,7 +214,7 @@ export async function editOnFork(
     switch (op) {
       case "replace_all": {
         beforeBlocks = isEmptyDoc ? [] : top;
-        const inserted = edits.replace(top.map(b => b.id), blocks);
+        const inserted = edits.replace(top.map(b => b.id), blocks, top);
         afterIds = inserted.map(b => b.id);
         // On an empty doc the only old block is the paragraph the mount normalized, never part of the note.
         if (!isEmptyDoc) keep(beforeBlocks, inserted);
@@ -225,7 +225,7 @@ export async function editOnFork(
         if (sectionIds.length === 0) afterIds = ed.insertBlocks(blocks, top[0]!.id, "before").map(b => b.id);
         else {
           beforeBlocks = pickBlocks(topLevelBlocksById(ed), sectionIds);
-          const inserted = edits.replace(sectionIds, blocks);
+          const inserted = edits.replace(sectionIds, blocks, beforeBlocks);
           afterIds = inserted.map(b => b.id);
           keep(beforeBlocks, inserted);
         }

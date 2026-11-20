@@ -11,16 +11,6 @@ import type { DbOrTx } from "../../db/tx.js";
 import { noteIsLive } from "../service.js";
 import type { EditingRuntime, SessionLease } from "./runtime.js";
 
-/**
- * Inserts after the old last block, then deletes the old blocks. `replaceBlocks` in one transaction makes y-prosemirror diff new paragraphs against old ones (Yjs splices the whole structure array per split: 49,000 `<br>` → 24,500 formatted takes 12 s vs 0.85 s). After the last block rather than before the first, so the insertion origin is inside the old section: before the first block it shares an origin with a paragraph a browser types at the end of the previous section, and the client id could move that paragraph into the target section.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple
-export function replaceBlocksFresh(editor: BlockNoteEditor<any, any, any>, ids: string[], blocks: Parameters<BlockNoteEditor<any, any, any>["insertBlocks"]>[0]): { id: string }[] {
-  const inserted = blocks.length === 0 ? [] : editor.insertBlocks(blocks, ids[ids.length - 1]!, "after");
-  editor.removeBlocks(ids);
-  return inserted;
-}
-
 const BLOCK_ELEMENTS = new Set(["blockContainer", "columnList", "column"]);
 
 // Pre-order, iterative (nesting depth is client-controlled); only block structure is descended into, never inline content.
@@ -106,6 +96,27 @@ export function removeBlocksInDoc(doc: Y.Doc, ids: readonly string[]): void {
   }
 }
 
+/** Same id, type, props, content and children, compared as plain data (a key holding `undefined` counts as absent). A block that omits a default prop does not match its full form, which only costs the skip. */
+function sameBlock(a: AnyBlock, b: AnyPartialBlock): boolean {
+  const stack: Array<[unknown, unknown]> = [[a, b]];
+  while (stack.length > 0) {
+    const [x, y] = stack.pop()!;
+    if (x === y) continue;
+    if (typeof x !== "object" || typeof y !== "object" || x === null || y === null) return false;
+    if (Array.isArray(x) !== Array.isArray(y)) return false;
+    const xo = x as Record<string, unknown>;
+    const yo = y as Record<string, unknown>;
+    const xk = Object.keys(xo).filter(k => xo[k] !== undefined);
+    const yk = Object.keys(yo).filter(k => yo[k] !== undefined);
+    if (xk.length !== yk.length) return false;
+    for (const k of xk) {
+      if (yo[k] === undefined) return false;
+      stack.push([xo[k], yo[k]]);
+    }
+  }
+  return true;
+}
+
 /**
  * Collects the old blocks of a rewrite while the editor is open and removes them only after it is closed (`withForkEditor`).
  * `replace` and `remove` do not check ids one by one (a per-id lookup is O(blocks) each); `removeBlocksInDoc` checks them after close and throws on a missing id.
@@ -118,16 +129,22 @@ export class ForkEdits {
 
   /**
    * Inserts `blocks` after the last of `ids` through the editor and queues `ids` for removal; `ids`: non-empty, distinct, top-level, present, not yet queued. With no blocks it behaves as `remove(ids)` and returns [].
+   * `old`: the current blocks of `ids`, in order. A leading run whose block has the same id and is {@link sameBlock} equal to the new one stays untouched (no copy is inserted, the old block is not queued) and comes back as the first entries of the result. The editor-level removal kept exactly that run: y-prosemirror keeps old nodes that equal the new ones from the front and the inserted copies from the back, and deleting an equal old block instead would drop text a browser types into it while the write is in flight and rebuild it in every open tab.
    * After the old last block rather than before the first: replacing in one editor call makes y-prosemirror diff new paragraphs against old ones (Yjs splices the whole structure array per split: 49,000 `<br>` → 24,500 formatted takes 12 s vs 0.85 s), and before the first block the insertion origin is shared with a paragraph a browser types at the end of the previous section, so the client id could move that paragraph into the target section.
    */
-  replace(ids: readonly string[], blocks: AnyPartialBlock[]): AnyBlock[] {
-    if (blocks.length === 0) {
-      this.remove(ids);
-      return [];
+  replace(ids: readonly string[], blocks: AnyPartialBlock[], old?: readonly AnyBlock[]): AnyBlock[] {
+    let kept = 0;
+    if (old) while (kept < ids.length && kept < blocks.length && kept < old.length && old[kept]!.id === ids[kept] && sameBlock(old[kept]!, blocks[kept]!)) kept++;
+    const restIds = ids.slice(kept);
+    const restBlocks = blocks.slice(kept);
+    const keptBlocks = old ? old.slice(0, kept) : [];
+    if (restBlocks.length === 0) {
+      if (restIds.length > 0) this.remove(restIds);
+      return keptBlocks;
     }
-    const inserted = this.editor.insertBlocks(blocks, ids[ids.length - 1]!, "after") as AnyBlock[];
-    for (const id of ids) this.queued.add(id);
-    return inserted;
+    const inserted = this.editor.insertBlocks(restBlocks, ids[ids.length - 1]!, "after") as AnyBlock[];
+    for (const id of restIds) this.queued.add(id);
+    return [...keptBlocks, ...inserted];
   }
 
   /** Queues `ids` for removal. When that would leave no top-level block, first inserts one empty paragraph after the last of them and returns it; otherwise null. */

@@ -64,7 +64,7 @@ export async function prepareRevertOnFork(
     let reinsertedIds: string[] = [];
     const revertReplace = () => {
       if (before.length === 0) edits.remove(row.afterBlockIds);
-      else reinsertedIds = edits.replace(row.afterBlockIds, before).map(b => b.id);
+      else reinsertedIds = edits.replace(row.afterBlockIds, before, removedSnapshot).map(b => b.id);
     };
     // `ForkEdits.remove` keeps the top level non-empty itself; relying on the editor's normalization write-back for that is a known trap (#100).
     const revertInsert = () => void edits.remove(row.afterBlockIds);

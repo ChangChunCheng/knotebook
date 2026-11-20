@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { prepareRevertOnFork, type RevertRow } from "../../src/notes/editing/revert-core.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import {
   EditorSession,
@@ -13,6 +14,7 @@ import {
   removeBlocksInDoc,
   topLevelBlocksById,
   withForkEditor,
+  type AnyBlock,
   type AnyEditor,
   type AnyPartialBlock,
   type ForkEdits,
@@ -274,7 +276,7 @@ describe("withForkEditor and ForkEdits: same document and same update as removin
   });
 
   // The editor-level removal goes through y-prosemirror's content diff, which keeps an old block that equals its reinserted copy and drops the copy; removal at the Yjs layer always deletes the old block. The result reads the same, only the delete set differs.
-  it("a reinserted copy that carries a removed block's id and equals it replaces the old block: same document, different delete set", async () => {
+  it("without the old blocks passed, a reinserted copy that carries a removed block's id and equals it replaces the old block: same document, different delete set", async () => {
     const state = stateOf(await docOf([H("hA", "A"), P("a1", "a1 text")]));
     const { fork, sv } = forkWithClient(state, 4242);
     const w = await withForkEditor(rt, fork, sv, (_ed, e) => void e.replace(["hA", "a1"], [H("hA", "A"), P("a1", "a1 old")]));
@@ -493,4 +495,256 @@ describe("referenceApplySync fixture", () => {
     expect(xmlOf(fork)).toBe(xmlOf(r.doc));
     expect(w.perRegion).toEqual(r.perRegion);
   });
+});
+
+/** Every item of the root blockGroup in list order, deleted ones included. */
+function groupItems(doc: Y.Doc): Y.Item[] {
+  const group = doc.getXmlFragment(YDOC_FRAGMENT).get(0) as Y.XmlElement;
+  const out: Y.Item[] = [];
+  for (let item = group._start; item !== null; item = item.right) out.push(item);
+  return out;
+}
+
+/** For each top-level block of `state`: does its original Yjs item survive `diff`? */
+function survivors(state: Uint8Array, diff: Uint8Array): boolean[] {
+  const base = new Y.Doc();
+  Y.applyUpdate(base, state);
+  const baseKeys = groupItems(base).filter(i => !i.deleted).map(i => `${i.id.client}:${i.id.clock}`);
+  const after = new Y.Doc();
+  Y.applyUpdate(after, state);
+  Y.applyUpdate(after, diff);
+  const alive = new Set(groupItems(after).filter(i => !i.deleted).map(i => `${i.id.client}:${i.id.clock}`));
+  return baseKeys.map(k => alive.has(k));
+}
+
+const jsonOf = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+async function fullBlocks(state: Uint8Array): Promise<AnyBlock[]> {
+  const doc = new Y.Doc();
+  Y.applyUpdate(doc, state);
+  const s = await EditorSession.open(rt, doc);
+  try {
+    return jsonOf(s.editor.document) as AnyBlock[];
+  } finally {
+    s.close();
+  }
+}
+const withText = (b: AnyBlock, text: string): AnyBlock => ({ ...b, content: [{ type: "text", text, styles: {} }] }) as AnyBlock;
+
+/** The same replace_all the way a version apply sends it: every block carries its existing id. */
+async function replaceAllBothWays(state: Uint8Array, next: AnyBlock[], clientID = 4242) {
+  const { fork, sv } = forkWithClient(state, clientID);
+  const w = await withForkEditor(rt, fork, sv, (ed, e) => e.replace(ed.document.map(b => b.id), next as AnyPartialBlock[], ed.document));
+  const r = await referenceWrite(rt, state, clientID, ed => {
+    ed.insertBlocks(next as never, "c1", "after");
+    ed.removeBlocks(BASE_IDS);
+  });
+  return { fork, w, r };
+}
+
+describe("unchanged leading blocks are left alone (#553)", () => {
+  // The editor-level removal inserted a copy of every block and then deleted the copies of the leading run, so its update carries those dead structs; the new update does not. Which old blocks survive and the document are the same.
+  const shapes: Array<[string, number | null, number]> = [["only the last block changed", 7, 7], ["only a middle block changed", 3, 3], ["only the first block changed", 0, 0], ["nothing changed", null, 8]];
+
+  it.each(shapes)("%s: the same old blocks survive as in the editor-level removal, same document", async (_name, changed, survivingCount) => {
+    const state = stateOf(await docOf(baseBlocks()));
+    const old = await fullBlocks(state);
+    const next = old.map((b, i) => (i === changed ? withText(b, "CHANGED") : b));
+    const { fork, w, r } = await replaceAllBothWays(state, next);
+    const kept = survivors(state, w.diff);
+    expect(kept).toEqual(survivors(state, r.diff));
+    expect(kept.filter(Boolean)).toHaveLength(survivingCount);
+    expect(xmlOf(fork)).toBe(xmlOf(r.doc));
+    expect(topIds(fork)).toEqual(topIds(r.doc));
+    if (changed === 0) expect(sameBytes(w.diff, r.diff)).toBe(true);
+    else expect(w.diff.length).toBeLessThan(r.diff.length);
+    if (changed === null) {
+      const d = Y.decodeUpdate(w.diff);
+      expect(d.structs).toHaveLength(0);
+      expect(d.ds.clients.size).toBe(0);
+    }
+  });
+
+  it("an equal block after the first difference is replaced by its copy, as in the editor-level removal", async () => {
+    const state = stateOf(await docOf(baseBlocks()));
+    const old = await fullBlocks(state);
+    const next = old.map((b, i) => (i === 3 ? withText(b, "CHANGED") : b));
+    const { w, r } = await replaceAllBothWays(state, next);
+    expect(survivors(state, w.diff)).toEqual([true, true, true, false, false, false, false, false]);
+    expect(survivors(state, r.diff)).toEqual([true, true, true, false, false, false, false, false]);
+    const copies = (u: Uint8Array) => Y.decodeUpdate(u).structs.filter(st => st.id.client === 4242 && (st as Y.Item).content.constructor.name === "ContentType").length;
+    expect(copies(w.diff)).toBeLessThan(copies(r.diff));
+  });
+
+  it("the skipped leading block is returned first and the rest goes as before", async () => {
+    const state = stateOf(await docOf([H("hA", "A"), P("a1", "a1 text")]));
+    const old = await fullBlocks(state);
+    const next = [old[0]!, withText(old[1]!, "a1 old")];
+    const { fork, sv } = forkWithClient(state, 4242);
+    const w = await withForkEditor(rt, fork, sv, (ed, e) => e.replace(["hA", "a1"], next as AnyPartialBlock[], ed.document));
+    const r = await referenceWrite(rt, state, 4242, ed => {
+      ed.insertBlocks(next as never, "a1", "after");
+      ed.removeBlocks(["hA", "a1"]);
+    });
+    expect(w.value.map(b => b.id)).toEqual(["hA", "a1"]);
+    expect(survivors(state, w.diff)).toEqual([true, false]);
+    expect(survivors(state, r.diff)).toEqual([true, false]);
+    expect(xmlOf(fork)).toBe(xmlOf(r.doc));
+    expect(topIds(fork)).toEqual(["hA", "a1"]);
+    expect(new Set(allBlockIds(fork)).size).toBe(2);
+  });
+
+  it("a block that omits a default prop is not equal to its full form: the old block is replaced", async () => {
+    const state = stateOf(await docOf([H("hA", "A"), P("a1", "a1 text")]));
+    const { fork, sv } = forkWithClient(state, 4242);
+    await withForkEditor(rt, fork, sv, (ed, e) => void e.replace(["hA", "a1"], [H("hA", "A"), P("a1", "a1 text")], ed.document));
+    expect(topIds(fork)).toEqual(["hA", "a1"]);
+    const copy = new Y.Doc();
+    Y.applyUpdate(copy, state);
+    expect(survivors(state, Y.encodeStateAsUpdate(fork, Y.encodeStateVector(copy)))).toEqual([false, false]);
+  });
+
+  it("only the replaced blocks are queued, and skipping every block queues none", async () => {
+    const state = stateOf(await docOf([H("hA", "A"), P("a1", "a1 text")]));
+    const old = await fullBlocks(state);
+    const { fork, sv } = forkWithClient(state, 4242);
+    await withForkEditor(rt, fork, sv, (ed, e) => {
+      const out = e.replace(["hA", "a1"], [old[0]!, withText(old[1]!, "new"), P("n1", "tail")] as AnyPartialBlock[], ed.document);
+      expect(out.map(b => b.id)).toEqual(["hA", "a1", "n1"]);
+      expect(e.isQueued("hA")).toBe(false);
+      expect(e.isQueued("a1")).toBe(true);
+    });
+    const second = forkWithClient(state, 4243);
+    await withForkEditor(rt, second.fork, second.sv, (ed, e) => {
+      expect(e.replace(["hA", "a1"], [old[0]!, old[1]!] as AnyPartialBlock[], ed.document).map(b => b.id)).toEqual(["hA", "a1"]);
+      expect(e.removals).toEqual([]);
+    });
+    expect(topIds(second.fork)).toEqual(["hA", "a1"]);
+  });
+
+  describe("text typed in a browser while the write is in flight", () => {
+    async function typedAfterMerge(state: Uint8Array, diff: Uint8Array, typeInto: string): Promise<string> {
+      const client = new Y.Doc();
+      client.clientID = 900_001;
+      Y.applyUpdate(client, state);
+      const csv = Y.encodeStateVector(client);
+      const s = await EditorSession.open(rt, client);
+      try {
+        s.editor.updateBlock(typeInto, { content: "TYPED" });
+      } finally {
+        s.close();
+      }
+      const update = Y.encodeStateAsUpdate(client, csv);
+      const live = new Y.Doc();
+      Y.applyUpdate(live, state);
+      Y.applyUpdate(live, diff);
+      Y.applyUpdate(live, update);
+      return xmlOf(live);
+    }
+
+    it("version-apply shape: only the last block changed, typing into an unchanged block survives, as in the editor-level removal", async () => {
+      const state = stateOf(await docOf(baseBlocks()));
+      const old = await fullBlocks(state);
+      const next = old.map((b, i) => (i === 7 ? withText(b, "CHANGED") : b));
+      const { w, r } = await replaceAllBothWays(state, next);
+      expect(await typedAfterMerge(state, w.diff, "a2")).toContain("TYPED");
+      expect(await typedAfterMerge(state, r.diff, "a2")).toContain("TYPED");
+    });
+
+    it("typing into the block that changed is lost on both paths", async () => {
+      const state = stateOf(await docOf(baseBlocks()));
+      const old = await fullBlocks(state);
+      const next = old.map((b, i) => (i === 7 ? withText(b, "CHANGED") : b));
+      const { w, r } = await replaceAllBothWays(state, next);
+      expect(await typedAfterMerge(state, w.diff, "c1")).not.toContain("TYPED");
+      expect(await typedAfterMerge(state, r.diff, "c1")).not.toContain("TYPED");
+    });
+
+    it("revert of a kept-id rewrite with an unchanged leading heading: typing into the heading survives", async () => {
+      const state = stateOf(await docOf([H("hA", "A"), P("a1", "a1 new"), P("a2", "tail")]));
+      const before = await fullBlocks(stateOf(await docOf([H("hA", "A"), P("a1", "a1 old")])));
+      const row: RevertRow = { op: "replace_section", afterBlockIds: ["hA", "a1"], afterFingerprint: null, beforeBlocks: before, anchor: null };
+      const { fork, sv } = forkWithClient(state, 4242);
+      const w = await prepareRevertOnFork(rt, row, fork, sv, false);
+      const r = await referenceWrite(rt, state, 4242, ed => {
+        ed.insertBlocks(before as never, "a1", "after");
+        ed.removeBlocks(["hA", "a1"]);
+      });
+      expect(w.reinsertedIds).toEqual(["hA", "a1"]);
+      expect(survivors(state, w.diff)).toEqual(survivors(state, r.diff));
+      expect(survivors(state, w.diff)).toEqual([true, false, true]);
+      expect(xmlOf(fork)).toBe(xmlOf(r.doc));
+      expect(await typedAfterMerge(state, w.diff, "hA")).toContain("TYPED");
+      expect(await typedAfterMerge(state, r.diff, "hA")).toContain("TYPED");
+    });
+  });
+
+  it("an editor mounted on the live doc while the update arrives keeps its nodes for the unchanged blocks and writes nothing back", async () => {
+    const state = stateOf(await docOf(baseBlocks()));
+    const old = await fullBlocks(state);
+    const next = old.map((b, i) => (i === 7 ? withText(b, "CHANGED") : b));
+    const { w, r } = await replaceAllBothWays(state, next);
+    const reused = async (diff: Uint8Array): Promise<number> => {
+      const live = new Y.Doc();
+      Y.applyUpdate(live, state);
+      const s = await EditorSession.open(rt, live);
+      let count = 0;
+      let clock = 0;
+      try {
+        const nodes = () => {
+          const top = s.editor.prosemirrorState.doc.firstChild!;
+          return Array.from({ length: top.childCount }, (_, i) => top.child(i));
+        };
+        const before = new Set(nodes());
+        Y.applyUpdate(live, diff);
+        const after = nodes();
+        expect(after.map(n => n.attrs.id as string)).toEqual(BASE_IDS);
+        count = after.filter(n => before.has(n)).length;
+        clock = totalClock(live);
+      } finally {
+        s.close();
+      }
+      expect(totalClock(live)).toBe(clock);
+      return count;
+    };
+    const newReused = await reused(w.diff);
+    const oldReused = await reused(r.diff);
+    console.log(`[probe] reused top-level nodes: new=${newReused} old=${oldReused}`);
+    expect(newReused).toBe(oldReused);
+    expect(newReused).toBe(7);
+  });
+
+  it("replacing 4,000 blocks where everything is identical, or only the last differs, costs little more than mounting the note", async () => {
+    const state = stateOf(yjsNote(4_000));
+    let minMount = Infinity;
+    let minSame = Infinity;
+    let minLast = Infinity;
+    for (let run = 0; run < 3; run++) {
+      const m = forkFrom(state);
+      minMount = Math.min(
+        minMount,
+        await timeIt(async () => {
+          const s = await EditorSession.open(rt, m.fork);
+          s.close();
+        })
+      );
+      for (const lastDiffers of [false, true]) {
+        const { fork, sv } = forkFrom(state);
+        const ms = await timeIt(() =>
+          withForkEditor(rt, fork, sv, (ed, e) => {
+            const old = ed.document as AnyBlock[];
+            const next = jsonOf(old);
+            if (lastDiffers) next[next.length - 1] = withText(next[next.length - 1]!, "CHANGED");
+            e.replace(old.map(b => b.id), next as AnyPartialBlock[], old);
+          })
+        );
+        if (lastDiffers) {
+          minLast = Math.min(minLast, ms);
+          expect(topIds(fork)).toHaveLength(4_000);
+        } else minSame = Math.min(minSame, ms);
+      }
+    }
+    console.log(`[perf] #553 replace 4,000 with skip: mount=${Math.round(minMount)} ms identical=${Math.round(minSame)} ms lastDiffers=${Math.round(minLast)} ms`);
+    expect(minSame).toBeLessThanOrEqual(1.5 * minMount + 200);
+    expect(minLast).toBeLessThanOrEqual(1.5 * minMount + 200);
+  }, 120_000);
 });
