@@ -286,6 +286,27 @@ describe("if_match and concurrency", () => {
     expect(md).toContain("第二段（併發）");
   });
 
+  it("provider inserts a paragraph right before section B's heading between fork and merge of replace_section B -> 201; that paragraph stays before # B and is not moved into B", async () => {
+    const hooks: EditingTestHooks = {};
+    const s = await setup(undefined, { editingTestHooks: hooks });
+    hooks.beforeMerge = async () => {
+      await humanEdit(s.ctx, s.note.id, s.client, "USER-BEFORE-B", ed =>
+        ed.insertBlocks([{ type: "paragraph", content: "USER-BEFORE-B" }], ed.document[2]!.id, "before"));
+    };
+    const b = (await s.content()).outline[2];
+    const res = await s.post({ op: "replace_section", section_id: b.sectionId, markdown: "# B2\n\nAI-B-BODY", if_match: b.fingerprint });
+    expect(res.statusCode).toBe(201);
+    await waitFor("provider receives the merge", 3_000, () => docText(s.client.doc).includes("AI-B-BODY"));
+    const md = (await s.content()).markdown as string;
+    const user = md.indexOf("USER-BEFORE-B");
+    expect(user).toBeGreaterThan(-1);
+    expect(user).toBeLessThan(md.indexOf("# B2"));
+    expect(user).toBeGreaterThan(md.indexOf("# A"));
+    expect(md.indexOf("AI-B-BODY")).toBeGreaterThan(md.indexOf("# B2"));
+    const live = ids(s.client.doc);
+    expect(new Set(live).size).toBe(live.length);
+  });
+
   it("concurrency: exactly one of the same-section requests succeeds (replace_section loser 409 when the winner kept the heading id, 404 when it did not; insert_after loser 409); different sections both 201; queue timeout 503 server_busy and nothing written", async () => {
     const s = await setup();
     const c = await s.content();
