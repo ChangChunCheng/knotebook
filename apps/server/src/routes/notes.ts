@@ -221,7 +221,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
       return rows.map((row): NoteDto => toNoteDto(row, accessFromListRow(row)));
     });
 
-    // ⚠ Must not be called inside a transaction (recognized as a helper by test/unit/s14-structure.test.ts).
+    // ⚠ Must not be called inside a transaction (recognized as a helper by test/unit/tx-nested-pool-borrow-structure.test.ts).
     function loadNoteWithOwner(noteId: string, viewerId: string): Promise<NoteFields | undefined> {
       return loadNoteFields(deps.db, noteId, viewerId);
     }

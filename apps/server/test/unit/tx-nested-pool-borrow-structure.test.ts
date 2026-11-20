@@ -21,7 +21,7 @@
  * Not caught:
  *   - Hiding the pool in another module: calling another module's function from an `*InTx` in `tx/`, re-exporting with
  *     `export { helper as xInTx } from "…"` from a `tx/` file, or an import path that goes through `/tx/` and back out
- *     (`…/tx/../…`). Only literals are scanned; the small-pool behaviour tests (`s14-pool.test.ts` for `patchSlugInTx`, the small-pool
+ *     (`…/tx/../…`). Only literals are scanned; the small-pool behaviour tests (`tx-nested-pool-borrow.test.ts` for `patchSlugInTx`, the small-pool
  *     block in `storage-quota-race.test.ts`) catch it only on the paths they exercise. The last two
  *     are deliberate evasions.
  *   - An unevaluated query builder or Promise passed as an identifier (`const audit = deps.db.select()…;` before `.transaction(`,
