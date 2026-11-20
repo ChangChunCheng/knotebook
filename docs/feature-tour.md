@@ -78,7 +78,7 @@ selects the sample sentence so the real toolbar appears. The tour doesn't change
 back typing and most shortcuts, and nothing is written, so reloading or closing the tab in the middle leaves no half-finished
 edit behind. On a touch screen the on-screen keyboard stays down on these stops, although the cursor is in the note; once the
 tour has moved on, tapping the text brings the keyboard up as usual. On these stops use the → and Enter keys for the next stop and ← for the previous one. A few key combinations that
-move the cursor still reach the editor; see [Known limitations](known-limitations.md#feature-tour).
+move the cursor still reach the editor; see [Known limitations](known-limitations/shortcuts-and-tour.md#feature-tour).
 
 **Ending.** The last stop asks whether to keep the sample note.
 

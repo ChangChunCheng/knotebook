@@ -348,7 +348,7 @@ Shared with me/<your folder path>/<title>.md
 - Attachments are not in it: images and files stay links in the markdown; fetch an image with `create_transfer_token`.
 - **The download is not a snapshot.** Each note is read when its turn comes, live — including what people are typing — so notes in one download can be from different moments.
 - **A range with more than 3 000 notes** answers `413 too_many_notes` before anything is sent: ask for a token with `space`, `group_id` or `folder_id`.
-- **One download at a time runs on the whole site**: while one runs, another answers `429` with `Retry-After: 30`, and that doesn't count against your downloads. Each person can start 10 downloads an hour; once they are used up, a download answers `429` whose message gives the wait in minutes (the commands don't print `Retry-After`), and fetching single notes with `note` doesn't count against them. A download whose client stops reading without closing the connection keeps that place until the connection drops (see [Known limitations](./known-limitations.md#sending-notes-back-as-files-mcp-bulk-transfer)).
+- **One download at a time runs on the whole site**: while one runs, another answers `429` with `Retry-After: 30`, and that doesn't count against your downloads. Each person can start 10 downloads an hour; once they are used up, a download answers `429` whose message gives the wait in minutes (the commands don't print `Retry-After`), and fetching single notes with `note` doesn't count against them. A download whose client stops reading without closing the connection keeps that place until the connection drops (see [Known limitations](./known-limitations/bulk-transfer.md)).
 
 #### Fetching one note
 
@@ -631,37 +631,37 @@ One check the SDK makes sits outside the tool altogether: a reply that doesn't m
 
 These are the MCP-specific entries in the shared [Known limitations](./known-limitations.md) list. The ones that bite an assistant first are the four about paging through live data rather than a snapshot — `list_notes`, `read_note_outline`, `read_note_section`, and `list_trash` with `list_folders`.
 
-- [A fingerprint is concurrency protection, not permission protection](./known-limitations.md)
-- [A per-minute read limit is not a per-turn context budget](./known-limitations.md)
-- [Notes other people shared with you, and your groups' notes, end up in your assistant's context](./known-limitations.md)
-- [MCP clients don't list your groups](./known-limitations.md)
-- [There is no cross-note view of what an assistant changed](./known-limitations.md)
-- [A wrong `PUBLIC_URL` makes MCP requests that carry an `Origin` header answer `403`](./known-limitations.md)
-- [A client's cached tool list does not shrink on its own](./known-limitations.md)
-- [`list_notes` pages through live data, not a snapshot](./known-limitations.md)
-- [`read_note_outline` pages through live positions, not a snapshot](./known-limitations.md)
-- [`read_note_section` pages through live text, not a snapshot](./known-limitations.md)
-- [`list_trash` and `list_folders` page through live data, not a snapshot](./known-limitations.md)
-- [`edit_note`'s reply carries fingerprints only for the page its change landed on](./known-limitations.md)
-- [Body-text search can lag the editors by a few seconds](./known-limitations.md)
-- [Only about the first million characters and the first 2000 sections of a note are searchable](./known-limitations.md)
-- [Right after an upgrade, older notes can be found by title only until the server has indexed them](./known-limitations.md)
-- [An assistant tricked by a prompt injection can send your notes' images off-site](./known-limitations.md)
-- [An assistant tricked by a prompt injection can move your personal notes into a group, or copy notes into one](./known-limitations.md)
-- [An assistant tricked by a prompt injection can move your notes to the trash](./known-limitations.md)
-- [An assistant tricked by a prompt injection can delete your folders, or rearrange them](./known-limitations.md)
-- [Someone whose role can delete notes but not edit them can't get back a note they deleted](./known-limitations.md)
-- [The date a note in the trash is due to be deleted can change](./known-limitations.md)
-- [`delete_note` and `restore_note` can use up their budgets without changing anything](./known-limitations.md)
-- [`read_note_image` shows an image only if you can read the note it was uploaded to](./known-limitations.md)
-- [An image uploaded but never written into a note is still an attachment](./known-limitations.md)
-- [The `curl` commands `create_transfer_token` and `open_notes_as_files` return are built from `PUBLIC_URL`](./known-limitations.md)
-- [On a plain-http `PUBLIC_URL` (for example a LAN deployment), transfer tokens cross the network unencrypted](./known-limitations.md)
-- [An MCP connection made with the browser's sign-in session has no `create_transfer_token` or `open_notes_as_files`](./known-limitations.md)
-- [A list or table with block or cell colors reads back as HTML as a whole](./known-limitations.md)
-- [Some image widths don't travel over the API and MCP, and sizes not written in the form reading gives are refused](./known-limitations.md)
-- [A pasted row keeps all of its columns, even more than four](./known-limitations.md)
-- [Sending notes back as files (MCP bulk transfer)](./known-limitations.md#sending-notes-back-as-files-mcp-bulk-transfer) — the limitations of `open_notes_as_files`, collected in a section of their own
+- [A fingerprint is concurrency protection, not permission protection](./known-limitations/api-writes.md)
+- [A per-minute read limit is not a per-turn context budget](./known-limitations/mcp.md)
+- [Notes other people shared with you, and your groups' notes, end up in your assistant's context](./known-limitations/mcp.md)
+- [MCP clients don't list your groups](./known-limitations/sharing-and-groups.md)
+- [There is no cross-note view of what an assistant changed](./known-limitations/mcp.md)
+- [A wrong `PUBLIC_URL` makes MCP requests that carry an `Origin` header answer `403`](./known-limitations/mcp.md)
+- [A client's cached tool list does not shrink on its own](./known-limitations/mcp.md)
+- [`list_notes` pages through live data, not a snapshot](./known-limitations/mcp.md)
+- [`read_note_outline` pages through live positions, not a snapshot](./known-limitations/mcp.md)
+- [`read_note_section` pages through live text, not a snapshot](./known-limitations/mcp.md)
+- [`list_trash` and `list_folders` page through live data, not a snapshot](./known-limitations/mcp.md)
+- [`edit_note`'s reply carries fingerprints only for the page its change landed on](./known-limitations/api-writes.md)
+- [Body-text search can lag the editors by a few seconds](./known-limitations/search.md)
+- [Only about the first million characters and the first 2000 sections of a note are searchable](./known-limitations/search.md)
+- [Right after an upgrade, older notes can be found by title only until the server has indexed them](./known-limitations/search.md)
+- [An assistant tricked by a prompt injection can send your notes' images off-site](./known-limitations/mcp.md)
+- [An assistant tricked by a prompt injection can move your personal notes into a group, or copy notes into one](./known-limitations/mcp.md)
+- [An assistant tricked by a prompt injection can move your notes to the trash](./known-limitations/mcp.md)
+- [An assistant tricked by a prompt injection can delete your folders, or rearrange them](./known-limitations/mcp.md)
+- [Someone whose role can delete notes but not edit them can't get back a note they deleted](./known-limitations/trash.md)
+- [The date a note in the trash is due to be deleted can change](./known-limitations/trash.md)
+- [`delete_note` and `restore_note` can use up their budgets without changing anything](./known-limitations/mcp.md)
+- [`read_note_image` shows an image only if you can read the note it was uploaded to](./known-limitations/mcp.md)
+- [An image uploaded but never written into a note is still an attachment](./known-limitations/mcp.md)
+- [The `curl` commands `create_transfer_token` and `open_notes_as_files` return are built from `PUBLIC_URL`](./known-limitations/mcp.md)
+- [On a plain-http `PUBLIC_URL` (for example a LAN deployment), transfer tokens cross the network unencrypted](./known-limitations/mcp.md)
+- [An MCP connection made with the browser's sign-in session has no `create_transfer_token` or `open_notes_as_files`](./known-limitations/mcp.md)
+- [A list or table with block or cell colors reads back as HTML as a whole](./known-limitations/api-writes.md)
+- [Some image widths don't travel over the API and MCP, and sizes not written in the form reading gives are refused](./known-limitations/api-writes.md)
+- [A pasted row keeps all of its columns, even more than four](./known-limitations/side-by-side-columns.md)
+- [Sending notes back as files (MCP bulk transfer)](./known-limitations/bulk-transfer.md) — the limitations of `open_notes_as_files`, collected on a page of their own
 
 ## See also
 

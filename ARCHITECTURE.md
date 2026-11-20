@@ -16,7 +16,7 @@ Knotebook is a pnpm workspace (`pnpm-workspace.yaml`) with three packages and an
 | `e2e` | `@knotebook/e2e`: the Playwright suite, run against a Docker Compose stack (`docker-compose.yml` plus `docker-compose.e2e.yml`). `e2e/stubs` holds a fake OIDC provider and an AI stub. |
 | `docker/Dockerfile` | The app image: builds all packages, deploys the server, and copies the web build next to it as `web-dist`. |
 | `docker-compose.yml` | The self-hosting stack: the `app` service and a bundled PostgreSQL (`db`, the `pgvector/pgvector:pg17` image). |
-| `scripts` | Repository scripts: license check, bundle-size check, release preparation, CHANGELOG section extraction, PWA icon generation, and the WSL wrappers for integration and e2e tests. Each `.mjs` has a `.test.mjs` next to it (`pnpm test:scripts`). |
+| `scripts` | Repository scripts: license check, bundle-size check, Markdown link check, release preparation, CHANGELOG section extraction, PWA icon generation, and the WSL wrappers for integration and e2e tests. Each `.mjs` has a `.test.mjs` next to it (`pnpm test:scripts`). |
 | `patches` | Patches applied to third-party packages with `pnpm patch` (see [Patched dependencies](#patched-dependencies)). |
 | `docs` | User, operator and contributor documentation. |
 
@@ -195,7 +195,7 @@ The integration tests build a real app with `buildApp` against a fresh database.
 
 CI is `.github/workflows/ci.yml`. It runs on pull requests, on pushes to `main`, and when started manually:
 
-- `build-unit`: install, `pnpm build`, the bundle-size check, `pnpm typecheck`, `pnpm lint`, `pnpm check-licenses`, `pnpm test:scripts`, then the shared, web and server unit tests;
+- `build-unit`: install, `pnpm build`, the bundle-size check, `pnpm typecheck`, `pnpm lint`, `pnpm check-licenses`, `pnpm check-doc-links`, `pnpm test:scripts`, then the shared, web and server unit tests;
 - `integration`: the server integration tests in 3 shards;
 - `e2e`: the Playwright suite in 4 shards against the Compose stack;
 - `ci`: succeeds only when all of the above did. It is the required status check on `main`.
