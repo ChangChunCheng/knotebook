@@ -9,6 +9,7 @@ import type { EditingTestHooks } from "../src/notes/editing/apply.js";
 import { EditorSession } from "../src/notes/editing/session.js";
 import { buildCollabTestApp, testEditingRuntime, signTestSession } from "./helpers.js";
 import { bearer, docText, getContent, seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
+import { allBlockIds } from "./unit/fixtures/block-ids.js";
 
 const PASSWORD = "correct-horse-battery";
 type Setup = Awaited<ReturnType<typeof setup>>;
@@ -285,7 +286,7 @@ describe("if_match and concurrency", () => {
     expect(md).toContain("第二段（併發）");
   });
 
-  it("concurrency: exactly one of the same-section requests succeeds (replace_section loser 404, insert_after loser 409); different sections both 201; queue timeout 503 server_busy and nothing written", async () => {
+  it("concurrency: exactly one of the same-section requests succeeds (replace_section loser 409 when the winner kept the heading id, 404 when it did not; insert_after loser 409); different sections both 201; queue timeout 503 server_busy and nothing written", async () => {
     const s = await setup();
     const c = await s.content();
     const a = c.outline[1];
@@ -293,11 +294,10 @@ describe("if_match and concurrency", () => {
       s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\n一", if_match: a.fingerprint }),
       s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\n二", if_match: a.fingerprint }),
     ]);
-    // The loser gets 404 `section_not_found`, not 409: the queue serializes the two, the second forks after the first merged, and
-    // `replace_section` replaces the heading block too, so the section's sectionId (the heading's block id) no longer exists. What is
-    // guarded is the same (exactly one succeeds, the loser writes nothing), only the code differs; "section still present but
-    // fingerprint changed -> 409" is covered by the insert_after group below.
-    expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 404]);
+    // The queue serializes the two and the second forks after the first merged. The winner kept the heading's id (same type, same
+    // text), so the section still exists but its content changed: 409 `fingerprint_mismatch`.
+    expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 409]);
+    expect([r1, r2].find(r => r.statusCode === 409)!.json().error.code).toBe("fingerprint_mismatch");
     expect(await s.rows()).toHaveLength(1); // the losing request leaves no record
     const c2 = await s.content();
     const a2 = c2.outline[1];
@@ -307,6 +307,27 @@ describe("if_match and concurrency", () => {
       s.post({ op: "replace_section", section_id: b2.sectionId, markdown: "# B\n\n四", if_match: b2.fingerprint }),
     ]);
     expect([r3.statusCode, r4.statusCode]).toEqual([201, 201]);
+    // Section A is now [# A, 三]; the winner's [# A1, 一] pairs with nothing (two blocks on each side), so the heading gets a new id
+    // and the section id the loser asked for is gone: 404 `section_not_found`.
+    const aNew = (await s.content()).outline[1];
+    const [rh1, rh2] = await Promise.all([
+      s.post({ op: "replace_section", section_id: aNew.sectionId, markdown: "# A1\n\n一", if_match: aNew.fingerprint }),
+      s.post({ op: "replace_section", section_id: aNew.sectionId, markdown: "# A2\n\n二", if_match: aNew.fingerprint }),
+    ]);
+    expect([rh1.statusCode, rh2.statusCode].sort()).toEqual([201, 404]);
+    expect([rh1, rh2].find(r => r.statusCode === 404)!.json().error.code).toBe("section_not_found");
+    expect(await s.rows()).toHaveLength(4);
+    // A changed heading followed by an unchanged block: the block pairs first and the heading pairs between the end and that pair,
+    // so the heading keeps its id and the loser sees the section with changed content: 409.
+    const h = await setup("# A\n\n三\n\n# B\n\n第二段");
+    const ah = (await h.content()).outline[1];
+    const [rk1, rk2] = await Promise.all([
+      h.post({ op: "replace_section", section_id: ah.sectionId, markdown: "# A1\n\n三", if_match: ah.fingerprint }),
+      h.post({ op: "replace_section", section_id: ah.sectionId, markdown: "# A2\n\n三", if_match: ah.fingerprint }),
+    ]);
+    expect([rk1.statusCode, rk2.statusCode].sort()).toEqual([201, 409]);
+    expect([rk1, rk2].find(r => r.statusCode === 409)!.json().error.code).toBe("fingerprint_mismatch");
+    expect(await h.rows()).toHaveLength(1);
     // Same section but the sectionId still exists (`insert_after` doesn't touch the heading): the loser gets 409 `fingerprint_mismatch`:
     // the first request's inserted block joins the section and changes its fingerprint, so the second's old fingerprint no longer matches.
     const cIns = await s.content();
@@ -345,6 +366,108 @@ describe("if_match and concurrency", () => {
     release();
     expect((await p1).statusCode).toBe(201);
     expect((await t.content()).fingerprint).not.toBe(c3.fingerprint);
+  });
+});
+
+describe("block ids kept on rewrite (#551)", () => {
+  const SEED = "# A\n\none\n\ntwo\n\nthree\n\n# B\n\nfour";
+  const live = (s: Setup) => s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
+  const unique = (xs: unknown[]) => new Set(xs).size === xs.length;
+  const section = async (s: Setup, n: number) => (await s.content()).outline[n];
+
+  it("replace_section through the API: unchanged and edited paragraphs keep their ids, the section keeps its id; then a split and a type change get new ids", async () => {
+    const s = await setup(SEED);
+    const before = ids(s.client.doc);
+    const a = await section(s, 1);
+    const r1 = await s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\none\n\ntwo changed\n\nthree", if_match: a.fingerprint });
+    expect(r1.statusCode).toBe(201);
+    await waitFor("provider gets write 1", 3_000, () => docText(s.client.doc).includes("two changed"));
+    expect(ids(s.client.doc).slice(0, 4)).toEqual(before.slice(0, 4));
+    expect((await section(s, 1)).sectionId).toBe(a.sectionId);
+    expect((await s.rows())[0]!.afterBlockIds).toEqual(before.slice(0, 4));
+
+    const seen = new Set(allBlockIds(live(s)));
+    const a2 = await section(s, 1);
+    const r2 = await s.post({ op: "replace_section", section_id: a2.sectionId, markdown: "# A\n\n- one\n\ntw\n\no\n\nthree", if_match: a2.fingerprint });
+    expect(r2.statusCode).toBe(201);
+    await waitFor("provider gets write 2", 3_000, () => ids(s.client.doc).length === 7);
+    const after = ids(s.client.doc);
+    expect(after).toHaveLength(7);
+    expect([after[0], after[4]]).toEqual([before[0], before[3]]);
+    for (const i of [1, 2, 3]) expect(seen.has(after[i] as string), `new block at ${i}`).toBe(false);
+    expect(unique(allBlockIds(live(s)))).toBe(true);
+    s.client.disconnect();
+  });
+
+  it("replace_all through the API keeps unchanged blocks and a single edited block", async () => {
+    const s = await setup(SEED);
+    const before = ids(s.client.doc);
+    const c = await s.content();
+    const r = await s.post({ op: "replace_all", markdown: "# A\n\none\n\ntwo\n\nthree\n\n# B\n\nfour changed", if_match: c.fingerprint });
+    expect(r.statusCode).toBe(201);
+    await waitFor("provider gets replace_all", 3_000, () => docText(s.client.doc).includes("four changed"));
+    expect(ids(s.client.doc)).toEqual(before);
+    expect(unique(allBlockIds(live(s)))).toBe(true);
+    s.client.disconnect();
+  });
+
+  it("provider types in section B between fork and merge of a rewrite of A: both edits present, A's kept ids unchanged, ids unique", async () => {
+    const hooks: EditingTestHooks = {};
+    const s = await setup(SEED, { editingTestHooks: hooks });
+    hooks.beforeMerge = async () => {
+      await humanEdit(s.ctx, s.note.id, s.client, "four (typed)", ed => ed.updateBlock(ed.document.at(-1)!.id, { content: "four (typed)" }));
+    };
+    const before = ids(s.client.doc);
+    const a = await section(s, 1);
+    const r = await s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\none\n\ntwo changed\n\nthree", if_match: a.fingerprint });
+    expect(r.statusCode).toBe(201);
+    await waitFor("provider gets the rewrite", 3_000, () => docText(s.client.doc).includes("two changed"));
+    const md = (await s.content()).markdown;
+    expect(md).toContain("two changed");
+    expect(md).toContain("four (typed)");
+    expect(ids(s.client.doc)).toEqual(before);
+    expect(unique(allBlockIds(live(s)))).toBe(true);
+    s.client.disconnect();
+  });
+
+  it("revert of an id-keeping replace_section: content back to before, kept ids present once, ids unique (also in note_states after settled)", async () => {
+    const s = await setup(SEED);
+    const before = await s.content();
+    const idsBefore = ids(s.client.doc);
+    const a = before.outline[1];
+    expect((await s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\none changed\n\ntwo\n\nthree", if_match: a.fingerprint })).statusCode).toBe(201);
+    await waitFor("provider gets the rewrite", 3_000, () => docText(s.client.doc).includes("one changed"));
+    expect(ids(s.client.doc)).toEqual(idsBefore);
+    const [edit] = (await s.ctx.app.inject({ method: "GET", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token) })).json().edits as Array<{ id: string }>;
+    const rv = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/edits/${edit!.id}/revert`, headers: bearer(s.token) });
+    expect(rv.statusCode).toBe(201);
+    await waitFor("provider gets the revert", 3_000, () => !docText(s.client.doc).includes("one changed"));
+    expect((await s.content()).fingerprint).toBe(before.fingerprint);
+    expect(allBlockIds(live(s)).filter(x => idsBefore.includes(x))).toHaveLength(idsBefore.length);
+    expect(unique(allBlockIds(live(s)))).toBe(true);
+    s.client.disconnect();
+    await settled(s.ctx);
+    const persisted = new Y.Doc();
+    Y.applyUpdate(persisted, await s.stateBytes());
+    expect(unique(allBlockIds(persisted))).toBe(true);
+    expect(docText(persisted)).not.toContain("one changed");
+  });
+
+  it("a later rewrite that keeps an earlier edit's blocks unchanged leaves that edit revertable, and reverting it gives the right content", async () => {
+    const s = await setup("# A\n\none\n\n# B\n\nfour");
+    const listEdits = async () => (await s.ctx.app.inject({ method: "GET", url: `/api/notes/${s.note.id}/edits`, headers: bearer(s.token) })).json().edits as Array<{ id: string; op: string; revertable: boolean }>;
+    const a = await section(s, 1);
+    expect((await s.post({ op: "replace_section", section_id: a.sectionId, markdown: "# A\n\none changed", if_match: a.fingerprint })).statusCode).toBe(201);
+    const a2 = await section(s, 1);
+    expect((await s.post({ op: "replace_section", section_id: a2.sectionId, markdown: "# A\n\none changed\n\nextra", if_match: a2.fingerprint })).statusCode).toBe(201);
+    const [e2, e1] = await listEdits();
+    expect([e1!.revertable, e2!.revertable]).toEqual([true, true]);
+    const rv = await s.ctx.app.inject({ method: "POST", url: `/api/notes/${s.note.id}/edits/${e1!.id}/revert`, headers: bearer(s.token) });
+    expect(rv.statusCode).toBe(201);
+    expect((await s.content()).markdown.trimEnd()).toBe("# A\n\none\n\nextra\n\n# B\n\nfour");
+    expect(unique(allBlockIds(live(s)))).toBe(true);
+    expect((await listEdits()).find(e => e.id === e2!.id)!.revertable).toBe(false);
+    s.client.disconnect();
   });
 });
 

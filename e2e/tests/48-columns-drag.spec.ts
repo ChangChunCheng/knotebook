@@ -1565,8 +1565,8 @@ test("after dragging a separator, a REST read: the column opening tag is canonic
     data: { op: "replace_all", markdown: original.markdown, if_match: original.fingerprint },
   });
   expect(same.status(), await same.text()).toBe(201);
-  // replace_all replaces every block's id: the row's data-id changing means the page received this write.
-  await expect.poll(() => editorLocator(page).locator(ROW).first().getAttribute("data-id"), { timeout: 10_000 }).not.toBe(rowIdBefore);
+  // The rewrite is identical, so the row keeps its id (#551).
+  await expect(editorLocator(page).locator(ROW).first()).toHaveAttribute("data-id", rowIdBefore!);
   expect(await docWidths(page)).toEqual(widths);
   expect((await read()).markdown).toBe(original.markdown);
   expectNoPageErrors(errors);

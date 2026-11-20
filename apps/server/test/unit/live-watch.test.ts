@@ -8,6 +8,7 @@ import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { LiveWatch, containerItems, type MergeGuard } from "../../src/notes/editing/live-watch.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
+import { allBlockIds, topIds } from "./fixtures/block-ids.js";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
@@ -123,7 +124,10 @@ describe("content merged after the guard lets through", () => {
   const H = (t: string) => ({ type: "heading", props: { level: 1 }, content: t });
   const P = (t: string) => ({ type: "paragraph", content: t });
   const base = [H("A"), P("a1 text"), P("a2 text"), H("B"), P("b1 text"), P("b2 text"), H("C"), P("c1 text")];
-  async function scenario(user: (ed: EditorSession["editor"]) => void): Promise<{ conflict: boolean; markdown: string }> {
+  async function scenario(
+    user: (ed: EditorSession["editor"]) => void,
+    blocks: unknown[] = [H("B"), P("AI-NEW")]
+  ): Promise<{ conflict: boolean; markdown: string; baseTop: string[]; liveTop: string[]; liveIds: string[] }> {
     const doc = new Y.Doc();
     const s = await EditorSession.open(rt, doc);
     try {
@@ -138,7 +142,7 @@ describe("content merged after the guard lets through", () => {
     const o = await rt.runDoc("u", { kind: "outline", state: st });
     if (o === "too_complex") throw new Error("outline");
     const b = o.outline.find(x => x.heading === "B")!;
-    const r = await rt.runDoc("u", { kind: "edit", state: new Uint8Array(st), op: "replace_section", sectionId: b.sectionId, ifMatch: b.fingerprint, blocks: [H("B"), P("AI-NEW")] as never });
+    const r = await rt.runDoc("u", { kind: "edit", state: new Uint8Array(st), op: "replace_section", sectionId: b.sectionId, ifMatch: b.fingerprint, blocks: blocks as never });
     if (r === "too_complex" || !r.ok) throw new Error("edit");
     await browser(live, user);
     const conflict = watch.conflicts(r.post.guard);
@@ -146,7 +150,7 @@ describe("content merged after the guard lets through", () => {
     if (!conflict) Y.applyUpdate(live, r.post.diff);
     const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(live), wantShown: false });
     if (md === "too_complex" || typeof md.result === "string" || !("markdown" in md.result)) throw new Error("read");
-    return { conflict, markdown: md.result.markdown };
+    return { conflict, markdown: md.result.markdown, baseTop: topIds(doc), liveTop: topIds(live), liveIds: allBlockIds(live) };
   }
 
   it("typing in another section (A): merged, both A's change and B's new content are present, order unchanged", async () => {
@@ -167,5 +171,35 @@ describe("content merged after the guard lets through", () => {
     const r = await scenario(ed => ed.insertBlocks([P("USER-AFTER-b2")] as never, ed.document[5]!.id, "after"));
     expect(r.conflict).toBe(true);
     expect(r.markdown).toBe("# A\n\na1 text\n\na2 text\n\n# B\n\nb1 text\n\nb2 text\n\nUSER-AFTER-b2\n\n# C\n\nc1 text\n");
+  });
+
+  it("rewrite keeping B's ids while the user types in A and inserts before # B: merged, B's ids unchanged, the user's paragraph stays in A (10 runs)", async () => {
+    for (let i = 0; i < 10; i++) {
+      const r = await scenario(
+        ed => {
+          ed.updateBlock(ed.document[1]!.id, { content: "a1 text EDITED" });
+          ed.insertBlocks([P("USER-NEW")] as never, ed.document[3]!.id, "before");
+        },
+        [H("B"), P("b1 text"), P("AI-NEW")]
+      );
+      expect(r.conflict).toBe(false);
+      expect(r.markdown, `run ${i + 1}`).toBe("# A\n\na1 text EDITED\n\na2 text\n\nUSER-NEW\n\n# B\n\nb1 text\n\nAI-NEW\n\n# C\n\nc1 text\n");
+      // hB, b1 and (rule 2: the one edited block between kept ones) b2's slot
+      expect(r.liveTop.slice(4, 7)).toEqual(r.baseTop.slice(3, 6));
+      expect(new Set(r.liveIds).size).toBe(r.liveIds.length);
+    }
+  }, 60_000);
+
+  it("a concurrent move of a block the rewrite would keep: conflict, not merged, live ids unique", async () => {
+    const r = await scenario(
+      ed => {
+        const b2 = ed.document[5]!;
+        ed.removeBlocks([b2.id]);
+        ed.insertBlocks([b2] as never, ed.document[2]!.id, "after");
+      },
+      [H("B"), P("b1 text"), P("AI-NEW")]
+    );
+    expect(r.conflict).toBe(true);
+    expect(new Set(r.liveIds).size).toBe(r.liveIds.length);
   });
 });

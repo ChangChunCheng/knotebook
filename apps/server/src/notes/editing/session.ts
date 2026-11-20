@@ -21,6 +21,48 @@ export function replaceBlocksFresh(editor: BlockNoteEditor<any, any, any>, ids: 
   return inserted;
 }
 
+const BLOCK_ELEMENTS = new Set(["blockContainer", "columnList", "column"]);
+
+// Pre-order, iterative (nesting depth is client-controlled); only block structure is descended into, never inline content.
+function walkBlockElements(doc: Y.Doc, visit: (el: Y.XmlElement) => void): void {
+  const stack: Array<Y.XmlFragment | Y.XmlElement> = [doc.getXmlFragment(YDOC_FRAGMENT)];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const kids = node.toArray();
+    for (let i = kids.length - 1; i >= 0; i--) {
+      const kid = kids[i];
+      if (!(kid instanceof Y.XmlElement)) continue;
+      if (kid.nodeName === "blockGroup" || BLOCK_ELEMENTS.has(kid.nodeName)) stack.push(kid);
+    }
+    if (node instanceof Y.XmlElement && BLOCK_ELEMENTS.has(node.nodeName)) visit(node);
+  }
+}
+
+/**
+ * Must run with no editor mounted on `doc`: bound, every ProseMirror attribute step copies the whole top-level array, while a Yjs attribute write is O(1). A value already held by any block is skipped, which is what keeps ids unique.
+ */
+export function renameBlocksInDoc(doc: Y.Doc, renames: ReadonlyMap<string, string>): Map<string, string> {
+  const applied = new Map<string, string>();
+  if (renames.size === 0) return applied;
+  const byId = new Map<string, Y.XmlElement>();
+  walkBlockElements(doc, el => {
+    const id = el.getAttribute("id");
+    if (typeof id === "string" && !byId.has(id)) byId.set(id, el);
+  });
+  const held = new Set(byId.keys());
+  doc.transact(() => {
+    for (const [from, to] of renames) {
+      const el = byId.get(from);
+      if (el === undefined || held.has(to)) continue;
+      el.setAttribute("id", to);
+      held.delete(from);
+      held.add(to);
+      applied.set(from, to);
+    }
+  });
+  return applied;
+}
+
 export function forkFrom(source: Y.Doc | Uint8Array): { fork: Y.Doc; sv: Uint8Array } {
   const fork = new Y.Doc();
   Y.applyUpdate(fork, source instanceof Y.Doc ? Y.encodeStateAsUpdate(source) : source);

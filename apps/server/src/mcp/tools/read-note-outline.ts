@@ -10,7 +10,7 @@
  * `note-sections.ts`; a `#` inside a `##` section counts). `insert_after`/`append` add a
  * section per inserted heading of that level; `replace_section` with two such headings splits
  * into two, and `replace_section` without a heading dissolves into the previous
- * section, `delete_section` removes one, `replace_all` rebuilds all ids. The description
+ * section, `delete_section` removes one, `replace_all` can change any id. The description
  * carries a verbatim sentence for this (pinned in `mcp-content.test.ts`; don't delete).
  */
 import { z } from "zod";

@@ -16,13 +16,14 @@ import type { Decision } from "../../transfer/decide.js";
 import { measureTrial, type SizeMeasure } from "../note-size.js";
 import { versionFingerprint } from "../version-fingerprint.js";
 import type { VisibleNoteTarget } from "./candidates.js";
+import { keptIdRenames } from "./block-align.js";
 import { fingerprintForIds, fingerprintsOfGroups, outlineOf, topLevelSnapshot, type OutlineEntry } from "./fingerprint.js";
 import type { ParseDetail, ParseError } from "./markdown.js";
 import { readNoteContentFromDoc } from "./read.js";
-import { editRevertable, isDeleteShape, prepareRevertOnFork, topLevelIds, type RevertRow } from "./revert-core.js";
+import { editRevertable, isDeleteShape, prepareRevertOnFork, removedIds, topLevelIds, type RevertRow } from "./revert-core.js";
 import { containerItems, type MergeGuard } from "./live-watch.js";
 import type { EditingRuntime } from "./runtime.js";
-import { EditorSession, replaceBlocksFresh } from "./session.js";
+import { EditorSession, renameBlocksInDoc, replaceBlocksFresh } from "./session.js";
 import type { ShownLinks } from "./shown-link-texts.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention
@@ -198,11 +199,16 @@ export async function editOnFork(
   runtime: EditingRuntime,
   fork: Y.Doc,
   sv: Uint8Array,
-  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined },
+  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined; keepIds?: boolean },
   blocks: AnyPartialBlock[],
 ): Promise<{ diff: Uint8Array; beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null }> {
   const { op, isEmptyDoc, section } = plan;
+  let renames = new Map<string, string>();
+  const keep = (before: readonly AnyBlock[], inserted: readonly AnyBlock[]): void => {
+    if (plan.keepIds) renames = keptIdRenames(before, inserted);
+  };
   const s = await EditorSession.open(runtime, fork);
+  let r: { beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null };
   try {
     const ed = s.editor;
     const top = ed.document;
@@ -213,7 +219,10 @@ export async function editOnFork(
     switch (op) {
       case "replace_all": {
         beforeBlocks = isEmptyDoc ? [] : top;
-        afterIds = replaceBlocksFresh(ed, top.map(b => b.id), blocks).map(b => b.id); // insert first, then delete (see `replaceBlocksFresh`)
+        const inserted = replaceBlocksFresh(ed, top.map(b => b.id), blocks) as AnyBlock[]; // insert first, then delete (see `replaceBlocksFresh`)
+        afterIds = inserted.map(b => b.id);
+        // On an empty doc the only old block is the paragraph the mount normalized, never part of the note.
+        if (!isEmptyDoc) keep(beforeBlocks, inserted);
         break;
       }
       case "replace_section": {
@@ -221,7 +230,9 @@ export async function editOnFork(
         if (sectionIds.length === 0) afterIds = ed.insertBlocks(blocks, top[0]!.id, "before").map(b => b.id);
         else {
           beforeBlocks = snapshot(sectionIds);
-          afterIds = replaceBlocksFresh(ed, sectionIds, blocks).map(b => b.id);
+          const inserted = replaceBlocksFresh(ed, sectionIds, blocks) as AnyBlock[];
+          afterIds = inserted.map(b => b.id);
+          keep(beforeBlocks, inserted);
         }
         break;
       }
@@ -251,10 +262,13 @@ export async function editOnFork(
         break;
       }
     }
-    return { diff: s.diffSince(sv), beforeBlocks, afterIds, anchor };
+    r = { beforeBlocks, afterIds, anchor };
   } finally {
     s.close();
   }
+  // After close(): with the editor bound, each ProseMirror attribute step copies the whole top-level array. Before the diff, so the diff carries the kept ids (#551).
+  const applied = renameBlocksInDoc(fork, renames);
+  return { diff: Y.encodeStateAsUpdate(fork, sv), beforeBlocks: r.beforeBlocks, afterIds: r.afterIds.map(id => applied.get(id) ?? id), anchor: r.anchor };
 }
 
 async function readOp(runtime: EditingRuntime, op: ReadDocOp, ask: AskFn): Promise<ReadDocResult> {
@@ -282,7 +296,7 @@ async function editOp(runtime: EditingRuntime, op: EditDocOp): Promise<EditDocRe
   const editKind: EditOp = isEmptyDoc ? "replace_all" : op.op;
   const blocks = op.blocks ?? [];
   const guard: MergeGuard = expect === null ? { kind: "none" } : targetIds === null || isEmptyDoc ? { kind: "any" } : { kind: "blocks", items: containerItems(fragment, targetIds), anchors: [] };
-  const r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section }, blocks);
+  const r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section, keepIds: true }, blocks);
   return { ok: true, beforeBlocks: r.beforeBlocks, afterIds: r.afterIds, anchor: r.anchor, post: postOf(fork, base, r.diff, r.afterIds, guard) };
 }
 
@@ -292,16 +306,17 @@ async function revertOp(runtime: EditingRuntime, op: RevertDocOp): Promise<Rever
   const fragment = fork.getXmlFragment(YDOC_FRAGMENT);
   const { row } = op;
   const isDelete = isDeleteShape({ op: row.op, anchor: row.anchor });
+  const beforeIds = row.beforeBlocks.map(b => (b as { id: string }).id);
   // Same predicate as `listEdits` (`editRevertable`) so the list and the revert gate agree.
   const revertable = editRevertable(
-    { op: row.op, afterBlockIds: row.afterBlockIds, afterFingerprint: row.afterFingerprint, anchorId: row.anchor?.block_id ?? null, beforeIds: isDelete ? row.beforeBlocks.map(b => (b as { id: string }).id) : [] },
+    { op: row.op, afterBlockIds: row.afterBlockIds, afterFingerprint: row.afterFingerprint, anchorId: row.anchor?.block_id ?? null, beforeIds },
     fragment,
     topLevelIds(fragment),
   );
   if (!revertable) return { ok: false, code: "stale" };
   const guard: MergeGuard = isDelete
-    ? { kind: "blocks", items: [], anchors: containerItems(fragment, row.anchor ? [row.anchor.block_id] : []), absent: row.beforeBlocks.map(b => (b as { id: string }).id) }
-    : { kind: "blocks", items: containerItems(fragment, row.afterBlockIds), anchors: [] };
+    ? { kind: "blocks", items: [], anchors: containerItems(fragment, row.anchor ? [row.anchor.block_id] : []), absent: beforeIds }
+    : { kind: "blocks", items: containerItems(fragment, row.afterBlockIds), anchors: [], absent: removedIds({ afterBlockIds: row.afterBlockIds, beforeIds }) };
   const r = await prepareRevertOnFork(runtime, row, fork, base.sv, op.othersShareAnchor);
   return { ok: true, reinsertedIds: r.reinsertedIds, removedSnapshot: r.removedSnapshot, post: postOf(fork, base, r.diff, r.reinsertedIds, guard) };
 }

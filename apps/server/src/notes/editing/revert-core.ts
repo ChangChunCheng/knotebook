@@ -42,7 +42,13 @@ export type RevertableRow = {
 export const editRevertable = (row: RevertableRow, fragment: Y.XmlFragment, topIds: readonly (string | null)[]): boolean =>
   isDeleteShape({ op: row.op, anchor: row.anchorId })
     ? row.anchorId !== null && topIds.includes(row.anchorId) && !row.beforeIds.some(id => topIds.includes(id))
-    : row.afterBlockIds.length > 0 && fingerprintForIds(fragment, row.afterBlockIds) === row.afterFingerprint;
+    : row.afterBlockIds.length > 0 && fingerprintForIds(fragment, row.afterBlockIds) === row.afterFingerprint && removedIds(row).every(id => !topIds.includes(id));
+
+/** Top-level ids the edit removed (before but not after). Rewrites keep ids (#551), so after a revert whose record step failed the removed blocks are back and the after-fingerprint can match again; reverting then would duplicate them. `before_blocks` holds top-level blocks only, so a nested id never lands here. */
+export const removedIds = (row: { afterBlockIds: readonly string[]; beforeIds: readonly string[] }): string[] => {
+  const after = new Set(row.afterBlockIds);
+  return row.beforeIds.filter(id => !after.has(id));
+};
 
 export async function prepareRevertOnFork(
   runtime: EditingRuntime,

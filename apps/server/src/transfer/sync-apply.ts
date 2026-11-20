@@ -7,10 +7,11 @@
  * note has a single insert region, equal to `replace_all`.
  */
 import type { Block } from "@blocknote/core";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import type { noteAiEdits } from "../db/schema.js";
+import { keptIdRenames } from "../notes/editing/block-align.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
-import { EditorSession } from "../notes/editing/session.js";
+import { EditorSession, renameBlocksInDoc } from "../notes/editing/session.js";
 import { chainKeyOf, type Anchor } from "./decide.js";
 import type { SyncPlan } from "./sync-plan.js";
 import { YIELD_AFTER_MS, yieldToLoop } from "./yield.js";
@@ -73,6 +74,7 @@ export async function applySync(
 
   // The fork mount can't be split; without this yield it would extend the tail of planning into a longer stall.
   await yieldFn();
+  const renames = new Map<string, string>();
   const s = await EditorSession.open(runtime, fork);
   try {
     await yieldFn();
@@ -121,6 +123,7 @@ export async function applySync(
       perRegion[ri]!.afterIds = inserted.map(b => b.id);
       if (d.kind === "rewrite" && d.survivors.length > 0) {
         perRegion[ri]!.beforeBlocks = snapshot(d.survivors);
+        for (const [newId, oldId] of keptIdRenames(perRegion[ri]!.beforeBlocks, inserted)) renames.set(newId, oldId);
         ed.removeBlocks(d.survivors);
       }
       await budget();
@@ -163,8 +166,16 @@ export async function applySync(
       });
     }
     assertTopLevel();
-    return { diff: s.diffSince(sv), perRegion };
   } finally {
     s.close();
   }
+  // Renamed after close() because a ProseMirror attribute step per block costs O(note size) each. Ids are mapped through what was applied, since a rename can be skipped.
+  const applied = renameBlocksInDoc(fork, renames);
+  if (applied.size > 0) {
+    for (const pr of perRegion) {
+      pr.afterIds = pr.afterIds.map(id => applied.get(id) ?? id);
+      if (pr.anchor !== null) pr.anchor = { ...pr.anchor, block_id: applied.get(pr.anchor.block_id) ?? pr.anchor.block_id };
+    }
+  }
+  return { diff: Y.encodeStateAsUpdate(fork, sv), perRegion };
 }

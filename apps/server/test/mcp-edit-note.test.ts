@@ -19,6 +19,7 @@ import { buildCollabTestApp, type CollabTestCtx, type HttpSession } from "./help
 import { bearer, docText, getContent, seedContent, seedTokenForUser, tick, waitFor } from "./editing-helpers.js";
 import { INITIALIZE, mcpPost, rpc } from "./mcp-helpers.js";
 import { loadDoc, xmlOf } from "./copy-helpers.js";
+import { topIds } from "./unit/fixtures/block-ids.js";
 import type { FastifyInstance } from "fastify";
 
 const PASSWORD = "correct-horse-battery";
@@ -608,5 +609,22 @@ describe("#240 uppercase note_id (MCP write)", () => {
     const xml = xmlOf((await loadDoc(s.ctx.db, s.noteId))!);
     expect(xml).toContain(MARK);
     expect(xml).toContain(Y_TEXT);
+  });
+});
+
+describe("#551 edit_note keeps block ids on a rewrite", () => {
+  it("replace_section keeps the section_id and the ids of unchanged blocks", async () => {
+    const s = await scene(THREE_SECTIONS);
+    const live = () => topIds(s.ctx.collab.hocuspocus.documents.get(s.noteId)!);
+    const before = live();
+    const rest = await restOutline(s.ctx.app, s.noteId, s.token);
+    const b = rest.outline[2]!;
+    const out = payloadOf<EditPayload>(
+      await editNote(s.ctx.app, s.token, { note_id: s.noteId, op: "replace_section", section_id: b.sectionId, markdown: "# B\n\n第二段內容 changed", if_match: b.fingerprint })
+    );
+    expect(out.outline.sections.map(x => x.sectionId)).toContain(b.sectionId);
+    expect(live()).toEqual(before);
+    expect((await restOutline(s.ctx.app, s.noteId, s.token)).markdown).toContain("第二段內容 changed");
+    s.disconnect();
   });
 });

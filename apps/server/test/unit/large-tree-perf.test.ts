@@ -11,7 +11,8 @@ import * as Y from "yjs";
 import { YDOC_FRAGMENT, blocksToNoteMarkdown, topLevelBlocks } from "@knotebook/shared";
 import { canonicalizeElements } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
-import { EditorSession, replaceBlocksFresh } from "../../src/notes/editing/session.js";
+import { EditorSession, forkFrom, replaceBlocksFresh } from "../../src/notes/editing/session.js";
+import { editOnFork } from "../../src/notes/editing/doc-jobs.js";
 import { outlineOf, topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { sameCanonicalOf } from "../../src/transfer/same-canonical.js";
 import { isLoneEmptyParagraph } from "../../src/transfer/decide.js";
@@ -229,6 +230,40 @@ describe("replaceBlocksFresh (insert first, delete after)", () => {
       } finally {
         s.close();
       }
+    }, 48_000);
+  }, 360_000);
+
+  it("editOnFork replace_section with keepIds on the same shape is linear and keeps the replaced paragraph's id (#551)", async () => {
+    const formatted = (n: number) => [
+      {
+        type: "paragraph",
+        content: Array.from({ length: n }, () => [
+          { type: "text", text: "b", styles: { bold: true } },
+          { type: "text", text: " ", styles: {} },
+          { type: "text", text: "i", styles: { italic: true } },
+          { type: "text", text: " ", styles: {} },
+        ])
+          .flat()
+          .slice(0, -1),
+      },
+    ];
+    const state = Y.encodeStateAsUpdate(await docOf("x<br>".repeat(2_000)));
+    const before = new Y.Doc();
+    Y.applyUpdate(before, state);
+    const oldTop = topLevelBlocks(before.getXmlFragment(YDOC_FRAGMENT)).map(el => String(el.getAttribute("id")));
+    expect(oldTop).toHaveLength(1);
+    const section = outlineOf(before.getXmlFragment(YDOC_FRAGMENT)).outline.find(o => o.blockIds.includes(oldTop[0]!))!;
+    await expectLinear("#551 editOnFork keepIds", async n => {
+      const { fork, sv } = forkFrom(state);
+      const blocks = formatted(n);
+      const [r, ms] = await (async () => {
+        const t = performance.now();
+        const v = await editOnFork(rt, fork, sv, { op: "replace_section", isEmptyDoc: false, section, keepIds: true }, blocks as never);
+        return [v, performance.now() - t] as const;
+      })();
+      expect(r.afterIds).toEqual(oldTop);
+      expect(topLevelBlocks(fork.getXmlFragment(YDOC_FRAGMENT)).map(el => String(el.getAttribute("id")))).toEqual(oldTop);
+      return ms;
     }, 48_000);
   }, 360_000);
 });

@@ -3,8 +3,11 @@ import * as Y from "yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { fingerprintsOfGroups } from "../../src/notes/editing/fingerprint.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
-import { fileSyncRows } from "../../src/transfer/sync-apply.js";
+import { decide } from "../../src/transfer/decide.js";
+import { applySync, fileSyncRows } from "../../src/transfer/sync-apply.js";
+import type { SyncPlan } from "../../src/transfer/sync-plan.js";
 import { yieldToLoop } from "../../src/transfer/yield.js";
+import { allBlockIds } from "./fixtures/block-ids.js";
 import { applyInMemory, docWith, forkOf, makeBaseInMemory, topOf, withEditor } from "./fixtures/transfer-sync.js";
 
 // Wraps yieldToLoop in a counting spy (still calls the original).
@@ -51,10 +54,64 @@ describe("rewrite", () => {
     const r = await applyInMemory(rt, b, "A\n\nB2\n\nC", live);
     expect(marks(r)).toEqual(["rewrite:applied"]);
     expect(texts(live)).toEqual(["A", "B2", "C"]);
-    expect(topOf(live).map(x => x.id)).not.toContain(b.ids[1]);
+    expect(topOf(live).map(x => x.id)).toEqual(b.ids);
     expect(r.applied.perRegion[0]!.beforeBlocks.map(x => x.id)).toEqual([b.ids[1]]);
     expect(r.applied.perRegion[0]!.afterIds).toEqual([topOf(live)[1]!.id]);
   });
+  it("a rewrite region's afterIds carry the kept survivor id (#551)", async () => {
+    const { b, live } = await scene([P("A"), P("B"), P("C")]);
+    const r = await applyInMemory(rt, b, "A\n\nB2\n\nC", live);
+    expect(r.applied.perRegion[0]!.afterIds).toEqual([b.ids[1]]);
+    expect(r.applied.perRegion[0]!.beforeBlocks.map(x => x.id)).toEqual([b.ids[1]]);
+  });
+  it("a deferred delete anchor that lands on a kept block is mapped to the kept id (#551)", async () => {
+    const doc = await docWith(rt, [P("A"), P("B")]);
+    const b = await makeBaseInMemory(rt, doc);
+    const live = forkOf(doc);
+    const fork = forkOf(live);
+    const sv = Y.encodeStateVector(fork);
+    const segs = b.base.segments!;
+    const region = (kind: "rewrite" | "delete", k: number, prevSeg: number, nextSeg: number) => ({
+      kind,
+      segIdx: [k],
+      baseIds: segs[k]!.ids,
+      baseFps: segs[k]!.fps,
+      text: kind === "delete" ? "" : "A2",
+      prevSeg,
+      nextSeg,
+    });
+    const regions = [region("rewrite", 0, -1, 1), region("delete", 1, 0, -1)];
+    const cur = { ids: b.ids, fps: b.fps, types: b.types };
+    const decisions = decide(segs, regions, cur, () => false);
+    expect(decisions[1]!.anchor).toBe("deferred");
+    const plan = { regions, decisions, parsed: [[{ type: "paragraph", content: "A2" }], []], unbound: 0, boundaryChecks: 0 } as unknown as SyncPlan;
+    const applied = await applySync(rt, fork, sv, plan, cur);
+    Y.applyUpdate(live, applied.diff);
+    expect(applied.perRegion[1]!.anchor).toEqual({ block_id: b.ids[0], position: "after" });
+    expect(applied.perRegion[0]!.afterIds).toEqual([b.ids[0]]);
+    expect(topOf(live).map(x => `${x.id}:${x.text}`)).toEqual([`${b.ids[0]}:A2`]);
+  });
+  it("1,000 rewrite regions (2,000 paragraphs, every other changed): all ids kept, no duplicates, apply time linear (#551)", async () => {
+    const run = async (n: number) => {
+      const doc = await docWith(rt, Array.from({ length: n }, (_, i) => P(`p${i}`)));
+      const b = await makeBaseInMemory(rt, doc);
+      const live = forkOf(doc);
+      const body = Array.from({ length: n }, (_, i) => (i % 2 === 0 ? `p${i} changed` : `p${i}`)).join("\n\n");
+      const t0 = performance.now();
+      const r = await applyInMemory(rt, b, body, live, { applyYieldFn: async () => {} });
+      const ms = performance.now() - t0;
+      const ids = allBlockIds(live);
+      expect(r.plan.regions).toHaveLength(n / 2);
+      expect(topOf(live).map(x => x.id)).toEqual(b.ids);
+      expect(new Set(ids).size).toBe(ids.length);
+      return ms;
+    };
+    await run(100);
+    const small = Math.min(await run(250), await run(250));
+    const large = await run(2000);
+    // 8x the regions: linear is about 8x; quadratic would be about 64x
+    expect(large).toBeLessThan(small * 8 * 4 + 2000);
+  }, 360_000);
 });
 
 describe("deletion-region anchor", () => {
