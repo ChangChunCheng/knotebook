@@ -51,9 +51,9 @@ describe("provider DTO icon conversion", () => {
     expectNoIconBytes(res.body);
   });
 
-  it("POST new provider -> iconKind 'template', icon from the template (gitlab -> GitLab logo, oidc -> generic)", async () => {
+  it("POST new provider -> iconKind 'template', icon is generic for every template", async () => {
     const { app, cookies } = await adminApp();
-    for (const [template, icon] of [["gitlab", { type: "builtin", name: "gitlab" }], ["oidc", { type: "builtin", name: "generic" }]] as const) {
+    for (const [template, icon] of [["gitlab", { type: "builtin", name: "generic" }], ["google", { type: "builtin", name: "generic" }], ["oidc", { type: "builtin", name: "generic" }]] as const) {
       const res = await app.inject({
         method: "POST",
         url: "/api/admin/auth/providers",

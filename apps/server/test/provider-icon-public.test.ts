@@ -57,13 +57,13 @@ describe("GET /api/auth/providers/:id/icon", () => {
     expect(jpeg.headers["cache-control"]).toBe(IMMUTABLE);
   });
 
-  it("icon_kind != upload -> 404 'No sign-in service icon with that id.'; after switching to gitlab -> 404; same URL 200 then 404 after deleting a provider that had an uploaded image; non-UUID -> 404", async () => {
+  it("icon_kind != upload -> 404 'No sign-in service icon with that id.'; after switching to template -> 404; same URL 200 then 404 after deleting a provider that had an uploaded image; non-UUID -> 404", async () => {
     const { app, db, cookies, p } = await uploaded();
     const plain = await seedAuthProvider(db, { issuerUrl: "https://b.example" });
     const notUpload = await get(app, `/api/auth/providers/${plain.id}/icon?v=0`);
     expect(notUpload.statusCode).toBe(404);
     expect(notUpload.json().error).toEqual({ code: "not_found", message: "No sign-in service icon with that id." });
-    const patched = await app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${p.id}`, cookies, payload: { iconKind: "gitlab" } });
+    const patched = await app.inject({ method: "PATCH", url: `/api/admin/auth/providers/${p.id}`, cookies, payload: { iconKind: "template" } });
     expect(patched.statusCode).toBe(200);
     expect((await get(app, `/api/auth/providers/${p.id}/icon?v=1`)).statusCode).toBe(404);
     // Deleting the provider deletes its image too; the deleted row did have an uploaded image.
