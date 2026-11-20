@@ -96,7 +96,7 @@ export async function applyVersionEdit(deps: ApplyVersionDeps, input: ApplyVersi
       if (err instanceof FingerprintMismatch) continue;
       throw err;
     } finally {
-      deps.versions.endApply(input.noteId); // endApply(r) doesn't clear `applying`; only this line after disconnect (persisted) does
+      deps.versions.endApply(input.noteId); // endApply(baseUpdate) doesn't clear `applying`; only this line after disconnect (persisted) does
     }
   }
   return { ok: false, code: "version_unsaved_changes" };
