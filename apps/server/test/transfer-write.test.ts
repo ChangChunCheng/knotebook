@@ -8,7 +8,10 @@ import { BASE_UNAVAILABLE_MESSAGES, NOT_MERGEABLE_MESSAGE, TRANSFER_NOTE_NOT_FOU
 import { UNCLOSED_FENCE_MESSAGE, unclosedFenceMessage } from "../src/transfer/regions.js";
 import { UNCLOSED_FRONT_MATTER_MESSAGE } from "../src/transfer/frontmatter.js";
 import { buildCollabTestApp, testConfig, type CollabTestCtx } from "./helpers.js";
-import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
+import { bearer, docText, getContent, seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
+import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { loadNoteDoc } from "../src/notes/editing/read.js";
+import { allBlockIds } from "./unit/fixtures/block-ids.js";
 import { seedDoc } from "./copy-helpers.js";
 import { seedFolder } from "./folder-helpers.js";
 import { cookieOf, seedNote, seedShare, seedUser } from "./group-helpers.js";
@@ -47,7 +50,7 @@ describe("state table", () => {
     expect((await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 1", "Para 1 new")))).statusCode).toBe(200);
   });
 
-  it("change one paragraph -> applied 1, content = the agent's file, other ids unchanged, one file_sync row, applied_body_sha written, no version", async () => {
+  it("change one paragraph -> applied 1, content = the agent's file, all ids unchanged (#551), one file_sync row, applied_body_sha written, no version", async () => {
     const s = await scene();
     const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const ids0 = await topIdsOf(s.ctx, s.note.id);
@@ -61,11 +64,48 @@ describe("state table", () => {
     expect((body.editIds as string[]).length).toBe(1);
     expect(norm(await liveMarkdown(s.ctx, s.note.id))).toBe(norm(editBody(d.text, b => b.replace("Para 1", "Para 1 new")).split("\n").slice(8).join("\n")));
     const ids1 = await topIdsOf(s.ctx, s.note.id);
-    expect([ids1[0], ids1[2], ids1[3]]).toEqual([ids0[0], ids0[2], ids0[3]]);
-    expect(ids1[1]).not.toBe(ids0[1]);
+    expect(ids1).toEqual(ids0);
     const rows = await edits(s.ctx, s.note.id);
     expect(rows.map(x => x.op)).toEqual(["file_sync"]);
     expect((await baseRow(s.ctx, d.fm.base!)).appliedBodySha).not.toBeNull();
+  });
+
+  it("#551 write-back with two separate regions: an edited paragraph keeps its id, a split one gets new ids, rows' after ids are live top ids", async () => {
+    const s = await scene({}, PARAS(4));
+    const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const ids0 = await topIdsOf(s.ctx, s.note.id);
+    const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Para 0", "Para 0 new").replace("Para 2", "Para 2a\n\nPara 2b")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "applied", applied: 2 });
+    const ids1 = await topIdsOf(s.ctx, s.note.id);
+    expect(ids1).toHaveLength(5);
+    expect([ids1[0], ids1[1], ids1[4]]).toEqual([ids0[0], ids0[1], ids0[3]]);
+    expect(ids0).not.toContain(ids1[2]);
+    expect(ids0).not.toContain(ids1[3]);
+    for (const row of await edits(s.ctx, s.note.id)) for (const id of row.afterBlockIds) expect(ids1).toContain(id);
+    const { doc } = await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, s.note.id);
+    const all = allBlockIds(doc);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("#551 write-back while a provider has the note open: the provider's doc shows the kept ids, all unique", async () => {
+    const ctx = await buildCollabTestApp();
+    const u = await ctx.createUser({ email: "p@example.com", password: "correct-horse-battery" });
+    const note = await ctx.createNote(u.id);
+    const session = await ctx.loginAs("p@example.com", "correct-horse-battery");
+    const client = await seedContent(ctx, session, note.id, "First para\n\nSecond para\n\nThird para");
+    const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
+    const bulk = await issueBulkDirect(ctx.db, pat.tokenId, { access: "write" });
+    const topOf = () => topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT)).map(c => c.getAttribute("id"));
+    const ids0 = topOf();
+    const d = await downloadNote(ctx.app, bulk.token, note.id);
+    const r = await bulkPut(ctx.app, bulk.token, editBody(d.text, b => b.replace("Second para", "Second para edited")));
+    expect(r.json()).toMatchObject({ result: "applied", applied: 1 });
+    await waitFor("provider gets the write-back", 3_000, () => docText(client.doc).includes("Second para edited"));
+    expect(topOf()).toEqual(ids0);
+    const all = allBlockIds(client.doc);
+    expect(new Set(all).size).toBe(all.length);
+    client.disconnect();
   });
 
   // The write quota is only looked at once the file is known to differ from the copy it came from; nothing checks it before the note's queue.
@@ -595,7 +635,7 @@ describe("write-back and create build the full-text index before the reply (#369
 });
 
 describe("note replaced after download -> 409 note_changed (replaces anchors_gone: changed means rejected)", () => {
-  /** REST `replace_section` (PAT): replaces the section under the first heading, so every block gets a new id. */
+  /** REST `replace_section` (PAT): replaces the section under the first heading; the 409 in these cases comes from the changed text, not from new ids. */
   async function replaceSection(s: Awaited<ReturnType<typeof scene>>, markdown: string) {
     const c = (await getContent(s.ctx.app, s.note.id, s.pat.token)).json() as { outline: Array<{ sectionId: string; fingerprint: string }> };
     const sec = c.outline[1]!;
@@ -646,6 +686,20 @@ describe("note replaced after download -> 409 note_changed (replaces anchors_gon
     });
     await refused(s, editBody(d.text, b => b.replace(/^A$/m, "A changed").replace(/\n*$/, "\n\nX\n")));
     expect(await edits(s.ctx, s.note.id)).toHaveLength(0);
+  });
+
+  it("#551 an edit_note rewrite with identical content no longer makes an already-downloaded file fail with note_changed", async () => {
+    const s = await scene({}, "# H\n\nFirst para\n\nSecond para");
+    const d = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const ids0 = await topIdsOf(s.ctx, s.note.id);
+    const sectionId = ((await getContent(s.ctx.app, s.note.id, s.pat.token)).json() as { outline: Array<{ sectionId: string }> }).outline[1]!.sectionId;
+    const sec = ((await getContent(s.ctx.app, s.note.id, s.pat.token, sectionId)).json() as { section: { markdown: string } }).section.markdown;
+    await replaceSection(s, sec);
+    expect(await topIdsOf(s.ctx, s.note.id)).toEqual(ids0);
+    const r = await bulkPut(s.ctx.app, s.bulk.token, editBody(d.text, b => b.replace("Second para", "Second para from the file")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "applied", applied: 1 });
+    expect(await liveMarkdown(s.ctx, s.note.id)).toContain("Second para from the file");
   });
 
   it("base is an empty note, someone later writes content -> 409 (no longer inserted at the start)", async () => {

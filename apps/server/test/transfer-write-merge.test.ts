@@ -187,7 +187,7 @@ describe("guards", () => {
     expect((await liveBlocks(s.ctx, nid)).map(b => `${b.type}:${b.text}`)).toEqual(["bulletListItem:t1x", "toggleListItem:t2"]);
   });
 
-  it("editing one item of a list that has colored items -> the whole list is one region, all list ids change, the paragraph after the list keeps its id", async () => {
+  it("editing one item of a list that has colored items -> the whole list is one region, all list ids are kept, the paragraph after the list keeps its id", async () => {
     const s = await scene();
     const nid = (await seedNote(s.ctx.db, { ownerId: s.u.id }, { title: "X" })).id;
     await seedBlocks(s.ctx.db, nid, [
@@ -203,7 +203,7 @@ describe("guards", () => {
     expect(r.json()).toMatchObject({ result: "applied", applied: 1 });
     const after = await liveBlocks(s.ctx, nid);
     expect(after.map(b => b.text)).toEqual(["a", "b2", "c", "after"]);
-    expect(after.slice(0, 3).filter(b => idsBefore.includes(b.id))).toEqual([]);
+    expect(after.slice(0, 3).map(b => b.id)).toEqual(idsBefore.slice(0, 3));
     expect(after[3]!.id).toBe(idsBefore[3]);
   });
 });
