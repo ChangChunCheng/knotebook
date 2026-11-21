@@ -510,6 +510,17 @@ async function favoriteViaApi(page: Page, noteId: string): Promise<void> {
   expect(res.status(), await res.text()).toBeLessThan(300);
 }
 
+async function tagNoteViaApi(page: Page, noteId: string, name: string): Promise<void> {
+  const res = await page.request.post(`/api/notes/${encodeURIComponent(noteId)}/tags`, { headers: { Origin: ORIGIN }, data: { name } });
+  expect(res.status(), await res.text()).toBeLessThan(300);
+}
+
+// A tagged note row ends with a fixed-width tag-dots slot (19px, plus a 4px gap before it); an untagged row has none.
+const DOTS_SLOT_WIDTH = 19;
+const DOTS_SLOT_GAP = 4;
+// Icon buttons keep their glyph 5px inside the button box (star and kebab alike).
+const ICON_GLYPH_INSET = 5;
+
 const box = async (target: Locator): Promise<{ x: number; y: number; width: number; height: number }> => {
   const b = await target.boundingBox();
   expect(b, "元素要有版面").not.toBeNull();
@@ -609,16 +620,21 @@ test("58-12 phone list (390): the last row scrolls above the floating buttons; n
   }
 });
 
-test("58-13 desktop (1280): without hover the favorite star is rightmost; on hover the kebab is rightmost and the star shifts left one slot; left and right padding are equal", async ({ browser }) => {
+test("58-13 desktop (1280): on an untagged row the star's right inset equals the left inset; on a tagged row the dots' right inset equals it and the star sits one slot further left; on either kind of row the star and the dots do not move on hover and the kebab appears left of the star", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openList(browser, 1280, false);
   try {
     const created = await createNoteVia(page, `E2E layout fav row ${RUN}`);
     await favoriteViaApi(page, created.id);
+    const tagged = await createNoteVia(page, `E2E layout tagged row ${RUN}`);
+    await favoriteViaApi(page, tagged.id);
+    await tagNoteViaApi(page, tagged.id, `layout${RUN}`);
     await page.reload();
     await showSidebarTab(page, "My notes");
     const row = page.locator(`[data-node-id="${created.id}"]`).first();
     await expect(row).toBeVisible({ timeout: 15_000 });
+    const taggedRow = page.locator(`[data-node-id="${tagged.id}"]`).first();
+    await expect(taggedRow.getByRole("img", { name: /^Tags: / })).toBeVisible({ timeout: 15_000 });
     const star = row.getByRole("button", { name: "Favorite", exact: true });
     const more = row.getByRole("button", { name: /^Note actions for / });
     await page.mouse.move(700, 600);
@@ -632,7 +648,19 @@ test("58-13 desktop (1280): without hover the favorite star is rightmost; on hov
     };
     const idleInset = edges.right - (await starGlyph());
     expect(leftInset, "文字左緣離清單左緣").toBeCloseTo(16, 0);
-    expect(Math.abs(idleInset - leftInset), `右內距 ${idleInset} 與左內距 ${leftInset} 相差`).toBeLessThanOrEqual(1);
+    expect(Math.abs(idleInset - leftInset), `無標籤列星號右內距 ${idleInset} 與左內距 ${leftInset} 相差`).toBeLessThanOrEqual(1);
+    await expect(row.locator("[data-tag-dots]")).toHaveCount(0);
+    const taggedStarButton = taggedRow.getByRole("button", { name: "Favorite", exact: true });
+    const taggedMore = taggedRow.getByRole("button", { name: /^Note actions for / });
+    const slot = await box(taggedRow.locator(":scope > span").last());
+    expect(slot.width, "圓點欄寬").toBeCloseTo(DOTS_SLOT_WIDTH, 0);
+    const slotInset13 = edges.right - (slot.x + slot.width);
+    expect(Math.abs(slotInset13 - leftInset), `圓點欄右內距 ${slotInset13} 與左內距 ${leftInset} 相差`).toBeLessThanOrEqual(1);
+    const taggedGlyph = await box(taggedStarButton.locator("svg"));
+    const taggedIdleInset = edges.right - (taggedGlyph.x + taggedGlyph.width);
+    expect(Math.abs(taggedIdleInset - slotInset13 - DOTS_SLOT_WIDTH - DOTS_SLOT_GAP - ICON_GLYPH_INSET), `有標籤列星號右內距 ${taggedIdleInset} 要多出圓點欄與間距`).toBeLessThanOrEqual(1);
+    const taggedIdleStar = await box(taggedStarButton);
+    console.log(`MEASURE 58-13 untagged star inset ${idleInset} tagged dots inset ${slotInset13} tagged star inset ${taggedIdleInset} star offset ${(await box(star)).x - taggedIdleStar.x}`);
     // When the kebab hasn't surfaced it is transparent with width 0 (takes no space); the title extends up to one gap before the star.
     expect(await more.evaluate((el) => getComputedStyle(el).opacity), "⋮ 沒浮出").toBe("0");
     expect((await box(more)).width, "⋮ 沒浮出時不佔位").toBeLessThanOrEqual(1);
@@ -657,18 +685,35 @@ test("58-13 desktop (1280): without hover the favorite star is rightmost; on hov
     const starBox = await box(star);
     expect(Math.abs(starBox.x - (moreBox.x + moreBox.width) - 4), "⋮ 與星號的間距").toBeLessThanOrEqual(1);
     expect(moreBox.x, "⋮ 在星號左邊").toBeLessThan(starBox.x);
+    await taggedRow.hover();
+    await expect(async () => {
+      expect(await taggedMore.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+      expect((await box(taggedMore)).width).toBeCloseTo(24, 0);
+    }).toPass({ timeout: 5_000 });
+    const taggedHoverStar = await box(taggedStarButton);
+    const taggedHoverMore = await box(taggedMore);
+    const taggedHoverSlot = await box(taggedRow.locator(":scope > span").last());
+    expect(Math.abs(taggedHoverStar.x - taggedIdleStar.x), "有標籤的列星號不動").toBeLessThanOrEqual(0.5);
+    expect(Math.abs(taggedHoverSlot.x - slot.x), "圓點欄不動").toBeLessThanOrEqual(0.5);
+    expect(taggedHoverMore.x + taggedHoverMore.width, "⋮ 不蓋到星號").toBeLessThanOrEqual(taggedHoverStar.x + 0.5);
+    expect(taggedHoverMore.x, "⋮ 在星號左邊").toBeLessThan(taggedHoverStar.x);
+    expect(taggedHoverStar.x + taggedHoverStar.width, "星號在圓點欄左邊").toBeLessThanOrEqual(taggedHoverSlot.x + 0.5);
+    expect(Math.abs(taggedHoverStar.x - starBox.x + DOTS_SLOT_WIDTH + DOTS_SLOT_GAP + ICON_GLYPH_INSET), "有標籤的列星號比沒標籤的列靠左：圓點欄寬＋間距＋圖示內縮").toBeLessThanOrEqual(1);
     await moveAway();
   } finally {
     await context.close();
   }
 });
 
-test("58-14 phone (390): right padding = left padding; star and kebab tap areas don't overlap; font sizes 15/12; top bar title on the left and avatar on the right aligned with the rows", async ({ browser }) => {
+test("58-14 phone (390): on an untagged row the kebab's right inset equals the left inset; on a tagged row the dots' right inset equals it and the kebab sits left of the dots; star and kebab tap areas don't overlap; font sizes 15/12; top bar title on the left and avatar on the right at the same 16px inset", async ({ browser }) => {
   test.setTimeout(120_000);
   const { context, page } = await openList(browser, 390, true);
   try {
     const created = await createNoteVia(page, `E2E layout phone row ${RUN}`);
     await favoriteViaApi(page, created.id);
+    await tagNoteViaApi(page, created.id, `phone${RUN}`);
+    const untaggedFav = await createNoteVia(page, `E2E layout phone untagged row ${RUN}`);
+    await favoriteViaApi(page, untaggedFav.id);
     await page.reload();
     await showSidebarTab(page, "My notes");
     const row = page.locator(`[data-node-id="${created.id}"]`).first();
@@ -682,10 +727,15 @@ test("58-14 phone (390): right padding = left padding; star and kebab tap areas 
     const edges = await listEdges(page);
     const link = row.getByRole("link");
     const leftInset = (await box(link)).x - edges.left;
-    // The kebab is the rightmost slot: its icon's right edge is the left padding from the list edge; the marker is about 8px left of it (icon to icon).
+    expect(leftInset, "文字左緣離清單左緣").toBeCloseTo(16, 0);
+    // On a tagged row the dots slot is the rightmost item and the kebab icon ends one slot plus a gap before it; the marker is about 8px left of the kebab (icon to icon).
     const moreGlyph = await box(more.locator("svg"));
     const rightInset = edges.right - (moreGlyph.x + moreGlyph.width);
-    expect(Math.abs(rightInset - leftInset), `⋮ 右內距 ${rightInset} 左內距 ${leftInset}`).toBeLessThanOrEqual(1);
+    const slotBox = await box(row.locator(":scope > span").last());
+    const slotInset = edges.right - (slotBox.x + slotBox.width);
+    expect(slotBox.width, "圓點欄寬").toBeCloseTo(DOTS_SLOT_WIDTH, 0);
+    expect(Math.abs(slotInset - leftInset), `圓點欄右內距 ${slotInset} 與左內距 ${leftInset} 相差`).toBeLessThanOrEqual(1);
+    expect(Math.abs(rightInset - slotInset - DOTS_SLOT_WIDTH - DOTS_SLOT_GAP - ICON_GLYPH_INSET), `⋮ 右內距 ${rightInset} 圓點欄右內距 ${slotInset}`).toBeLessThanOrEqual(1);
     const markerGlyph = await box(marker.locator("svg"));
     const iconGap = moreGlyph.x - (markerGlyph.x + markerGlyph.width);
     expect(iconGap, "標記與 ⋮ 的圖示間距").toBeGreaterThanOrEqual(6);
@@ -693,18 +743,21 @@ test("58-14 phone (390): right padding = left padding; star and kebab tap areas 
     const moreBox = await box(more);
     const markerBox = await box(marker);
     expect(moreBox.x, "⋮ 在標記右邊").toBeGreaterThanOrEqual(markerBox.x + markerBox.width - 0.5);
-    // There must be space between the marker and the title's visible end (the right edge of the truncated link box; plus the role text when present).
+    // There must be space between the marker and the title's visible end (the right edge of the truncated link box).
     const linkBox = await box(link);
     expect(markerBox.x - (linkBox.x + linkBox.width), "標記與標題右緣").toBeGreaterThanOrEqual(11);
-    const roleLabel = row.getByText(/^(Editor|Viewer)$/);
-    if ((await roleLabel.count()) > 0) {
-      const roleBox = await box(roleLabel.first());
-      expect(markerBox.x - (roleBox.x + roleBox.width), "標記與角色字右緣").toBeGreaterThanOrEqual(11);
-    }
-    const plainRow = page.locator('li[data-node-kind="note"]').filter({ hasNot: page.getByRole("img", { name: "Favorite", exact: true }) }).first();
-    const plainMore = await box(plainRow.getByRole("button", { name: /^Note actions for / }));
-    expect(Math.abs(plainMore.x + plainMore.width - (moreBox.x + moreBox.width)), "各列 ⋮ 右緣").toBeLessThanOrEqual(1);
-    expect(plainMore.width).toBeLessThanOrEqual(24.5);
+    // An untagged row has no dots slot: its kebab icon is the rightmost item, 16px from the list edge like the left text start.
+    const untaggedRow = page.locator(`[data-node-id="${untaggedFav.id}"]`).first();
+    await expect(untaggedRow).toBeVisible({ timeout: 15_000 });
+    await expect(untaggedRow.locator("[data-tag-dots]")).toHaveCount(0);
+    const untaggedMore = untaggedRow.getByRole("button", { name: /^Note actions for / });
+    const untaggedGlyph = await box(untaggedMore.locator("svg"));
+    const untaggedInset = edges.right - (untaggedGlyph.x + untaggedGlyph.width);
+    expect(Math.abs(untaggedInset - leftInset), `無標籤列 ⋮ 右內距 ${untaggedInset} 與左內距 ${leftInset} 相差`).toBeLessThanOrEqual(1);
+    const untaggedMoreBox = await box(untaggedMore);
+    expect(untaggedMoreBox.width).toBeLessThanOrEqual(24.5);
+    expect(Math.abs(untaggedMoreBox.x + untaggedMoreBox.width - (moreBox.x + moreBox.width) - (DOTS_SLOT_WIDTH + DOTS_SLOT_GAP + 5)), "有標籤的列 ⋮ 比沒標籤的列靠左一欄").toBeLessThanOrEqual(1);
+    console.log(`MEASURE 58-14 untagged kebab inset ${untaggedInset} tagged dots inset ${slotInset} tagged kebab inset ${rightInset}`);
 
     expect(await link.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBe(15);
     await showSidebarTab(page, "Recent");
@@ -721,7 +774,7 @@ test("58-14 phone (390): right padding = left padding; star and kebab tap areas 
     const avatarButton = top.getByRole("button", { name: alice.displayName, exact: true });
     const avatar = await box(avatarButton.locator("> *").first());
     expect(avatar.width).toBeCloseTo(32, 0);
-    expect(Math.abs(edges.right - (avatar.x + avatar.width) - rightInset), "頭像右緣").toBeLessThanOrEqual(1);
+    expect(Math.abs(edges.right - (avatar.x + avatar.width) - leftInset), "頭像右緣與左內距同一個內距").toBeLessThanOrEqual(1);
     expect((await box(avatarButton)).width, "頭像點擊範圍").toBeGreaterThanOrEqual(44);
     expect((await box(top.getByText("Knotebook", { exact: true }))).x).toBeLessThan((await box(avatarButton)).x);
   } finally {
