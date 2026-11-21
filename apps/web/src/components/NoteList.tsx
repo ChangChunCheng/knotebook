@@ -81,14 +81,6 @@ function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string
   return t("errors.fallback");
 }
 
-/** Only for non-owner notes shared with me per person; group notes are never marked (#182): see the group panel member table. The note header no longer shows the role either (#335). */
-export function RoleBadge({ role, group }: { role: NoteDto["role"]; group: NoteDto["group"] }) {
-  const { t } = useTranslation();
-  if (group) return null;
-  if (role !== "editor" && role !== "viewer") return null;
-  return <span className="shrink-0 text-[11px] text-muted-foreground max-sm:text-xs">{t(`roles.${role}`)}</span>;
-}
-
 type RowVariant = "plain" | "group" | "recent";
 
 interface NoteRowProps {
@@ -100,7 +92,7 @@ interface NoteRowProps {
   favoritePending: boolean;
 }
 
-/** Not a button: shown only on touch/no-hover devices (a mouse uses the star button) and takes no clicks; add and remove through ⋮. Sits left of ⋮ so every row ⋮ lines up: 14px star about 8px from ⋮, `ms-2` from the text. */
+/** Not a button: shown only on touch/no-hover devices (a mouse uses the star button) and takes no clicks; add and remove through ⋮. Sits left of ⋮ so ⋮ lines up across favourite and non-favourite rows: 14px star about 8px from ⋮, `ms-2` from the text. */
 function FavoriteMarker() {
   const { t } = useTranslation();
   return (
@@ -121,12 +113,16 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
   const { activeNoteId, setActiveNoteId } = useActiveNote();
   // #122: active comes from context note.id (see `lib/active-note.tsx`), not route params: slug is recomputed from the title and the URL changes after the save returns.
   const active = activeNoteId === note.id;
+  const tags = note.tags ?? EMPTY_TAGS;
+  const hasDots = tags.length > 0;
   return (
     <li
       data-node-kind="note"
       data-node-id={note.id}
       className={cn(
-        "group/noterow flex items-center gap-1 rounded-md pr-0.75 text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
+        "group/noterow flex items-center gap-1 rounded-md text-[13px] max-sm:text-[15px] hover:bg-brand-soft hover:text-brand-on-soft active:bg-brand-soft-strong",
+        // 8px puts the dots' edge 16px from the list edge; without dots the rightmost button's icon edge gets there with 3px, like folder and group rows.
+        hasDots ? "pr-2" : "pr-0.75",
         variant === "recent" ? "pl-2" : "h-11 pointer-fine:h-7",
         variant === "plain" && "pl-2",
         variant === "group" && "pl-3",
@@ -159,15 +155,15 @@ function NoteRow({ note, variant, location, favorite, favoritePending }: NoteRow
           note.title
         )}
       </Link>
-      <TagDots
-        tags={note.tags ?? EMPTY_TAGS}
-        // The two-line row puts the dots level with the title line, not centred between the lines.
-        className={variant === "recent" ? "self-start mt-3 max-sm:mt-3.5" : undefined}
-      />
-      {variant !== "recent" && <RoleBadge role={note.role} group={note.group} />}
       {favorite === true && <FavoriteMarker />}
       <SidebarNoteMenu note={note} />
       {favorite !== null && <RowFavoriteStar note={note} favorite={favorite} pending={favoritePending} />}
+      {/* Fixed 19px (three overlapping 7px dots) so every tagged row's dots end at the same x and hovering never moves them. The two-line row puts the dots level with the title line. */}
+      {hasDots && (
+        <span className={cn("flex w-[19px] shrink-0 justify-end", variant === "recent" && "self-start mt-3 max-sm:mt-3.5")}>
+          <TagDots tags={tags} className="pl-0" />
+        </span>
+      )}
     </li>
   );
 }

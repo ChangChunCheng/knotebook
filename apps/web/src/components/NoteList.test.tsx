@@ -325,7 +325,7 @@ describe("NoteList", () => {
     expect(touchRow).toHaveClass("self-stretch", "flex", "items-center");
   });
 
-  it("shows a role badge only for shared (non-owner) notes; no delete button anywhere (moved to the more menu)", async () => {
+  it("shows no role text on any row; no delete button anywhere (moved to the more menu)", async () => {
     stubNotesFetch([OWNER_NOTE, SHARED_NOTE]);
 
     renderNoteList();
@@ -334,7 +334,8 @@ describe("NoteList", () => {
     expect(screen.queryByText("Editor")).not.toBeInTheDocument();
 
     selectTab("Shared with me");
-    expect(within(panel()).getByText("Editor")).toBeInTheDocument();
+    await within(panel()).findByRole("link", { name: "No Slug Note" });
+    expect(within(panel()).queryByText("Editor")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
@@ -504,7 +505,7 @@ describe("NoteList", () => {
     expect(titles).toEqual(["Third Owner Note", "Has A Slug"]); // server order, not sorted by title
     for (const note of [THIRD_OWNER_NOTE, OWNER_NOTE]) {
       const row = noteRow(note.id)!;
-      // Right padding 3px: the rightmost button's icon edge is 16px from the list edge, symmetric with the left text start; phone title is 15px.
+      // Untagged row: right padding 3px like folder and group rows, so the rightmost button's icon edge is 16px from the list edge; phone title is 15px.
       expect(row).toHaveClass("pl-2", "pr-0.75", "text-[13px]", "max-sm:text-[15px]");
       expect(row).not.toHaveClass("pl-6", "pr-2");
       const menu = within(row).getByRole("button", { name: `Note actions for ${note.title}` });
@@ -528,7 +529,7 @@ describe("NoteList", () => {
     expect(within(panel()).queryByRole("link", { name: "No Slug Note" })).toBeNull();
   });
 
-  it("Shared with me: per-person shares (with small Editor/Viewer text) + orphan group notes; no personal notes", async () => {
+  it("Shared with me: per-person shares + orphan group notes; no personal notes", async () => {
     const viewerShared: NoteDto = { ...SHARED_NOTE, id: "77777777-7777-7777-7777-777777777777", title: "Read Only Share", role: "viewer", permissions: VIEWER_PERMS };
     stubNotesFetch([OWNER_NOTE, SHARED_NOTE, viewerShared, ORPHAN_GROUP_NOTE, MY_GROUP_NOTE], [GROUP_A]);
 
@@ -536,10 +537,8 @@ describe("NoteList", () => {
 
     const orphan = await within(panel()).findByRole("link", { name: "Orphan" });
     expect(orphan).toHaveAttribute("href", `/g/${ORPHAN_GROUP_NOTE.group!.id}/orphan`);
-    expect(within(noteRow(SHARED_NOTE.id)!).getByText("Editor")).toBeInTheDocument();
-    expect(within(noteRow(viewerShared.id)!).getByText("Viewer")).toHaveClass("text-[11px]", "max-sm:text-xs");
-    // Orphan group notes carry no role (#182).
-    expect(within(noteRow(ORPHAN_GROUP_NOTE.id)!).queryByText("Editor")).toBeNull();
+    expect(within(noteRow(SHARED_NOTE.id)!).queryByText("Editor")).toBeNull();
+    expect(within(noteRow(viewerShared.id)!).queryByText("Viewer")).toBeNull();
     expect(within(panel()).queryByRole("link", { name: "Has A Slug" })).toBeNull();
     expect(within(panel()).queryByRole("link", { name: "Mine In A" })).toBeNull();
   });
@@ -909,7 +908,7 @@ describe("NoteList", () => {
       expect(titles).toEqual(["Note 3", ...Array.from({ length: 19 }, (_, i) => `Note ${24 - i}`)]);
     });
 
-    it("second line is the location (My notes, Groups with the group name, Shared with me with the role); group row accessible name = title + location; no RoleBadge; each row has a more menu", async () => {
+    it("second line is the location (My notes, Groups with the group name, Shared with me with the role); group row accessible name = title + location; no role text; each row has a more menu", async () => {
       const mine = { ...OWNER_NOTE, updatedAt: "2026-03-03T00:00:00.000Z" };
       const group = { ...MY_GROUP_NOTE, updatedAt: "2026-03-02T00:00:00.000Z" };
       const shared = { ...SHARED_NOTE, updatedAt: "2026-03-01T00:00:00.000Z" };
@@ -1184,7 +1183,7 @@ describe("note row more menu", () => {
     vi.unstubAllGlobals();
   });
 
-  it("every row has one, the name includes the title, after the badge; class = 24px + hover float-in (class assertion, not behaviour: jsdom has no CSS/hover)", async () => {
+  it("every row has one, the name includes the title; class = 24px + hover float-in (class assertion, not behaviour: jsdom has no CSS/hover)", async () => {
     renderRowMenu(null);
     const trigger = await ownerRowTrigger();
     const row = trigger.closest("li") as HTMLElement;
@@ -1205,12 +1204,11 @@ describe("note row more menu", () => {
     expect(last === trigger || last?.getAttribute("aria-pressed") !== null).toBe(true);
     expect(within(panel()).getAllByRole("button", { name: "Note actions for Has A Slug" })).toHaveLength(1);
 
-    // Shared-with-me (editor) row: order = title, badge, more menu, star (the star exists only after the favorites list loads, rightmost slot); with a star the more menu floats one slot left of it.
+    // Shared-with-me (editor) row: order = title, more menu, star (the star exists only after the favorites list loads, rightmost slot); with a star the more menu floats one slot left of it.
     selectTab("Shared with me");
     const sharedTrigger = within(panel()).getByRole("button", { name: "Note actions for No Slug Note" });
-    const badge = within(panel()).getByText("Editor");
     const star = await within(panel()).findByRole("button", { name: "Favorite" });
-    expect(badge.nextElementSibling).toBe(sharedTrigger);
+    expect(sharedTrigger.previousElementSibling).toBe(sharedTrigger.closest("li")!.querySelector("a"));
     expect(sharedTrigger.nextElementSibling).toBe(star);
     expect(star.className).not.toContain("me-7");
     expect(sharedTrigger.closest("li")?.lastElementChild).toBe(star);
@@ -2087,18 +2085,16 @@ describe("NoteList - star on the row", () => {
     expect(favoritesGets(server)).toBe(1);
   });
 
-  it("DOM order within a row is link, role marker, more menu, star (rightmost); the star isn't inside the link", async () => {
+  it("DOM order within a row is link, more menu, star; the star isn't inside the link", async () => {
     stubStars();
     renderNoteList({}, { tab: "shared" });
     await waitFor(() => expect(starOf(SHARED.id)).not.toBeNull());
     const row = noteRow(SHARED.id)!;
     const link = within(row).getByRole("link");
-    const badge = within(row).getByText("Viewer");
     const star = starOf(SHARED.id)!;
     const actions = within(row).getByRole("button", { name: "Note actions for Delta" });
     const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(before(link, badge)).toBe(true);
-    expect(before(badge, actions)).toBe(true);
+    expect(before(link, actions)).toBe(true);
     expect(before(actions, star)).toBe(true);
     expect(star.closest("a")).toBeNull();
     expect(star.parentElement).toBe(row);
