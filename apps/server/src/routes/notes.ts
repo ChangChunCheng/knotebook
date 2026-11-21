@@ -23,6 +23,7 @@ import type { EditingRuntime } from "../notes/editing/runtime.js";
 import type { PresenceRegistry } from "../notes/editing/presence.js";
 import { accessFromListRow, editor, visibleNoteBranches } from "../notes/list-query.js";
 import { noteTagsJsonSql } from "../tags/queries.js";
+import { noteHasKnowledgeSql } from "../knowledge/index-sql.js";
 import { loadNoteFields, noteFieldsSelection, noteSizeBytesSql, placementJoinOn, toNoteDto, viewerFolderIdFor, type NoteFields } from "../notes/note-dto.js";
 import { createBodySchema, updateBodySchema } from "../notes/schemas.js";
 import { renameNoteTitle } from "../notes/rename-note.js";
@@ -43,6 +44,7 @@ import { trashNote } from "../trash/service.js";
 import { moveNoteToGroup } from "../notes/move-note.js";
 import { copyNote } from "../notes/copy-note.js";
 import type { SearchIndexHooks } from "../notes/tx/search-index.js";
+import type { KnowledgeIndexHooks } from "../knowledge/tx/index-write.js";
 import { patchSlugInTx, type SlugPatchTestHook, type SlugWriteScope } from "../notes/tx/patch-slug.js";
 import { groupNotePath, userNotePath } from "../notes/redirects.js";
 import { resolveNotePath, type PathRowSource } from "../notes/resolve-path.js";
@@ -110,6 +112,7 @@ export interface NotesRouteDeps {
   noteCreateHooks?: NoteCreateHooks;
   groupTestHook?: GroupTestHook;
   searchIndexHooks?: SearchIndexHooks;
+  knowledgeIndexHooks?: KnowledgeIndexHooks;
   /** Handed to trash/service.ts, which deletes files after a permanent delete commits. */
   uploadsDir: string;
   storageLockTimeoutMs: number;
@@ -211,9 +214,9 @@ export function notesRoutes(deps: NotesRouteDeps) {
 
       // UNION ALL instead of one query with `owner_id=$u OR note_shares.user_id=$u`: an OR across an outer join forces a full notes scan, while each branch uses its own index.
       // The shared branch excludes owner_id = userId: nothing at the DB level stops a self-share row (cannot_share_with_self is only an application check), which would return the note twice with the wrong role.
-      // The three branches (owned/shared/grouped) are structurally disjoint (see list-query.ts) and all join users (grouped with a LEFT JOIN) so the select shapes match for unionAll. `sizeBytes` is added here only; MCP lists don't pay for the subqueries.
+      // The three branches (owned/shared/grouped) are structurally disjoint (see list-query.ts) and all join users (grouped with a LEFT JOIN) so the select shapes match for unionAll. `sizeBytes`, `tags` and `hasKnowledge` are added here only; MCP lists don't pay for the subqueries.
       const { owned: ownedSelect, shared: sharedSelect, grouped: groupedSelect } = visibleNoteBranches(deps.db, userId, {
-        extra: { sizeBytes: noteSizeBytesSql(), tags: noteTagsJsonSql() },
+        extra: { sizeBytes: noteSizeBytesSql(), tags: noteTagsJsonSql(), hasKnowledge: noteHasKnowledgeSql() },
       });
 
       // Secondary key id: updatedAt isn't unique, and an unstable order would duplicate or skip rows under future keyset pagination.
@@ -554,6 +557,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
           db: deps.db, collab: deps.collab, log: request.log, uploadsDir: deps.uploadsDir, storageLockTimeoutMs: deps.storageLockTimeoutMs,
           limiters: { edit: deps.limiters.edit, upload: deps.limiters.upload }, noteMaxBytes: deps.siteLimits.get("noteMaxBytes"),
           groupTestHook: deps.groupTestHook, noteCreateHooks: deps.noteCreateHooks, searchIndexHooks: deps.searchIndexHooks,
+          knowledgeIndexHooks: deps.knowledgeIndexHooks,
         },
         {
           sourceId: id, userId, groupId: parsed.data.groupId,

@@ -46,3 +46,4 @@ export * from "./knowledge-markdown.js";
 export * from "./knowledge-html.js";
 export * from "./block-align.js";
 export * from "./knowledge-rewrite.js";
+export * from "./knowledge-index.js";
