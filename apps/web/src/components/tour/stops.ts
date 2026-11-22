@@ -24,7 +24,7 @@ import {
 
 export type TourScreen = "list" | "note";
 
-export type StopId = "tabs" | "newNote" | "folders" | "search" | "header" | "versions" | "wikilink" | "ai" | "slash" | "userMenu";
+export type StopId = "tabs" | "newNote" | "folders" | "search" | "header" | "versions" | "knowledge" | "tags" | "wikilink" | "ai" | "slash" | "userMenu";
 
 export interface StopContext {
   searchQuery: string;
@@ -66,6 +66,19 @@ function all(...els: (Element | null)[]): Element[] {
 
 const drawerButton = () => all(findDrawerButton());
 const noteMenu = () => findTourTarget("noteMenu");
+
+/** Scrolled to once per visit: the target is re-queried every frame, so within a visit the user's own scrolling must win; cleared on leave because later stops (the `[[` demo) scroll the note away. */
+let scrolledKnowledgeIcon: Element | null = null;
+
+function sampleKnowledgeIcon(): Element[] {
+  const icon = findTourTarget("knowledgeIcon");
+  if (icon === null) return [];
+  if (scrolledKnowledgeIcon !== icon) {
+    scrolledKnowledgeIcon = icon;
+    if (typeof icon.scrollIntoView === "function") icon.scrollIntoView({ block: "center" });
+  }
+  return [icon];
+}
 
 /** While searching, the sidebar's tab row and header aren't rendered; the user's query isn't cleared for them, so the step is skipped (blank counts as searching). */
 const searchIsEmpty = (ctx: StopContext) => ctx.searchQuery === "";
@@ -153,6 +166,25 @@ export const STOPS: Readonly<Record<StopId, StopDef>> = {
     target: () => all(findTourTarget("versions")),
     phoneTarget: () => all(noteMenu()),
   },
+  knowledge: {
+    id: "knowledge",
+    titleKey: "tourGuide.stops.knowledge.title",
+    bodyKey: "tourGuide.stops.knowledge.body",
+    phoneBodyKey: "tourGuide.stops.knowledge.phoneBody",
+    // The sample note's heading is seeded with knowledge info; if the user removed it the icon is gone and the step is skipped.
+    target: sampleKnowledgeIcon,
+    leave: () => {
+      scrolledKnowledgeIcon = null;
+    },
+  },
+  tags: {
+    id: "tags",
+    titleKey: "tourGuide.stops.tags.title",
+    bodyKey: "tourGuide.stops.tags.body",
+    phoneBodyKey: "tourGuide.stops.tags.phoneBody",
+    // The tag row is drawn only when a note has tags, and a tag stays in the space after its note is trashed, so the step points at ⋮ ("Add tag") instead of tagging the sample note.
+    target: () => all(noteMenu()),
+  },
   wikilink: {
     id: "wikilink",
     titleKey: "tourGuide.stops.wikilink.title",
@@ -210,7 +242,7 @@ export const STOPS: Readonly<Record<StopId, StopDef>> = {
   },
 };
 
-export const FULL_TOUR: readonly [StopId, ...StopId[]] = ["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "ai", "slash", "userMenu"];
+export const FULL_TOUR: readonly [StopId, ...StopId[]] = ["tabs", "newNote", "folders", "search", "header", "versions", "knowledge", "tags", "wikilink", "ai", "slash", "userMenu"];
 
 // The exported helpers below default `layout` to a one-time `tourLayout()` read; components subscribed to layout changes pass their value.
 export function stopShownIn(stop: StopDef, layout: TourLayout = tourLayout()): boolean {

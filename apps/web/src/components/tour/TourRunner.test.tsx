@@ -164,6 +164,7 @@ const RECTS: Record<TourTargetId, [number, number, number, number]> = {
   slashMenu: [400, 300, 220, 60],
   wikilink: [300, 200, 120, 20],
   flowchart: [300, 400, 400, 120],
+  knowledgeIcon: [620, 160, 16, 16],
 };
 let hiddenTargets = new Set<TourTargetId>();
 
@@ -231,6 +232,10 @@ function NoteStandIn() {
         </a>
         {/* A diagram inserted with `/` in the sample note (when there is no editor, the `/` stop points at it). */}
         <div {...tourTarget("flowchart")}>a flowchart</div>
+        {/* Status icon of the sample note's knowledge heading. */}
+        <button type="button" aria-label="Knowledge info: Verified" {...tourTarget("knowledgeIcon")}>
+          ✓
+        </button>
       </VersionsProvider>
     </AppShell>
   );
@@ -383,7 +388,19 @@ async function next(expectTitle: string) {
   await findCard(expectTitle);
 }
 
-const FULL_TITLES = ["Sidebar sections", "New note", "Folders", "Search", "Share and more", "Version history", "Link to another note", "Insert blocks with /", "Forgot how something works?"];
+const FULL_TITLES = [
+  "Sidebar sections",
+  "New note",
+  "Folders",
+  "Search",
+  "Share and more",
+  "Version history",
+  "Knowledge info",
+  "Tags",
+  "Link to another note",
+  "Insert blocks with /",
+  "Forgot how something works?",
+];
 
 async function goToLast() {
   await findCard(FULL_TITLES[0]!);
@@ -428,11 +445,11 @@ afterEach(() => {
 });
 
 describe("a full tour round (wide window)", () => {
-  it("opened from the note page: nine stops in order, the hole on each stop's target, n / N; finally Keep sample note -> back to the original page, focus on the account row, nothing deleted", async () => {
+  it("opened from the note page: eleven stops in order, the hole on each stop's target, n / N; finally Keep sample note -> back to the original page, focus on the account row, nothing deleted", async () => {
     const { onFinished } = await startTour();
     await findCard("Sidebar sections");
     expect(currentPath).toBe(SAMPLE_PATH);
-    expect(progress()).toBe("1 / 9");
+    expect(progress()).toBe("1 / 11");
     expect(hole()).toEqual(padded(RECTS.tabs));
     expect(card()).not.toHaveAccessibleDescription(/\{\{/);
 
@@ -443,13 +460,16 @@ describe("a full tour round (wide window)", () => {
       // union of the share button and the kebab menu
       ["Share and more", padded([900, 10, 100, 30])],
       ["Version history", padded(RECTS.versions)],
+      ["Knowledge info", padded(RECTS.knowledgeIcon)],
+      // the kebab menu holds "Add tag"
+      ["Tags", padded(RECTS.noteMenu)],
       ["Link to another note", padded(RECTS.wikilink)],
       ["Insert blocks with /", padded(RECTS.flowchart)],
       ["Forgot how something works?", padded(RECTS.userMenu)],
     ];
     for (const [i, [title, rect]] of expected.entries()) {
       await next(title);
-      expect(progress()).toBe(`${i + 2} / 9`);
+      expect(progress()).toBe(`${i + 2} / 11`);
       await waitFor(() => expect(hole()).toEqual(rect));
       expect(card(), title).not.toHaveAccessibleDescription(/\{\{/);
       if (title === "Search") expect(card()).toHaveAccessibleDescription(/Ctrl\+K/);
@@ -472,7 +492,7 @@ describe("a full tour round (wide window)", () => {
     expect(announcement()).toBe("");
     await next("New note");
     expect(overlay()).toBe(root);
-    expect(announcement()).toContain("2 / 9");
+    expect(announcement()).toContain("2 / 11");
     expect(announcement()).toContain("New note");
     await next("Folders");
     expect(overlay()).toBe(root);
@@ -485,7 +505,7 @@ describe("a full tour round (wide window)", () => {
     await next("New note");
     fireEvent.click(within(card()).getByRole("button", { name: "Back" }));
     await findCard("Sidebar sections");
-    expect(progress()).toBe("1 / 9");
+    expect(progress()).toBe("1 / 11");
   });
 });
 
@@ -623,14 +643,14 @@ describe("start flow", () => {
     expect(document.querySelectorAll("[data-tour-overlay]")).toHaveLength(1);
   });
 
-  it("search box has text: the tab list, folder and search stops are dropped, starting from New note for 6 stops", async () => {
+  it("search box has text: the tab list, folder and search stops are dropped, starting from New note for 8 stops", async () => {
     await startTour({
       before: () => {
         fireEvent.change(screen.getByRole("textbox", { name: "Search notes" }), { target: { value: "ab" } });
       },
     });
     await findCard("New note");
-    expect(progress()).toBe("1 / 6");
+    expect(progress()).toBe("1 / 8");
   });
 });
 
@@ -925,8 +945,12 @@ describe("stops are skipped when the target never appears", () => {
     await findCard("Sidebar sections");
     for (const title of FULL_TITLES.slice(1, 5)) await next(title);
     fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
-    await screen.findByRole("dialog", { name: "Insert blocks with /" }, { timeout: TARGET_TIMEOUT_MS * 2 + 2000 });
-    expect(progress()).toBe("8 / 9");
+    await screen.findByRole("dialog", { name: "Knowledge info" }, { timeout: TARGET_TIMEOUT_MS + 2000 });
+    expect(progress()).toBe("7 / 11");
+    await next("Tags");
+    fireEvent.click(within(card()).getByRole("button", { name: "Next" }));
+    await screen.findByRole("dialog", { name: "Insert blocks with /" }, { timeout: TARGET_TIMEOUT_MS + 2000 });
+    expect(progress()).toBe("10 / 11");
   }, TARGET_TIMEOUT_MS * 2 + 5000);
 });
 
@@ -1092,6 +1116,8 @@ describe("phone (narrower than 640)", () => {
     // union of the share button and the kebab menu
     ["Share and more", padded([900, 10, 100, 30]), SAMPLE_PATH],
     ["Version history", padded(RECTS.noteMenu), SAMPLE_PATH],
+    ["Knowledge info", padded(RECTS.knowledgeIcon), SAMPLE_PATH],
+    ["Tags", padded(RECTS.noteMenu), SAMPLE_PATH],
     ["Link to another note", padded(RECTS.wikilink), SAMPLE_PATH],
     ["Insert blocks with /", padded(RECTS.flowchart), SAMPLE_PATH],
     ["Forgot how something works?", padded(RECTS.userMenu), "/"],
@@ -1315,12 +1341,12 @@ describe("crossing 640 and 1280 during the tour", () => {
     stubTier("overlay");
     await startTour();
     await findCard("Sidebar sections");
-    for (const title of ["New note", "Folders", "Search", "Share and more", "Version history", "Link to another note"]) await next(title);
-    expect(progress()).toBe("7 / 10");
+    for (const title of ["New note", "Folders", "Search", "Share and more", "Version history", "Knowledge info", "Tags", "Link to another note"]) await next(title);
+    expect(progress()).toBe("9 / 12");
     setTier("phone");
-    await waitFor(() => expect(progress()).toBe("7 / 9"));
+    await waitFor(() => expect(progress()).toBe("9 / 11"));
     setTier("overlay");
-    await waitFor(() => expect(progress()).toBe("7 / 10"));
+    await waitFor(() => expect(progress()).toBe("9 / 12"));
   });
 
   it("switching to a phone while on a stop the phone lacks: the card stays on that stop (no hole) and 'n / N' counts it; going back works as usual", async () => {

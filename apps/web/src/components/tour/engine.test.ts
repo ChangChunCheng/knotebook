@@ -135,7 +135,7 @@ describe("stop filtering and total count", () => {
 
   it("search box has text: the full tour omits the tab list, folder and search stops", () => {
     const planned = planStops(fullTourStops(), { ...CTX, searchQuery: "ab" });
-    expect(planned.map((e) => e.stop.id)).toEqual(["newNote", "header", "versions", "wikilink", "slash", "userMenu"]);
+    expect(planned.map((e) => e.stop.id)).toEqual(["newNote", "header", "versions", "knowledge", "tags", "wikilink", "slash", "userMenu"]);
   });
 });
 
@@ -457,8 +457,8 @@ describe("the card's 'n / N'", () => {
   it("full tour with an AI stop: the phone has one fewer stop and the last stop is still N / N", () => {
     const planned = planStops(fullTourStops(), { ...CTX, aiActions: [AI_ACTION] });
     const last = planned.length - 1;
-    expect(tourProgress(planned, last, "wide")).toEqual({ step: 10, total: 10 });
-    expect(tourProgress(planned, last, "phone")).toEqual({ step: 9, total: 9 });
+    expect(tourProgress(planned, last, "wide")).toEqual({ step: 12, total: 12 });
+    expect(tourProgress(planned, last, "phone")).toEqual({ step: 11, total: 11 });
   });
 });
 

@@ -44,6 +44,8 @@ const WIDE_TARGETS: readonly (readonly string[])[] = [
   ["search"],
   ["share", "noteMenu"],
   ["versions"],
+  ["knowledgeIcon"],
+  ["noteMenu"],
   ["wikilinkMenu"],
   ["slashMenu", "flowchart"],
   ["userMenu"],
@@ -342,6 +344,8 @@ const PHONE_STOPS: readonly { ids: readonly string[]; on: "list" | "note" }[] = 
   { ids: ["newFolder"], on: "list" },
   { ids: ["phoneSearch"], on: "list" },
   { ids: ["share", "noteMenu"], on: "note" },
+  { ids: ["noteMenu"], on: "note" },
+  { ids: ["knowledgeIcon"], on: "note" },
   { ids: ["noteMenu"], on: "note" },
   { ids: ["wikilinkMenu"], on: "note" },
   { ids: ["slashMenu"], on: "note" },
@@ -1121,7 +1125,58 @@ test.describe("feature tour (manual start)", () => {
     });
   }
 
-  test("the tour has no stop for this version's new features: after the / stop comes the user menu stop", async ({ page, browser }) => {
+  test("after Version history the knowledge stop highlights the sample heading's Verified icon and the tags stop highlights ⋮; Back from the [[ stop brings the icon into view again; ending the tour adds no tag to the space", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    await signUpFreshUser(browser, page);
+    await startTourOnSample(page);
+    await goToTitle(page, "Version history");
+
+    await tourCard(page).getByRole("button", { name: "Next", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Knowledge info");
+    const icon = page.locator('[data-kb-tour-target="knowledgeIcon"]:visible');
+    await expect(icon).toHaveCount(1);
+    await expect(icon).toHaveAccessibleName("Knowledge info: Verified");
+    const heading = editorLocator(page).getByRole("heading", { name: "What a note can hold", exact: true });
+    const [iconBox, headingBox] = [await icon.boundingBox(), await heading.boundingBox()];
+    expect(iconBox !== null && headingBox !== null && iconBox.y < headingBox.y + headingBox.height && iconBox.y + iconBox.height > headingBox.y, "圖示在示範標題那一行").toBe(true);
+    await expectHoleCoversLocator(page, icon, "知識資訊站的挖洞要蓋住示範標題的狀態圖示");
+    await expect(tourCard(page)).toContainText("/info");
+
+    await tourCard(page).getByRole("button", { name: "Next", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Tags");
+    await expectHoleCoversLocator(page, page.getByRole("button", { name: "More", exact: true }), "標籤站的挖洞要蓋住 ⋮");
+    await expect(tourCard(page)).toContainText('"Add tag" in this ⋮ menu');
+
+    await tourCard(page).getByRole("button", { name: "Next", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Link to another note");
+
+    // The [[ demo scrolls the editor to the last paragraph; coming back must bring the icon into view again.
+    await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Tags");
+    await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
+    await expect(cardTitle(page)).toHaveText("Knowledge info");
+    const viewport = page.viewportSize()!;
+    await expect
+      .poll(
+        async () => {
+          const box = await icon.boundingBox();
+          return box !== null && box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
+        },
+        { message: "回到知識資訊站時圖示要在畫面內" },
+      )
+      .toBe(true);
+    await expectHoleCoversLocator(page, icon, "回到知識資訊站時挖洞要蓋住圖示");
+    await page.keyboard.press("Escape");
+    await expect(tourCard(page)).toHaveCount(0);
+    const tags = await page.request.get("/api/tags");
+    expect(tags.status(), await tags.text()).toBe(200);
+    expect(await tags.json()).toEqual([]);
+  });
+
+  test("no stop is titled as a version's new feature: after the / stop comes the user menu stop", async ({ page, browser }) => {
     test.setTimeout(120_000);
     await signUpFreshUser(browser, page);
     await openTour(page, USER_NAME);
@@ -1166,25 +1221,23 @@ test.describe("feature tour (manual start)", () => {
     await expect(tourCard(page)).toBeVisible({ timeout: 30_000 });
     await expect(help).toHaveCount(0);
 
-    // Stop 5 (Share and more) points at the header kebab, stop 6 (Version history) at the version bubble at bottom right (present from 640 up), stops 7 and 8 at the real [[ and / menus in the editor;
-    // the rest point at the sidebar button that opens the sidebar. The drawer never appears again for the whole run.
-    const label = (n: number): string =>
-      n === 5 ? "More" : n === 6 ? "the versions bubble" : n === 7 ? "the [[ menu" : n === 8 ? "the / menu" : "Open sidebar";
+    // Stops 5 (Share and more) and 8 (Tags) point at the header kebab, stop 6 (Version history) at the version bubble at bottom right (present from 640 up), stop 7 at the knowledge icon,
+    // stops 9 and 10 at the real [[ and / menus in the editor; the rest point at the sidebar button that opens the sidebar. The drawer never appears again for the whole run.
+    const more = page.getByRole("button", { name: "More", exact: true });
+    const NOTE_STOPS: Record<number, [string, Locator]> = {
+      5: ["More", more],
+      6: ["the versions bubble", page.locator('[data-kb-tour-target="versions"]:visible').first()],
+      7: ["the knowledge icon", page.locator('[data-kb-tour-target="knowledgeIcon"]:visible').first()],
+      8: ["More", more],
+      9: ["the [[ menu", page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()],
+      10: ["the / menu", page.locator('[data-kb-tour-target="slashMenu"]:visible').first()],
+    };
     await walkToLastStop(page, async (n) => {
       await expect(page.locator("[data-sidebar-drawer]")).toHaveCount(0);
-      const target =
-        n === 5
-          ? page.getByRole("button", { name: "More", exact: true })
-          : n === 6
-            ? page.locator('[data-kb-tour-target="versions"]:visible').first()
-            : n === 7
-              ? page.locator('[data-kb-tour-target="wikilinkMenu"]:visible').first()
-              : n === 8
-                ? page.locator('[data-kb-tour-target="slashMenu"]:visible').first()
-                : drawerButton;
-      await expectHoleCoversLocator(page, target, `第 ${n} 站的挖洞要蓋住 ${label(n)}`);
+      const [label, target] = NOTE_STOPS[n] ?? ["Open sidebar", drawerButton];
+      await expectHoleCoversLocator(page, target, `第 ${n} 站的挖洞要蓋住 ${label}`);
       // The menu fills the whole narrow screen and the card overlaps it; the tour layer is above the menu, so the card's title and Next must be topmost (not covered by the menu).
-      if (n === 8) await expectCardContentOnTop(page);
+      if (n === 10) await expectCardContentOnTop(page);
     });
     await tourCard(page).getByRole("button", { name: "Keep sample note", exact: true }).click();
     await expect(tourCard(page)).toHaveCount(0);
@@ -1267,11 +1320,11 @@ test.describe("feature tour (manual start)", () => {
     await expect(cardTitle(page)).toHaveText("Share and more");
     await expect(page).toHaveURL(SAMPLE_URL);
 
-    // Live stops don't bring up the on-screen keyboard: at the [[ stop the editor is inputmode="none", and going back to the version stop removes it (it didn't have this attribute originally).
+    // Live stops don't bring up the on-screen keyboard: at the [[ stop the editor is inputmode="none", and going back to the tags stop removes it (it didn't have this attribute originally).
     await goToTitle(page, "Link to another note");
     await expect(editorLocator(page)).toHaveAttribute("inputmode", "none");
     await tourCard(page).getByRole("button", { name: "Back", exact: true }).click();
-    await expect(cardTitle(page)).toHaveText("Version history");
+    await expect(cardTitle(page)).toHaveText("Tags");
     await expect(editorLocator(page)).not.toHaveAttribute("inputmode");
 
     await page.keyboard.press("Escape");

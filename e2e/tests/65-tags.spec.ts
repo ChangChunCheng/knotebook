@@ -53,7 +53,7 @@ test("a note without tags looks the same as before: no tag row above the text, n
   }
 });
 
-test("add the first tag with /tag, see its dot in the sidebar, and reuse it on a second note", async ({ browser }) => {
+test("add the first tag with /tag, see its dot in the sidebar, and reuse it on a second note [sc:addTag]", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);

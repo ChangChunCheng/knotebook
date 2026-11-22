@@ -208,7 +208,7 @@ describe("category switching (left card items + right card content)", () => {
     expect(navButton("General")).toHaveAttribute("aria-current", "true");
     for (const other of NO_AI_EN.slice(1)) expect(navButton(other)).not.toHaveAttribute("aria-current");
     expect(region()).toHaveAccessibleName("General");
-    expect(rowIds()).toEqual(["search", "searchClear", "saveVersion", "openSettings", "openShortcuts"]);
+    expect(rowIds()).toEqual(["search", "searchClear", "tagSearch", "saveVersion", "openSettings", "openShortcuts"]);
   });
 
   it("clicking \"Markdown shortcuts\": aria-current moves, the region name changes, the right card keeps only that category's entries", async () => {
@@ -567,6 +567,41 @@ describe("key faces", () => {
     expect(heading3).toContain("Space");
     // All three trigger characters must be followed by a space: only one Space at the end, not one per trigger
     expect(heading3.filter((t) => t === "Space")).toHaveLength(1);
+  });
+
+  it("tag and knowledge rows: Typing triggers lists addTag (#… Space or /tag) and knowledgeInfo (/info) after the link rows; General lists # for tag search", async () => {
+    renderContent();
+    await waitFor(() => expect(hasRow("search")).toBe(true));
+    expect(kbdTexts(row("tagSearch"))).toEqual(["#"]);
+    expect(row("tagSearch").textContent).toContain("Search by tag");
+    openCategory("Typing triggers");
+    expect(rowIds()).toEqual(["slashMenu", "wikilink", "markdownLink", "addTag", "knowledgeInfo"]);
+    const tag = row("addTag");
+    expect(kbdTexts(tag)).toEqual(["#…", "Space", "/tag"]);
+    expect(Array.from(tag.querySelectorAll(".sr-only")).map((s) => s.textContent)).toContain("or");
+    expect(tag.textContent).toContain("first line, when it is a plain paragraph");
+    expect(tag.textContent).toContain("# and a space with no name is still a heading");
+    const info = row("knowledgeInfo");
+    expect(kbdTexts(info)).toEqual(["/info"]);
+    expect(info.textContent).toContain("“Knowledge info…” in the ⋮⋮ menu");
+    expect(info.textContent).toContain("inside columns or nested under another block");
+  });
+
+  it("zh-TW: the tag and knowledge rows use the app's own labels", async () => {
+    await i18n.changeLanguage("zh-TW");
+    try {
+      renderContent();
+      await waitFor(() => expect(hasRow("search")).toBe(true));
+      expect(row("tagSearch").textContent).toContain("依標籤搜尋");
+      fireEvent.click(screen.getByRole("button", { name: "打字觸發" }));
+      expect(row("addTag").textContent).toContain("加標籤");
+      expect(row("addTag").textContent).toContain("第一行是一般段落");
+      expect(row("addTag").textContent).toContain("只打 # 加空白還是標題");
+      expect(row("knowledgeInfo").textContent).toContain("「知識資訊…」");
+      expect(row("knowledgeInfo").textContent).toContain("縮排在其他區塊底下的標題");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 
   it("redo row (sep: or): the visible slash is aria-hidden and the row has an sr-only \"or\"", async () => {

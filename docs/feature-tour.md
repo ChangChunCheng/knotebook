@@ -37,6 +37,13 @@ a heading, bulleted and numbered lists, to-dos, a quote, a code block, a link to
 Mermaid diagram and a table, plus, only when your site has an AI action, one sentence for the AI stop. The tour
 works on that note only; it doesn't change your other notes.
 
+The sample note's heading carries [knowledge info](knowledge.md) (when to read it, a one-line conclusion, current, and
+verified on the day you start the tour), so its status icon shows a green check. Because of that, as long as the sample
+note is in **My notes** it is listed in the My notes [knowledge index](knowledge.md#the-index), and the **My notes** title
+has an index button (shown when you point at the title, always on a touch screen); once the note is in the trash it leaves
+the index again. The tour creates no tag: the Tags stop points at the menu where tags are added instead of tagging the
+sample note.
+
 **The stops.** A card says what the highlighted part is for; the rest of the screen is dimmed. The card
 shows "n / N", **Back** and **Next**; the first stop has **Skip feature tour** instead of **Back**.
 
@@ -48,6 +55,8 @@ shows "n / N", **Back** and **Next**; the first stop has **Skip feature tour** i
 | Search | The search box, and Ctrl+K (⌘K on a Mac) |
 | Share and more | **Share**, the width button next to it (Standard, Wide, Full width; also under `⋮` → **Width**; not on a phone) and the `⋮` menu in the note header |
 | Version history | The version history button |
+| Knowledge info | The status icon after the sample note's heading; the card names `/info` and the knowledge index |
+| Tags | The `⋮` menu in the note header, which has **Add tag**; the card also names `/tag`, `#name` and a space on the note's first line (when that line is an ordinary paragraph), the tag row above the text, the dots and the filter in the sidebar, and `#` in the search box |
 | Link to another note | The `[[` menu, shown live |
 | Ask AI about a selection | A selected sentence and the AI button in the toolbar (only when your site has an AI action) |
 | Insert blocks with / | The `/` menu, shown live |
@@ -64,7 +73,7 @@ between them:
   points at the row of tab icons, **New note** and **Search** at the round buttons at the bottom of the screen, and
   **Folders** at the New folder button in the My notes header.
 - Then it opens the sample note for **Share and more**, **Version history** (the `⋮` menu, which has **Version history** on a
-  phone) and the `[[` and `/` stops.
+  phone), **Knowledge info** (the status icon), **Tags** (the `⋮` menu again) and the `[[` and `/` stops.
 - It goes back to the list for the last stop, which points at your avatar at the top right: Help is in its menu.
 - The AI stop is left out: selecting text on a phone doesn't bring up the toolbar. "n / N" doesn't count it.
 

@@ -1,9 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import type { NoteDto } from "@knotebook/shared";
-import { COLUMN_LIST_TYPE, COLUMN_TYPE } from "@knotebook/shared";
+import { COLUMN_LIST_TYPE, COLUMN_TYPE, generateKnowledgeId } from "@knotebook/shared";
 import { api } from "@/api/client";
 import { replaceBlocksKeepColumns } from "@/collab/columns/keep-columns";
+import { todayLocalDate } from "@/components/knowledge/commands";
 import "@/i18n/tour-strings";
 import type { TourEditor } from "@/lib/tour-bridge";
 
@@ -24,7 +25,7 @@ const text = (value: string) => [{ type: "text" as const, text: value, styles: {
 
 const para = (value: string): SampleBlock => ({ type: "paragraph", content: text(value) });
 
-/** With AI configured (`hasAi`) the second-to-last paragraph is the sentence the AI step selects; otherwise it is omitted. The last paragraph is empty (the cursor target for later steps). */
+/** With AI configured (`hasAi`) the second-to-last paragraph is the sentence the AI step selects; otherwise it is omitted. The last paragraph is empty (the cursor target for later steps). The heading carries knowledge info so the knowledge step has a status icon to point at. */
 export function buildSampleBlocks(
   t: TFunction,
   note: Pick<NoteDto, "id" | "title">,
@@ -33,7 +34,17 @@ export function buildSampleBlocks(
   const s = (key: string) => t(`tourGuide.sample.${key}`);
   return [
     para(s("intro")),
-    { type: "heading", props: { level: 2 }, content: text(s("heading")) },
+    {
+      type: "heading",
+      props: {
+        level: 2,
+        knowledgeId: generateKnowledgeId(new Set()),
+        knowledgeWhen: s("knowledgeWhen"),
+        knowledgeConclusion: s("knowledgeConclusion"),
+        knowledgeVerified: todayLocalDate(),
+      },
+      content: text(s("heading")),
+    },
     { type: "bulletListItem", content: text(s("bullet1")) },
     { type: "bulletListItem", content: text(s("bullet2")) },
     { type: "numberedListItem", content: text(s("number1")) },

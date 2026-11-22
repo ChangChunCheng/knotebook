@@ -41,6 +41,10 @@
         "name": "Clear the search",
         "desc": "In the search box, clears what you typed and brings back the sidebar sections."
       },
+      "tagSearch": {
+        "name": "Search by tag",
+        "desc": "In the search box, # lists tags. Pick one or more to list only the notes that have all of them, type words to narrow the list further, and press Backspace to take the last tag off."
+      },
       "saveVersion": {
         "name": "Save current version",
         "desc": "On a note you can edit, saves the current content as a version. You can give it a name."
@@ -64,6 +68,14 @@
       "markdownLink": {
         "name": "Link to a web address",
         "desc": "Write [text](https://…). It turns into a link as soon as you type the closing parenthesis."
+      },
+      "addTag": {
+        "name": "Add a tag",
+        "desc": "On the note's first line, when it is a plain paragraph, type only # and the tag name, then a space: the tag is added and the text disappears. # and a space with no name is still a heading. You can also type /tag."
+      },
+      "knowledgeInfo": {
+        "name": "Knowledge info",
+        "desc": "Type it in a heading of any level to open that heading's knowledge info form. You can also choose “Knowledge info…” in the ⋮⋮ menu next to the heading. Headings inside columns or nested under another block don't offer it."
       },
       "heading": {
         "name": "Headings",
@@ -240,7 +252,7 @@
       "items": {
         "tags": {
           "title": "Tags",
-          "desc": "Label a note with tags: type /tag in the note, choose Add tag in its ⋮ menu, or type #name and a space on its first line. The tags sit in a row above the text, show as colored dots on the note's row in the sidebar, and the funnel button in My notes and Groups lists only the notes that have all the tags you pick. Type # in the search box to search by tag. Rename, recolor, merge or delete tags in Settings → Tags (for a group, in the group's window)."
+          "desc": "Label a note with tags: type /tag in the note, choose Add tag in its ⋮ menu, or type #name and a space on its first line when that line is a plain paragraph. The tags sit in a row above the text, show as colored dots on the note's row in the sidebar, and the funnel button in My notes and Groups lists only the notes that have all the tags you pick. Type # in the search box to search by tag. Rename, recolor (a built-in color or any custom one), merge or delete tags in Settings → Tags (for a group, in the group's window)."
         },
         "knowledgeInfo": {
           "title": "Knowledge info",

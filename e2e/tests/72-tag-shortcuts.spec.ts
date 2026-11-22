@@ -64,7 +64,7 @@ async function apiTagList(page: Page): Promise<Array<{ name: string; color: stri
   return (await list.json()) as Array<{ name: string; color: string; noteCount: number }>;
 }
 
-test("typing #name and a space in the first paragraph adds the tag, clears the line and shows a toast; a second #name adds another; # and a space still makes a heading", async ({ browser }) => {
+test("typing #name and a space in the first paragraph adds the tag, clears the line and shows a toast; a second #name adds another; # and a space still makes a heading [sc:addTag]", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -109,7 +109,7 @@ test("full-width ＃name followed by a full-width space adds the tag", async ({ 
   }
 });
 
-test("a #name in a later block or after other text stays text and adds no tag", async ({ browser }) => {
+test("a #name in a later block, after other text, or under a heading that opens the note stays text and adds no tag [sc:addTag]", async ({ browser }) => {
   test.setTimeout(90_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);
@@ -122,6 +122,14 @@ test("a #name in a later block or after other text stays text and adds no tag", 
     await page.keyboard.press("Enter");
     await page.keyboard.type("#third ");
     await expect(editorLocator(page)).toContainText("#third");
+
+    // The note's first line is a heading, so the paragraph under it is not the first line.
+    await createNote(page, `E2E hash under heading ${RUN}`);
+    await typeInEditor(page, "# Title");
+    await expect(editorLocator(page).locator("h1")).toHaveText("Title");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("#fourth ");
+    await expect(editorLocator(page)).toContainText("#fourth");
     // The tags are checked last: a conversion would have removed the text above before the tag arrived.
     expect(await apiTagList(page)).toEqual([]);
     await expect(tagRow(page)).toHaveCount(0);
@@ -386,7 +394,7 @@ test("a group member who can edit but not manage the group only gets Remove from
   }
 });
 
-test("# in the search box lists tags; picking two keeps only notes with both, a keyword narrows them, and Backspace takes the last tag off", async ({ browser }) => {
+test("# in the search box lists tags; picking two keeps only notes with both, a keyword narrows them, and Backspace takes the last tag off [sc:tagSearch]", async ({ browser }) => {
   test.setTimeout(150_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice);

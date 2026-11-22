@@ -50,6 +50,16 @@
         "body": "Notes save versions automatically by default, and you can press {{mod}}S to save one yourself. Open the version history with this button in the bottom-right corner.",
         "phoneBody": "Notes save versions automatically by default. \"Version history\" in the ⋮ menu opens the version history, where you can also save a version yourself."
       },
+      "knowledge": {
+        "title": "Knowledge info",
+        "body": "Type /info in a heading to note when to read it, a one-line conclusion and whether it is still current. This icon shows its state; point at it to see the details. My notes, folders and groups that hold knowledge each get an index of it.",
+        "phoneBody": "Type /info in a heading to note when to read it, a one-line conclusion and whether it is still current. This icon shows its state; tap it to see the details. My notes, folders and groups that hold knowledge each get an index of it."
+      },
+      "tags": {
+        "title": "Tags",
+        "body": "Tag a note with \"Add tag\" in this ⋮ menu, by typing /tag, or by typing #name and a space on its first line when that line is a plain paragraph. Tags sit in a row above the text and show as colored dots in the sidebar. To list notes by tag, use the funnel button in the sidebar or type # in the search box.",
+        "phoneBody": "Tag a note with \"Add tag\" in this ⋮ menu, by typing /tag, or by typing #name and a space on its first line when that line is a plain paragraph. Tags sit in a row above the text and show as colored dots in the list. To list notes by tag, use the funnel button or type # in the search box."
+      },
       "wikilink": {
         "title": "Link to another note",
         "body": "Type [[ anywhere in a note and pick another note to link to it. The note you link to lists this one under \"Mentioned in\"."
@@ -91,7 +101,9 @@
       "tableValue": "Value",
       "tableRow1Name": "Notes",
       "tableRow1Value": "Ideas",
-      "aiSentence": "Select this sentence to try AI."
+      "aiSentence": "Select this sentence to try AI.",
+      "knowledgeWhen": "When you are new to Knotebook",
+      "knowledgeConclusion": "A note can hold lists, tasks, quotes, code, links, columns, diagrams and tables."
     }
   }
 }
