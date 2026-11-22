@@ -30,7 +30,8 @@ import { E2E_ORIGIN } from "../ports.js";
  * - Titles are plain string literals (no template literal): the coverage test only recognises the first argument of `test("...")`.
  * - Verified on Chromium only.
  * - Entries covered by other specs are not rewritten here (presentOverview, presentExit: `22-presentation.spec.ts`; dragNoteToEditor,
- *   dragNoteToFolder: `42-folders-drag.spec.ts`; dragBlockCopy: `49-drag-undo.spec.ts`).
+ *   dragNoteToFolder: `42-folders-drag.spec.ts`; dragBlockCopy: `49-drag-undo.spec.ts`; addTag: `65-tags.spec.ts` and `72-tag-shortcuts.spec.ts`;
+ *   tagSearch: `72-tag-shortcuts.spec.ts`; knowledgeInfo's ⋮⋮ menu item: `66-knowledge-info.spec.ts`).
  */
 
 const RUN = Date.now();
@@ -206,6 +207,58 @@ test("Typed trigger: [text](url) becomes an external link when the closing paren
   await expect(link).toHaveCount(1, { timeout: 10_000 });
   await expect(link).toHaveText("example");
   expect(await blockTexts(page)).toEqual(["go example"]); // brackets and URL are consumed, only the display text remains
+});
+
+test("Typed trigger: /info in a heading opens its knowledge info form; a paragraph, a heading inside columns or a heading nested under another block has no such item [sc:knowledgeInfo]", async ({ page }) => {
+  test.setTimeout(120_000);
+  const editor = await startNote(page, "typing-info");
+  await page.keyboard.type("# Cache rules");
+  await expect(editor.locator("h1")).toHaveText("Cache rules");
+  await page.keyboard.type("/info");
+  const item = page.locator(".bn-suggestion-menu .bn-mt-suggestion-menu-item-title", { hasText: /^Knowledge info$/ });
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
+  const form = page.locator("[data-kb-knowledge-form]");
+  await expect(form).toBeVisible();
+  await expect(editor.locator("h1")).toHaveText("Cache rules");
+  await page.keyboard.press("Escape");
+  await expect(form).toBeHidden();
+
+  // Positive anchor (Heading 1) so an unopened menu can't pass the absence check.
+  await editor.locator("h1").click();
+  await freshParagraph(page);
+  await page.keyboard.type("/");
+  await expect.poll(() => slashTitles(page)).toContain("Heading 1");
+  expect(await slashTitles(page)).not.toContain("Knowledge info");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Backspace");
+  await expect(editor).not.toContainText("/");
+
+  await page.keyboard.type("/grid");
+  await expect.poll(() => slashTitles(page)).toContain("2 columns");
+  await page.keyboard.press("Enter");
+  await expect(editor.locator(ROW).first().locator(COL)).toHaveCount(2);
+  await waitForEditorSelection(page);
+  await page.keyboard.type("## Inside");
+  await expect(editor.locator(COL).first().locator("h2")).toHaveText("Inside");
+  await page.keyboard.type("/");
+  await expect.poll(() => slashTitles(page)).toContain("Heading 1");
+  expect(await slashTitles(page)).not.toContain("Knowledge info");
+  await page.keyboard.press("Escape");
+
+  await createNote(page, `E2E sc typing-info nested ${RUN}`);
+  await editor.click();
+  await waitForEditorSelection(page);
+  await page.keyboard.type("Parent");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("## Nested");
+  await expect(editor.locator("h2")).toHaveText("Nested");
+  await page.keyboard.press("Tab");
+  await expect(editor.locator(".bn-block-group .bn-block-group h2")).toHaveText("Nested");
+  await page.keyboard.type("/");
+  await expect.poll(() => slashTitles(page)).toContain("Heading 1");
+  expect(await slashTitles(page)).not.toContain("Knowledge info");
+  await page.keyboard.press("Escape");
 });
 
 test("Markdown shorthand: block-start # - 1. [] > ``` --- [sc:heading] [sc:bullet] [sc:numbered] [sc:checklist] [sc:quote] [sc:codeBlock] [sc:divider]", async ({ page }) => {

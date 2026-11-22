@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import { QueryClient } from "@tanstack/react-query";
 import { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { KNOWLEDGE_ID_RE, readKnowledgeInfo, YDOC_FRAGMENT } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { collabUndoManager } from "@/collab/undo";
@@ -140,8 +140,11 @@ describe("seedSampleNote", () => {
     expect(seedSampleNote(editor, NOTE, t, false)).toBe(true);
     expect(types(editor)).toEqual(BLOCK_TYPES);
     expect(JSON.stringify(editor.document)).not.toContain(t("tourGuide.sample.aiSentence"));
-    const withAi = buildSampleBlocks(t, NOTE, true);
-    const withoutAi = buildSampleBlocks(t, NOTE, false);
+    // The knowledge id is random per build, so it is left out of the comparison.
+    const sansId = (blocks: ReturnType<typeof buildSampleBlocks>) =>
+      blocks.map((b) => (b.props?.knowledgeId === undefined ? b : { ...b, props: { ...b.props, knowledgeId: "" } }));
+    const withAi = sansId(buildSampleBlocks(t, NOTE, true));
+    const withoutAi = sansId(buildSampleBlocks(t, NOTE, false));
     expect(withoutAi).toEqual(withAi.filter((_, i) => i !== withAi.length - 2));
     expect(withoutAi[withoutAi.length - 1]).toEqual({ type: "paragraph" });
   });
@@ -165,6 +168,35 @@ describe("seedSampleNote", () => {
       .filter((c) => c.type === "wikilink");
     expect(links).toHaveLength(1);
     expect(links[0]!.props).toMatchObject({ targetNoteId: NOTE.id, snapshotTitle: NOTE.title });
+  });
+
+  it("the heading carries current knowledge info verified today, so the knowledge stop has an icon to point at; both languages have its text", async () => {
+    const { editor } = await mountEmptyNote();
+    // Only Date is faked, at a fixed local time, so the expected date cannot drift across midnight.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 2, 4, 23, 59, 59));
+      seedSampleNote(editor, NOTE, t, true);
+    } finally {
+      vi.useRealTimers();
+    }
+    const today = "2026-03-04";
+    const heading = (editor.document as { type: string; props: Record<string, unknown> }[]).find((b) => b.type === "heading")!;
+    const info = readKnowledgeInfo(heading.props);
+    expect(info).not.toBeNull();
+    expect(info!.id).toMatch(KNOWLEDGE_ID_RE);
+    expect(info).toMatchObject({
+      when: t("tourGuide.sample.knowledgeWhen"),
+      conclusion: t("tourGuide.sample.knowledgeConclusion"),
+      verified: today,
+      status: "",
+      supersededBy: "",
+    });
+    const zh = i18n.getFixedT("zh-TW");
+    for (const key of ["knowledgeWhen", "knowledgeConclusion"]) {
+      expect(zh(`tourGuide.sample.${key}`)).not.toBe(t(`tourGuide.sample.${key}`));
+      expect(zh(`tourGuide.sample.${key}`)).not.toBe(`tourGuide.sample.${key}`);
+    }
   });
 
   it("the sentence selected by the AI stop is in the second-to-last paragraph and the last block is an empty paragraph", async () => {

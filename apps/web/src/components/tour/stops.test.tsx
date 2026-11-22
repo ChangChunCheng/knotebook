@@ -109,6 +109,10 @@ function NotePageStandIn({ withShare }: { withShare: boolean }) {
       </a>
       {/* A diagram inserted with `/` in the sample note. */}
       <div {...tourTarget("flowchart")}>a flowchart</div>
+      {/* Status icon after the sample note's knowledge heading. */}
+      <button type="button" aria-label="Knowledge info: Verified" {...tourTarget("knowledgeIcon")}>
+        ✓
+      </button>
       {/* Format toolbar that appears after a selection (really a portal layer; placed directly in the page here). */}
       <div data-kb-formatting-toolbar-popover="">
         <button type="button" aria-label="Bold">
@@ -175,7 +179,7 @@ afterEach(() => {
 
 describe("stop table", () => {
   it("full tour order; each stop appears once", () => {
-    expect(FULL_TOUR).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
+    expect(FULL_TOUR).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "knowledge", "tags", "wikilink", "ai", "slash", "userMenu"]);
     expect(Object.keys(STOPS).sort()).toEqual([...FULL_TOUR].sort());
     for (const id of FULL_TOUR) expect(STOPS[id].id).toBe(id);
   });
@@ -210,6 +214,8 @@ describe("wide window: targets", () => {
       search: [side.getByRole("textbox", { name: "Search notes" })],
       header: [header.getByRole("button", { name: "Share" }), header.getByRole("button", { name: "More" })],
       versions: [screen.getByTestId("versions-bubble")],
+      knowledge: [screen.getByRole("button", { name: "Knowledge info: Verified" })],
+      tags: [header.getByRole("button", { name: "More" })],
       wikilink: [screen.getByRole("link", { name: "linked note" })],
       ai: [screen.getByRole("button", { name: "AI" })],
       slash: [screen.getByText("a flowchart")],
@@ -266,6 +272,8 @@ describe("floating sidebar (640-1279): targets", () => {
       search: [hamburger],
       header: [header.getByRole("button", { name: "Share" }), more],
       versions: [screen.getByTestId("versions-bubble")],
+      knowledge: [screen.getByRole("button", { name: "Knowledge info: Verified" })],
+      tags: [more],
       wikilink: [screen.getByRole("link", { name: "linked note" })],
       ai: [screen.getByRole("button", { name: "AI" })],
       slash: [screen.getByText("a flowchart")],
@@ -303,13 +311,15 @@ describe("phone: targets", () => {
     expect(stopTarget(STOPS.search, ctx())[0]).toHaveAttribute("data-phone-fab", "search");
   });
 
-  it("stops on the note screen: the header's share and kebab menu, versions pointing at the kebab menu (phones have no bubble), the [[ and / results; the AI stop has no target", async () => {
+  it("stops on the note screen: the header's share and kebab menu, versions and tags pointing at the kebab menu (phones have no bubble), the knowledge icon, the [[ and / results; the AI stop has no target", async () => {
     await renderPage();
     const header = within(pageHeader());
     const more = header.getByRole("button", { name: "More" });
     const expected: Partial<Record<StopId, HTMLElement[]>> = {
       header: [header.getByRole("button", { name: "Share" }), more],
       versions: [more],
+      knowledge: [screen.getByRole("button", { name: "Knowledge info: Verified" })],
+      tags: [more],
       wikilink: [screen.getByRole("link", { name: "linked note" })],
       ai: [],
       slash: [screen.getByText("a flowchart")],
@@ -357,7 +367,7 @@ describe("phone: targets", () => {
 
   it("body and title: read the current layout by default; stops with their own phone text use it", () => {
     const phoneOnes = Object.values(STOPS).filter((s) => s.phoneBodyKey !== undefined).map((s) => s.id);
-    expect(phoneOnes.sort()).toEqual(["folders", "header", "newNote", "search", "slash", "tabs", "userMenu", "versions"]);
+    expect(phoneOnes.sort()).toEqual(["folders", "header", "knowledge", "newNote", "search", "slash", "tabs", "tags", "userMenu", "versions"]);
     const t = i18n.getFixedT("en");
     for (const stop of Object.values(STOPS)) {
       expect(stopBody(t, stop), stop.id).toBe(stopBody(t, stop, "phone"));
@@ -433,9 +443,9 @@ describe("user content name clashes", () => {
 });
 
 describe("non-interactive background (AppShell inert in presentation mode)", () => {
-  const ALL_IDS: TourTargetId[] = ["tabs", "newNote", "newFolder", "search", "share", "noteMenu", "versions", "userMenu", "drawerButton", "wikilink", "flowchart"];
+  const ALL_IDS: TourTargetId[] = ["tabs", "newNote", "newFolder", "search", "share", "noteMenu", "versions", "userMenu", "drawerButton", "wikilink", "flowchart", "knowledgeIcon"];
 
-  it.each([false, true])("floating sidebar = %s: none of the eleven targets can be found", async (narrow) => {
+  it.each([false, true])("floating sidebar = %s: none of the twelve targets can be found", async (narrow) => {
     stubViewport(narrow);
     await renderPage({ inert: true });
     // The elements are still in the DOM (with their attributes), only inside the inert range. The version bubble is present on a floating sidebar (640-1279) too.
@@ -536,13 +546,34 @@ describe("prepare", () => {
   });
 });
 
+describe("knowledge stop scrolling", () => {
+  it("scrolls the icon into view once per visit: re-finding it in the same visit leaves the user's scrolling alone, and coming back after leave scrolls again", () => {
+    const icon = document.createElement("button");
+    icon.setAttribute("data-kb-tour-target", "knowledgeIcon");
+    const scroll = vi.fn();
+    icon.scrollIntoView = scroll;
+    document.body.append(icon);
+    try {
+      expect(stopTarget(STOPS.knowledge, ctx())).toEqual([icon]);
+      expect(stopTarget(STOPS.knowledge, ctx())).toEqual([icon]);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      STOPS.knowledge.leave!(ctx());
+      expect(stopTarget(STOPS.knowledge, ctx())).toEqual([icon]);
+      expect(scroll).toHaveBeenCalledTimes(2);
+    } finally {
+      STOPS.knowledge.leave!(ctx());
+      icon.remove();
+    }
+  });
+});
+
 describe("precondition", () => {
   it("while the search box has text tabs, folders and search do not hold (the tab list and header are not rendered while searching, and the user's text is not cleared); other stops work as usual", () => {
     const applies = (q: string) => FULL_TOUR.filter((id) => STOPS[id].precondition?.(ctx(q, [AI_ACTION])) ?? true);
     expect(applies("")).toEqual(FULL_TOUR);
-    expect(applies("ab")).toEqual(["newNote", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
+    expect(applies("ab")).toEqual(["newNote", "header", "versions", "knowledge", "tags", "wikilink", "ai", "slash", "userMenu"]);
     // whitespace also counts as searching (same check as AppShell)
-    expect(applies(" ")).toEqual(["newNote", "header", "versions", "wikilink", "ai", "slash", "userMenu"]);
+    expect(applies(" ")).toEqual(["newNote", "header", "versions", "knowledge", "tags", "wikilink", "ai", "slash", "userMenu"]);
   });
 });
 
@@ -556,7 +587,7 @@ describe("precondition of the AI stop", () => {
 
   it("no AI actions: the full tour omits the AI stop", () => {
     const planned = FULL_TOUR.filter((id) => STOPS[id].precondition?.(ctx("", [])) ?? true);
-    expect(planned).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "wikilink", "slash", "userMenu"]);
+    expect(planned).toEqual(["tabs", "newNote", "folders", "search", "header", "versions", "knowledge", "tags", "wikilink", "slash", "userMenu"]);
   });
 });
 
@@ -569,6 +600,8 @@ describe("body text", () => {
       search: "Search",
       header: "Share and more",
       versions: "Version history",
+      knowledge: "Knowledge info",
+      tags: "Tags",
       wikilink: "Link to another note",
       ai: "Ask AI about a selection",
       slash: "Insert blocks with /",
@@ -581,6 +614,8 @@ describe("body text", () => {
       search: "搜尋",
       header: "分享與更多動作",
       versions: "版本歷史",
+      knowledge: "知識資訊",
+      tags: "標籤",
       wikilink: "連到別篇筆記",
       ai: "框選文字叫 AI",
       slash: "用 / 插入各種區塊",
@@ -603,6 +638,8 @@ describe("body text", () => {
       search: ["{mod}K", "titles and note text"],
       header: ["invites others to view or edit", "icon next to Share", "⋮ → \"Width\"", "Standard, Wide and Full width"],
       versions: ["{mod}S", "bottom-right corner"],
+      knowledge: ["/info", "This icon", "point at it", "index"],
+      tags: ["\"Add tag\" in this ⋮ menu", "/tag", "#name and a space on its first line when that line is a plain paragraph", "row above the text", "colored dots in the sidebar", "funnel button", "type # in the search box"],
       wikilink: ["Type [[", "Mentioned in"],
       ai: ["AI button", "toolbar"],
       slash: ["Type /", "flowchart", "side-by-side columns", "\"2 columns\"", "divider between columns"],
@@ -615,6 +652,8 @@ describe("body text", () => {
       search: ["{mod}K", "標題和內文"],
       header: ["邀請別人一起看或一起編輯", "「分享」旁邊的圖示", "⋮ →「寬度」", "標準、寬或全寬"],
       versions: ["{mod}S", "右下角"],
+      knowledge: ["/info", "這個小圖示", "滑鼠移上去", "知識索引"],
+      tags: ["⋮ 選「加標籤」", "/tag", "第一行（須為一般段落）打 #名稱 再按空白", "內文上方", "側欄顯示成彩色圓點", "漏斗鈕", "在搜尋框打 #"],
       wikilink: ["打 [[", "提及"],
       ai: ["「AI」鈕", "工具列"],
       slash: ["打 /", "流程圖", "並排 2 欄", "拖欄與欄之間的分隔線"],
@@ -649,6 +688,8 @@ describe("body text", () => {
       search: ["Tap here to search", "titles and note text"],
       header: ["invites others to view or edit"],
       versions: ["\"Version history\" in the ⋮ menu", "save a version yourself"],
+      knowledge: ["/info", "tap it"],
+      tags: ["\"Add tag\" in this ⋮ menu", "colored dots in the list", "funnel button"],
       slash: ["Type /", "flowchart"],
       userMenu: ["Tap your avatar here", "Help", "shortcuts, the feature tour and what's new"],
     },
@@ -659,6 +700,8 @@ describe("body text", () => {
       search: ["點這裡就能搜尋", "標題和內文"],
       header: ["邀請別人一起看或一起編輯"],
       versions: ["⋮ 選單裡的「版本歷史」", "自己儲存一個版本"],
+      knowledge: ["/info", "點一下"],
+      tags: ["⋮ 選「加標籤」", "清單上顯示成彩色圓點", "漏斗鈕"],
       slash: ["打 /", "流程圖"],
       userMenu: ["點這裡的頭像", "「說明」", "快捷鍵、功能導覽和這一版新增"],
     },
@@ -781,6 +824,10 @@ describe("body text", () => {
         expect(floatingBody("header"), `${lng} ${key}`).toContain(t(key));
       }
       expect(phoneBody("header")).not.toContain(t("note.width.label"));
+      // Knowledge and tags: titles match the /info item and the tag row's label; the menu item is named as in the note's ⋮ menu.
+      expect(stopTitle(t, STOPS.knowledge)).toBe(t("note.knowledge.slashTitle"));
+      expect(stopTitle(t, STOPS.tags)).toBe(t("tags.label"));
+      for (const text of [body("tags"), phoneBody("tags")]) expect(text).toContain(t("tags.entry.menuItem"));
       // Stop 10: the entry is called Help, matching the user menu item.
       for (const text of [body("userMenu"), floatingBody("userMenu"), phoneBody("userMenu")]) expect(text).toContain(t("userMenu.help"));
       // The three pages mentioned in stop 10 must be named the same as the page names in the help dialog's left column.

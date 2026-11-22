@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { KnowledgeEntry, KnowledgeIconKind } from "@knotebook/shared";
 import { CircleAlert, CircleCheck, CircleInfo, CircleSlash } from "@/components/ui/icons-extra";
+import { tourTarget } from "@/lib/tour-targets";
 import { cn } from "@/lib/utils";
 
 const COLOR: Record<KnowledgeIconKind, string> = {
@@ -49,6 +50,7 @@ export function KnowledgeIconButton({
     <button
       type="button"
       {...rest}
+      {...tourTarget("knowledgeIcon")}
       data-kb-knowledge-icon=""
       data-kind={entry.icon}
       data-block-id={entry.blockId}

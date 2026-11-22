@@ -21,7 +21,8 @@ export type TourTargetId =
   | "wikilinkMenu"
   | "slashMenu"
   | "wikilink"
-  | "flowchart";
+  | "flowchart"
+  | "knowledgeIcon";
 
 export const TOUR_TARGET_ATTR = "data-kb-tour-target";
 

@@ -117,7 +117,7 @@ test("66-2 hovering the icon shows the card; Mark verified today turns the icon 
   }
 });
 
-test("66-3 the drag handle menu opens the same form for that heading", async ({ browser }) => {
+test("66-3 the drag handle menu opens the same form for that heading [sc:knowledgeInfo]", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { viewport: DESKTOP });
