@@ -11,7 +11,7 @@ import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 /**
  * Pins that App.tsx's `LazyPageRoute` really wraps each whole-page lazy route in `LazyRouteErrorBoundary`, puts `ChunkLoadBeacon` inside Suspense, and keys boundary instances per `chunk`. The boundary's own behaviour is in ErrorBoundary.test.tsx, where a hand-assembled shape says nothing about App.tsx's; same approach as App.errorBoundary.test.tsx.
  *
- * ⚠⚠ Each page's "throw" case must be the first case in this file to trigger that page's lazy (the lazies of AdminSections (the site modal's six sections, #247), RegisterPage, ... are module-level singletons, and only the first trigger passes through a suspend period). The "beacon misplaced outside Suspense" guard relies on that pending period: a misplaced beacon commits during it and clears the seeded flag, so componentDidCatch wrongly treats the error as the first one and reloads into the loading screen; the error-text assertion and the "reload not called" assertion both go red.
+ * ⚠⚠ Each page's "throw" case must be the first case in this file to trigger that page's lazy (the lazies of AdminSections (the site modal's seven sections, #247), RegisterPage, ... are module-level singletons, and only the first trigger passes through a suspend period). The "beacon misplaced outside Suspense" guard relies on that pending period: a misplaced beacon commits during it and clears the seeded flag, so componentDidCatch wrongly treats the error as the first one and reloads into the loading screen; the error-text assertion and the "reload not called" assertion both go red.
  *
  * Precondition: each throw case begins by asserting `mockPages.<page>Loaded === false`. The mock factory runs only on that page's first dynamic import and sets it to true, so this turns the "this case is the first trigger" ordering assumption into a failing assertion. Don't use "not the error screen right after render" as the precondition instead: /admin is under RequireAuth and waits on an async /api/auth/me, so right after render it is not the error screen whether or not the lazy was loaded before (an admin ok case moved ahead of the throw case, with a misplaced beacon, would leave the admin case green).
  */
@@ -40,6 +40,7 @@ vi.mock("./components/admin/AdminSections", () => {
     AdminLoginSection: make("adminsections-login"),
     AdminStorageSection: make("adminsections-storage"),
     AdminAiSection: make("adminsections-ai"),
+    AdminKnowledgeFieldsSection: make("adminsections-knowledge-fields"),
     AdminLimitsSection: make("adminsections-limits"),
   };
 });
@@ -162,7 +163,7 @@ describe("App route tree - ErrorBoundary wiring for whole-page lazy routes (#201
     expect(sessionStorage.getItem(ADMIN_FLAG)).toBeNull();
   });
 
-  it("all six site modal sections come from one AdminSections module: /admin/limits renders its AdminLimitsSection", async () => {
+  it("all seven site modal sections come from one AdminSections module: /admin/limits renders its AdminLimitsSection", async () => {
     mockPages.admin = "ok";
     renderAt("/admin/limits");
 
@@ -174,6 +175,7 @@ describe("App route tree - ErrorBoundary wiring for whole-page lazy routes (#201
       "/admin/login",
       "/admin/storage",
       "/admin/ai",
+      "/admin/knowledge-fields",
       "/admin/limits",
     ]);
   });

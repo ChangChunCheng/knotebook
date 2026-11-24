@@ -39,6 +39,7 @@ function mockFetch(getUser: () => UserDto | null) {
     if (url === "/api/admin/storage-plans" && method === "GET") return Promise.resolve(fakeResponse(200, { plans: [], defaults: { userPlanId: "", groupPlanId: "" } }));
     if (url === "/api/admin/versions/settings" && method === "GET") return Promise.resolve(fakeResponse(200, { keepAllDays: 7, dailyUntilDays: 30, autoVersionsEnabled: true, autoWaitMinutes: 5 }));
     if (url === "/api/admin/trash/settings" && method === "GET") return Promise.resolve(fakeResponse(200, { retentionDays: 7 }));
+    if (url === "/api/admin/knowledge-fields" && method === "GET") return Promise.resolve(fakeResponse(200, { fields: [], limits: { customEnabledMax: 20, customTotalMax: 100, optionsMax: 30, nameMax: 60 } }));
     if (url === "/api/admin/limits" && method === "GET") return Promise.resolve(fakeResponse(200, SITE_LIMITS_EMPTY));
     if (url.startsWith("/api/admin/ai/") && method === "GET") {
       const key = url.slice("/api/admin/ai/".length);
@@ -118,7 +119,7 @@ describe("AdminModal (/admin/*, #247)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("six items (nav accessible name Site admin): Users/Groups/Sign-in/Storage plans/AI agents/Site limits; no \"Back to notes\"; /admin/users is aria-current", async () => {
+  it("seven items (nav accessible name Site admin): Users/Groups/Sign-in/Storage plans/AI agents/Knowledge fields/Site limits; no \"Back to notes\"; /admin/users is aria-current", async () => {
     renderAt("/admin/users", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     const nav = within(dialog).getByRole("navigation", { name: "Site admin" });
@@ -128,6 +129,7 @@ describe("AdminModal (/admin/*, #247)", () => {
       ["Sign-in", "/admin/login"],
       ["Storage plans", "/admin/storage"],
       ["AI agents", "/admin/ai"],
+      ["Knowledge fields", "/admin/knowledge-fields"],
       ["Site limits", "/admin/limits"],
     ]);
     expect(within(nav).getByRole("link", { name: "Users" })).toHaveAttribute("aria-current", "page");
@@ -199,7 +201,7 @@ describe("AdminModal (/admin/*, #247)", () => {
     await waitFor(() => expect(path()).toBe(BG.pathname));
   });
 
-  it("each item's content: clicking Groups/Sign-in/Storage plans/AI agents/Site limits swaps in that section (h1)", async () => {
+  it("each item's content: clicking Groups/Sign-in/Storage plans/AI agents/Knowledge fields/Site limits swaps in that section (h1)", async () => {
     renderAt("/admin/users", mockFetch(() => ADMIN_USER));
     const dialog = await screen.findByRole("dialog", { name: "Site admin" });
     const nav = within(within(dialog).getByRole("navigation", { name: "Site admin" }));
@@ -208,6 +210,7 @@ describe("AdminModal (/admin/*, #247)", () => {
       ["Sign-in", "/admin/login", "Sign-in"],
       ["Storage plans", "/admin/storage", "Storage plans"],
       ["AI agents", "/admin/ai", "AI providers & actions"],
+      ["Knowledge fields", "/admin/knowledge-fields", "Knowledge fields"],
       ["Site limits", "/admin/limits", "Site limits"],
     ] as const) {
       fireEvent.click(nav.getByRole("link", { name: link }));

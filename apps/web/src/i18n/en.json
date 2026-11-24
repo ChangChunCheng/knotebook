@@ -436,6 +436,7 @@
       "storage": "Storage plans",
       "ai": "AI agents",
       "auth": "Sign-in",
+      "knowledgeFields": "Knowledge fields",
       "limits": "Site limits"
     }
   },
