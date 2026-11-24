@@ -1,3 +1,4 @@
+import { formatKnowledgeCustom } from "./knowledge-custom.js";
 import { isKnowledgeCommentData, parseKnowledgeComment, type KnowledgeCommentFields, type KnowledgeIgnoredItem, type KnowledgeProblem } from "./knowledge-markdown.js";
 import { EMPTY_KNOWLEDGE_PROPS, KNOWLEDGE_PROP_NAMES, type KnowledgePropName } from "./knowledge-schema.js";
 import type { MarkdownPlacement } from "./note-markdown-write.js";
@@ -61,7 +62,7 @@ function isClosedInSource(data: string, html: string): boolean {
   return html.includes(`${open}-->`) || html.includes(`${open}--!>`);
 }
 
-const FIELD_PROPS: ReadonlyArray<readonly [Exclude<keyof KnowledgeCommentFields, "id" | "unknown">, KnowledgePropName]> = [
+const FIELD_PROPS: ReadonlyArray<readonly [Exclude<keyof KnowledgeCommentFields, "id" | "unknown" | "custom">, KnowledgePropName]> = [
   ["when", "knowledgeWhen"],
   ["conclusion", "knowledgeConclusion"],
   ["evidence", "knowledgeEvidence"],
@@ -119,6 +120,7 @@ export function applyKnowledgeComments(
     const id = fields.id ?? `${KNOWLEDGE_PENDING_ID_PREFIX}${i}`;
     const written = { ...EMPTY_KNOWLEDGE_PROPS, knowledgeId: id } as KnowledgeProps;
     for (const [field, prop] of FIELD_PROPS) written[prop] = fields[field];
+    written.knowledgeCustom = formatKnowledgeCustom(fields.custom);
     for (const prop of KNOWLEDGE_PROP_NAMES) if (written[prop] !== "") heading.setAttribute(dataAttrOf(prop), written[prop]);
     assigned.add(id);
     props.push(written);

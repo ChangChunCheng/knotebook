@@ -3,13 +3,27 @@ import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type KnowledgeInfo } from "@knotebook/sha
 import { draftForSave, draftOf, EMPTY_DRAFT, evidenceLabel, fieldOfError, isDraftFieldEnabled, singleLine, tooLongLength } from "./form-state";
 import { fieldView } from "./test-support";
 
-const INFO: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-01", status: "unverified", supersededBy: "" };
+const INFO: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-01", status: "unverified", supersededBy: "", custom: {} };
 
 describe("form state", () => {
   it("draftOf drops the id and starts empty for a heading that is not knowledge yet", () => {
-    expect(draftOf(INFO)).toEqual({ when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-01", state: "needs-verify", supersededBy: "" });
+    expect(draftOf(INFO)).toEqual({ when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-01", state: "needs-verify", supersededBy: "", custom: {} });
     expect(draftOf(null)).toEqual(EMPTY_DRAFT);
     expect(EMPTY_DRAFT.state).toBe("needs-verify");
+  });
+
+  it("every draft has its own custom values, and the empty draft's cannot be written through", () => {
+    const a = draftOf(null);
+    const b = draftOf(null);
+    a.custom.team = "core";
+    expect(b.custom).toEqual({});
+    expect(EMPTY_DRAFT.custom).toEqual({});
+    const fromInfo = draftOf({ ...INFO, custom: { team: "web" } });
+    fromInfo.custom.team = "changed";
+    expect(draftOf({ ...INFO, custom: { team: "web" } }).custom).toEqual({ team: "web" });
+    expect(() => {
+      (EMPTY_DRAFT.custom as Record<string, string>).team = "x";
+    }).toThrow();
   });
 
   it("draftOf reads a heading saved without a status through its verified date", () => {

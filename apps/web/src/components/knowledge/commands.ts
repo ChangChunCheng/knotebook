@@ -98,7 +98,7 @@ export function saveKnowledge(
   const current = currentInfo(editor, blockId);
   const selfId = current?.id ?? base?.id ?? null;
   // A stored value the form doesn't show can't be corrected there, so it must not block saving.
-  const checked: KnowledgeDraft = { ...EMPTY_DRAFT, state: draft.state };
+  const checked: KnowledgeDraft = { ...EMPTY_DRAFT, state: draft.state, custom: {} };
   for (const field of shown) checked[field] = draft[field];
   const invalid = validateKnowledgeDraft(checked, selfId ? { noteId: null, knowledgeId: selfId } : null, noteId, touched);
   if (invalid) return { ok: false, reason: invalid };

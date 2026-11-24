@@ -39,8 +39,14 @@ function docOf(containers: Y.XmlElement[]): { doc: Y.Doc; fragment: Y.XmlFragmen
 
 describe("knowledge schema", () => {
   it("every knowledge prop defaults to the empty string", () => {
-    expect(Object.values(KNOWLEDGE_PROP_SCHEMA).map((p) => p.default)).toEqual(["", "", "", "", "", "", ""]);
+    expect(Object.values(KNOWLEDGE_PROP_SCHEMA).map((p) => p.default)).toEqual(["", "", "", "", "", "", "", ""]);
     expect(Object.keys(EMPTY_KNOWLEDGE_PROPS)).toEqual([...KNOWLEDGE_PROP_NAMES]);
+  });
+
+  it("knowledgeCustom is a knowledge prop whose empty default is ignorable", () => {
+    expect(KNOWLEDGE_PROP_NAMES).toContain("knowledgeCustom");
+    expect(isIgnorableKnowledgeDefault("heading", "knowledgeCustom", "")).toBe(true);
+    expect(isIgnorableKnowledgeDefault("heading", "knowledgeCustom", '{"a":"b"}')).toBe(false);
   });
 
   it("the headless schema's heading carries exactly the knowledge props on top of the default heading props", () => {

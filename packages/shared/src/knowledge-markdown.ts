@@ -1,4 +1,5 @@
 import { knowledgeStateOf, type KnowledgeInfo } from "./knowledge.js";
+import { knowledgeMemberToken } from "./knowledge-custom.js";
 import { KNOWLEDGE_KEY_RE, isKnowledgeFieldEnabled, type KnowledgeBuiltinFieldKey, type KnowledgeFieldView } from "./knowledge-fields.js";
 
 export const KNOWLEDGE_COMMENT_MARK = "knotebook:knowledge";
@@ -32,7 +33,8 @@ export interface KnowledgeIgnoredItem {
 
 /**
  * Raw strings as written (after decoding); `evidence: unconfirmed` is already mapped to "". Values are not checked here.
- * `id` null = the line was left out. `unknown`: every other key in order, its text after the colon undecoded.
+ * `id` null = the line was left out. `custom`: each well-formed `x-<key>` line by its key without the prefix.
+ * `unknown`: every other key in order, its text after the colon undecoded.
  */
 export interface KnowledgeCommentFields {
   id: string | null;
@@ -42,6 +44,7 @@ export interface KnowledgeCommentFields {
   verified: string;
   status: string;
   supersededBy: string;
+  custom: Record<string, string>;
   unknown: Array<{ key: string; raw: string }>;
 }
 
@@ -83,14 +86,25 @@ const BUILTIN_VALUES: ReadonlyArray<readonly [KnowledgeBuiltinFieldKey, (info: K
   ["superseded_by", i => i.supersededBy],
 ];
 
-/** A turned-off field is left out; a stored basis is written even when its option is hidden, so writing the comment back keeps it. */
-export function formatKnowledgeComment(info: KnowledgeInfo, fields: KnowledgeFieldView): string {
+/**
+ * A turned-off field is left out; a stored basis or choice is written even when its option is hidden, so writing the comment
+ * back keeps it. A member without an entry in `handleOf` is written as `user:<id>`.
+ */
+export function formatKnowledgeComment(info: KnowledgeInfo, fields: KnowledgeFieldView, handleOf: ReadonlyMap<string, string> = new Map()): string {
   const lines = [`<!-- ${KNOWLEDGE_COMMENT_MARK}`, `id: ${encodeKnowledgeValue(info.id)}`];
   for (const [key, valueOf] of BUILTIN_VALUES) {
     const value = valueOf(info);
     if (value !== "" && isKnowledgeFieldEnabled(fields, key)) lines.push(`${key}: ${encodeKnowledgeValue(value)}`);
   }
-  lines.push(`status: ${knowledgeStateOf(info)}`, "-->");
+  lines.push(`status: ${knowledgeStateOf(info)}`);
+  for (const field of fields.fields) {
+    if (field.builtin || !field.enabled) continue;
+    const key = field.key.slice("x-".length);
+    const value = Object.hasOwn(info.custom, key) ? info.custom[key]! : "";
+    if (value === "") continue;
+    lines.push(`${field.key}: ${encodeKnowledgeValue(field.type === "member" ? knowledgeMemberToken(value, handleOf) : value)}`);
+  }
+  lines.push("-->");
   return lines.join("\n");
 }
 
@@ -100,7 +114,7 @@ export function isKnowledgeCommentData(data: string): boolean {
   return MARK_START.test(data);
 }
 
-const FIELD_OF: Record<KnowledgeCommentKey, Exclude<keyof KnowledgeCommentFields, "unknown">> = {
+const FIELD_OF: Record<KnowledgeCommentKey, Exclude<keyof KnowledgeCommentFields, "unknown" | "custom">> = {
   id: "id",
   when: "when",
   conclusion: "conclusion",
@@ -124,7 +138,7 @@ export function parseKnowledgeComment(
   if (lines.length < 2 || lines[0]!.trim() !== KNOWLEDGE_COMMENT_MARK) return { ok: false, problem: "not_multiline" };
   let end = lines.length;
   while (end > 1 && lines[end - 1]!.trim() === "") end -= 1;
-  const fields: KnowledgeCommentFields = { id: null, when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", unknown: [] };
+  const fields: KnowledgeCommentFields = { id: null, when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", custom: {}, unknown: [] };
   const seen = new Set<string>();
   for (let i = 1; i < end; i += 1) {
     const line = lines[i]!.trimStart();
@@ -143,10 +157,10 @@ export function parseKnowledgeComment(
     const value = decodeKnowledgeValue(raw);
     if (value === null) return { ok: false, problem: "bad_value", key };
     if (value.includes("\u0000") || /\p{Surrogate}/u.test(value)) return { ok: false, problem: "unstorable", key };
-    if (!isKnownKey(key)) fields.unknown.push({ key, raw });
+    if (!isKnownKey(key)) fields.custom[key.slice("x-".length)] = value;
     else if (key === "id") fields.id = value === "" ? null : value;
     else if (key === "evidence") fields.evidence = value === "unconfirmed" ? "" : value;
-    else fields[FIELD_OF[key] as Exclude<keyof KnowledgeCommentFields, "id" | "unknown">] = value;
+    else fields[FIELD_OF[key] as Exclude<keyof KnowledgeCommentFields, "id" | "unknown" | "custom">] = value;
   }
   return { ok: true, fields };
 }

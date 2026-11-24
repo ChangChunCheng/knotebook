@@ -10,6 +10,7 @@ export const KNOWLEDGE_PROP_SCHEMA = {
   knowledgeVerified: { default: "" },
   knowledgeStatus: { default: "" },
   knowledgeSupersededBy: { default: "" },
+  knowledgeCustom: { default: "" },
 } as const;
 
 export type KnowledgePropName = keyof typeof KNOWLEDGE_PROP_SCHEMA;

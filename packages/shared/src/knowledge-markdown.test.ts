@@ -45,7 +45,15 @@ function generated(count: number, seed: number): string[] {
 const GENERATED = generated(2000, 20261121);
 
 const info = (over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({
-  id: "k_8f3a2c1d", when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", ...over,
+  id: "k_8f3a2c1d", when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", custom: {}, ...over,
+});
+const customView = resolveKnowledgeFieldView({
+  defs: [
+    { kind: "field", fieldRef: "x-owner", key: "owner", type: "member", createdAt: "2026-01-02" },
+    { kind: "field", fieldRef: "x-team", key: "team", type: "text", createdAt: "2026-01-01" },
+    { kind: "field", fieldRef: "x-old", key: "old", type: "text", createdAt: "2026-01-03" },
+  ],
+  site: [{ fieldRef: "x-old", optionKey: "", enabled: false, name: null, position: null }],
 });
 const viewWith = (enabled: Partial<Record<KnowledgeBuiltinFieldKey, boolean>>): KnowledgeFieldView =>
   resolveKnowledgeFieldView({ defs: [], site: Object.entries(enabled).map(([fieldRef, on]) => ({ fieldRef: fieldRef as KnowledgeBuiltinFieldKey, optionKey: "", enabled: on, name: null, position: null })) });
@@ -107,7 +115,7 @@ describe("formatKnowledgeComment", () => {
     expect(text.split("\n")).toHaveLength(6);
   });
   it("the comment always writes the status by its new name and leaves out turned-off fields", () => {
-    const info = { id: "k_00000001", when: "w", conclusion: "", evidence: "docs", verified: "2026-01-02", status: "", supersededBy: "" } as const;
+    const info = { id: "k_00000001", when: "w", conclusion: "", evidence: "docs", verified: "2026-01-02", status: "", supersededBy: "", custom: {} } as const;
     expect(formatKnowledgeComment(info, DEFAULT_KNOWLEDGE_FIELD_VIEW)).toBe("<!-- knotebook:knowledge\nid: k_00000001\nwhen: w\nevidence: docs\nverified: 2026-01-02\nstatus: verified\n-->");
     expect(formatKnowledgeComment(info, viewWith({ when: false }))).not.toContain("when:");
     expect(formatKnowledgeComment({ ...info, verified: "" }, DEFAULT_KNOWLEDGE_FIELD_VIEW)).toContain("status: needs-verify");
@@ -124,6 +132,23 @@ describe("formatKnowledgeComment", () => {
   it("writes outdated as obsolete", () => {
     expect(formatKnowledgeComment(info({ status: "outdated" }), DEFAULT_KNOWLEDGE_FIELD_VIEW)).toContain("\nstatus: obsolete\n");
   });
+  it("x- lines round-trip in field order after the builtin lines", () => {
+    const text = formatKnowledgeComment(info({ when: "w", custom: { owner: "u1", team: "core", old: "hidden", gone: "x" } }), customView, new Map([["u1", "bob"]]));
+    expect(text.endsWith("\nstatus: needs-verify\nx-team: core\nx-owner: bob\n-->")).toBe(true);
+    expect(text).not.toContain("hidden");
+    expect(text).not.toContain("gone");
+    expect(parseKnowledgeComment(dataOf(text))).toMatchObject({ ok: true, fields: { when: "w", custom: { team: "core", owner: "bob" }, unknown: [] } });
+  });
+  it("a member without a handle is written as user:<id>, and without a map every member is", () => {
+    expect(formatKnowledgeComment(info({ custom: { owner: "u2" } }), customView, new Map([["u1", "bob"]]))).toContain("\nx-owner: user:u2\n");
+    expect(formatKnowledgeComment(info({ custom: { owner: "u1" } }), customView)).toContain("\nx-owner: user:u1\n");
+  });
+  it("custom values are encoded like built-in ones", () => {
+    for (const v of [...TRICKY, ...GENERATED].filter(storable)) {
+      const parsed = parseKnowledgeComment(dataOf(formatKnowledgeComment(info({ custom: { team: v } }), customView)));
+      expect(parsed).toEqual({ ok: true, fields: expect.objectContaining({ custom: v === "" ? {} : { team: v } }) });
+    }
+  });
 });
 
 describe("parseKnowledgeComment", () => {
@@ -133,7 +158,7 @@ describe("parseKnowledgeComment", () => {
       const parsed = parseKnowledgeComment(dataOf(formatKnowledgeComment(written, DEFAULT_KNOWLEDGE_FIELD_VIEW)));
       expect(parsed).toEqual({
         ok: true,
-        fields: { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-01-02", status: "obsolete", supersededBy: "k_77b0e912", unknown: [] },
+        fields: { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-01-02", status: "obsolete", supersededBy: "k_77b0e912", custom: {}, unknown: [] },
       });
     }
   });
@@ -146,7 +171,7 @@ describe("parseKnowledgeComment", () => {
   it("unconfirmed becomes empty evidence; a missing key is empty; an unknown key is kept aside; other values come back as written, unchecked", () => {
     expect(parseKnowledgeComment(" knotebook:knowledge\nid: k_8f3a2c1d\nevidence: unconfirmed\nmood: happy\nwhen: w\n")).toEqual({
       ok: true,
-      fields: { id: "k_8f3a2c1d", when: "w", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", unknown: [{ key: "mood", raw: "happy" }] },
+      fields: { id: "k_8f3a2c1d", when: "w", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", custom: {}, unknown: [{ key: "mood", raw: "happy" }] },
     });
     expect(parseKnowledgeComment(" knotebook:knowledge\nevidence: guess\nstatus: current\nverified: 2026-02-30\n")).toMatchObject({
       ok: true,
@@ -170,16 +195,18 @@ describe("parseKnowledgeComment", () => {
     expect(parseKnowledgeComment(' knotebook:knowledge\nwhen: "\\ud800"\n')).toMatchObject({ problem: "unstorable" });
     expect(parseKnowledgeComment(" knotebook:knowledge\nwhen: a\n\nconclusion: b\n")).toMatchObject({ problem: "bad_line" });
   });
-  it("x- lines and any other unknown key are kept aside, not refused", () => {
-    const r = parseKnowledgeComment("knotebook:knowledge\nid: k_00000001\nx-owner: bob\nOwner: x\nx-負責人: bob\nwhen to read: soon\nowner: \"unterminated\n");
-    expect(r).toEqual({ ok: true, fields: expect.objectContaining({ id: "k_00000001", unknown: [
-      { key: "x-owner", raw: "bob" }, { key: "Owner", raw: "x" }, { key: "x-負責人", raw: "bob" }, { key: "when to read", raw: "soon" }, { key: "owner", raw: "\"unterminated" }] }) });
+  it("well-formed x- lines go to custom; any other unknown key is kept aside, not refused", () => {
+    const r = parseKnowledgeComment("knotebook:knowledge\nid: k_00000001\nx-owner: bob\nOwner: x\nx-負責人: bob\nwhen to read: soon\nowner: \"unterminated\nx-Team: a\nx-: b\n");
+    expect(r).toEqual({ ok: true, fields: expect.objectContaining({ id: "k_00000001", custom: { owner: "bob" }, unknown: [
+      { key: "Owner", raw: "x" }, { key: "x-負責人", raw: "bob" }, { key: "when to read", raw: "soon" }, { key: "owner", raw: "\"unterminated" },
+      { key: "x-Team", raw: "a" }, { key: "x-", raw: "b" }] }) });
   });
   it.each([["no colon here", "bad_line"], [": value", "bad_line"], ["evidence: \"bad", "bad_value"], ["x-a: 1\nx-a: 2", "duplicate_key"]])("%s is refused as %s", (lines, problem) =>
     expect(parseKnowledgeComment(`knotebook:knowledge\n${lines}`)).toMatchObject({ ok: false, problem }));
-  it("a well-formed x- key is decoded like a built-in one; its raw text is kept undecoded", () => {
+  it("a well-formed x- key is decoded like a built-in one", () => {
     expect(parseKnowledgeComment('knotebook:knowledge\nx-a: "b\\u0000"')).toMatchObject({ ok: false, problem: "unstorable", key: "x-a" });
-    expect(parseKnowledgeComment('knotebook:knowledge\nx-a: "b c"')).toMatchObject({ ok: true, fields: { unknown: [{ key: "x-a", raw: '"b c"' }] } });
+    expect(parseKnowledgeComment('knotebook:knowledge\nx-a: "b c"')).toMatchObject({ ok: true, fields: { custom: { a: "b c" }, unknown: [] } });
+    expect(parseKnowledgeComment('knotebook:knowledge\nx-a: "b')).toMatchObject({ ok: false, problem: "bad_value", key: "x-a" });
   });
   it("an unknown key is cut at 80 code points", () => {
     const key = `${"鍵".repeat(79)}😀😀`;

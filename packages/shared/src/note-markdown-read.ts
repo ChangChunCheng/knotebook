@@ -453,8 +453,11 @@ function freeMarkerChar(haystack: string): string | null {
 }
 
 export interface NoteMarkdownOptions {
-  /** Write a knowledge comment under each top-level knowledge heading in `blocks`, with the fields `fields` has turned on. */
-  knowledge?: { fields: KnowledgeFieldView };
+  /**
+   * Write a knowledge comment under each top-level knowledge heading in `blocks`, with the fields `fields` has turned on.
+   * A member missing from `handleOf` is written as `user:<id>`.
+   */
+  knowledge?: { fields: KnowledgeFieldView; handleOf?: ReadonlyMap<string, string> };
 }
 
 // One download can hit many such headings; the warning is only a hint that the case exists.
@@ -467,7 +470,7 @@ const propsOf = (b: { props?: unknown }): Record<string, unknown> | undefined =>
 // restored, so nothing a comment holds can be mistaken for one.
 export function blocksToNoteMarkdown(editor: AnyEditor, blocks: Blocks, opts?: NoteMarkdownOptions): string {
   if (!opts?.knowledge) return convertBlocks(editor, blocks);
-  const { fields } = opts.knowledge;
+  const { fields, handleOf } = opts.knowledge;
   const source = blocks ?? editor.document;
   const isKnowledge = (b: { type?: string; props?: unknown }): boolean => b.type === "heading" && readKnowledgeInfo(propsOf(b)) !== null;
   const mark = source.some(isKnowledge) ? freeMarkerChar(JSON.stringify(source)) : null;
@@ -480,7 +483,7 @@ export function blocksToNoteMarkdown(editor: AnyEditor, blocks: Blocks, opts?: N
     return { ...b, children: [{ type: "paragraph", content: `${mark}${infos.length - 1}${mark}` }, ...(b.children ?? [])] };
   }) as Blocks;
   const md = convertBlocks(editor, withTokens);
-  const injected = md.replace(new RegExp(`\n\n${mark}(\\d+)${mark}`, "g"), (_m, i: string) => `\n${formatKnowledgeComment(infos[Number(i)]!, fields)}`);
+  const injected = md.replace(new RegExp(`\n\n${mark}(\\d+)${mark}`, "g"), (_m, i: string) => `\n${formatKnowledgeComment(infos[Number(i)]!, fields, handleOf)}`);
   // A colored toggleable heading goes out as one raw HTML block that carries the placeholder inside it.
   let lost = 0;
   const out = injected.replace(new RegExp(`(?:<p>)?${mark}\\d+${mark}(?:</p>)?`, "g"), () => {

@@ -12,9 +12,12 @@ import {
   type KnowledgeInfo,
 } from "@knotebook/shared";
 
-export const EMPTY_DRAFT: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
+// Frozen, custom included: a spread copies the custom object by reference, so it must not be written through.
+export const EMPTY_DRAFT: Readonly<KnowledgeDraft> = Object.freeze({
+  when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "", custom: Object.freeze({}) as Record<string, string>,
+});
 
-export type DraftField = Exclude<keyof KnowledgeDraft, "state">;
+export type DraftField = Exclude<keyof KnowledgeDraft, "state" | "custom">;
 
 /** In form order. */
 export const DRAFT_FIELDS: readonly DraftField[] = ["when", "conclusion", "evidence", "verified", "supersededBy"];
@@ -42,9 +45,9 @@ export function evidenceLabel(fields: KnowledgeFieldView, key: string, t: Transl
 }
 
 export function draftOf(info: KnowledgeInfo | null): KnowledgeDraft {
-  if (!info) return EMPTY_DRAFT;
+  if (!info) return { ...EMPTY_DRAFT, custom: {} };
   const { when, conclusion, evidence, verified, supersededBy } = info;
-  return { when, conclusion, evidence, verified, state: knowledgeStateOf(info), supersededBy };
+  return { when, conclusion, evidence, verified, state: knowledgeStateOf(info), supersededBy, custom: { ...info.custom } };
 }
 
 /** A single-line input can't show a line break written elsewhere; the stored value stays as it is until the field is edited. */

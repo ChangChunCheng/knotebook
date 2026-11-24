@@ -38,7 +38,7 @@ const read = async (blocks: AnyBlocks, knowledge = true): Promise<string> => {
   const doc = await docWith(blocks);
   return withSession(ed => blocksToNoteMarkdown(ed, ed.document, knowledge ? WITH_KNOWLEDGE : {}), doc);
 };
-const KNOWLEDGE_PROPS = ["knowledgeId", "knowledgeWhen", "knowledgeConclusion", "knowledgeEvidence", "knowledgeVerified", "knowledgeStatus", "knowledgeSupersededBy"];
+const KNOWLEDGE_PROPS = ["knowledgeId", "knowledgeWhen", "knowledgeConclusion", "knowledgeEvidence", "knowledgeVerified", "knowledgeStatus", "knowledgeSupersededBy", "knowledgeCustom"];
 const withoutKnowledge = (blocks: AnyBlocks): AnyBlocks =>
   blocks.map(b => {
     const props = { ...b.props };
@@ -58,6 +58,26 @@ describe("knowledge comments on read", () => {
   it("a top-level knowledge heading is followed by its comment and a blank line", async () => {
     expect(await read([H(2, "D1", K), P("body")])).toBe(
       "## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\nbody\n",
+    );
+  });
+
+  it("custom values follow the status line in field order, members by handle, and garbage in the prop is skipped", async () => {
+    const fields = resolveKnowledgeFieldView({
+      defs: [
+        { kind: "field", fieldRef: "x-owner", key: "owner", type: "member", createdAt: "2026-01-02" },
+        { kind: "field", fieldRef: "x-team", key: "team", type: "text", createdAt: "2026-01-01" },
+      ],
+      site: [],
+    });
+    const doc = await docWith([
+      H(2, "D1", { ...K, knowledgeCustom: '{"owner":"u-1","team":"core","gone":"x"}' }),
+      H(2, "D2", { knowledgeId: "k_00000002", knowledgeCustom: '["not","an","object"]' }),
+      P("body"),
+    ]);
+    const md = await withSession(ed => blocksToNoteMarkdown(ed, ed.document, { knowledge: { fields, handleOf: new Map([["u-1", "bob"]]) } }), doc);
+    expect(md).toBe(
+      "## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\nx-team: core\nx-owner: bob\n-->\n\n" +
+        "## D2\n<!-- knotebook:knowledge\nid: k_00000002\nstatus: needs-verify\n-->\n\nbody\n",
     );
   });
 
@@ -198,7 +218,7 @@ describe("knowledge comments on read", () => {
   it("round-trips every tricky value through the comment on read", async () => {
     const values = ["a --> b", "x\ny", "\"q\"", "C:\\Users\\alice", " pad ", "中文 😀", "a\u2028b", "a\u0085b", "p | q"];
     for (const v of values) {
-      const info: KnowledgeInfo = { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-10-20", status: "unverified", supersededBy: "" };
+      const info: KnowledgeInfo = { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-10-20", status: "unverified", supersededBy: "", custom: {} };
       const md = await read([H(2, "D1", { knowledgeId: info.id, knowledgeWhen: v, knowledgeConclusion: v, knowledgeEvidence: "docs", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified" })]);
       expect(md).toContain(formatKnowledgeComment(info, DEFAULT_KNOWLEDGE_FIELD_VIEW));
       expect(md.match(/-->/g)).toHaveLength(1);

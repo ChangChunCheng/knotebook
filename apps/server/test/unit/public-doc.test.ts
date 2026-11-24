@@ -11,8 +11,9 @@ const VALUES = {
   knowledgeVerified: "2031-04-05",
   knowledgeStatus: "outdated",
   knowledgeSupersededBy: "11111111-2222-3333-4444-555555555555#k_6b6b6b6b",
+  knowledgeCustom: '{"team":"carol-team-4d1e"}',
 };
-const UNIQUE_VALUES = [VALUES.knowledgeId, VALUES.knowledgeWhen, VALUES.knowledgeConclusion, VALUES.knowledgeVerified, VALUES.knowledgeSupersededBy, "old-secret-3c9d"];
+const UNIQUE_VALUES = [VALUES.knowledgeId, VALUES.knowledgeWhen, VALUES.knowledgeConclusion, VALUES.knowledgeVerified, VALUES.knowledgeSupersededBy, "carol-team-4d1e", "old-secret-3c9d"];
 
 function el(name: string, attrs: Record<string, string> = {}, children: Array<Y.XmlElement | Y.XmlText> = []): Y.XmlElement {
   const e = new Y.XmlElement(name);
@@ -61,7 +62,7 @@ describe("preparePublicDoc", () => {
     const doc = new Y.Doc();
     fillDoc(doc);
     const stored = Y.encodeStateAsUpdate(doc);
-    expect(UNIQUE_VALUES.slice(0, 5).every((v) => contains(stored, v))).toBe(true);
+    expect(UNIQUE_VALUES.slice(0, 6).every((v) => contains(stored, v))).toBe(true);
 
     const out = preparePublicDoc(stored);
     expectNoKnowledge(b64Bytes(out.ydocB64));

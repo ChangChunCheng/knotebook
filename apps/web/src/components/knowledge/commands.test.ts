@@ -72,7 +72,7 @@ function pair(blocks: unknown[]) {
   return { a, b, ea: open(a), eb: open(b) };
 }
 
-const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
+const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "", custom: {} };
 const draft = (over: Partial<KnowledgeDraft>): KnowledgeDraft => ({ ...EMPTY, ...over });
 const infoOf = (editor: Ed, id: string): KnowledgeInfo | null => readKnowledgeInfo(editor.getBlock(id)?.props as Record<string, unknown>);
 const K1 = { knowledgeId: "k_00000001", knowledgeWhen: "alice reads", knowledgeConclusion: "bob concludes" };
@@ -308,7 +308,7 @@ describe("saveKnowledge", () => {
 });
 
 describe("isClearedAll", () => {
-  const filled: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "" };
+  const filled: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "", custom: {} };
   const statusOnly: KnowledgeInfo = { ...filled, when: "", conclusion: "" };
   it.each([
     ["existing knowledge emptied with needs verify", filled, draft({}), true],
