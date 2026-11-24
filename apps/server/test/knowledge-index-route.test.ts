@@ -3,9 +3,9 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { KNOWLEDGE_INDEX_MAX, type KnowledgeIndexDto, type NoteDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, KNOWLEDGE_INDEX_MAX, type KnowledgeIndexDto, type NoteDto } from "@knotebook/shared";
 import type { Db } from "../src/db/index.js";
-import { noteTags, notes, tags } from "../src/db/schema.js";
+import { knowledgeFieldOverrides, noteTags, notes, tags } from "../src/db/schema.js";
 import { loadKnowledgeIndex } from "../src/knowledge/index-query.js";
 import { resolveKnowledgeScope } from "../src/knowledge/scope.js";
 import { buildTestApp } from "./helpers.js";
@@ -618,7 +618,7 @@ describe("one snapshot", () => {
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q.trim().toLowerCase()) } }) as unknown as Db;
     const scope = await resolveKnowledgeScope(logged, alice.id, { kind: "group", groupId: g.id });
     queries.length = 0;
-    const dto = await loadKnowledgeIndex(logged, { userId: alice.id, scope: scope!, filters: { tagIds: [], status: null, evidence: null } });
+    const dto = await loadKnowledgeIndex(logged, { userId: alice.id, scope: scope!, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, filters: { tagIds: [], status: null, evidence: null } });
     expect(Object.keys(dto.replacements)).toHaveLength(1);
     expect(queries[0]).toBe("begin");
     expect(queries[1]).toContain("repeatable read");
@@ -626,5 +626,40 @@ describe("one snapshot", () => {
     expect(queries.at(-1)).toBe("commit");
     expect(queries.filter(q => q === "begin")).toHaveLength(1);
     expect(queries.filter(q => /for (key share|update|share|no key update)/.test(q))).toEqual([]);
+  });
+});
+
+
+describe("field settings", () => {
+  async function disable(db: Db, ...fieldRefs: string[]) {
+    await db.insert(knowledgeFieldOverrides).values(fieldRefs.map(fieldRef => ({ groupId: null, fieldRef, optionKey: "", enabled: false })));
+  }
+
+  it("turned-off fields are empty in the index and their filter is ignored", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    const target = await seedKnowledgeNote(db, { ownerId: alice.id }, "T", [kh("t", kid(20), "T", { level: 1 })]);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "S", [
+      kh("b1", kid(1), "Old", { level: 1, status: "outdated", when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02", supersededBy: `${target.id}#${kid(20)}` }),
+      kh("b2", kid(2), "Other", { level: 1, evidence: "tested" }),
+    ]);
+    await disable(db, "when", "evidence", "superseded_by", "verified");
+    const dto = await okIndex(app, alice.id, "me", "?evidence=docs");
+    expect(dto.entries.map(e => e.knowledgeId).sort()).toEqual([kid(1), kid(2), kid(20)].sort());
+    const old = dto.entries.find(e => e.knowledgeId === kid(1))!;
+    expect(old).toMatchObject({ when: "", evidence: "", supersededBy: null, verified: null, conclusion: "c", status: "outdated" });
+    expect(dto.replacements).toEqual({});
+    expect(dto.fields.filter(f => !f.enabled).map(f => f.key).sort()).toEqual(["evidence", "superseded_by", "verified", "when"]);
+  });
+
+  it("with no settings the index DTO is what it was, plus the default fields", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "S", [kh("b1", kid(1), "H", { level: 1, when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02" })]);
+    const dto = await okIndex(app, alice.id, "me");
+    expect(dto.entries[0]).toMatchObject({ when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02" });
+    expect(dto.fields).toEqual(DEFAULT_KNOWLEDGE_FIELD_VIEW.fields);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=docs"))).toEqual([kid(1)]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=tested"))).toEqual([]);
   });
 });

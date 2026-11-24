@@ -1,4 +1,4 @@
-import { knowledgeStateOf, type KnowledgeIndexDto, type KnowledgeIndexEntryDto, type KnowledgeIndexNoteDto, type NoteTagDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, knowledgeStateOf, type KnowledgeIndexDto, type KnowledgeIndexEntryDto, type KnowledgeIndexNoteDto, type NoteTagDto } from "@knotebook/shared";
 
 export function indexNote(over: Partial<KnowledgeIndexNoteDto> & { id: string }): KnowledgeIndexNoteDto {
   return { title: over.id, path: `/n/alice/${over.id}`, folderId: null, tags: [], capped: false, ...over };
@@ -36,6 +36,7 @@ export function indexDto(over: Partial<KnowledgeIndexDto> = {}): KnowledgeIndexD
     tagOptions: [],
     truncated: false,
     backfillPending: false,
+    fields: DEFAULT_KNOWLEDGE_FIELD_VIEW.fields,
     ...over,
   };
 }
