@@ -29,6 +29,8 @@ Releases before 0.16 are in [`docs/changelog/`](docs/changelog/), one file per m
 
 - **Every knowledge comment in the Markdown agents read has a `status` line, with the new names** (#565). `status` is `verified`, `needs-verify` or `obsolete`; the older `unverified` and `outdated` are still read, and a comment without `status` reads from the last verified date as above. Only the fields the space has turned on are written.
 
+- **Two-finger zoom now works on slides in presentation mode on touch screens** (#235). Slides that fit on screen, short code blocks and vertical sub-slides used to turn pinch-zoom off along with the browser's own panning, so that a swipe would change slides. They now allow pinch-zoom while still leaving one-finger swipes to the presentation; slides that scroll keep scrolling as before.
+
 ### Upgrade notes
 
 - **Knowledge with no last verified date now shows the amber needs-review icon instead of the gray *i*.** Nothing in the note changed: knowledge that was current but never dated now reads as needing review, because nothing says it was checked. Mark it as verified to clear it.

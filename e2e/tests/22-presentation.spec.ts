@@ -588,3 +588,79 @@ test("E7: sidebar more menu of another note, \"Present\" -> opens that note's pr
   expect(new URL(page.url()).search).toBe("");
   await expect(page.getByLabel("Note title")).toHaveValue(target);
 });
+
+test("E8 (#235): touch - two-finger pinch zooms a non-overflowing slide, a short code block and a vertical sub-slide without changing slide; with touch-action:none (positive control) the same pinch does not zoom", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const title = `E2E present pinch ${Date.now()}`;
+  const { context: desktop, page: owner } = await adminPageWithNote(browser, title, ["## Short", "", "short text", "", "## Code", "", "```ts", "const shortCode = 1;", "```", "", "## Stack", "", "stack text", "", "### Child", "", "child text", ""].join("\n"));
+  const mobile = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 640 } });
+  try {
+    await expect(editorLocator(owner).getByText("shortCode")).toBeVisible({ timeout: 15_000 });
+    const noteUrl = owner.url();
+    const page = await mobile.newPage();
+    await loginAs(page, ADMIN.email, ADMIN.password);
+    await page.goto(`${noteUrl}?present`);
+    await expect(page.locator(".reveal.ready")).toBeVisible({ timeout: 20_000 });
+    const cdp = await page.context().newCDPSession(page);
+    const scale = () => page.evaluate(() => window.visualViewport?.scale ?? 1);
+    const resetZoom = async () => {
+      await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+      await expect.poll(scale).toBe(1);
+    };
+    // Raw two-finger spread: CDP's synthesizePinchGesture doesn't zoom in headless Chromium even with touch-action:auto everywhere.
+    const pinchOn = async (target: import("@playwright/test").Locator) => {
+      const box = (await target.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x - 15, y, id: 1 }, { x: x + 15, y, id: 2 }] });
+      for (let i = 1; i <= 10; i++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 15 - 8 * i, y, id: 1 }, { x: x + 15 + 8 * i, y, id: 2 }] });
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+
+    const short = await slideIdContaining(page, "short text");
+    await page.locator(".reveal .controls .navigate-right").tap();
+    await expect.poll(() => currentSlideId(page)).toBe(short);
+    const shortSection = page.locator(`section[data-kn-slide-id="${short}"]`);
+    expect(await shortSection.getAttribute("data-prevent-swipe")).toBeNull();
+    expect(await shortSection.evaluate((el) => getComputedStyle(el).touchAction)).toBe("pinch-zoom");
+
+    // Positive control: the old touch-action:none blocks the same gesture, so a zoom below is really due to pinch-zoom.
+    await shortSection.evaluate((el) => { (el as HTMLElement).style.touchAction = "none"; });
+    await pinchOn(shortSection.getByText("short text"));
+    await page.waitForTimeout(300);
+    expect(await scale()).toBe(1);
+    await shortSection.evaluate((el) => { (el as HTMLElement).style.touchAction = ""; });
+
+    await pinchOn(shortSection.getByText("short text"));
+    await expect.poll(scale).toBeGreaterThan(1.2);
+    expect(await currentSlideId(page)).toBe(short);
+    await resetZoom();
+
+    const codeSlide = await slideIdContaining(page, "shortCode");
+    await page.locator(".reveal .controls .navigate-right").tap();
+    await expect.poll(() => currentSlideId(page)).toBe(codeSlide);
+    const shortPre = page.locator(`section[data-kn-slide-id="${codeSlide}"] pre`);
+    expect(await shortPre.getAttribute("data-prevent-swipe")).toBeNull();
+    expect(await shortPre.evaluate((el) => getComputedStyle(el).touchAction)).toBe("pinch-zoom");
+    await pinchOn(shortPre);
+    await expect.poll(scale).toBeGreaterThan(1.2);
+    expect(await currentSlideId(page)).toBe(codeSlide);
+    await resetZoom();
+
+    // A vertical sub-slide: reveal marks .reveal with is-vertical-slide (touch-action:none), which the app widens to pinch-zoom.
+    const child = await slideIdContaining(page, "child text");
+    await page.locator(".reveal .controls .navigate-right").tap();
+    await page.locator(".reveal .controls .navigate-down").tap();
+    await expect.poll(() => currentSlideId(page)).toBe(child);
+    await expect(page.locator(".reveal")).toHaveClass(/is-vertical-slide/);
+    await pinchOn(page.locator(`section[data-kn-slide-id="${child}"]`).getByText("child text"));
+    await expect.poll(scale).toBeGreaterThan(1.2);
+    expect(await currentSlideId(page)).toBe(child);
+    await cdp.detach();
+  } finally {
+    await mobile.close();
+    await desktop.close();
+  }
+});
