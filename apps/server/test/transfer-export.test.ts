@@ -11,11 +11,11 @@ import { presenceClientId } from "../src/notes/editing/presence.js";
 import { TRANSFER_WRITE_BODY_LIMIT } from "../src/http/body-limits.js";
 import { buildCollabTestApp, testConfig } from "./helpers.js";
 import { seedContent, seedTokenForUser } from "./editing-helpers.js";
-import { seedGroup, seedNote, seedRole, seedShare, seedUser, setMemberRole } from "./group-helpers.js";
+import { cookieOf, seedGroup, seedNote, seedRole, seedShare, seedUser, setMemberRole } from "./group-helpers.js";
 import { seedFolder, seedManyNotesInFolder, seedPlacement, setNoteFolder } from "./folder-helpers.js";
 import { readTarGz, type TarEntry } from "./tar-read.js";
 import type { BulkRange } from "../src/auth/transfer-token.js";
-import { basesOf, exportRaw, gate, issueBulkDirect, parseNoteFile, seedMd } from "./bulk-transfer-helpers.js";
+import { basesOf, callTool, exportRaw, gate, issueBulkDirect, parseNoteFile, seedBlocks, seedMd } from "./bulk-transfer-helpers.js";
 
 type Ctx = Awaited<ReturnType<typeof buildCollabTestApp>>;
 const PASSWORD = "correct horse battery staple";
@@ -81,7 +81,8 @@ describe("archive shape", () => {
     }
     expect(bases.size).toBe(4);
     const m = manifestOf(entries);
-    expect(Object.keys(m)).toEqual(["knotebook", "exportedAt", "site", "range", "folders", "notes", "skipped"]);
+    expect(Object.keys(m)).toEqual(["knotebook", "exportedAt", "site", "range", "folders", "notes", "knowledgeFieldSets", "skipped"]);
+    expect(Object.keys(m.knowledgeFieldSets).sort()).toEqual(["personal", g.id].sort());
     expect(m.knotebook).toBe(1);
     expect(m.site).toBe(new URL(testConfig.publicUrl).origin);
     expect(m.range).toEqual({ kind: "all" });
@@ -89,9 +90,49 @@ describe("archive shape", () => {
     expect(m.folders).toContainEqual({ path: "My notes", id: null, space: null });
     expect(m.folders).toContainEqual({ path: "Groups/團隊", id: null, space: { kind: "group", groupId: g.id } });
     expect(m.folders).toContainEqual({ path: "My notes/空的", id: empty.id, space: { kind: "personal" } });
-    expect(m.notes).toContainEqual({ path: "Groups/團隊/群組筆記.md", id: gn.id, role: "editor" });
-    expect(m.notes).toContainEqual({ path: "Shared with me/我放的/分享的.md", id: sh.id, role: "viewer" });
+    expect(m.notes).toContainEqual({ path: "Groups/團隊/群組筆記.md", id: gn.id, role: "editor", knowledgeFields: g.id });
+    expect(m.notes).toContainEqual({ path: "Shared with me/我放的/分享的.md", id: sh.id, role: "viewer", knowledgeFields: "personal" });
     expect((await basesOf(ctx.db, { userId: u.id })).length).toBe(4);
+  });
+
+  it("a downloaded file has the same comment as read_note_section and the manifest lists fields per space", async () => {
+    const ctx = await buildCollabTestApp();
+    const { u, pat, b } = await userWithBulk(ctx);
+    const admin = await seedUser(ctx.db, { isAdmin: true });
+    const fields = (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+      key,
+      enabled: key !== "conclusion",
+      ...(key === "evidence" ? { options: ["tested", "docs", "inferred"].map(o => ({ key: o, name: null, enabled: true })) } : {}),
+    }));
+    const put = await ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
+    expect(put.statusCode, put.body).toBe(200);
+    const knowledgeHeading = (knowledgeId: string) => [
+      { id: "hK", type: "heading", props: { level: 2, knowledgeId, knowledgeWhen: "alice reads this", knowledgeConclusion: "hidden" }, content: "Known" },
+      { id: "pK", type: "paragraph", content: "body" },
+    ];
+    const mine = await seedNote(ctx.db, { ownerId: u.id }, { title: "mine" });
+    await seedBlocks(ctx.db, mine.id, knowledgeHeading("k_00000001"));
+    const g = await seedGroup(ctx.db, "team", [{ userId: u.id, role: "member" }]);
+    const gn = await seedNote(ctx.db, { groupId: g.id }, { title: "theirs" });
+    await seedBlocks(ctx.db, gn.id, knowledgeHeading("k_00000002"));
+
+    const entries = readTarGz((await exportRaw(ctx.baseUrl, b.token)).body);
+    const m = manifestOf(entries);
+    expect(Object.keys(m.knowledgeFieldSets).sort()).toEqual(["personal", g.id].sort());
+    expect(m.notes).toContainEqual({ path: "My notes/mine.md", id: mine.id, role: "owner", knowledgeFields: "personal" });
+    expect(m.notes).toContainEqual({ path: "Groups/team/theirs.md", id: gn.id, role: "editor", knowledgeFields: g.id });
+    for (const set of Object.values(m.knowledgeFieldSets) as Array<{ status: string[]; fields: Array<{ key: string }> }>) {
+      expect(set.status).toEqual(["verified", "needs-verify", "obsolete"]);
+      expect(set.fields.map(f => f.key)).toEqual(["when", "evidence", "verified", "superseded_by"]);
+    }
+    for (const [noteId, path] of [[mine.id, "My notes/mine.md"], [gn.id, "Groups/team/theirs.md"]] as const) {
+      const body = parseNoteFile(filesOf(entries).find(e => e.path === path)!.data.toString("utf8")).body;
+      const section = await callTool(ctx.app, pat.token, "read_note_section", { note_id: noteId, section_id: "hK" });
+      const markdown = (section.structuredContent as { section: { markdown: string } }).section.markdown;
+      expect(markdown).toContain("<!-- knotebook:knowledge\n");
+      expect(markdown).not.toContain("conclusion:");
+      expect(body, path).toContain(markdown);
+    }
   });
 
   it("visibility matrix: owner, shared viewer/editor, group editor/viewer/create-only (role viewer) are in; trash, non-member groups, canRead:false roles are not", async () => {
@@ -503,8 +544,8 @@ describe("not mergeable, headers, presence, live", () => {
     target = n1.id;
     const entries = readTarGz((await exportRaw(ctx.baseUrl, b.token)).body);
     const m = manifestOf(entries);
-    expect(m.notes).toContainEqual({ path: "My notes/n1.md", id: n1.id, role: "owner", mergeable: false });
-    expect(m.notes).toContainEqual({ path: "My notes/n2.md", id: n2.id, role: "owner" });
+    expect(m.notes).toContainEqual({ path: "My notes/n1.md", id: n1.id, role: "owner", knowledgeFields: "personal", mergeable: false });
+    expect(m.notes).toContainEqual({ path: "My notes/n2.md", id: n2.id, role: "owner", knowledgeFields: "personal" });
     expect(filesOf(entries).map(e => e.path)).toContain("My notes/n1.md");
     const [b1] = await basesOf(ctx.db, { noteId: n1.id });
     const [b2] = await basesOf(ctx.db, { noteId: n2.id });
@@ -528,9 +569,9 @@ describe("not mergeable, headers, presence, live", () => {
     expect(sizeOf("My notes/big.md")).toBeGreaterThan(TRANSFER_WRITE_BODY_LIMIT);
     expect(sizeOf("My notes/big.md")).toBeLessThan(1_048_576);
     expect(sizeOf("My notes/near.md")).toBeLessThanOrEqual(TRANSFER_WRITE_BODY_LIMIT);
-    expect(m.notes).toContainEqual({ path: "My notes/big.md", id: big.id, role: "owner", tooLargeToSend: true });
-    expect(m.notes).toContainEqual({ path: "My notes/near.md", id: near.id, role: "owner" });
-    expect(m.notes).toContainEqual({ path: "My notes/small.md", id: small.id, role: "owner" });
+    expect(m.notes).toContainEqual({ path: "My notes/big.md", id: big.id, role: "owner", knowledgeFields: "personal", tooLargeToSend: true });
+    expect(m.notes).toContainEqual({ path: "My notes/near.md", id: near.id, role: "owner", knowledgeFields: "personal" });
+    expect(m.notes).toContainEqual({ path: "My notes/small.md", id: small.id, role: "owner", knowledgeFields: "personal" });
   });
 
   it("headers: application/gzip, content-disposition, nosniff", async () => {

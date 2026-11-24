@@ -72,13 +72,13 @@ describe("worker answers match the same-thread answers (every round-trip corpus 
         const b = await wrt.runDoc<K>("u", { ...op, state: new Uint8Array(op.state) }, { ask: noTitles });
         return [a, b] as const;
       };
-      const [r1, r2] = await both({ kind: "read", state, wantShown: true });
+      const [r1, r2] = await both({ kind: "read", state, wantShown: true, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       expect(r2, c.id).toEqual(r1);
-      const [s1, s2] = await both({ kind: "read", state, section: "_top", wantShown: false });
+      const [s1, s2] = await both({ kind: "read", state, section: "_top", wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       expect(s2, c.id).toEqual(s1);
       const [o1, o2] = await both({ kind: "outline", state });
       expect(o2, c.id).toEqual(o1);
-      const [x1, x2] = await both({ kind: "exportFile", state, key: KEY, salt: SALT });
+      const [x1, x2] = await both({ kind: "exportFile", state, key: KEY, salt: SALT, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       // `stats.yields` yields based on the wall clock (every >= 20 ms), so counts can differ between the two; everything else is identical.
       const noYields = (x: typeof x1) => (x === DOC_TOO_COMPLEX ? x : { ...x, stats: { ...x.stats, yields: 0 } });
       expect(noYields(x2), c.id).toEqual(noYields(x1));
@@ -94,8 +94,8 @@ describe("worker answers match the same-thread answers (every round-trip corpus 
       expect(e2.afterIds.length, c.id).toBe(e1.afterIds.length);
       const m1 = applied(state, d1);
       const m2 = applied(state, d2);
-      const [after1, after2] = await both({ kind: "read", state: Y.encodeStateAsUpdate(m1), wantShown: false });
-      expect(after1, c.id).toEqual((await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(m2), wantShown: false })));
+      const [after1, after2] = await both({ kind: "read", state: Y.encodeStateAsUpdate(m1), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+      expect(after1, c.id).toEqual((await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(m2), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })));
       expect(after2, c.id).toEqual(after1);
       const s1Rev = Y.encodeStateAsUpdate(m1);
       const s2Rev = Y.encodeStateAsUpdate(m2);
@@ -118,8 +118,8 @@ describe("worker answers match the same-thread answers (every round-trip corpus 
       asked.push(q.ids ?? []);
       return [[target, "現在的標題"]];
     };
-    const a = await rt.runDoc("u", { kind: "read", state, wantShown: true }, { ask: ask as never });
-    const b = await wrt.runDoc("u", { kind: "read", state: new Uint8Array(state), wantShown: true }, { ask: ask as never });
+    const a = await rt.runDoc("u", { kind: "read", state, wantShown: true, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, { ask: ask as never });
+    const b = await wrt.runDoc("u", { kind: "read", state: new Uint8Array(state), wantShown: true, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, { ask: ask as never });
     expect(b).toEqual(a);
     expect(JSON.stringify(a)).toContain("現在的標題");
     expect(asked).toEqual([[target], [target]]);
@@ -128,7 +128,7 @@ describe("worker answers match the same-thread answers (every round-trip corpus 
   it("ask throws on the main thread -> the job in the worker fails -> runDoc rejects (a programming error, the caller gives 500), and the worker remains usable", async () => {
     const target = "00000000-0000-4000-8000-000000000002";
     const state = await stateWith([{ type: "paragraph", content: [{ type: "wikilink", props: { targetNoteId: target, snapshotTitle: "t", label: "" } }] }]);
-    await expect(wrt.runDoc("u", { kind: "read", state, wantShown: false }, { ask: async () => { throw new Error("db down"); } })).rejects.toThrow(/parse worker/);
+    await expect(wrt.runDoc("u", { kind: "read", state, wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, { ask: async () => { throw new Error("db down"); } })).rejects.toThrow(/parse worker/);
     expect(await wrt.runDoc("u", { kind: "outline", state: await stateWith([{ type: "paragraph", content: "ok" }]) })).toMatchObject({ outline: expect.any(Array) });
   }, 120_000);
 });
@@ -173,14 +173,14 @@ describe("worker timeout or crash -> too_complex; threshold; transfer", () => {
   it("read timeout (limit 300 ms) -> too_complex, the worker is replaced; the replacement works as usual", async () => {
     const { wrt, pool } = await workerRuntime({ timeoutMs: 100 });
     const state = await big();
-    expect(await wrt.runDoc("u", { kind: "read", state, wantShown: false }, { timeoutMs: 300 })).toBe(DOC_TOO_COMPLEX);
+    expect(await wrt.runDoc("u", { kind: "read", state, wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, { timeoutMs: 300 })).toBe(DOC_TOO_COMPLEX);
     expect(pool.stats().timedOut).toBe(1);
     expect(await wrt.runDoc("u", { kind: "outline", state: await stateWith([{ type: "paragraph", content: "ok" }]) })).toMatchObject({ whole: expect.any(String) });
   }, 180_000);
 
   it("read exhausts worker memory (limit 64 MiB) -> too_complex, the main process survives", async () => {
     const { wrt, pool } = await workerRuntime({ workerMemoryMb: 64 });
-    expect(await wrt.runDoc("u", { kind: "read", state: await big(), wantShown: false })).toBe(DOC_TOO_COMPLEX);
+    expect(await wrt.runDoc("u", { kind: "read", state: await big(), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })).toBe(DOC_TOO_COMPLEX);
     expect(pool.stats().crashed).toBe(1);
   }, 180_000);
 

@@ -22,7 +22,7 @@ async function readThenWrite(blocks: AnyBlock[], titleNow: string, dropComment =
   try {
     s.editor.replaceBlocks(s.editor.document, blocks);
     const before = s.editor.document as AnyBlock[];
-    const markdown = toNoteMarkdown(s.editor, s.editor.document, new Map([[TARGET, titleNow]]));
+    const markdown = toNoteMarkdown(s.editor, s.editor.document, new Map([[TARGET, titleNow]]), DEFAULT_KNOWLEDGE_FIELD_VIEW);
     const parsed = parseMarkdownForNote(s.editor, dropComment ? markdown.replace(/^<!-- knotebook:knowledge[\s\S]*?\n-->\n/m, "") : markdown, [candidate(titleNow)], "http://localhost");
     if (!("blocks" in parsed)) throw new Error(`parse failed: ${JSON.stringify(parsed)}`);
     return { before, after: parsed.blocks as AnyBlock[], markdown };

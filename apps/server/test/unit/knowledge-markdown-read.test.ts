@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
+import { toNoteMarkdown } from "../../src/notes/editing/read.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, blocksToNoteMarkdown, formatKnowledgeComment, parseKnowledgeComment, resolveKnowledgeFieldView, type KnowledgeInfo } from "@knotebook/shared";
@@ -128,6 +129,14 @@ describe("knowledge comments on read", () => {
     const doc = await docWith([H(2, "D1", K)]);
     const md = await withSession(ed => blocksToNoteMarkdown(ed, ed.document, { knowledge: { fields } }), doc);
     expect(md).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nevidence: tested\nstatus: needs-verify\n-->\n");
+  });
+
+  it("toNoteMarkdown writes the comment with the fields it is given: a turned-off field with a stored value is left out, the status line stays", async () => {
+    const fields = resolveKnowledgeFieldView({ defs: [], site: [{ fieldRef: "conclusion", optionKey: "", enabled: false, name: null, position: null }] });
+    const doc = await docWith([H(2, "D1", { ...K, knowledgeConclusion: "c" })]);
+    const [off, on] = await withSession(ed => [toNoteMarkdown(ed, ed.document, new Map(), fields), toNoteMarkdown(ed, ed.document, new Map(), DEFAULT_KNOWLEDGE_FIELD_VIEW)], doc);
+    expect(off).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n");
+    expect(on).toContain("conclusion: c\n");
   });
 
   it("an id-less heading with other knowledge props reads without a comment", async () => {

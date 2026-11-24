@@ -132,7 +132,7 @@ describe("edit ops keep block ids (#551)", () => {
     Y.applyUpdate(after, Y.encodeStateAsUpdate(merged));
     Y.applyUpdate(after, rr.post.diff);
     const read = async (d: Y.Doc) => {
-      const m = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(d), wantShown: false });
+      const m = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(d), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       if (m === "too_complex" || typeof m.result === "string" || !("markdown" in m.result)) throw new Error("read");
       return m.result.markdown;
     };

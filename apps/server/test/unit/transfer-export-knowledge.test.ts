@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeFieldView } from "@knotebook/shared";
+import { DOC_TOO_COMPLEX, executeDocOp } from "../../src/notes/editing/doc-jobs.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { exportNoteForTransfer } from "../../src/transfer/export-note.js";
@@ -49,6 +51,22 @@ describe("a note with knowledge comments downloads like one without, plus the co
         "-->",
       ]);
     }
+  });
+
+  it("a downloaded file has the same comment as read_note_section, both written with the fields the op carries", async () => {
+    const fields = resolveKnowledgeFieldView({ defs: [], site: [{ fieldRef: "when", optionKey: "", enabled: false, name: null, position: null }] });
+    const doc = await docWith(note(3, true));
+    const state = Y.encodeStateAsUpdate(doc);
+    const ask = async () => [];
+    const read = await executeDocOp(rt, { kind: "read", state, wantShown: false, fields }, ask);
+    const file = await executeDocOp(rt, { kind: "exportFile", state, key: new Uint8Array(32), salt: new Uint8Array(16), fields }, ask);
+    if (read === DOC_TOO_COMPLEX || file === DOC_TOO_COMPLEX || typeof read.result === "string" || !("markdown" in read.result)) throw new Error("unexpected result");
+    expect(file.body).toBe(read.result.markdown);
+    expect(file.body).toContain("<!-- knotebook:knowledge\nid: k_00000001\nconclusion: conclusion 0\nevidence: tested\nstatus: needs-verify\n-->");
+    expect(file.body).not.toContain("when:");
+    const withDefaults = await executeDocOp(rt, { kind: "exportFile", state, key: new Uint8Array(32), salt: new Uint8Array(16), fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, ask);
+    if (withDefaults === DOC_TOO_COMPLEX) throw new Error("unexpected result");
+    expect(withDefaults.body).toContain("when: when 0\n");
   });
 
   it("a coloured toggle heading, an empty heading and a heading with only an id still line up", async () => {

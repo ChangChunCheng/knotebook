@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BlockNoteEditor } from "@blocknote/core";
-import { KNOWLEDGE_PROP_NAMES, createHeadlessNoteSchema } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, KNOWLEDGE_PROP_NAMES, createHeadlessNoteSchema } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
 import { preUpgradeSchema } from "../helpers/knowledge-docs.js";
@@ -34,7 +34,7 @@ function exportAll(editor: AnyEditor) {
     external: editor.blocksToHTMLLossy(doc),
     internal: editor.blocksToFullHTML(doc),
     lossyMarkdown: editor.blocksToMarkdownLossy(doc),
-    noteMarkdown: toNoteMarkdown(editor, doc, new Map()),
+    noteMarkdown: toNoteMarkdown(editor, doc, new Map(), DEFAULT_KNOWLEDGE_FIELD_VIEW),
   };
 }
 

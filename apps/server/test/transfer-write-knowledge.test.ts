@@ -7,7 +7,7 @@ import { loadNoteDoc } from "../src/notes/editing/read.js";
 import { versionFingerprint } from "../src/notes/version-fingerprint.js";
 import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
 import { cookieOf, seedNote, seedUser } from "./group-helpers.js";
-import { bulkPut, downloadNote, editBody, issueBulkDirect, seedBlocks, topIdsOf } from "./bulk-transfer-helpers.js";
+import { bulkPut, downloadNote, editBody, issueBulkDirect, renameIn, seedBlocks, topIdsOf } from "./bulk-transfer-helpers.js";
 import { buildCollabTestApp } from "./helpers.js";
 
 const comment = (lines: string[]) => `<!-- knotebook:knowledge\n${lines.join("\n")}\n-->`;
@@ -212,7 +212,7 @@ describe("a file with knowledge comments", () => {
 
 const parseBody = (text: string): string => text.slice(text.indexOf("\n---\n", 4) + 5);
 
-async function turnOffWhen(s: Awaited<ReturnType<typeof setup>>) {
+async function turnOffWhen(s: Pick<Awaited<ReturnType<typeof setup>>, "ctx">) {
   const admin = await seedUser(s.ctx.db, { isAdmin: true });
   const fields = (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
     key,
@@ -246,12 +246,34 @@ describe("comments written by an older version or under other field settings", (
     expect(before.get(K1)?.status).toBe("unverified");
     await turnOffWhen(s);
     const d = await s.download();
-    const r = await s.put(editBody(d.text, b => b.replace("when: when A\n", "").replace("third body", "third body changed")));
+    expect(d.text).not.toContain("when: when A");
+    const r = await s.put(editBody(d.text, b => b.replace("status: needs-verify\n", "status: unverified\n").replace("third body", "third body changed")));
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json()).toMatchObject({ result: "applied", applied: 1, same: 1 });
     expect(r.json().editIds).toHaveLength(1);
     expect((await s.infos()).get(K1)).toEqual(before.get(K1));
     await s.ctx.destroy();
+  });
+
+  // A note that can't be written back block by block is compared by its whole export, which has to be made with the same fields as the download.
+  it("with a field turned off, a title-only change to a note that isn't mergeable is renamed, not refused as note_changed", async () => {
+    const ctx = await buildCollabTestApp({ transferTestHooks: { forceUnmergeable: () => true } });
+    const u = await seedUser(ctx.db);
+    const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
+    const bulk = await issueBulkDirect(ctx.db, pat.tokenId, { access: "write" });
+    const note = await seedNote(ctx.db, { ownerId: u.id }, { title: "Title" });
+    await seedBlocks(ctx.db, note.id, [
+      { type: "heading", props: { level: 2, knowledgeId: K1, knowledgeWhen: "when A", knowledgeConclusion: "use A" }, content: "First" },
+      { type: "paragraph", content: "first body" },
+    ]);
+    await turnOffWhen({ ctx });
+    const d = await downloadNote(ctx.app, bulk.token, note.id);
+    expect(d.text).toContain("conclusion: use A");
+    expect(d.text).not.toContain("when: when A");
+    const r = await bulkPut(ctx.app, bulk.token, renameIn(d.text, "Renamed"));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "renamed", renamed: true });
+    await ctx.destroy();
   });
 
   it("a file that drops a heading's comment clears every knowledge prop, turned-off ones included", async () => {

@@ -82,9 +82,9 @@ export interface DocPost {
   guard: MergeGuard;
 }
 
-export type ReadDocOp = { kind: "read"; state: Uint8Array; section?: string; wantShown: boolean };
+export type ReadDocOp = { kind: "read"; state: Uint8Array; section?: string; wantShown: boolean; fields: KnowledgeFieldView };
 export type OutlineDocOp = { kind: "outline"; state: Uint8Array };
-export type ExportFileDocOp = { kind: "exportFile"; state: Uint8Array; key: Uint8Array; salt: Uint8Array; forceUnmergeable?: boolean };
+export type ExportFileDocOp = { kind: "exportFile"; state: Uint8Array; key: Uint8Array; salt: Uint8Array; forceUnmergeable?: boolean; fields: KnowledgeFieldView };
 export type EditDocOp = {
   kind: "edit";
   state: Uint8Array;
@@ -320,7 +320,7 @@ async function readOp(runtime: EditingRuntime, op: ReadDocOp, ask: AskFn): Promi
   const doc = decodeState(op.state);
   const titles = await titlesFor(doc, ask);
   let shown: ShownLinks | undefined;
-  const result = await readNoteContentFromDoc(runtime, doc, op.section, titles, op.wantShown ? s => (shown = s) : undefined);
+  const result = await readNoteContentFromDoc(runtime, doc, op.section, titles, op.wantShown ? s => (shown = s) : undefined, op.fields);
   return shown ? { result, shown } : { result };
 }
 
@@ -388,7 +388,7 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
     // No block fingerprints for a title-only change: compare a full export, made on a copy of the fork (mount doesn't touch the fork).
     const titles = await titlesFor(fork, ask);
     const copy = decodeState(Y.encodeStateAsUpdate(fork));
-    const nowBody = normalizeBody(await exportNoteBody(runtime, copy, titles));
+    const nowBody = normalizeBody(await exportNoteBody(runtime, copy, titles, op.fields));
     if (!hmacOf(key, salt, nowBody).equals(Buffer.from(op.baseBodySha))) return { kind: "note_changed", budgetLeft: left() };
   }
   if (op.body === null || op.segments === null) return { kind: "body_checked", budgetLeft: left() };
@@ -455,7 +455,7 @@ async function run(runtime: EditingRuntime, op: DocOp, ask: AskFn): Promise<DocR
       const titles = await titlesFor(doc, ask);
       const key = Buffer.from(op.key);
       const salt = Buffer.from(op.salt);
-      return exportNoteForTransfer(runtime, doc, titles, { ...(op.forceUnmergeable ? { forceUnmergeable: true } : {}), linkHash: (id, text) => linkTextHash(key, salt, id, text) });
+      return exportNoteForTransfer(runtime, doc, titles, { ...(op.forceUnmergeable ? { forceUnmergeable: true } : {}), linkHash: (id, text) => linkTextHash(key, salt, id, text), fields: op.fields });
     }
     case "edit":
       return editOp(runtime, op);

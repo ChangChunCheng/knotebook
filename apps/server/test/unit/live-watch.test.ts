@@ -148,7 +148,7 @@ describe("content merged after the guard lets through", () => {
     const conflict = watch.conflicts(r.post.guard);
     watch.stop();
     if (!conflict) Y.applyUpdate(live, r.post.diff);
-    const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(live), wantShown: false });
+    const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(live), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     if (md === "too_complex" || typeof md.result === "string" || !("markdown" in md.result)) throw new Error("read");
     return { conflict, markdown: md.result.markdown, baseTop: topIds(doc), liveTop: topIds(live), liveIds: allBlockIds(live) };
   }

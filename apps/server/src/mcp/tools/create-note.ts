@@ -26,6 +26,8 @@ import {
   FOLDER_NOT_FOUND_MESSAGE,
   NEW_NOTE_FOLDER_CROSS_SPACE_MESSAGE,
 } from "../folder-messages.js";
+import { loadKnowledgeFieldView } from "../../knowledge/fields/queries.js";
+import { CREATE_KNOWLEDGE_FIELDS_DESCRIBE, KNOWLEDGE_FIELDS_REPLY_BUDGET, knowledgeFieldsForModel, knowledgeFieldsOutputSchema } from "../knowledge-fields-output.js";
 import { CREATE_KNOWLEDGE_OUTPUT_DESCRIBE, knowledgeForModel, knowledgeOutputSchema } from "../knowledge-output.js";
 import { CREATE_KNOWLEDGE_SENTENCE } from "../knowledge-strings.js";
 import { WRITE_NOTE_LINK_SENTENCE } from "../note-link-strings.js";
@@ -86,6 +88,7 @@ export const createNoteInput = {
 export const createNoteOutput = {
   note: noteSummarySchema.describe("The note that was created, in the same shape list_notes returns."),
   knowledge: knowledgeOutputSchema.optional().describe(CREATE_KNOWLEDGE_OUTPUT_DESCRIBE),
+  knowledgeFields: knowledgeFieldsOutputSchema.describe(CREATE_KNOWLEDGE_FIELDS_DESCRIBE),
 };
 
 export interface CreateNoteArgs {
@@ -170,7 +173,7 @@ export async function createNote(args: CreateNoteArgs, ctx: McpToolCtx): Promise
     }
     const fresh = await rereadVisibleNote(ctx, out.noteId, target.scope);
     const [note] = await noteSummariesForModel(ctx.db, [fresh ?? { ...insertedRow(out.inserted, target), role: target.role }]);
-    return toolResult({ note, ...(out.knowledge ? { knowledge: knowledgeForModel(out.knowledge) } : {}) });
+    return toolResult({ note, ...(out.knowledge ? { knowledge: knowledgeForModel(out.knowledge) } : {}), knowledgeFields: await knowledgeFieldsFor(ctx, target.scope) });
   }
 
   // No re-read: the four `last_edited_*` fields are still defaults, so `lastEdited` is null and a JOIN would miss anyway. With `title` the slug follows it at insert, so the returned `url` is final. `beforeInsert` is outside the insert's try, so its error reaches the catch here as-is.
@@ -181,5 +184,9 @@ export async function createNote(args: CreateNoteArgs, ctx: McpToolCtx): Promise
     return mapCreateInsertFailure(err);
   }
   const [note] = await noteSummariesForModel(ctx.db, [{ ...insertedRow(created, target), role: target.role }]);
-  return toolResult({ note });
+  return toolResult({ note, knowledgeFields: await knowledgeFieldsFor(ctx, target.scope) });
+}
+
+async function knowledgeFieldsFor(ctx: McpToolCtx, scope: SlugScope) {
+  return knowledgeFieldsForModel(await loadKnowledgeFieldView(ctx.db, { groupId: "groupId" in scope ? scope.groupId : null }), KNOWLEDGE_FIELDS_REPLY_BUDGET);
 }

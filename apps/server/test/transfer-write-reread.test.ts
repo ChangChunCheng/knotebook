@@ -10,7 +10,7 @@ import { exportNoteBody, exportNoteForTransfer } from "../src/transfer/export-no
 import { BASE_UNAVAILABLE_MESSAGES } from "../src/routes/transfer.js";
 import { BASE_WITHOUT_ID_MESSAGE } from "../src/transfer/frontmatter.js";
 import { loadNoteDoc } from "../src/notes/editing/read.js";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT } from "@knotebook/shared";
 import { buildCollabTestApp, testEditingRuntime, type CollabTestCtx } from "./helpers.js";
 import { bearer, docText, getContent, seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
 import { seedNote, seedShare, seedUser } from "./group-helpers.js";
@@ -81,8 +81,8 @@ describe("a note with knowledge info reads the same on every path", () => {
     } finally {
       session.close();
     }
-    const body = await exportNoteBody(testEditingRuntime, doc, new Map());
-    const transfer = await exportNoteForTransfer(testEditingRuntime, doc, new Map());
+    const body = await exportNoteBody(testEditingRuntime, doc, new Map(), DEFAULT_KNOWLEDGE_FIELD_VIEW);
+    const transfer = await exportNoteForTransfer(testEditingRuntime, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(transfer.body).toBe(body);
     expect(body).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\nbody\n");
 

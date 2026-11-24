@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession, ForkEdits, forkFrom, removeBlocksInDoc, renameBlocksInDoc, withForkEditor } from "../../src/notes/editing/session.js";
 import { expectLinear, timeIt, yieldToLoop } from "../perf-helpers.js";
@@ -46,7 +47,7 @@ async function browser(live: Y.Doc, f: (ed: EditorSession["editor"]) => void): P
 }
 
 async function markdownOf(doc: Y.Doc): Promise<string> {
-  const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(doc), wantShown: false });
+  const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(doc), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
   if (md === "too_complex" || typeof md.result === "string" || !("markdown" in md.result)) throw new Error("read");
   return md.result.markdown;
 }
