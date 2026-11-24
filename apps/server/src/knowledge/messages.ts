@@ -7,3 +7,4 @@ export const INVALID_INDEX_EVIDENCE_MESSAGE = "evidence must be unconfirmed or a
 export const INVALID_REFS_QUERY_MESSAGE = "The search text must be 1 to 200 characters and can't contain characters that can't be processed.";
 export const INVALID_REFS_EXCLUDE_MESSAGE = "excludeNote must be a note id.";
 export const REFS_RATE_LIMITED_MESSAGE = "Too many searches. Wait a moment and try again.";
+export const KNOWLEDGE_FIELDS_NOT_FOUND_MESSAGE = "No note or group with that id.";
