@@ -18,7 +18,7 @@ import { DOC_TOO_COMPLEX, editOnFork, stateEquals, type DocPost } from "./doc-jo
 import { isEmptyKnowledgeReport, type KnowledgeWriteReport } from "./knowledge-write.js";
 import type { LiveWatch } from "./live-watch.js";
 import { ParserBusyError, type ParseOutcome } from "./parse-core.js";
-import { loadNoteDoc, loadNoteState } from "./read.js";
+import { docAsk, loadNoteDoc, loadNoteState } from "./read.js";
 import type { EditingRuntime } from "./runtime.js";
 import { directTarget, withDirectConnection, type DirectConnectionCtx, type DirectCtx } from "./session.js";
 import { shownLinkTextsOf, type ShownLinks, type ShownLinkTexts } from "./shown-link-texts.js";
@@ -286,7 +286,7 @@ export async function applyEdit(deps: ApplyDeps, input: ApplyInput): Promise<App
           ...(blocks !== undefined && input.op !== "delete_section" ? { blocks } : {}),
           ...(parseError ? { parseError } : {}),
         },
-        { extraWeight: input.markdown?.length ?? input.contentLength ?? (blocks ? JSON.stringify(blocks).length : 0) }
+        { ask: docAsk(deps.db, input.userId), extraWeight: input.markdown?.length ?? input.contentLength ?? (blocks ? JSON.stringify(blocks).length : 0) }
       );
       if (out === DOC_TOO_COMPLEX) return input.blocks !== undefined ? { ok: false, code: "unsupported_block", detail: "too_complex" } : { ok: false, code: "too_complex" };
       if (!out.ok) return out;
