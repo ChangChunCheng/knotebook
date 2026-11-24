@@ -127,6 +127,45 @@ describe("SelectionAiResult (#263 preview state, real lazy module)", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
   });
 
+  it("knowledge values that were not applied are listed under the preview, and a direct action stops there", async () => {
+    const ai = await mount();
+    await runToDone(ai, REWRITE.id, "## Fresh\n<!-- knotebook:knowledge\nid: k_00000005\nevidence: bogus\nsuperseded_by: nope\nOwner: bob\n-->\n\nbody");
+    const list = await screen.findByTestId("selection-ai-ignored");
+    expect(list).toHaveTextContent("These knowledge info values weren't applied");
+    expect([...list.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "Fresh · Owner: bob — no such field",
+      "Fresh · Basis: bogus — not one of the options",
+      "Fresh · Replaced by: nope — not a valid knowledge reference",
+    ]);
+    expect(docText()).not.toContain("Fresh");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeInTheDocument();
+  });
+
+  it("the list shows at most ten lines and counts the rest", async () => {
+    const ai = await mount();
+    const lines = Array.from({ length: 12 }, (_, i) => `extra${i + 1}: v${i + 1}`).join("\n");
+    await runToDone(ai, SUMMARIZE.id, `## Fresh\n<!-- knotebook:knowledge\nid: k_00000005\n${lines}\n-->\n\nbody`);
+    const list = await screen.findByTestId("selection-ai-ignored");
+    expect(list.querySelectorAll("li")).toHaveLength(10);
+    expect(list).toHaveTextContent("and 2 more");
+  });
+
+  it("the list is written in the interface language", async () => {
+    await i18n.changeLanguage("zh-TW");
+    const ai = await mount();
+    await runToDone(ai, SUMMARIZE.id, "## Fresh\n<!-- knotebook:knowledge\nid: k_00000005\nevidence: bogus\n-->\n\nbody");
+    const list = await screen.findByTestId("selection-ai-ignored");
+    expect(list).toHaveTextContent("這些知識資訊沒有套用");
+    expect(list.querySelector("li")).toHaveTextContent("Fresh · 依據：bogus — 不是可選的選項");
+  });
+
+  it("a result without ignored knowledge shows no list", async () => {
+    const ai = await mount();
+    await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");
+    await screen.findByTestId("selection-ai-preview");
+    expect(screen.queryByTestId("selection-ai-ignored")).not.toBeInTheDocument();
+  });
+
   it("retry resends the same request", async () => {
     const ai = await mount();
     await runToDone(ai, SUMMARIZE.id, "SUMMARY TEXT");

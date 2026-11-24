@@ -67,6 +67,24 @@
       "otherNotes": "其他筆記",
       "searchFailed": "無法搜尋其他筆記。",
       "searchBusy": "搜尋太頻繁，請一分鐘後再試。"
+    },
+    "aiIgnored": {
+      "title": "這些知識資訊沒有套用",
+      "line": "{{heading}} · {{field}}：{{value}} — {{reason}}",
+      "more": "還有 {{count}} 項",
+      "reason": {
+        "unknown_field": "沒有這個欄位",
+        "field_disabled": "這個欄位沒有開啟",
+        "not_an_option": "不是可選的選項",
+        "bad_status": "不是有效的狀態",
+        "bad_date": "不是有效的日期",
+        "bad_link": "不是有效的連結",
+        "unresolved_member": "找不到這位成員",
+        "bad_ref": "不是有效的知識參照",
+        "superseded_self": "不能被自己取代",
+        "too_long": "太長",
+        "line_break": "不能有換行"
+      }
     }
   }
 }

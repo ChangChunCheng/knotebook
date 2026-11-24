@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { Block, BlockNoteEditor } from "@blocknote/core";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
 import type { EditorRef } from "@/components/wikilink/menu";
+import { fieldView } from "@/components/knowledge/test-support";
 import { createTestEditor } from "@/test/ai-host";
 import { captureAnchor } from "./anchor";
 import { aiMarkdownOf } from "./note-markdown";
@@ -71,8 +72,8 @@ function headingsOf(doc: Y.Doc): Array<{ blockId: string; text: string; attrs: R
   });
 }
 
-function prepare(editor: Ed, markdown: string, ids: string[], placement: "top" | "nested" = "top") {
-  return prepareAiResult(editor, markdown, { notes: [], placement, knowledge: aiKnowledgeContext(editor, NOTE, ids) });
+function prepare(editor: Ed, markdown: string, ids: string[], placement: "top" | "nested" = "top", fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW) {
+  return prepareAiResult(editor, markdown, { notes: [], placement, knowledge: aiKnowledgeContext(editor, NOTE, ids, fields) });
 }
 function ok(r: ReturnType<typeof prepareAiResult>): PreparedResult {
   if ("empty" in r || "invalid" in r) throw new Error(`expected a result, got ${JSON.stringify(r)}`);
@@ -80,7 +81,8 @@ function ok(r: ReturnType<typeof prepareAiResult>): PreparedResult {
 }
 const headingProps = (blocks: readonly AnyBlock[], i: number) => (blocks[i] as { props: Record<string, string> }).props;
 const sendIds = (editor: Ed) => editor.document.map((b) => b.id);
-const markdownOfAll = (editor: Ed, knowledge: boolean) => aiMarkdownOf(editor.document, titleOf, { knowledge });
+const markdownOfAll = (editor: Ed, knowledge: boolean, fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW) =>
+  aiMarkdownOf(editor.document, titleOf, knowledge ? { knowledge: { fields } } : {});
 
 describe("aiMarkdownOf with knowledge", () => {
   it("writes the comment for a top-level knowledge heading when knowledge is true and none when false", () => {
@@ -96,6 +98,14 @@ describe("aiMarkdownOf with knowledge", () => {
     const editor = createTestEditor([H("h1", "Title"), P("p1", "body **bold**")]);
     expect(markdownOfAll(editor, true)).toBe(markdownOfAll(editor, false));
     expect(aiMarkdownOf(editor.document, titleOf)).toBe(markdownOfAll(editor, false));
+  });
+
+  it("the markdown given to the AI has no line for a turned-off field", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const md = markdownOfAll(editor, true, fieldView({ off: ["when"] }));
+    expect(md).toContain("<!-- knotebook:knowledge");
+    expect(md).toContain("conclusion: conclusion 1");
+    expect(md).not.toContain("when:");
   });
 });
 
@@ -196,6 +206,32 @@ describe("prepareAiResult with knowledge", () => {
     }
     const stored = ok(prepare(editor, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: changed\nconclusion: conclusion 1\nevidence: bogus\n-->\n\nbody", sendIds(editor)));
     expect(headingProps(stored.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "changed", knowledgeEvidence: "docs" });
+  });
+
+  it("a result with a bad basis value applies the rest and lists the ignored value", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const md = markdownOfAll(editor, true).replace("evidence: docs", "evidence: vendor-doc").replace("conclusion: conclusion 1", "conclusion: brand new");
+    const prepared = ok(prepare(editor, md, sendIds(editor)));
+    expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeEvidence: "docs", knowledgeConclusion: "brand new" });
+    expect(prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "evidence", value: "vendor-doc", reason: "not_an_option" }]);
+  });
+
+  it("a turned-off field is kept when the AI result leaves it out", () => {
+    const fields = fieldView({ off: ["when"] });
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const md = markdownOfAll(editor, true, fields).replace("conclusion: conclusion 1", "conclusion: revised");
+    const prepared = ok(prepare(editor, md, sendIds(editor), "top", fields));
+    expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "when 1", knowledgeConclusion: "revised" });
+    expect(prepared.ignoredKnowledge).toEqual([]);
+  });
+
+  it("an unknown key in a comment is listed together with the values the field checks ignored", () => {
+    const editor = createTestEditor([P("p1", "body")]);
+    const prepared = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\nOwner: bob\nevidence: bogus\n-->\n\nbody", sendIds(editor)));
+    expect(prepared.ignoredKnowledge).toEqual([
+      { heading: "T", key: "Owner", value: "bob", reason: "unknown_field" },
+      { heading: "T", key: "evidence", value: "bogus", reason: "not_an_option" },
+    ]);
   });
 
   it("a comment with only an id, and outdated without superseded_by, are written with no replacement", () => {
