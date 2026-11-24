@@ -203,13 +203,148 @@ describe("the admin endpoints", () => {
     expect((await db.select().from(knowledgeFieldOverrides)).map((r) => [r.optionKey, r.enabled])).toEqual([["vendor-doc", false]]);
   });
 
-  it("a custom field is refused in this release of the endpoint", async () => {
+  it("an admin can add each custom field type and readers see them in order", async () => {
+    const { app, db, admin } = await ctx();
+    const bob = await seedUser(db);
+    const body = fieldsBody();
+    const res = await putAdmin(app, admin.id, {
+      fields: [
+        ...body.fields,
+        { key: "x-team", enabled: true, name: "Team", type: "text" },
+        { key: "x-area", enabled: true, name: "Area", type: "select", options: [opt("a", { name: "Area A" }), opt("b", { name: "Area B" })] },
+        { key: "x-due", enabled: false, name: "Due", type: "date" },
+        { key: "x-doc", enabled: true, name: "Doc", type: "link" },
+        { key: "x-owner", enabled: true, name: "Owner", type: "member" },
+      ],
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const seen = (await getFields(app, bob.id)).json() as KnowledgeFieldsDto;
+    const custom = seen.fields.filter((f) => !f.builtin);
+    expect(custom.map((f) => [f.key, f.type, f.name, f.enabled])).toEqual([
+      ["x-team", "text", "Team", true],
+      ["x-area", "select", "Area", true],
+      ["x-due", "date", "Due", false],
+      ["x-doc", "link", "Doc", true],
+      ["x-owner", "member", "Owner", true],
+    ]);
+    expect(custom[1]!.options!.map((o) => [o.key, o.name, o.builtin])).toEqual([["a", "Area A", false], ["b", "Area B", false]]);
+    expect((res.json() as AdminKnowledgeFieldsDto).fields).toEqual(seen.fields);
+
+    const defs = await db.select().from(knowledgeFieldDefs);
+    expect(defs.map((d) => [d.kind, d.fieldRef, d.key, d.type]).sort()).toEqual([
+      ["field", "x-area", "area", "select"],
+      ["field", "x-doc", "doc", "link"],
+      ["field", "x-due", "due", "date"],
+      ["field", "x-owner", "owner", "member"],
+      ["field", "x-team", "team", "text"],
+      ["option", "x-area", "a", null],
+      ["option", "x-area", "b", null],
+    ]);
+
+    const reordered = await putAdmin(app, admin.id, {
+      fields: [...body.fields, ...[...custom].reverse().map((f) => ({
+        key: f.key,
+        enabled: f.enabled,
+        name: f.name,
+        ...(f.options ? { options: f.options.map((o) => opt(o.key, { name: o.name })) } : {}),
+      }))],
+    });
+    expect(reordered.statusCode, reordered.body).toBe(200);
+    expect(((await getFields(app, bob.id)).json() as KnowledgeFieldsDto).fields.filter((f) => !f.builtin).map((f) => f.key)).toEqual(["x-owner", "x-doc", "x-due", "x-area", "x-team"]);
+  });
+
+  it("the twenty-first enabled custom field and the hundred-and-first in total are refused", async () => {
     const { app, db, admin } = await ctx();
     const body = fieldsBody();
-    const res = await putAdmin(app, admin.id, { fields: [...body.fields, { key: "x-owner", enabled: true, name: "Owner", type: "member" }] });
-    expect(res.statusCode, res.body).toBe(400);
-    expect(errorCode(res)).toBe("invalid_body");
+    const make = (n: number, enabled: boolean) => ({ key: `x-f${n}`, enabled, name: `Field ${n}`, type: "text" as const });
+    const twentyOne = Array.from({ length: 21 }, (_, i) => make(i, true));
+    const tooMany = await putAdmin(app, admin.id, { fields: [...body.fields, ...twentyOne] });
+    expect(tooMany.statusCode, tooMany.body).toBe(400);
+    expect(errorCode(tooMany)).toBe("knowledge_fields_limit");
     expect(await db.select().from(knowledgeFieldDefs)).toEqual([]);
+
+    const hundred = Array.from({ length: 100 }, (_, i) => make(i, i < 20));
+    const ok = await putAdmin(app, admin.id, { fields: [...body.fields, ...hundred] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const over = await putAdmin(app, admin.id, { fields: [...body.fields, ...hundred, make(100, false)] });
+    expect(over.statusCode, over.body).toBe(400);
+    expect(errorCode(over)).toBe("knowledge_fields_limit");
+    expect(await db.select().from(knowledgeFieldDefs)).toHaveLength(100);
+  });
+
+  it("a custom field's type cannot change and it cannot be left out", async () => {
+    const { app, db, admin } = await ctx();
+    const body = fieldsBody();
+    const team = { key: "x-team", enabled: true, name: "Team", type: "text" };
+    expect((await putAdmin(app, admin.id, { fields: [...body.fields, team] })).statusCode).toBe(200);
+
+    const retype = await putAdmin(app, admin.id, { fields: [...body.fields, { ...team, type: "link" }] });
+    expect(retype.statusCode, retype.body).toBe(400);
+    expect(errorCode(retype)).toBe("invalid_body");
+
+    const left = await putAdmin(app, admin.id, body);
+    expect(left.statusCode, left.body).toBe(400);
+    expect(errorCode(left)).toBe("knowledge_fields_incomplete");
+
+    const same = await putAdmin(app, admin.id, { fields: [...body.fields, { key: "x-team", enabled: false, name: "Squad" }] });
+    expect(same.statusCode, same.body).toBe(200);
+    expect(await db.select().from(knowledgeFieldDefs)).toHaveLength(1);
+  });
+
+  it("a turned-off custom field keeps its key, and a new field cannot take it", async () => {
+    const { app, db, admin } = await ctx();
+    const body = fieldsBody();
+    expect((await putAdmin(app, admin.id, { fields: [...body.fields, { key: "x-team", enabled: false, name: "Team", type: "text" }] })).statusCode).toBe(200);
+    const taken = await putAdmin(app, admin.id, { fields: [...body.fields, { key: "x-team", enabled: true, name: "Team", type: "select", options: [] }] });
+    expect(taken.statusCode, taken.body).toBe(400);
+    expect(errorCode(taken)).toBe("invalid_body");
+    const stored = await db.select().from(knowledgeFieldDefs);
+    expect(stored.map((d) => [d.fieldRef, d.type])).toEqual([["x-team", "text"]]);
+    const fields = ((await getFields(app, admin.id)).json() as KnowledgeFieldsDto).fields;
+    expect(fields.find((f) => f.key === "x-team")).toMatchObject({ enabled: false, name: "Team" });
+  });
+
+  it("custom field input is checked: key, type, name, options and their keys", async () => {
+    const { app, db, admin } = await ctx();
+    const body = fieldsBody();
+    const code = async (field: unknown, status = 400) => {
+      const res = await putAdmin(app, admin.id, { fields: [...body.fields, field] });
+      expect(res.statusCode, `${JSON.stringify(field)} ${res.body}`).toBe(status);
+      return errorCode(res);
+    };
+    const text = { key: "x-ok", enabled: true, name: "Ok", type: "text" };
+    expect(await code({ ...text, key: "x-Bad" })).toBe("knowledge_key_invalid");
+    expect(await code({ ...text, key: "x-" })).toBe("knowledge_key_invalid");
+    expect(await code({ ...text, key: `x-${"a".repeat(65)}` })).toBe("knowledge_key_invalid");
+    expect(await code({ ...text, type: undefined })).toBe("invalid_body");
+    expect(await code({ ...text, name: undefined })).toBe("invalid_body");
+    expect(await code({ ...text, name: null })).toBe("invalid_body");
+    expect(await code({ ...text, name: " " })).toBe("invalid_body");
+    expect(await code({ ...text, name: "x".repeat(61) })).toBe("invalid_body");
+    expect(await code({ ...text, type: "number" })).toBe("invalid_body");
+    expect(await code({ ...text, options: [] })).toBe("invalid_body");
+    const select = { key: "x-sel", enabled: true, name: "Sel", type: "select" };
+    expect(await code(select)).toBe("knowledge_fields_incomplete");
+    expect(await code({ ...select, options: [opt("a", { name: "A" }), opt("a", { name: "B" })] })).toBe("knowledge_key_taken");
+    expect(await code({ ...select, options: [opt("Bad", { name: "A" })] })).toBe("knowledge_key_invalid");
+    expect(await code({ ...select, options: [opt("a")] })).toBe("invalid_body");
+    expect(await code({ ...select, options: Array.from({ length: 31 }, (_, i) => opt(`o${i}`, { name: "N" })) })).toBe("knowledge_fields_limit");
+    expect(await db.select().from(knowledgeFieldDefs)).toEqual([]);
+    const dup = await putAdmin(app, admin.id, { fields: [...body.fields, text, text] });
+    expect(dup.statusCode).toBe(400);
+  });
+
+  it("a custom select has no reserved option words and cannot drop an existing option", async () => {
+    const { app, db, admin } = await ctx();
+    const body = fieldsBody();
+    const sel = (options: KnowledgeOptionInput[]) => ({ key: "x-sel", enabled: true, name: "Sel", type: "select", options });
+    expect((await putAdmin(app, admin.id, { fields: [...body.fields, sel([opt("tested", { name: "Tested" }), opt("unconfirmed", { name: "U" }), opt("b", { name: "B" })])] })).statusCode).toBe(200);
+    const dropped = await putAdmin(app, admin.id, { fields: [...body.fields, sel([opt("tested", { name: "Tested" }), opt("unconfirmed", { name: "U" })])] });
+    expect(dropped.statusCode, dropped.body).toBe(400);
+    expect(errorCode(dropped)).toBe("knowledge_fields_incomplete");
+    expect((await db.select().from(knowledgeFieldDefs)).filter((d) => d.kind === "option")).toHaveLength(3);
+    const evidenceOptions = ((await getFields(app, admin.id)).json() as KnowledgeFieldsDto).fields.find((f) => f.key === "evidence")!.options!;
+    expect(evidenceOptions.map((o) => o.key)).toEqual(["tested", "docs", "inferred"]);
   });
 
   it("other malformed bodies are 400 invalid_body", async () => {
