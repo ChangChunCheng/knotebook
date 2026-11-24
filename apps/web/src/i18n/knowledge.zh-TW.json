@@ -1,5 +1,7 @@
 {
   "knowledge": {
+    "notFilled": "未填",
+    "turnedOff": "{{name}}（已停用）",
     "iconLabel": "知識資訊：{{status}}",
     "state": {
       "outdated": "過時",
@@ -26,8 +28,6 @@
       "obsolete": "過時"
     },
     "card": {
-      "notVerified": "未驗證",
-      "empty": "—",
       "quotedTitle": "「{{title}}」",
       "belongsTo": "屬於：{{title}}",
       "bannerNeedsReview": "待驗證・上次驗證 {{date}}，建議重新確認",
@@ -44,7 +44,7 @@
     },
     "form": {
       "title": "知識資訊",
-      "markToday": "標記今天已驗證",
+      "today": "今天",
       "remove": "移除知識資訊",
       "save": "儲存",
       "cancel": "取消",

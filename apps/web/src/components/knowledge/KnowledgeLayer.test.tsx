@@ -9,7 +9,8 @@ import { useKnowledgeController, type KnowledgeController } from "./controller";
 import { KnowledgeGlyph } from "./KnowledgeIcon";
 import { KnowledgeLayer } from "./KnowledgeLayer";
 import { useKnowledgeEntries } from "./use-knowledge-entries";
-import { blocksHtml, knowledgeEntries, stubLayout, stubMedia, type KnowledgeFixture } from "./test-support";
+import type { KnowledgeFieldsValue } from "./fields-context";
+import { blocksHtml, fieldView, knowledgeEntries, stubLayout, stubMedia, withFields, type KnowledgeFixture } from "./test-support";
 
 const ALL = [
   { blockId: "a", title: "Alpha" },
@@ -25,12 +26,14 @@ function Host({
   accept,
   editSurface,
   html = blocksHtml(ALL),
+  fields,
 }: {
   entries: readonly KnowledgeEntry[];
   editable?: boolean;
   accept?: (outer: HTMLElement) => boolean;
   editSurface?: (blockId: string, close: () => void) => ReactNode;
   html?: string;
+  fields?: Partial<KnowledgeFieldsValue>;
 }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const controller = useKnowledgeController();
@@ -38,7 +41,7 @@ function Host({
   return (
     <div ref={setEl} data-testid="col">
       <div dangerouslySetInnerHTML={{ __html: html }} />
-      <KnowledgeLayer container={el} entries={entries} editable={editable} noteId="n1" controller={controller} accept={accept} editSurface={editSurface} />
+      {withFields(<KnowledgeLayer container={el} entries={entries} editable={editable} noteId="n1" controller={controller} accept={accept} editSurface={editSurface} />, fields)}
     </div>
   );
 }
@@ -559,6 +562,26 @@ describe("KnowledgeLayer ref source", () => {
     fireEvent.click(icons()[0]!);
     await screen.findByText(/knowledge in another note/);
     expect(screen.queryByRole("button", { name: "Elsewhere" })).toBeNull();
+  });
+
+  it("with the replacement field off another note's reference is not looked up and the banner says only Outdated", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <Host entries={knowledgeEntries(outdatedTo(`${OTHER}#k_0000000f`))} fields={{ view: fieldView({ off: ["superseded_by"] }) }} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(icons()).toHaveLength(1));
+    fireEvent.click(icons()[0]!);
+    const banner = await waitFor(() => {
+      const found = document.querySelector("[data-kb-knowledge-banner='red']");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(banner.textContent).toBe("Outdated");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 30)));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("a same-note reference makes no request", async () => {

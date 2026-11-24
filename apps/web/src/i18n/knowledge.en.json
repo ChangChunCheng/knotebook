@@ -1,5 +1,7 @@
 {
   "knowledge": {
+    "notFilled": "Not filled",
+    "turnedOff": "{{name}} (turned off)",
     "iconLabel": "Knowledge info: {{status}}",
     "state": {
       "outdated": "Outdated",
@@ -26,8 +28,6 @@
       "obsolete": "Outdated"
     },
     "card": {
-      "notVerified": "Not verified",
-      "empty": "—",
       "quotedTitle": "{{title}}",
       "belongsTo": "Part of: {{title}}",
       "bannerNeedsReview": "Needs review · last verified {{date}}, worth checking again",
@@ -44,7 +44,7 @@
     },
     "form": {
       "title": "Knowledge info",
-      "markToday": "Mark verified today",
+      "today": "Today",
       "remove": "Remove knowledge info",
       "save": "Save",
       "cancel": "Cancel",

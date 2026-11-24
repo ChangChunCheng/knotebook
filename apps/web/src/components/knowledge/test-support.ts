@@ -1,5 +1,15 @@
 import { vi } from "vitest";
-import { listKnowledgeInBlocks, type KnowledgeBlockLike, type KnowledgeEntry } from "@knotebook/shared";
+import { createElement, type ReactNode } from "react";
+import {
+  listKnowledgeInBlocks,
+  resolveKnowledgeFieldView,
+  type KnowledgeBlockLike,
+  type KnowledgeBuiltinFieldKey,
+  type KnowledgeEntry,
+  type KnowledgeFieldOverrideRow,
+  type KnowledgeFieldView,
+} from "@knotebook/shared";
+import { KnowledgeFieldsContext, type KnowledgeFieldsValue } from "./fields-context";
 
 export interface KnowledgeFixture {
   id: string;
@@ -56,4 +66,17 @@ export function stubMedia(matching: string[]): void {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   })) as typeof window.matchMedia;
+}
+
+/** Site settings with the given builtin fields turned off and basis options renamed or hidden. */
+export function fieldView(over: { off?: KnowledgeBuiltinFieldKey[]; options?: Array<{ key: string; enabled?: boolean; name?: string }> } = {}): KnowledgeFieldView {
+  const site: KnowledgeFieldOverrideRow[] = [
+    ...(over.off ?? []).map((fieldRef) => ({ fieldRef, optionKey: "", enabled: false, name: null, position: null })),
+    ...(over.options ?? []).map((o) => ({ fieldRef: "evidence" as const, optionKey: o.key, enabled: o.enabled ?? null, name: o.name ?? null, position: null })),
+  ];
+  return resolveKnowledgeFieldView({ defs: [], site });
+}
+
+export function withFields(children: ReactNode, value: Partial<KnowledgeFieldsValue> = {}): ReactNode {
+  return createElement(KnowledgeFieldsContext.Provider, { value: { view: value.view ?? fieldView(), status: value.status ?? "ready" } }, children);
 }
