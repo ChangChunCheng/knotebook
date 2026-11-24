@@ -583,6 +583,46 @@ export const noteKnowledgeState = pgTable("note_knowledge_state", {
   indexedAt: timestamp("indexed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Definitions are never deleted so a key is never reused; a definition made by a group that was later deleted keeps its row with `origin_group_id` NULL.
+// `field_ref`: `evidence` or `x-<key>`; the key patterns equal KNOWLEDGE_KEY_RE (see knowledge-check-sync.test.ts).
+export const knowledgeFieldDefs = pgTable("knowledge_field_defs", {
+  id: uuid().primaryKey().defaultRandom(),
+  kind: text().notNull(),
+  fieldRef: text("field_ref").notNull(),
+  key: text().notNull(),
+  type: text(),
+  originKind: text("origin_kind").notNull(),
+  originGroupId: uuid("origin_group_id").references(() => groups.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex("kfd_field_idx").on(t.fieldRef).where(sql`${t.kind} = 'field'`),
+  uniqueIndex("kfd_option_idx").on(t.fieldRef, t.key).where(sql`${t.kind} = 'option'`),
+  check("kfd_key_chk", sql`${t.key} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check("kfd_field_ref_chk", sql`${t.fieldRef} = 'evidence' or ${t.fieldRef} ~ '^x-[a-z0-9][a-z0-9-]{0,63}$'`),
+  check("kfd_kind_type_chk", sql`(${t.kind} = 'field' and ${t.type} is not null and ${t.type} in ('text', 'select', 'date', 'link', 'member') and ${t.fieldRef} = 'x-' || ${t.key}) or (${t.kind} = 'option' and ${t.type} is null)`),
+  check("kfd_reserved_chk", sql`not (${t.kind} = 'option' and ${t.fieldRef} = 'evidence' and ${t.key} in ('tested', 'docs', 'inferred', 'unconfirmed'))`),
+  check("kfd_origin_chk", sql`(${t.originKind} = 'site' and ${t.originGroupId} is null) or ${t.originKind} = 'group'`),
+]);
+
+// `group_id` NULL = the site level. A NULL attribute inherits from the level above; `option_key` '' is the field itself.
+export const knowledgeFieldOverrides = pgTable("knowledge_field_overrides", {
+  id: uuid().primaryKey().defaultRandom(),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
+  fieldRef: text("field_ref").notNull(),
+  optionKey: text("option_key").notNull().default(""),
+  enabled: boolean(),
+  name: text(),
+  position: integer(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex("kfo_site_idx").on(t.fieldRef, t.optionKey).where(sql`${t.groupId} is null`),
+  uniqueIndex("kfo_group_idx").on(t.groupId, t.fieldRef, t.optionKey).where(sql`${t.groupId} is not null`),
+  check("kfo_field_ref_chk", sql`${t.fieldRef} in ('when', 'conclusion', 'evidence', 'verified', 'superseded_by') or ${t.fieldRef} ~ '^x-[a-z0-9][a-z0-9-]{0,63}$'`),
+  check("kfo_option_key_chk", sql`${t.optionKey} = '' or ${t.optionKey} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check("kfo_name_chk", sql`${t.name} is null or char_length(${t.name}) between 1 and 60`),
+  check("kfo_position_chk", sql`${t.position} is null or ${t.position} >= 0`),
+]);
+
 export const noteShares = pgTable("note_shares", {
   noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

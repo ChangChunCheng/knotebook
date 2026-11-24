@@ -15,7 +15,7 @@ import { apiTokens, authProviders, folders, groupMembers, groupRoles, groups, no
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** Drizzle's serialization of `schema.ts`; the declaration-drift guard compares against the latest snapshot (update the file name with each new migration). */
-const SNAPSHOT_FILE = "meta/0047_snapshot.json";
+const SNAPSHOT_FILE = "meta/0048_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
   tables: Record<string, {
     checkConstraints?: Record<string, { name: string; value: string }>;
@@ -27,12 +27,12 @@ const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAP
 const pgDialect = new PgDialect();
 
 describe("runMigrations", () => {
-  it("migrating twice is idempotent and 44 tables exist", async () => {
+  it("migrating twice is idempotent and 46 tables exist", async () => {
     const { db, pool } = await freshDb();
     await runMigrations(db); // freshDb already ran it once; this is the second run
     const r = await pool.query(`select table_name from information_schema.tables where table_schema='public'`);
     const tableNames = r.rows.map(x => x.table_name);
-    for (const t of ["users", "instance_setup", "notes", "note_states", "note_state_backups", "note_shares", "note_links", "uploads", "ai_providers", "ai_models", "ai_actions", "handles", "api_tokens", "oauth_clients", "oauth_requests", "oauth_codes", "note_ai_edits", "groups", "group_members", "group_roles", "note_redirects", "auth_providers", "user_identities", "site_settings", "note_search_sections", "note_search_state", "transfer_tokens", "storage_plans", "note_versions", "note_link_conversion", "handle_renames", "one_time_links", "folders", "note_placements", "transfer_bases", "transfer_creates", "sessions", "site_limits", "site_limit_changes", "note_favorites", "user_avatars", "tags", "note_tags", "note_knowledge", "note_knowledge_state"])
+    for (const t of ["users", "instance_setup", "notes", "note_states", "note_state_backups", "note_shares", "note_links", "uploads", "ai_providers", "ai_models", "ai_actions", "handles", "api_tokens", "oauth_clients", "oauth_requests", "oauth_codes", "note_ai_edits", "groups", "group_members", "group_roles", "note_redirects", "auth_providers", "user_identities", "site_settings", "note_search_sections", "note_search_state", "transfer_tokens", "storage_plans", "note_versions", "note_link_conversion", "handle_renames", "one_time_links", "folders", "note_placements", "transfer_bases", "transfer_creates", "sessions", "site_limits", "site_limit_changes", "note_favorites", "user_avatars", "tags", "note_tags", "note_knowledge", "note_knowledge_state", "knowledge_field_defs", "knowledge_field_overrides"])
       expect(tableNames).toContain(t);
   });
 
@@ -4257,5 +4257,119 @@ describe("0047_knowledge-status-checks", () => {
     ]);
     expect(statements[2]).toMatch(/^ALTER TABLE "note_knowledge" ADD CONSTRAINT "nk_evidence_chk" CHECK \(/);
     expect(statements[3]).toMatch(/^ALTER TABLE "note_knowledge" ADD CONSTRAINT "nk_status_chk" CHECK \(/);
+  });
+});
+
+describe("0048_knowledge-fields", () => {
+  const TAG = "0048_knowledge-fields";
+  const PREV_TAG = "0047_knowledge-status-checks";
+  type Pool = import("pg").Pool;
+  const outcome = async (p: Promise<unknown>) => {
+    try { await p; } catch (e) { const x = e as { code?: string; constraint?: string }; return `${x.code}:${x.constraint}`; }
+    return "ok";
+  };
+  const insertOptionDef = (pool: Pool, fieldRef: string, key: string) =>
+    pool.query(`insert into knowledge_field_defs (kind, field_ref, key, origin_kind) values ('option', $1, $2, 'site')`, [fieldRef, key]);
+
+  const ACCEPTED = ["a", "0", "vendor-doc", "a".repeat(64)];
+  const REJECTED = ["", "Docs", "-a", "a".repeat(65), "abé", "ａｂｃ", "İa", "ab\n", "a_b"];
+
+  async function outcomes(pool: Pool): Promise<{ accepted: string[]; rejected: string[] }> {
+    const accepted: string[] = [];
+    const rejected: string[] = [];
+    for (const key of [...ACCEPTED, ...REJECTED]) {
+      const result = await outcome(insertOptionDef(pool, "evidence", key));
+      if (result === "ok") accepted.push(key);
+      else {
+        expect(result, JSON.stringify(key)).toBe("23514:kfd_key_chk");
+        rejected.push(key);
+      }
+    }
+    return { accepted, rejected };
+  }
+
+  it("adds the two settings tables and leaves existing rows unchanged", async () => {
+    const { pool, db } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(PREV_TAG));
+    const owner = (await pool.query(`insert into users (email, display_name) values ('alice-kf0@example.com', 'A') returning id`)).rows[0].id as string;
+    await pool.query(`insert into notes (owner_id) values ($1)`, [owner]);
+    const tables = async () => (await pool.query(`select table_name from information_schema.tables where table_schema = 'public' and table_name like 'knowledge\\_field\\_%' order by 1`)).rows.map(r => r.table_name);
+    expect(await tables()).toEqual([]);
+    const counts = async () => (await pool.query(`select (select count(*) from users) u, (select count(*) from notes) n`)).rows[0];
+    const before = await counts();
+    await runMigrations(db);
+    expect(idxOfTag(TAG)).toBe(idxOfTag(PREV_TAG) + 1);
+    expect(await tables()).toEqual(["knowledge_field_defs", "knowledge_field_overrides"]);
+    expect(await counts()).toEqual(before);
+    expect((await pool.query(`select count(*)::int c from knowledge_field_defs`)).rows[0].c).toBe(0);
+    expect((await pool.query(`select count(*)::int c from knowledge_field_overrides`)).rows[0].c).toBe(0);
+  });
+
+  it("refuses the same definition keys on a UTF-8 and a C locale database", async () => {
+    const utf8 = await freshDb();
+    const locale = (await utf8.pool.query(`select datctype from pg_database where datname = current_database()`)).rows[0];
+    expect(locale.datctype).toMatch(/utf-?8/i);
+    const c = await freshEmptyDb({ cLocale: true });
+    await runMigrations(c.db);
+    expect((await c.pool.query(`select datctype from pg_database where datname = current_database()`)).rows[0].datctype).toBe("C");
+
+    const onUtf8 = await outcomes(utf8.pool);
+    const onC = await outcomes(c.pool);
+    expect(onUtf8).toEqual({ accepted: ACCEPTED, rejected: REJECTED });
+    expect(onC).toEqual(onUtf8);
+  });
+
+  it("definition keys are unique per field, reserved basis keys are refused, and deleting a group keeps its definitions", async () => {
+    const { pool } = await freshDb();
+    expect(await outcome(insertOptionDef(pool, "evidence", "vendor-doc"))).toBe("ok");
+    expect(await outcome(insertOptionDef(pool, "evidence", "vendor-doc"))).toBe("23505:kfd_option_idx");
+    expect(await outcome(insertOptionDef(pool, "x-owner", "vendor-doc"))).toBe("ok");
+    for (const key of ["unconfirmed", "tested", "docs", "inferred"]) {
+      expect(await outcome(insertOptionDef(pool, "evidence", key)), key).toBe("23514:kfd_reserved_chk");
+    }
+    expect(await outcome(insertOptionDef(pool, "who", "a"))).toBe("23514:kfd_field_ref_chk");
+
+    const field = (ref: string, key: string, type: string | null, kind = "field") =>
+      pool.query(`insert into knowledge_field_defs (kind, field_ref, key, type, origin_kind) values ($4, $1, $2, $3, 'site')`, [ref, key, type, kind]);
+    expect(await outcome(field("x-owner", "owner", "member"))).toBe("ok");
+    expect(await outcome(field("x-owner", "owner", "text"))).toBe("23505:kfd_field_idx");
+    expect(await outcome(field("x-a", "a", null))).toBe("23514:kfd_kind_type_chk");
+    expect(await outcome(field("x-a", "a", "number"))).toBe("23514:kfd_kind_type_chk");
+    expect(await outcome(field("x-a", "b", "text"))).toBe("23514:kfd_kind_type_chk");
+    expect(await outcome(field("x-a", "a", "text", "option"))).toBe("23514:kfd_kind_type_chk");
+
+    const owner = (await pool.query(`insert into users (email, display_name) values ('alice-kf1@example.com', 'A') returning id`)).rows[0].id as string;
+    const group = (await pool.query(`insert into groups (name, created_by) values ('Team', $1) returning id`, [owner])).rows[0].id as string;
+    await pool.query(`insert into knowledge_field_defs (kind, field_ref, key, type, origin_kind, origin_group_id) values ('field', 'x-team', 'team', 'text', 'group', $1)`, [group]);
+    await pool.query(`insert into knowledge_field_overrides (group_id, field_ref, option_key, enabled) values ($1, 'x-team', '', false), (null, 'x-team', '', true)`, [group]);
+    expect(await outcome(pool.query(`insert into knowledge_field_overrides (group_id, field_ref, enabled) values ($1, 'x-team', false)`, [group]))).toBe("23505:kfo_group_idx");
+    expect(await outcome(pool.query(`insert into knowledge_field_overrides (group_id, field_ref, enabled) values (null, 'x-team', false)`))).toBe("23505:kfo_site_idx");
+    await pool.query(`delete from groups where id = $1`, [group]);
+    expect((await pool.query(`select origin_kind, origin_group_id from knowledge_field_defs where key = 'team'`)).rows).toEqual([{ origin_kind: "group", origin_group_id: null }]);
+    expect((await pool.query(`select group_id from knowledge_field_overrides where field_ref = 'x-team'`)).rows).toEqual([{ group_id: null }]);
+  });
+
+  it("override rows refuse unknown fields, bad option keys, bad names and negative positions", async () => {
+    const { pool } = await freshDb();
+    const insert = (cols: string, vals: unknown[]) =>
+      pool.query(`insert into knowledge_field_overrides (${cols}) values (${vals.map((_, i) => `$${i + 1}`).join(", ")})`, vals);
+    expect(await outcome(insert("field_ref, enabled", ["when", false]))).toBe("ok");
+    expect(await outcome(insert("field_ref, enabled", ["what", false]))).toBe("23514:kfo_field_ref_chk");
+    expect(await outcome(insert("field_ref, option_key", ["evidence", "Docs"]))).toBe("23514:kfo_option_key_chk");
+    expect(await outcome(insert("field_ref, option_key, name", ["evidence", "docs", ""]))).toBe("23514:kfo_name_chk");
+    expect(await outcome(insert("field_ref, option_key, name", ["evidence", "docs", "x".repeat(61)]))).toBe("23514:kfo_name_chk");
+    expect(await outcome(insert("field_ref, option_key, name", ["evidence", "docs", "x".repeat(60)]))).toBe("ok");
+    expect(await outcome(insert("field_ref, option_key, position", ["evidence", "inferred", -1]))).toBe("23514:kfo_position_chk");
+  });
+
+  it("SQL file only creates tables and indexes; no CONCURRENTLY/line-leading COMMIT", () => {
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${TAG}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+    const statements = sqlText.split("--> statement-breakpoint").map(s => s.replace(/^\s*--.*$/gm, "").trim()).filter(s => s.length > 0);
+    expect(statements).toHaveLength(8);
+    for (const st of statements) {
+      expect(st).toMatch(/^(CREATE TABLE "knowledge_field_(defs|overrides)" |ALTER TABLE "knowledge_field_(defs|overrides)" ADD CONSTRAINT .* FOREIGN KEY|CREATE UNIQUE INDEX "kf[do]_)/);
+    }
   });
 });

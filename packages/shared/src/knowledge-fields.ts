@@ -154,3 +154,20 @@ export function knowledgeKeyFromName(name: string, taken: ReadonlySet<string>): 
     if (!taken.has(key)) return key;
   }
 }
+
+export const KNOWLEDGE_FIELDS_QUERY_ROOT = "knowledge-fields";
+
+export interface KnowledgeFieldsDto { fields: KnowledgeFieldDef[] }
+export interface AdminKnowledgeFieldsDto {
+  fields: KnowledgeFieldDef[];
+  limits: { customEnabledMax: number; customTotalMax: number; optionsMax: number; nameMax: number };
+}
+export interface KnowledgeOptionInput { key: string; name: string | null; enabled: boolean }
+export interface KnowledgeFieldInput {
+  key: KnowledgeFieldKey;
+  enabled: boolean;
+  name?: string | null;
+  type?: KnowledgeCustomFieldType;
+  options?: KnowledgeOptionInput[];
+}
+export interface SiteKnowledgeFieldsInput { fields: KnowledgeFieldInput[] }
