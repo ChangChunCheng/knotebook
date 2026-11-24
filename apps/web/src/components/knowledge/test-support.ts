@@ -5,7 +5,9 @@ import {
   resolveKnowledgeFieldView,
   type KnowledgeBlockLike,
   type KnowledgeBuiltinFieldKey,
+  type KnowledgeCustomFieldType,
   type KnowledgeEntry,
+  type KnowledgeFieldDefRow,
   type KnowledgeFieldOverrideRow,
   type KnowledgeFieldView,
 } from "@knotebook/shared";
@@ -75,6 +77,32 @@ export function fieldView(over: { off?: KnowledgeBuiltinFieldKey[]; options?: Ar
     ...(over.options ?? []).map((o) => ({ fieldRef: "evidence" as const, optionKey: o.key, enabled: o.enabled ?? null, name: o.name ?? null, position: null })),
   ];
   return resolveKnowledgeFieldView({ defs: [], site });
+}
+
+export interface CustomFieldFixture {
+  key: string;
+  type: KnowledgeCustomFieldType;
+  name: string;
+  enabled?: boolean;
+  position?: number;
+  options?: Array<{ key: string; name: string; enabled?: boolean }>;
+}
+
+/** Built-in fields as `over` sets them, followed by the given custom fields. */
+export function customFieldView(custom: CustomFieldFixture[], over: Parameters<typeof fieldView>[0] = {}): KnowledgeFieldView {
+  const base = fieldView(over);
+  const defs: KnowledgeFieldDefRow[] = [];
+  const site: KnowledgeFieldOverrideRow[] = [];
+  custom.forEach((f, i) => {
+    const fieldRef = `x-${f.key}` as const;
+    defs.push({ kind: "field", fieldRef, key: f.key, type: f.type, createdAt: `2026-01-01T00:00:0${i}Z` });
+    site.push({ fieldRef, optionKey: "", enabled: f.enabled ?? null, name: f.name, position: f.position ?? i });
+    (f.options ?? []).forEach((o, j) => {
+      defs.push({ kind: "option", fieldRef, key: o.key, type: null, createdAt: `2026-01-01T00:00:0${j}Z` });
+      site.push({ fieldRef, optionKey: o.key, enabled: o.enabled ?? null, name: o.name, position: j });
+    });
+  });
+  return { fields: [...base.fields, ...resolveKnowledgeFieldView({ defs, site }).fields.filter((f) => !f.builtin)] };
 }
 
 export function withFields(children: ReactNode, value: Partial<KnowledgeFieldsValue> = {}): ReactNode {

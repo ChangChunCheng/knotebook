@@ -15,7 +15,7 @@ import { apiTokens, authProviders, folders, groupMembers, groupRoles, groups, no
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** Drizzle's serialization of `schema.ts`; the declaration-drift guard compares against the latest snapshot (update the file name with each new migration). */
-const SNAPSHOT_FILE = "meta/0048_snapshot.json";
+const SNAPSHOT_FILE = "meta/0049_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
   tables: Record<string, {
     checkConstraints?: Record<string, { name: string; value: string }>;
@@ -1466,7 +1466,7 @@ describe("0009_api-tokens", () => {
       note_tags: ["note_id", "tag_id", "created_at"],
       note_knowledge: [
         "note_id", "knowledge_id", "block_id", "ord", "level", "heading", "read_when", "conclusion", "evidence", "verified", "status", "icon",
-        "parent_knowledge_id", "superseded_note_id", "superseded_knowledge_id", "desc_total", "desc_verified", "desc_no_date", "desc_needs_review", "desc_outdated",
+        "parent_knowledge_id", "superseded_note_id", "superseded_knowledge_id", "desc_total", "desc_verified", "desc_no_date", "desc_needs_review", "desc_outdated", "custom",
       ],
       note_knowledge_state: ["note_id", "extractor_version", "source_version", "content_hash", "entries", "capped", "indexed_at"],
       users: [
@@ -4019,7 +4019,7 @@ describe("0045_knowledge-index", () => {
     expect(shape("note_knowledge")).toEqual({
       note_id: "uuid", knowledge_id: "text", block_id: "text", ord: "integer", level: "smallint", heading: "text", read_when: "text", conclusion: "text",
       evidence: "text", verified: "date?", status: "text", icon: "text", parent_knowledge_id: "text?", superseded_note_id: "uuid?", superseded_knowledge_id: "text?",
-      desc_total: "integer = 0", desc_verified: "integer = 0", desc_no_date: "integer = 0", desc_needs_review: "integer = 0", desc_outdated: "integer = 0",
+      desc_total: "integer = 0", desc_verified: "integer = 0", desc_no_date: "integer = 0", desc_needs_review: "integer = 0", desc_outdated: "integer = 0", custom: "jsonb?",
     });
     expect(shape("note_knowledge_state")).toEqual({
       note_id: "uuid", extractor_version: "smallint", source_version: "integer", content_hash: "text", entries: "integer", capped: "boolean",
@@ -4221,10 +4221,11 @@ describe("0047_knowledge-status-checks", () => {
     await insertRow(pool, note, { knowledge_id: kid(2), icon: "noVerifiedDate", desc_no_date: 2 });
     expect(await outcome(insertRow(pool, note, { knowledge_id: kid(3), evidence: "vendor-doc" }))).toBe("23514:nk_evidence_chk");
     expect(await outcome(insertRow(pool, note, { knowledge_id: kid(4), status: "verified" }))).toBe("23514:nk_status_chk");
-    const before = (await pool.query(`select * from note_knowledge order by knowledge_id`)).rows;
+    const rows = async () => (await pool.query(`select * from note_knowledge order by knowledge_id`)).rows.map(({ custom: _custom, ...r }) => r);
+    const before = await rows();
     await runMigrations(db);
     expect(idxOfTag(TAG)).toBe(idxOfTag(PREV_TAG) + 1);
-    expect((await pool.query(`select * from note_knowledge order by knowledge_id`)).rows).toEqual(before);
+    expect(await rows()).toEqual(before);
     expect(await outcome(insertRow(pool, note, { knowledge_id: kid(3), evidence: "vendor-doc" }))).toBe("ok");
     expect(await outcome(insertRow(pool, note, { knowledge_id: kid(4), status: "verified" }))).toBe("ok");
     expect(await outcome(insertRow(pool, note, { knowledge_id: kid(5), status: "current" }))).toBe("23514:nk_status_chk");
@@ -4371,5 +4372,30 @@ describe("0048_knowledge-fields", () => {
     for (const st of statements) {
       expect(st).toMatch(/^(CREATE TABLE "knowledge_field_(defs|overrides)" |ALTER TABLE "knowledge_field_(defs|overrides)" ADD CONSTRAINT .* FOREIGN KEY|CREATE UNIQUE INDEX "kf[do]_)/);
     }
+  });
+});
+
+describe("0049_knowledge-custom", () => {
+  const TAG = "0049_knowledge-custom";
+  const PREV_TAG = "0048_knowledge-fields";
+
+  it("only adds a nullable column and leaves rows unchanged", async () => {
+    const { pool, db } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(PREV_TAG));
+    const owner = (await pool.query(`insert into users (email, display_name) values ('alice-kc0@example.com', 'A') returning id`)).rows[0].id as string;
+    const noteId = (await pool.query(`insert into notes (owner_id) values ($1) returning id`, [owner])).rows[0].id as string;
+    await pool.query(
+      `insert into note_knowledge (note_id, knowledge_id, block_id, ord, level, heading, read_when, conclusion, evidence, status, icon)
+       values ($1, 'k_00000001', 'b1', 0, 2, 'h', 'w', 'c', '', '', 'verified')`,
+      [noteId],
+    );
+    const columns = async () => (await pool.query(`select column_name, is_nullable from information_schema.columns where table_name = 'note_knowledge' and column_name = 'custom'`)).rows;
+    const rows = async () => (await pool.query(`select * from note_knowledge`)).rows;
+    expect(await columns()).toEqual([]);
+    const before = await rows();
+    await runMigrations(db);
+    expect(idxOfTag(TAG)).toBe(idxOfTag(PREV_TAG) + 1);
+    expect(await columns()).toEqual([{ column_name: "custom", is_nullable: "YES" }]);
+    expect(await rows()).toEqual(before.map(r => ({ ...r, custom: null })));
   });
 });

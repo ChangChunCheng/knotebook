@@ -22,13 +22,18 @@ const MARKER = "knotebookKnowledgeDecorations";
 
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
+function sameValues(a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && a[k] === b[k]);
+}
+
 function sameEntry(a: KnowledgeEntry, b: KnowledgeEntry): boolean {
   return (
     a.blockId === b.blockId && a.level === b.level && a.heading === b.heading && a.parentBlockId === b.parentBlockId &&
     a.outdated === b.outdated && a.icon === b.icon &&
     a.info.id === b.info.id && a.info.when === b.info.when && a.info.conclusion === b.info.conclusion && a.info.evidence === b.info.evidence &&
     a.info.verified === b.info.verified && a.info.status === b.info.status && a.info.supersededBy === b.info.supersededBy &&
-    sameList(a.ancestorBlockIds, b.ancestorBlockIds) && sameList(a.rangeBlockIds, b.rangeBlockIds)
+    sameValues(a.info.custom, b.info.custom) && sameList(a.ancestorBlockIds, b.ancestorBlockIds) && sameList(a.rangeBlockIds, b.rangeBlockIds)
   );
 }
 

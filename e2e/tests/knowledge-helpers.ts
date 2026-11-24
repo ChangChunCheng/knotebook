@@ -1,7 +1,7 @@
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { ADMIN, chooseSelectOption, clickEndOfParagraph, createUserViaInvite, editorLocator, loginAs, randomEmail, reEscape } from "./helpers.js";
 
-/** Shared by the knowledge-info specs (66, 67): accounts, note setup through the API, and the form driven the way a person drives it. */
+/** Shared by the knowledge and tag specs (66–74) and markdown-helpers.ts: accounts, note setup through the API, and the form driven the way a person drives it. */
 
 export const RUN = Date.now();
 export const PASSWORD = "e2e-knowledge-user-pw";

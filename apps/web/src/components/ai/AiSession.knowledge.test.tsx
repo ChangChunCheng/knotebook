@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, waitFor } from "@testing-library/react";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, REWRITE_ACTION_ID, type AiActionDto, type KnowledgeFieldView } from "@knotebook/shared";
+import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW, REWRITE_ACTION_ID, type AiActionDto, type KnowledgeFieldView, type KnowledgeMembersDto, type KnowledgeMembersRequest,
+} from "@knotebook/shared";
 import i18n from "@/i18n";
 import { knowledgeFieldsKey } from "@/api/knowledge-fields";
-import { fieldView } from "@/components/knowledge/test-support";
+import { customFieldView, fieldView } from "@/components/knowledge/test-support";
 import { createTestEditor, renderAiHost, selectWholeBlocks, stubAiFetch, type AiCall, type AiHostProps, type AnyEditor } from "@/test/ai-host";
 import { useAiSession, type AiSessionValue } from "./AiSession";
 
@@ -22,9 +24,26 @@ function Probe() {
 }
 let editor: AnyEditor;
 
-async function run(opts: { knowledgeFields?: AiHostProps["knowledgeFields"]; served?: KnowledgeFieldView; range?: [string, string] } = {}): Promise<AiCall> {
-  editor = createTestEditor(DOC);
-  const ai = stubAiFetch({ actions: [REWRITE], ...(opts.served ? { knowledgeFields: opts.served } : {}) });
+let memberLookups: KnowledgeMembersRequest[] = [];
+let memberSignals: AbortSignal[] = [];
+let aiCalls: AiCall[] = [];
+
+async function run(
+  opts: {
+    knowledgeFields?: AiHostProps["knowledgeFields"];
+    served?: KnowledgeFieldView;
+    range?: [string, string];
+    doc?: unknown[];
+    members?: (body: KnowledgeMembersRequest) => KnowledgeMembersDto | "hang";
+    /** false: return as soon as the action starts, before the AI request goes out. */
+    awaitCall?: boolean;
+  } = {},
+): Promise<AiCall> {
+  editor = createTestEditor(opts.doc ?? DOC);
+  const ai = stubAiFetch({ actions: [REWRITE], ...(opts.served ? { knowledgeFields: opts.served } : {}), ...(opts.members ? { members: opts.members } : {}) });
+  memberLookups = ai.memberLookups;
+  memberSignals = ai.memberSignals;
+  aiCalls = ai.calls;
   const host = renderAiHost({ editor, knowledgeFields: opts.knowledgeFields, children: <Probe /> });
   await waitFor(() => expect(session.actions).toHaveLength(1));
   if (opts.knowledgeFields === "fetch") {
@@ -35,6 +54,7 @@ async function run(opts: { knowledgeFields?: AiHostProps["knowledgeFields"]; ser
   act(() => {
     session.start(REWRITE_ACTION_ID);
   });
+  if (opts.awaitCall === false) return undefined as never;
   await waitFor(() => expect(ai.calls).toHaveLength(1));
   return ai.calls[0]!;
 }
@@ -155,5 +175,112 @@ describe("AI box with knowledge", () => {
     await reply(call, '<h2 data-knowledge-id="k_000000ff" data-knowledge-when="x">Other</h2>\n\nrewritten body');
     expect(JSON.stringify(editor.document)).toContain("rewritten body");
     expect(JSON.stringify(editor.document)).not.toContain("k_000000ff");
+  });
+
+  describe("member fields", () => {
+    const BOB = "aaaaaaaa-0000-4000-8000-000000000002";
+    const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+    const MEMBER = customFieldView([{ key: "owner", type: "member", name: "Owner" }]);
+    const MEMBER_DOC = [{ ...DOC[0]!, props: { ...DOC[0]!.props, knowledgeCustom: JSON.stringify({ owner: BOB }) } }, DOC[1]!, DOC[2]!];
+    const directory = (body: KnowledgeMembersRequest): KnowledgeMembersDto => ({
+      byId: (body.ids ?? []).filter((id) => id === BOB).map((id) => ({ id, handle: "bob", displayName: "Bob" })),
+      byToken: (body.tokens ?? []).filter((t) => t === "alice").map((token) => ({ token, id: ALICE })),
+    });
+
+    it("the request writes a stored member by the handle looked up first", async () => {
+      const call = await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: directory });
+      expect(memberLookups).toEqual([{ noteId: "note-1", ids: [BOB] }]);
+      expect(call.body.text).toContain("x-owner: bob");
+    });
+
+    it("when the lookup fails the stored member is sent as user:<id>", async () => {
+      const call = await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" } });
+      expect(call.body.text).toContain(`x-owner: user:${BOB}`);
+    });
+
+    it("a member the AI names by handle is looked up and stored as the user id", async () => {
+      const call = await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: directory });
+      await reply(call, call.body.text.replace("x-owner: bob", "x-owner: ALICE"));
+      expect(memberLookups.at(-1)).toEqual({ noteId: "note-1", tokens: ["alice"] });
+      expect(doneState().prepared.ignoredKnowledge).toEqual([]);
+      expect(heading().knowledgeCustom).toBe(JSON.stringify({ owner: ALICE }));
+    });
+
+    it("when resolving fails the named member is listed as unresolved and the stored one stays", async () => {
+      let lookups = 0;
+      const call = await run({
+        doc: MEMBER_DOC,
+        knowledgeFields: { view: MEMBER, status: "ready" },
+        members: (body) => {
+          lookups += 1;
+          if (lookups > 1) throw new Error("down");
+          return directory(body);
+        },
+      });
+      await reply(call, call.body.text.replace("x-owner: bob", "x-owner: alice"));
+      expect(doneState().applied).toBeNull();
+      expect(doneState().prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "x-owner", value: "alice", reason: "unresolved_member" }]);
+      expect((doneState().prepared.blocks[0]!.props as Record<string, string>).knowledgeCustom).toBe(JSON.stringify({ owner: BOB }));
+    });
+
+    it("the stored member written back keeps its heading, and the same member moved to another heading is looked up and stored", async () => {
+      const withBob = (body: KnowledgeMembersRequest): KnowledgeMembersDto => ({
+        ...directory(body),
+        byToken: (body.tokens ?? []).flatMap((token) => (token === "bob" ? [{ token, id: BOB }] : token === "alice" ? [{ token, id: ALICE }] : [])),
+      });
+      const call = await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: withBob });
+      await reply(call, `${call.body.text.replace("body text", "rewritten body")}\n\n## Second\n<!-- knotebook:knowledge\nx-owner: bob\n-->\n\nmore`);
+      expect(memberLookups.at(-1)).toEqual({ noteId: "note-1", tokens: ["bob"] });
+      expect(doneState().prepared.ignoredKnowledge).toEqual([]);
+      const customs = editor.document.filter((b) => b.type === "heading").map((b) => (b.props as Record<string, string>).knowledgeCustom);
+      expect(customs).toEqual([JSON.stringify({ owner: BOB }), JSON.stringify({ owner: BOB })]);
+    });
+
+    it("cancelling while the handles are looked up aborts the lookup and sends nothing", async () => {
+      await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: () => "hang", awaitCall: false });
+      await waitFor(() => expect(memberSignals).toHaveLength(1));
+      expect(session.state.phase).toBe("streaming");
+      act(() => session.cancel());
+      expect(memberSignals[0]!.aborted).toBe(true);
+      expect(session.state.phase).toBe("idle");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(aiCalls).toHaveLength(0);
+    });
+
+    it("a handle lookup that never answers times out and the request writes user:<id>", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: () => "hang", awaitCall: false });
+        await waitFor(() => expect(memberSignals).toHaveLength(1));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10_000);
+        });
+        await waitFor(() => expect(aiCalls).toHaveLength(1));
+        expect(memberSignals[0]!.aborted).toBe(true);
+        expect(aiCalls[0]!.body.text).toContain(`x-owner: user:${BOB}`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a token lookup that never answers times out and the named member is listed as unresolved", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const call = await run({ doc: MEMBER_DOC, knowledgeFields: { view: MEMBER, status: "ready" }, members: (body) => (body.tokens ? "hang" : directory(body)) });
+        await act(async () => {
+          call.delta(call.body.text.replace("x-owner: bob", "x-owner: alice"));
+          call.done();
+        });
+        await waitFor(() => expect(memberSignals).toHaveLength(2));
+        expect(session.state.phase).toBe("streaming");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10_000);
+        });
+        await waitFor(() => expect(session.state.phase).toBe("done"));
+        expect(doneState().prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "x-owner", value: "alice", reason: "unresolved_member" }]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

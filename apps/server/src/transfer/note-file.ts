@@ -3,7 +3,7 @@ import { canonicalNotePath, type KnowledgeFieldView } from "@knotebook/shared";
 import type { CollabServer } from "../collab/server.js";
 import type { Db } from "../db/index.js";
 import { DOC_TOO_COMPLEX } from "../notes/editing/doc-jobs.js";
-import { NoteReadTooComplexError, loadNoteState, titlesAsk } from "../notes/editing/read.js";
+import { NoteReadTooComplexError, docAsk, loadNoteState } from "../notes/editing/read.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
 import { baseHashes, newBaseKey, newSalt } from "./base-hash.js";
 import type { TransferBaseInsert } from "./bases.js";
@@ -39,7 +39,7 @@ export async function buildNoteFile(
   const ex = await deps.editing.runDoc(
     viewerId,
     { kind: "exportFile", state, key: new Uint8Array(deps.key), salt: new Uint8Array(salt), fields, ...(opts.forceUnmergeable ? { forceUnmergeable: true } : {}) },
-    { ask: titlesAsk(deps.db, viewerId) },
+    { ask: docAsk(deps.db, viewerId) },
   );
   if (ex === DOC_TOO_COMPLEX) throw new NoteReadTooComplexError();
   const baseKey = newBaseKey();

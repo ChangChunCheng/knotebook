@@ -1,7 +1,15 @@
 // The keep-knowledge pairing against blocks produced by the real read → parse path, not hand-written ones.
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, knowledgePairs, readKnowledgeInfo, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite } from "@knotebook/shared";
+import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
+  blocksToNoteMarkdown,
+  knowledgePairs,
+  readKnowledgeInfo,
+  resolveKnowledgeFieldView,
+  resolveKnowledgeForWrite,
+  sanitizeKnowledgeForWrite,
+} from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
@@ -74,5 +82,35 @@ describe("knowledge pairing across a real read and write", () => {
     expect(s.ignored).toEqual([]);
     const knowledgeOf = (b: AnyBlock) => Object.fromEntries(Object.entries(b.props).filter(([k]) => k.startsWith("knowledge")));
     expect(s.blocks.map(knowledgeOf)).toEqual(before.map(knowledgeOf));
+  });
+
+  it("custom values read back and written unchanged, a member by handle and a hidden field left out, store exactly what was there", async () => {
+    const fields = resolveKnowledgeFieldView({
+      defs: [
+        { kind: "field", fieldRef: "x-owner", key: "owner", type: "member", createdAt: "2026-01-01" },
+        { kind: "field", fieldRef: "x-doc", key: "doc", type: "link", createdAt: "2026-01-02" },
+        { kind: "field", fieldRef: "x-old", key: "old", type: "text", createdAt: "2026-01-03" },
+      ],
+      site: [{ fieldRef: "x-old", optionKey: "", enabled: false, name: null, position: null }],
+    });
+    const custom = '{"doc":"javascript:alert(1)","gone":"keep","old":"hidden","owner":"u-bob"}';
+    const blocks = [{ type: "heading", props: { level: 2, knowledgeId: "k_00000001", knowledgeStatus: "unverified", knowledgeCustom: custom }, content: "H" }];
+    const s = await EditorSession.open(rt, new Y.Doc());
+    try {
+      s.editor.replaceBlocks(s.editor.document, blocks as never);
+      const before = s.editor.document as AnyBlock[];
+      const markdown = blocksToNoteMarkdown(s.editor, s.editor.document, { knowledge: { fields, handleOf: new Map([["u-bob", "bob"]]) } });
+      expect(markdown).toContain("\nx-owner: bob\nx-doc: javascript:alert(1)\n-->");
+      const parsed = parseMarkdownForNote(s.editor, markdown, [], "http://localhost");
+      if (!("blocks" in parsed)) throw new Error(`parse failed: ${JSON.stringify(parsed)}`);
+      const current = new Map([["k_00000001", readKnowledgeInfo(before[0].props)!]]);
+      const resolved = resolveKnowledgeForWrite({ before, after: parsed.blocks as AnyBlock[], keep: true, taken: new Set(current.keys()) });
+      const r = sanitizeKnowledgeForWrite({ after: resolved.blocks, current, noteId: TARGET, fields, members: { handleOf: new Map([["u-bob", "bob"]]), idOf: new Map() } });
+      expect(r.problem).toBeNull();
+      expect(r.ignored).toEqual([]);
+      expect(r.blocks[0].props.knowledgeCustom).toBe(custom);
+    } finally {
+      s.close();
+    }
   });
 });

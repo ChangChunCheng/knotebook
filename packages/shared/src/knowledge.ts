@@ -1,3 +1,4 @@
+import { formatKnowledgeCustom, parseKnowledgeCustom } from "./knowledge-custom.js";
 import { KNOWLEDGE_KEY_RE } from "./knowledge-fields.js";
 import type { KnowledgePropName } from "./knowledge-schema.js";
 
@@ -17,6 +18,8 @@ export interface KnowledgeInfo {
   verified: string;
   status: KnowledgeStatus;
   supersededBy: string;
+  /** Field key without its `x-` prefix to stored value; member values are user ids. */
+  custom: Readonly<Record<string, string>>;
 }
 export interface KnowledgeDraft {
   when: string;
@@ -25,6 +28,7 @@ export interface KnowledgeDraft {
   verified: string;
   state: KnowledgeState;
   supersededBy: string;
+  custom: Record<string, string>;
 }
 
 export const KNOWLEDGE_WHEN_MAX = 200;
@@ -53,6 +57,7 @@ export function readKnowledgeInfo(props: Readonly<Record<string, unknown>> | und
     verified: str(props.knowledgeVerified),
     status: status === "" || (KNOWLEDGE_STORED_STATUSES as readonly string[]).includes(status) ? (status as KnowledgeStatus) : "unverified",
     supersededBy: str(props.knowledgeSupersededBy),
+    custom: parseKnowledgeCustom(props.knowledgeCustom),
   };
 }
 
@@ -83,6 +88,7 @@ export function knowledgeInfoToProps(info: KnowledgeInfo): Record<KnowledgePropN
     knowledgeVerified: info.verified,
     knowledgeStatus: info.status,
     knowledgeSupersededBy: info.supersededBy,
+    knowledgeCustom: formatKnowledgeCustom(info.custom),
   };
 }
 

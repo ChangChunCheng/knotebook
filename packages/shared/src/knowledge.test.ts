@@ -21,7 +21,7 @@ import {
 } from "./knowledge.js";
 
 const info = (over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({
-  id: "k_1234abcd", when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", ...over,
+  id: "k_1234abcd", when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", custom: {}, ...over,
 });
 
 afterEach(() => {
@@ -48,9 +48,16 @@ describe("readKnowledgeInfo", () => {
     expect(
       readKnowledgeInfo({
         knowledgeId: "k_1234abcd", knowledgeWhen: 42, knowledgeConclusion: ["a"], knowledgeEvidence: {}, knowledgeStatus: {},
-        knowledgeVerified: null, knowledgeSupersededBy: undefined,
+        knowledgeVerified: null, knowledgeSupersededBy: undefined, knowledgeCustom: { team: "core" },
       }),
     ).toEqual(info());
+  });
+
+  it("reads custom values defensively and never throws", () => {
+    const read = (knowledgeCustom: unknown) => readKnowledgeInfo({ knowledgeId: "k_1234abcd", knowledgeCustom })!.custom;
+    expect(read('{"team":"core","Bad":"x","n":1}')).toEqual({ team: "core" });
+    for (const bad of ["{", "[1]", 7, ["x"], null, '"x"']) expect(read(bad)).toEqual({});
+    expect(read(`{"big":"${"x".repeat(3_000_000)}"}`).big).toHaveLength(3_000_000);
   });
 
   it("an unknown stored status reads as unverified and an unknown basis as empty", () => {
@@ -96,11 +103,19 @@ describe("knowledgePropsPatch", () => {
     expect(knowledgePropsPatch(null, info())).toEqual({ knowledgeId: "k_1234abcd" });
   });
 
+  it("patches custom values as one normalized string, only when they change", () => {
+    const before = info({ custom: { team: "core" } });
+    expect(knowledgePropsPatch(before, { ...before, custom: { team: "core" } })).toEqual({});
+    expect(knowledgePropsPatch(before, { ...before, custom: { team: "web", area: "" } })).toEqual({ knowledgeCustom: '{"team":"web"}' });
+    expect(knowledgePropsPatch(before, { ...before, custom: {} })).toEqual({ knowledgeCustom: "" });
+    expect(knowledgePropsPatch(null, info({ custom: { b: "2", a: "1" } }))).toEqual({ knowledgeId: "k_1234abcd", knowledgeCustom: '{"a":"1","b":"2"}' });
+  });
+
   it("knowledgeInfoToProps maps every field", () => {
     const all = info({ when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02", status: "outdated", supersededBy: "k_aaaaaaaa" });
     expect(knowledgeInfoToProps(all)).toEqual({
       knowledgeId: "k_1234abcd", knowledgeWhen: "w", knowledgeConclusion: "c", knowledgeEvidence: "docs",
-      knowledgeVerified: "2026-01-02", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_aaaaaaaa",
+      knowledgeVerified: "2026-01-02", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_aaaaaaaa", knowledgeCustom: "",
     });
   });
 });
@@ -127,10 +142,10 @@ describe("text helpers", () => {
 });
 
 describe("validateKnowledgeDraft", () => {
-  const blank: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
+  const blank: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "", custom: {} };
 
   it("a draft with nothing but a state is valid, and obsolete needs no replacement", () => {
-    const empty = { when: "", conclusion: "", evidence: "", verified: "", supersededBy: "" };
+    const empty = { when: "", conclusion: "", evidence: "", verified: "", supersededBy: "", custom: {} };
     expect(validateKnowledgeDraft({ ...empty, state: "needs-verify" }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...empty, state: "obsolete" }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...empty, state: "obsolete", supersededBy: "nope" }, null, null)).toBe("supersededInvalid");

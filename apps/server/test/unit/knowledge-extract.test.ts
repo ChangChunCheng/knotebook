@@ -94,7 +94,62 @@ describe("extractKnowledgeIndex", () => {
     expect(r.rows.every((x) => x.descNoDate === 0)).toBe(true);
   });
 
-  it("the extractor version is 2", () => expect(KNOWLEDGE_EXTRACTOR_VERSION).toBe(2));
+  it("the extractor version is 3", () => expect(KNOWLEDGE_EXTRACTOR_VERSION).toBe(3));
+
+  describe("custom values", () => {
+    const withCustom = (raw: unknown): KBlk => {
+      const b = kh("h", kid(1), "H");
+      return { ...b, knowledge: { ...b.knowledge, knowledgeCustom: raw } };
+    };
+    const customOf = (raw: unknown) => extract([withCustom(raw)]).rows[0]!.custom;
+
+    it("stores values whatever the settings say, cleaned and capped", () => {
+      const custom = customOf(JSON.stringify({ team: `a${NUL}b`, Bad: "x", big: "z".repeat(70_000), lone: "p\ud800q" }));
+      expect(Object.keys(custom!).sort()).toEqual(["big", "lone", "team"]);
+      expect(custom!.team).toBe("a�b");
+      expect(custom!.lone).toBe("p�q");
+      expect([...custom!.big!]).toHaveLength(2048);
+    });
+
+    it.each([["not json{"], ["[1]"], ['"s"'], ["null"], [""], [42], [["a"]], [{ a: "b" }], [undefined]])("%j gives custom null and the note is still indexed", (raw) => {
+      const r = extract([withCustom(raw)]);
+      expect(r.rows).toHaveLength(1);
+      expect(r.rows[0]!.custom).toBeNull();
+    });
+
+    it("skips non-string values and malformed keys but keeps the good ones", () => {
+      expect(customOf('{"a":1,"b":"ok","-c":"x","d":null,"e":""}')).toEqual({ b: "ok" });
+    });
+
+    it("truncates a payload over 65,536 in key order", () => {
+      const values = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`k${String(i).padStart(2, "0")}`, "v".repeat(2048)]));
+      const custom = customOf(JSON.stringify(values))!;
+      const keys = Object.keys(custom);
+      expect(keys).toEqual(Object.keys(values).slice(0, keys.length));
+      expect(keys.length).toBeGreaterThan(0);
+      expect(keys.length).toBeLessThan(60);
+      expect(JSON.stringify(custom).length).toBeLessThanOrEqual(65_536);
+    });
+
+    it("keeps a payload of exactly 65,536 and drops an entry that would make it one over", () => {
+      const build = (last: number) => {
+        const values: Record<string, string> = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`k${String(i).padStart(2, "0")}`, "v".repeat(2048)]));
+        values.k31 = "v".repeat(last);
+        return customOf(JSON.stringify(values))!;
+      };
+      const exact = build(1759);
+      expect(JSON.stringify(exact)).toHaveLength(65_536);
+      expect(Object.keys(exact)).toHaveLength(32);
+      expect(Object.keys(build(1760))).toHaveLength(31);
+    });
+
+    it("changing only a custom value changes the content hash", () => {
+      const a = extract([withCustom('{"team":"a"}')]);
+      const b = extract([withCustom('{"team":"b"}')]);
+      const none = extract([withCustom("")]);
+      expect(new Set([a.contentHash, b.contentHash, none.contentHash]).size).toBe(3);
+    });
+  });
 
   it("stores the parsed replaced-by ref: a bare id has supersededNoteId null, an other-note ref keeps the lowercased note id; garbage is null", () => {
     const other = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";

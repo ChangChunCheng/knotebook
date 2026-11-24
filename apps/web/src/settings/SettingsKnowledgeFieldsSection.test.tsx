@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type AdminKnowledgeFieldsDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type AdminKnowledgeFieldsDto, type KnowledgeFieldDef } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { dismissAllToasts, Toaster } from "@/components/ui/toast";
+import { chooseOption } from "@/test/ui-select";
 import { SettingsKnowledgeFieldsSection } from "./SettingsKnowledgeFieldsSection";
 
 const URL_ = "/api/admin/knowledge-fields";
@@ -263,7 +264,7 @@ describe("SettingsKnowledgeFieldsSection", () => {
     setup(() => res(400, { error: { code: "knowledge_fields_limit", message: "x" } }));
     fireEvent.click(await loaded());
     fireEvent.click(save());
-    expect(await screen.findByText("A field can have at most 30 options.")).toBeInTheDocument();
+    expect(await screen.findByText("Too many options or custom fields.")).toBeInTheDocument();
   });
 
   it("blocks Save with a message when a new option has no key", async () => {
@@ -301,5 +302,139 @@ describe("SettingsKnowledgeFieldsSection", () => {
     expect(screen.getByRole("switch", { name: "Show When to read" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(screen.getByRole("switch", { name: "Show When to read" })).toBeChecked();
+  });
+
+  describe("custom fields", () => {
+    const custom = (i: number, over: Partial<KnowledgeFieldDef> = {}): KnowledgeFieldDef => ({
+      key: `x-f${i}`,
+      builtin: false,
+      type: "text",
+      name: `Field ${i}`,
+      enabled: true,
+      ...over,
+    });
+    const withCustom = (fields: KnowledgeFieldDef[]): AdminKnowledgeFieldsDto => ({ ...DTO, fields: [...DTO.fields, ...fields] });
+    const addButton = () => screen.getByRole("button", { name: "Add custom field" });
+    const nameBox = () => document.getElementById("kf-new-name") as HTMLInputElement;
+    const keyBox = () => document.getElementById("kf-new-key") as HTMLInputElement;
+
+    it("lists saved custom fields with a read-only key and the enabled count", async () => {
+      setup(undefined, withCustom([custom(1, { enabled: false }), custom(2, { type: "member" })]));
+      await loaded();
+      expect(screen.getByText("On 1 / 20")).toBeInTheDocument();
+      expect(screen.getAllByLabelText("Field name").map((i) => (i as HTMLInputElement).value)).toEqual(["Field 1", "Field 2"]);
+      expect(screen.getAllByLabelText("Field key")[0]).toHaveAttribute("readonly");
+      expect(screen.getByRole("switch", { name: "Show Field 1" })).not.toBeChecked();
+    });
+
+    it("there is no delete control for a custom field", async () => {
+      setup(undefined, withCustom([custom(1)]));
+      await loaded();
+      expect(screen.queryByRole("button", { name: /delete|remove/i })).not.toBeInTheDocument();
+    });
+
+    it("adds a field whose key follows the name, and sends its type only until it is saved", async () => {
+      const saved = withCustom([custom(1, { key: "x-owner", name: "Owner", type: "text" })]);
+      const { puts } = setup(() => res(200, saved));
+      await loaded();
+      fireEvent.click(addButton());
+      fireEvent.change(nameBox(), { target: { value: "Owner" } });
+      expect(keyBox()).toHaveValue("owner");
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      expect(screen.getByLabelText("Field key")).toHaveValue("owner");
+      expect(screen.getByLabelText("Field key")).not.toHaveAttribute("readonly");
+      fireEvent.click(save());
+      await waitFor(() => expect(puts()).toHaveLength(1));
+      expect(puts()[0]!.fields.slice(5)).toEqual([{ key: "x-owner", enabled: true, name: "Owner", type: "text" }]);
+      await waitFor(() => expect(screen.getByLabelText("Field key")).toHaveAttribute("readonly"));
+    });
+
+    it("a key edited by hand stops following the name, and a taken or invalid key is refused in the form", async () => {
+      setup(undefined, withCustom([custom(1, { key: "x-owner" })]));
+      await loaded();
+      fireEvent.click(addButton());
+      fireEvent.change(keyBox(), { target: { value: "Owner" } });
+      fireEvent.change(nameBox(), { target: { value: "Mine" } });
+      expect(keyBox()).toHaveValue("Owner");
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      expect(await screen.findByText(/can only use lowercase letters/)).toBeInTheDocument();
+      fireEvent.change(keyBox(), { target: { value: "owner" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      expect(await screen.findByText(/already uses this key/)).toBeInTheDocument();
+      expect(screen.getAllByLabelText("Field name")).toHaveLength(1);
+    });
+
+    it("a new select field needs at least one option before it can be saved", async () => {
+      const { puts } = setup();
+      await loaded();
+      fireEvent.click(addButton());
+      fireEvent.change(nameBox(), { target: { value: "Scope" } });
+      await chooseOption(screen.getByRole("combobox"), "Single choice");
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      expect(await screen.findByText("A single-choice field needs at least one option.")).toBeInTheDocument();
+      const addOptionButtons = screen.getAllByRole("button", { name: "Add option" });
+      fireEvent.click(addOptionButtons.at(-1)!);
+      fireEvent.change(screen.getAllByLabelText("Option name").at(-1)!, { target: { value: "Whole site" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      await waitFor(() => expect(screen.getByLabelText("Field name")).toHaveValue("Scope"));
+      fireEvent.click(save());
+      await waitFor(() => expect(puts()).toHaveLength(1));
+      expect(puts()[0]!.fields.at(-1)).toEqual({
+        key: "x-scope",
+        enabled: true,
+        name: "Scope",
+        type: "select",
+        options: [{ key: "whole-site", name: "Whole site", enabled: true }],
+      });
+    });
+
+    it("the counter shows enabled custom fields and a new field starts off at the limit", async () => {
+      setup(undefined, withCustom(Array.from({ length: 20 }, (_, i) => custom(i))));
+      await loaded();
+      expect(screen.getByText("On 20 / 20")).toBeInTheDocument();
+      expect(screen.getByText("While 20 fields are on, a new field starts off.")).toBeInTheDocument();
+      fireEvent.click(addButton());
+      fireEvent.change(nameBox(), { target: { value: "Extra" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      expect(screen.getByRole("switch", { name: "Show Extra" })).not.toBeChecked();
+      expect(screen.getByText(/already on, so this one stays off/)).toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: "Show Extra" })).toBeDisabled();
+      expect(screen.getByText("On 20 / 20")).toBeInTheDocument();
+    });
+
+    it("disables the add button at 100 custom fields, turned-off ones included", async () => {
+      setup(undefined, withCustom(Array.from({ length: 100 }, (_, i) => custom(i, { enabled: i < 5 }))));
+      await loaded();
+      expect(addButton()).toBeDisabled();
+      expect(screen.getByText(/At most 100 custom fields/)).toBeInTheDocument();
+    });
+
+    it("moves a custom field and sends the new order", async () => {
+      const { puts } = setup(undefined, withCustom([custom(1), custom(2)]));
+      await loaded();
+      fireEvent.click(screen.getAllByRole("button", { name: "Move up" }).at(-1)!);
+      fireEvent.click(save());
+      await waitFor(() => expect(puts()).toHaveLength(1));
+      expect(puts()[0]!.fields.slice(5).map((f) => f.key)).toEqual(["x-f2", "x-f1"]);
+    });
+
+    it("a taken key is flagged on the custom row before anything is sent", async () => {
+      const { puts } = setup(() => res(400, { error: { code: "knowledge_key_taken", message: "x" } }), withCustom([custom(1, { key: "x-owner" })]));
+      await loaded();
+      fireEvent.click(addButton());
+      fireEvent.change(nameBox(), { target: { value: "Other" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+      fireEvent.change(screen.getAllByLabelText("Field key").at(-1)!, { target: { value: "owner" } });
+      fireEvent.click(save());
+      expect(await screen.findByRole("alert")).toHaveTextContent("Another field already uses this key");
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("a saved custom option shows its stored name even when its key matches a built-in option", async () => {
+      const field = custom(1, { type: "select", options: [{ key: "docs", name: "Handbook", enabled: true, builtin: false }] });
+      setup(undefined, withCustom([field]));
+      await loaded();
+      expect(screen.getAllByLabelText("Option name").at(-1)).toHaveValue("Handbook");
+    });
   });
 });

@@ -231,7 +231,7 @@ describe("failure isolation", () => {
       db,
       log,
       extractKnowledge: () => ({
-        rows: [{ knowledgeId: "not-an-id", blockId: "b", ord: 0, level: 2, heading: "H", when: "alice-secret-71b2", conclusion: "", evidence: "", verified: null, status: "", icon: "verified", parentKnowledgeId: null, supersededNoteId: null, supersededKnowledgeId: null, descTotal: 0, descVerified: 0, descNoDate: 0, descNeedsReview: 0, descOutdated: 0 }],
+        rows: [{ knowledgeId: "not-an-id", blockId: "b", ord: 0, level: 2, heading: "H", when: "alice-secret-71b2", conclusion: "", evidence: "", verified: null, status: "", icon: "verified", parentKnowledgeId: null, supersededNoteId: null, supersededKnowledgeId: null, descTotal: 0, descVerified: 0, descNoDate: 0, descNeedsReview: 0, descOutdated: 0, custom: null }],
         capped: false,
         contentHash: "h",
         extractorVersion: 1,

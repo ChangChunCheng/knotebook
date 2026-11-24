@@ -1,6 +1,7 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import {
   EMPTY_KNOWLEDGE_PROPS,
+  formatKnowledgeCustom,
   generateKnowledgeId,
   knowledgeInfoToProps,
   knowledgeStateOf,
@@ -15,12 +16,27 @@ import {
   type KnowledgeInfo,
   type KnowledgePropName,
 } from "@knotebook/shared";
-import { DRAFT_FIELDS, EMPTY_DRAFT, isDraftFieldEnabled, type DraftField } from "./form-state";
+import {
+  DRAFT_FIELDS,
+  EMPTY_DRAFT,
+  customDraftProblem,
+  customKeyOf,
+  customValueOf,
+  isDraftFieldEnabled,
+  shownCustomFields,
+  storedCustomValue,
+  withCustomValue,
+  type CustomDraftError,
+  type DraftField,
+} from "./form-state";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple (repo convention)
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-export type SaveKnowledgeResult = { ok: true; knowledgeId: string } | { ok: false; reason: KnowledgeDraftError | "notEligible" | "clearedAll" };
+export type SaveKnowledgeResult =
+  | { ok: true; knowledgeId: string }
+  | { ok: false; reason: KnowledgeDraftError | "notEligible" | "clearedAll" }
+  | { ok: false; reason: "customInvalid"; field: `x-${string}`; error: CustomDraftError };
 
 type Patch = Partial<Record<KnowledgePropName, string>>;
 
@@ -76,7 +92,10 @@ const CLEARABLE_FIELDS: readonly DraftField[] = ["when", "conclusion", "evidence
 export function isClearedAll(base: KnowledgeInfo | null, draft: KnowledgeDraft, fields: KnowledgeFieldView): boolean {
   if (!base || draft.state !== "needs-verify") return false;
   const shown = CLEARABLE_FIELDS.filter((f) => isDraftFieldEnabled(fields, f));
-  return shown.some((f) => stored(f, base[f]) !== "") && shown.every((f) => stored(f, draft[f]) === "");
+  const custom = shownCustomFields(fields);
+  const customFilled = (values: Readonly<Record<string, string>>) => custom.some((f) => storedCustomValue(f, customValueOf(values, customKeyOf(f))) !== "");
+  const hadValue = shown.some((f) => stored(f, base[f]) !== "") || customFilled(base.custom);
+  return hadValue && shown.every((f) => stored(f, draft[f]) === "") && !customFilled(draft.custom);
 }
 
 /**
@@ -98,10 +117,22 @@ export function saveKnowledge(
   const current = currentInfo(editor, blockId);
   const selfId = current?.id ?? base?.id ?? null;
   // A stored value the form doesn't show can't be corrected there, so it must not block saving.
-  const checked: KnowledgeDraft = { ...EMPTY_DRAFT, state: draft.state };
+  const checked: KnowledgeDraft = { ...EMPTY_DRAFT, state: draft.state, custom: {} };
   for (const field of shown) checked[field] = draft[field];
   const invalid = validateKnowledgeDraft(checked, selfId ? { noteId: null, knowledgeId: selfId } : null, noteId, touched);
   if (invalid) return { ok: false, reason: invalid };
+  const customShown = shownCustomFields(fields);
+  // Only values this form changed are checked, and they are written over the current values, so a collaborator's change to another key survives.
+  const customChanges: Array<[key: string, value: string]> = [];
+  for (const field of customShown) {
+    const key = customKeyOf(field);
+    const edited = customValueOf(draft.custom, key);
+    if (edited === (base ? customValueOf(base.custom, key) : "")) continue;
+    const value = storedCustomValue(field, edited);
+    const problem = value === "" ? null : customDraftProblem(field, value);
+    if (problem) return { ok: false, reason: "customInvalid", field: field.key, error: problem };
+    customChanges.push([key, value]);
+  }
   if (isClearedAll(base, draft, fields)) return { ok: false, reason: "clearedAll" };
 
   const patch: Patch = {};
@@ -115,12 +146,26 @@ export function saveKnowledge(
     const value = stored(field, draft[field]);
     if (currentProps?.[PROP_OF[field]] !== value) patch[PROP_OF[field]] = value;
   }
+  let custom = current?.custom ?? {};
+  for (const [key, value] of customChanges) custom = withCustomValue(custom, key, value);
+  let customChanged = customChanges.length > 0;
   // The knowledge was removed while the form was open: nothing is left to keep, so every filled field is written again.
   if (!current && base) {
     for (const field of shown) {
       const value = stored(field, draft[field]);
       if (value !== "") patch[PROP_OF[field]] = value;
     }
+    for (const field of customShown) {
+      const value = storedCustomValue(field, customValueOf(draft.custom, customKeyOf(field)));
+      if (value === "") continue;
+      custom = withCustomValue(custom, customKeyOf(field), value);
+      customChanged = true;
+    }
+  }
+  if (customChanged) {
+    fieldChanged = true;
+    const value = formatKnowledgeCustom(custom);
+    if ((currentProps?.knowledgeCustom ?? "") !== value) patch.knowledgeCustom = value;
   }
   const status = storedStatusOf(draft.state);
   // An explicit status a collaborator set while the form was open is theirs to keep unless this form changed the state.

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, readKnowledgeInfo, topLevelBlocks, type KnowledgeDraft, type KnowledgeInfo } from "@knotebook/shared";
-import { fieldView } from "./test-support";
+import { customFieldView, fieldView } from "./test-support";
 import type { EditorRef } from "@/components/wikilink/menu";
 
 vi.mock("@/components/ui/toast", () => ({ toast: vi.fn() }));
@@ -72,7 +72,7 @@ function pair(blocks: unknown[]) {
   return { a, b, ea: open(a), eb: open(b) };
 }
 
-const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
+const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "", custom: {} };
 const draft = (over: Partial<KnowledgeDraft>): KnowledgeDraft => ({ ...EMPTY, ...over });
 const infoOf = (editor: Ed, id: string): KnowledgeInfo | null => readKnowledgeInfo(editor.getBlock(id)?.props as Record<string, unknown>);
 const K1 = { knowledgeId: "k_00000001", knowledgeWhen: "alice reads", knowledgeConclusion: "bob concludes" };
@@ -307,8 +307,74 @@ describe("saveKnowledge", () => {
   });
 });
 
+describe("saveKnowledge with custom fields", () => {
+  const CUSTOM = customFieldView([
+    { key: "team", type: "text", name: "Team" },
+    { key: "area", type: "text", name: "Area" },
+    { key: "docs", type: "link", name: "Docs" },
+    { key: "due", type: "date", name: "Due" },
+    { key: "old", type: "text", name: "Old", enabled: false },
+  ]);
+  const withCustom = (base: KnowledgeInfo, values: Record<string, string>): KnowledgeDraft => ({ ...draftOf(base), custom: { ...draftOf(base).custom, ...values } });
+
+  it("saving changes only the custom keys the form touched, over the current value", async () => {
+    const { a, ea, eb } = pair([H("h1", "Title", { ...K1, knowledgeStatus: "unverified", knowledgeCustom: '{"team":"a"}' })]);
+    const base = infoOf(ea, "h1")!;
+    eb.updateBlock("h1", { props: { knowledgeCustom: '{"area":"x","team":"a"}' } } as never);
+    await tick();
+    expect(saveKnowledge(ea, "h1", base, withCustom(base, { team: "b" }), null, CUSTOM).ok).toBe(true);
+    await tick();
+    expect(attrsOf(a, "h1").knowledgeCustom).toBe('{"area":"x","team":"b"}');
+  });
+
+  it("saving without touching a custom value leaves the stored string as it is", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "unverified", knowledgeCustom: '{"team":"a","zzz":1}' })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    saveKnowledge(editor, "h1", base, { ...draftOf(base), when: "changed" }, null, CUSTOM);
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeWhen: "changed" } });
+  });
+
+  it("clearing a custom value removes its key, and a turned-off field keeps its stored value", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "unverified", knowledgeCustom: '{"old":"kept","team":"a"}' })]));
+    const base = infoOf(editor, "h1")!;
+    saveKnowledge(editor, "h1", base, withCustom(base, { team: "", old: "" }), null, CUSTOM);
+    expect(editor.getBlock("h1")!.props.knowledgeCustom).toBe('{"old":"kept"}');
+  });
+
+  it("text is trimmed and a new knowledge stores its filled custom values", () => {
+    const editor = open(seeded([H("h1", "Title")]));
+    expect(saveKnowledge(editor, "h1", null, draft({ custom: { team: "  core  ", due: "2026-03-04" } }), null, CUSTOM).ok).toBe(true);
+    expect(editor.getBlock("h1")!.props.knowledgeCustom).toBe('{"due":"2026-03-04","team":"core"}');
+  });
+
+  it("a link that is not http(s) or a site path is refused and nothing is written", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "unverified" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    expect(saveKnowledge(editor, "h1", base, withCustom(base, { docs: "javascript:alert(1)" }), null, CUSTOM)).toEqual({ ok: false, reason: "customInvalid", field: "x-docs", error: "linkInvalid" });
+    expect(saveKnowledge(editor, "h1", base, withCustom(base, { due: "2026-02-30" }), null, CUSTOM)).toEqual({ ok: false, reason: "customInvalid", field: "x-due", error: "dateInvalid" });
+    expect(saveKnowledge(editor, "h1", base, withCustom(base, { team: "t".repeat(301) }), null, CUSTOM)).toEqual({ ok: false, reason: "customInvalid", field: "x-team", error: "tooLong" });
+    expect(spy).not.toHaveBeenCalled();
+    expect(saveKnowledge(editor, "h1", base, withCustom(base, { docs: "/n/alice/page" }), null, CUSTOM).ok).toBe(true);
+  });
+
+  it("a stored custom value that would fail the checks does not block saving another field", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "unverified", knowledgeCustom: '{"docs":"javascript:x"}' })]));
+    const base = infoOf(editor, "h1")!;
+    expect(saveKnowledge(editor, "h1", base, { ...draftOf(base), when: "edited" }, null, CUSTOM).ok).toBe(true);
+  });
+
+  it("emptying the last filled custom value counts toward clearedAll", () => {
+    const fields = customFieldView([{ key: "team", type: "text", name: "Team" }], { off: ["when", "conclusion"] });
+    const base: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "", custom: { team: "a" } };
+    expect(isClearedAll(base, draft({}), fields)).toBe(true);
+    expect(isClearedAll(base, draft({ custom: { team: "a" } }), fields)).toBe(false);
+  });
+});
+
 describe("isClearedAll", () => {
-  const filled: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "" };
+  const filled: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "", custom: {} };
   const statusOnly: KnowledgeInfo = { ...filled, when: "", conclusion: "" };
   it.each([
     ["existing knowledge emptied with needs verify", filled, draft({}), true],

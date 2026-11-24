@@ -19,6 +19,7 @@ import {
   type KnowledgeBlockShape,
   type KnowledgeFieldView,
   type KnowledgeInfo,
+  type KnowledgeMemberMaps,
 } from "@knotebook/shared";
 import { KnowledgeWriteError, createdKnowledge, knowledgeIdsByBlock, mergeKnowledgeReports, type KnowledgeEditReport } from "../notes/editing/knowledge-write.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
@@ -77,7 +78,7 @@ export async function applySync(
   plan: SyncPlan,
   cur: { ids: string[] },
   // `normalizedId`: the base had 0 blocks and the current doc is one empty paragraph; replaced once, like the `cur.ids.length === 0` case.
-  opts: { yieldFn?: () => Promise<void>; now?: () => number; normalizedId?: string; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string; fields: KnowledgeFieldView } } = {},
+  opts: { yieldFn?: () => Promise<void>; now?: () => number; normalizedId?: string; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string; fields: KnowledgeFieldView; members?: KnowledgeMemberMaps } } = {},
 ): Promise<Applied> {
   const yieldFn = opts.yieldFn ?? yieldToLoop;
   const now = opts.now ?? (() => performance.now());
@@ -123,7 +124,7 @@ export async function applySync(
         // A comment without an id takes the id of the heading it rewrites; headings written without a comment are never given knowledge.
         const old = d.kind === "rewrite" ? (pickBlocks(byId, d.survivors) as unknown as readonly KnowledgeBlockShape[]) : [];
         const r = resolveKnowledgeForWrite({ before: old, after: normalizeKnowledgeRefs(blocks as unknown as readonly KnowledgeBlockShape[], k.noteId), keep: false, taken });
-        const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: k.fields });
+        const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: k.fields, ...(k.members ? { members: k.members } : {}) });
         if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
         for (const ref of [...r.created, ...r.renewed]) taken.add(ref.id);
         blocks = s.blocks as unknown as typeof blocks;

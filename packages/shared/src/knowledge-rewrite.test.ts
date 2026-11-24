@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { alignInlineText } from "./block-align.js";
 import { KNOWLEDGE_ID_RE, knowledgeStateOf, type KnowledgeInfo, type KnowledgeStatus } from "./knowledge.js";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeFieldView, type KnowledgeBuiltinFieldKey, type KnowledgeFieldView } from "./knowledge-fields.js";
+import { KNOWLEDGE_CUSTOM_JSON_MAX, type KnowledgeMemberMaps } from "./knowledge-custom.js";
+import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
+  resolveKnowledgeFieldView,
+  type KnowledgeBuiltinFieldKey,
+  type KnowledgeCustomFieldType,
+  type KnowledgeFieldDefRow,
+  type KnowledgeFieldOverrideRow,
+  type KnowledgeFieldView,
+} from "./knowledge-fields.js";
 import { KNOWLEDGE_PENDING_ID_PREFIX } from "./knowledge-html.js";
 import { knowledgePairs, knowledgeRefsIn, normalizeKnowledgeRefs, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite, type KnowledgeBlockShape } from "./knowledge-rewrite.js";
 
@@ -26,13 +35,15 @@ describe("alignInlineText", () => {
 describe("knowledgePairs and resolveKnowledgeForWrite", () => {
   const resolve = (before: KnowledgeBlockShape[], after: KnowledgeBlockShape[], keep = true, taken: string[] = []) => resolveKnowledgeForWrite({ before, after, keep, taken: new Set(taken) });
 
-  it("a heading with the same level and text and no comment gets the old seven props, id included, when keep is true; nothing when keep is false", () => {
-    const old = H(2, "A", { ...K("k_00000001", { knowledgeConclusion: "c", knowledgeEvidence: "tested", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified", knowledgeSupersededBy: "k_00000002" }) });
+  it("a heading with the same level and text and no comment gets every old knowledge prop, id included, when keep is true; nothing when keep is false", () => {
+    const custom = '{"team":"core"}';
+    const old = H(2, "A", { ...K("k_00000001", { knowledgeConclusion: "c", knowledgeEvidence: "tested", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified", knowledgeSupersededBy: "k_00000002", knowledgeCustom: custom }) });
     const before = [P("intro"), old, P("x")];
     const after = [P("intro"), H(2, "A"), P("x2")];
     const kept = resolve(before, after);
     expect(KNOWLEDGE_PROP_NAMES_OF(kept.blocks[1]!)).toEqual({
       knowledgeId: "k_00000001", knowledgeWhen: "alice reads this", knowledgeConclusion: "c", knowledgeEvidence: "tested", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified", knowledgeSupersededBy: "k_00000002",
+      knowledgeCustom: custom,
     });
     expect(kept.kept).toEqual([{ id: "k_00000001", heading: "A" }]);
     expect(kept.created).toEqual([]);
@@ -212,7 +223,7 @@ function KNOWLEDGE_PROP_NAMES_OF(b: KnowledgeBlockShape): Record<string, unknown
 }
 
 describe("sanitizeKnowledgeForWrite", () => {
-  const info = (over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({ id: "k_00000001", when: "w", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", ...over });
+  const info = (over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({ id: "k_00000001", when: "w", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", custom: {}, ...over });
   const viewWith = (enabled: Partial<Record<KnowledgeBuiltinFieldKey, boolean>>, hiddenOptions: string[] = []): KnowledgeFieldView =>
     resolveKnowledgeFieldView({
       defs: [],
@@ -416,6 +427,168 @@ describe("sanitizeKnowledgeForWrite", () => {
     const r = run(blocks);
     expect(propsOf(blocks[0]!).knowledgeEvidence).toBe("guess");
     expect(propsOf(r.blocks[0]!).knowledgeEvidence).toBe("");
+  });
+});
+
+describe("sanitizeKnowledgeForWrite custom values", () => {
+  const info = (custom: Record<string, string>, over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({
+    id: "k_00000001", when: "w", conclusion: "", evidence: "", verified: "", status: "unverified", supersededBy: "", custom, ...over,
+  });
+  const def = (key: string, type: KnowledgeCustomFieldType, createdAt: string): KnowledgeFieldDefRow => ({ kind: "field", fieldRef: `x-${key}`, key, type, createdAt });
+  const option = (field: string, key: string): KnowledgeFieldDefRow => ({ kind: "option", fieldRef: `x-${field}`, key, type: null, createdAt: "2026-01-01" });
+  const off = (fieldRef: `x-${string}`, optionKey = ""): KnowledgeFieldOverrideRow => ({ fieldRef, optionKey, enabled: false, name: null, position: null });
+  const view = resolveKnowledgeFieldView({
+    defs: [
+      def("team", "text", "2026-01-01"),
+      def("hidden", "text", "2026-01-02"),
+      def("date", "date", "2026-01-03"),
+      def("owner", "member", "2026-01-04"),
+      def("doc", "link", "2026-01-05"),
+      def("area", "select", "2026-01-06"),
+      option("area", "web"),
+      option("area", "core"),
+      option("area", "old"),
+    ],
+    site: [off("x-hidden"), off("x-area", "old")],
+  });
+  const written = (values: Record<string, string>, extra: Record<string, unknown> = {}) => ({
+    knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeStatus: "needs-verify", knowledgeCustom: JSON.stringify(values), ...extra,
+  });
+  const run = (props: Record<string, unknown>, current: KnowledgeInfo[] = [], members?: KnowledgeMemberMaps, fields: KnowledgeFieldView = view) => {
+    const r = sanitizeKnowledgeForWrite({ after: [H(2, "Alpha", props)], current: new Map(current.map(i => [i.id, i])), noteId: NOTE, fields, members });
+    return { ...r, props: propsOf(r.blocks[0]!) };
+  };
+  const stored = (r: { props: Record<string, unknown> }) => JSON.parse(r.props.knowledgeCustom as string) as Record<string, string>;
+
+  it("custom values are checked per key and stored values of hidden or unknown fields stay", () => {
+    const r = run(written({ team: "new", hidden: "other", nope: "z", date: "2026-02-30" }), [info({ gone: "keep", hidden: "h", team: "old" })]);
+    expect(r.problem).toBeNull();
+    expect(stored(r)).toEqual({ gone: "keep", hidden: "h", team: "new" });
+    expect(r.props.knowledgeCustom).toBe('{"gone":"keep","hidden":"h","team":"new"}');
+    expect(r.ignored).toEqual([
+      { heading: "Alpha", key: "x-hidden", value: "other", reason: "field_disabled" },
+      { heading: "Alpha", key: "x-date", value: "2026-02-30", reason: "bad_date" },
+      { heading: "Alpha", key: "x-nope", value: "z", reason: "unknown_field" },
+    ]);
+  });
+
+  it("a turned-on field left out is cleared, and nothing is left stores the empty string", () => {
+    const r = run(written({}), [info({ team: "old", date: "2026-01-02" })]);
+    expect(r.props.knowledgeCustom).toBe("");
+    expect(r.ignored).toEqual([]);
+  });
+
+  it("new knowledge stores only accepted values", () => {
+    const r = run(written({ team: "core", area: "web", doc: "https://example.com/a", date: "2026-01-02", hidden: "x" }));
+    expect(stored(r)).toEqual({ team: "core", area: "web", doc: "https://example.com/a", date: "2026-01-02" });
+    expect(r.ignored).toEqual([{ heading: "Alpha", key: "x-hidden", value: "x", reason: "field_disabled" }]);
+  });
+
+  it("a choice must be a turned-on option of that field, but a stored hidden one is written back silently", () => {
+    expect(run(written({ area: "old" })).ignored).toEqual([{ heading: "Alpha", key: "x-area", value: "old", reason: "not_an_option" }]);
+    expect(run(written({ area: "nope" })).ignored).toMatchObject([{ reason: "not_an_option" }]);
+    const kept = run(written({ area: "old", team: "changed" }), [info({ area: "old" })]);
+    expect(stored(kept)).toEqual({ area: "old", team: "changed" });
+    expect(kept.ignored).toEqual([]);
+  });
+
+  it("text with a line break or over 300 code points keeps the stored value", () => {
+    const r = run(written({ team: "a\nb" }), [info({ team: "old" })]);
+    expect(stored(r)).toEqual({ team: "old" });
+    expect(r.ignored).toMatchObject([{ key: "x-team", reason: "line_break" }]);
+    expect(run(written({ team: "測".repeat(300) })).ignored).toEqual([]);
+    expect(run(written({ team: `${"測".repeat(300)}😀` })).ignored).toMatchObject([{ key: "x-team", reason: "too_long" }]);
+  });
+
+  it("a link with another scheme is ignored", () => {
+    for (const bad of ["javascript:alert(1)", "//evil.example", "mailto:a@b", `https://example.com/${"a".repeat(2048)}`]) {
+      expect(run(written({ doc: bad })).ignored, bad).toEqual([{ heading: "Alpha", key: "x-doc", value: bad, reason: "bad_link" }]);
+    }
+    expect(run(written({ doc: "/n/alice/x" })).ignored).toEqual([]);
+  });
+
+  it("a member written as the stored member's handle stays without resolving, others resolve only through the map", () => {
+    const current = [info({ owner: "u-dave" })];
+    const handleOf = new Map([["u-dave", "dave"]]);
+    const same = run(written({ owner: "dave", team: "t" }), current, { handleOf, idOf: new Map() });
+    expect(stored(same)).toEqual({ owner: "u-dave", team: "t" });
+    expect(same.ignored).toEqual([]);
+    const carol = run(written({ owner: "carol" }), current, { handleOf, idOf: new Map() });
+    expect(stored(carol)).toEqual({ owner: "u-dave" });
+    expect(carol.ignored).toEqual([{ heading: "Alpha", key: "x-owner", value: "carol", reason: "unresolved_member" }]);
+    expect(run(written({ owner: "user:u-erin" }), current, { handleOf, idOf: new Map() }).ignored).toMatchObject([{ reason: "unresolved_member" }]);
+    const resolved = run(written({ owner: "Carol" }), current, { handleOf, idOf: new Map([["carol", "u-carol"]]) });
+    expect(stored(resolved)).toEqual({ owner: "u-carol" });
+    expect(resolved.ignored).toEqual([]);
+  });
+
+  it("without member maps the stored member is still written back by user:<id> or by its id; anything else is unresolved", () => {
+    const current = [info({ owner: "u-dave" })];
+    expect(run(written({ owner: "user:u-dave" }), current).ignored).toEqual([]);
+    expect(stored(run(written({ owner: "user:u-dave", team: "t" }), current))).toEqual({ owner: "u-dave", team: "t" });
+    expect(run(written({ owner: "u-dave" }), current).ignored).toEqual([]);
+    expect(run(written({ owner: "dave" }), current).ignored).toMatchObject([{ reason: "unresolved_member" }]);
+  });
+
+  it("the stored member written back as user:<id> stays even when its handle is known, also on the stored-as-is path", () => {
+    const members = { handleOf: new Map([["u-dave", "dave"]]), idOf: new Map<string, string>() };
+    const r = run(written({ owner: "user:u-dave", team: "t" }), [info({ owner: "u-dave" })], members);
+    expect(r.ignored).toEqual([]);
+    expect(stored(r)).toEqual({ owner: "u-dave", team: "t" });
+    const legacy = sanitizeKnowledgeForWrite({
+      after: [H(2, "Alpha", { ...written({ owner: "user:u-dave" }), knowledgeId: "K_bad" })],
+      current: new Map([["K_bad", info({ owner: "u-dave" }, { id: "K_bad" })]]),
+      noteId: NOTE,
+      fields: view,
+      members,
+    });
+    expect(legacy.problem).toBeNull();
+    expect(legacy.ignored).toEqual([]);
+  });
+
+  it("a heading kept without a comment keeps its custom string byte for byte", () => {
+    const raw = '{"team":"old","gone":"keep"}';
+    const current = [info({ team: "old", gone: "keep" })];
+    const r = run({ knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeStatus: "unverified", knowledgeCustom: raw }, current);
+    expect(r.props.knowledgeCustom).toBe(raw);
+    expect(r.ignored).toEqual([]);
+    const changed = run({ knowledgeId: "k_00000001", knowledgeWhen: "changed", knowledgeStatus: "unverified", knowledgeCustom: raw }, current);
+    expect(changed.props).toMatchObject({ knowledgeWhen: "changed", knowledgeCustom: raw });
+  });
+
+  it("a write without the custom prop leaves it out when nothing is stored, and restores stored values otherwise", () => {
+    const r = run({ knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeStatus: "unverified" }, [info({})]);
+    expect("knowledgeCustom" in r.props).toBe(false);
+    const hidden = run({ knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeStatus: "unverified" }, [info({ hidden: "h", team: "t" })]);
+    expect(stored(hidden)).toEqual({ hidden: "h" });
+  });
+
+  it("stored as is: a heading whose custom values read as stored skips the id check, a changed one does not", () => {
+    const legacy = (props: Record<string, unknown>, custom: Record<string, string>) =>
+      sanitizeKnowledgeForWrite({ after: [H(2, "Alpha", { ...props, knowledgeId: "K_bad" })], current: new Map([["K_bad", info(custom, { id: "K_bad" })]]), noteId: NOTE, fields: view });
+    expect(legacy(written({ team: "t", hidden: "changed" }), { team: "t", hidden: "h" }).problem).toBeNull();
+    expect(legacy(written({ team: "other" }), { team: "t" }).problem).toMatchObject({ problem: "bad_id" });
+  });
+
+  it("collab garbage in the written prop reads as no values", () => {
+    for (const bad of [["x"], 5, "not json", '{"Team":"x"}']) {
+      const r = run({ ...written({}), knowledgeCustom: bad }, [info({ team: "t" })]);
+      expect(r.props.knowledgeCustom, String(bad)).toBe("");
+    }
+    const noted = run({ ...written({}), knowledgeCustom: ["x"] }, [info({})]);
+    expect(noted.props.knowledgeCustom).toBe("");
+  });
+
+  it("new values that would grow the JSON past its limit are ignored in field order", () => {
+    const linkView = resolveKnowledgeFieldView({ defs: Array.from({ length: 40 }, (_, i) => def(`l${String(i).padStart(2, "0")}`, "link", `2026-01-${String(i + 1).padStart(2, "0")}`)), site: [] });
+    const values = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`l${String(i).padStart(2, "0")}`, `https://example.com/${"a".repeat(2000)}`]));
+    const r = run(written(values), [], undefined, linkView);
+    const kept = stored(r);
+    expect((r.props.knowledgeCustom as string).length).toBeLessThanOrEqual(KNOWLEDGE_CUSTOM_JSON_MAX);
+    expect(Object.keys(kept).length).toBeGreaterThan(30);
+    expect(r.ignored.length).toBe(40 - Object.keys(kept).length);
+    expect(r.ignored.every(i => i.reason === "too_long")).toBe(true);
+    expect(r.ignored[0]!.key).toBe(`x-l${Object.keys(kept).length}`);
   });
 });
 

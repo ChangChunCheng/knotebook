@@ -427,7 +427,7 @@ Deleting a note moves it to the trash, where it can be restored or permanently d
 
 ## Knowledge fields
 
-Which knowledge info fields headings carry is a site setting: site admins turn the built-in fields on and off and edit the options of **Basis** in **Site admin → Knowledge fields** (or with `GET` and `PUT /api/admin/knowledge-fields`, see [the API reference](api.md)). Every space, personal and group alike, uses the site's settings. With nothing saved, all five built-in fields are on and **Basis** has **Tested**, **Documentation** and **Inferred**; only differences from that are stored, in the `knowledge_field_defs` and `knowledge_field_overrides` tables. Turning a field off hides it and keeps its values in the notes. What each setting does is in [Knowledge info](./knowledge.md#choosing-the-fields).
+Which knowledge info fields headings carry is a site setting: site admins turn the built-in fields on and off, edit the options of **Basis** and add custom fields in **Site admin → Knowledge fields** (or with `GET` and `PUT /api/admin/knowledge-fields`, see [the API reference](api.md)). Every space, personal and group alike, uses the site's settings. With nothing saved, all five built-in fields are on, **Basis** has **Tested**, **Documentation** and **Inferred**, and there are no custom fields; only differences from that are stored, in the `knowledge_field_defs` and `knowledge_field_overrides` tables. Up to 20 custom fields can be on and 100 can exist; they can't be deleted, so their keys are never reused. Turning a field off hides it and keeps its values in the notes. The values of custom fields are stored in the notes, with the rest of the knowledge info, and copied into the knowledge index's `custom` column. What each setting does is in [Knowledge info](./knowledge.md#choosing-the-fields).
 
 ## Content Security Policy
 
@@ -573,27 +573,29 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
 
 **Knowledge index (migration 0045).** The migration only adds two tables, `note_knowledge` and `note_knowledge_state`, and changes no existing row; back up as usual before upgrading. The first start after upgrading builds the index for existing notes in the background, after the server is already answering requests; the `app` log shows `knowledge index backfill started` and `knowledge index backfill finished`. Rolling back is harmless: an older server ignores the two tables, and after you upgrade again the background run redoes the notes that were edited while the older server ran.
 
-**Knowledge fields (migrations 0047 and 0048).**
+**Knowledge fields (migrations 0047, 0048 and 0049).**
 
 1. **Migration 0047 only widens two checks on `note_knowledge`**: `nk_status_chk` also accepts `verified`, and `nk_evidence_chk` accepts any option key (lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters) as well as an empty value. It changes no row. Back up the database first as usual.
-2. **Migration 0048 only adds two tables**, `knowledge_field_defs` (the basis options an admin added) and `knowledge_field_overrides` (what differs from the default settings: fields turned off, options renamed, hidden or moved). It fills nothing in and changes no existing row; with no rows, the settings are the defaults (see [Knowledge fields](#knowledge-fields)).
-3. **Nothing in the notes is rewritten.** The new statuses are worked out when a note is read: knowledge saved without a status reads as verified when it has a last verified date and as needs review when it doesn't. The knowledge index is built again in the background, note by note, after the first start; until a note is done, its rows read the same way.
-4. **Rolling back:** if anyone saved knowledge info after the upgrade — in the form, with **Mark as verified**, through MCP, the API or a file sent back, or with an AI action in the editor — or an admin changed the knowledge field settings, restore the database dump taken before the upgrade instead of only switching back to the previous image. The previous image does start on the upgraded database, because both migrations only widen and add, but it then gets these wrong:
+2. **Migration 0048 only adds two tables**, `knowledge_field_defs` (the custom fields and the options an admin added) and `knowledge_field_overrides` (what differs from the default settings: fields turned off, options renamed, hidden or moved, and the names and order of custom fields). It fills nothing in and changes no existing row; with no rows, the settings are the defaults (see [Knowledge fields](#knowledge-fields)).
+3. **Migration 0049 only adds one nullable column**, `note_knowledge.custom`, which holds the custom field values in the knowledge index, and changes no row.
+4. **Nothing in the notes is rewritten.** The new statuses are worked out when a note is read: knowledge saved without a status reads as verified when it has a last verified date and as needs review when it doesn't. The knowledge index is built again in the background, note by note, after the first start; until a note is done, its rows read the same way.
+5. **Rolling back:** if anyone saved knowledge info after the upgrade — in the form, with **Mark as verified**, through MCP, the API or a file sent back, or with an AI action in the editor — or an admin changed the knowledge field settings, restore the database dump taken before the upgrade instead of only switching back to the previous image. The previous image does start on the upgraded database, because the migrations only widen and add, but it then gets these wrong:
    - knowledge marked **Verified** reads as current there: with a last verified date it still shows a green check, without one a gray *i*; a basis option added by an admin reads as **Unconfirmed**;
    - an MCP `replace_section` or `replace_all`, or an AI rewrite in the editor, over a part that holds such knowledge is refused with `bad_status` or `bad_evidence`, even when it doesn't touch the knowledge;
    - outdated knowledge with no replacement, and knowledge with only a status, fall under its older rules (`superseded_required`, `empty`): changing them through MCP is refused, and saving them in the form is blocked;
-   - the field settings aren't read: every field is shown, and options an admin renamed or hid are back to their defaults;
+   - the field settings aren't read: every built-in field is shown, options an admin renamed or hid are back to their defaults, and custom fields aren't shown;
+   - custom field values aren't shown, and a heading that is changed there, by a person or an agent, can lose them, because that version has no place for them; headings left alone keep them;
    - the knowledge index is rebuilt by its own background run, with its own reading of each note.
 
-   The two tables and the wider checks stay; after upgrading again the settings saved before apply again.
+   The two tables, the `custom` column and the wider checks stay; after upgrading again the settings saved before apply again.
 
 **Upgrading to v0.19 (configurable knowledge fields).**
 
-1. **Back up the database first.** Migrations 0047 and 0048 run automatically when the new server starts; they widen two checks and add two tables, and change no existing value (see **Knowledge fields** above). Keep the dump: rolling back needs it once anyone has saved knowledge info on the new version.
-2. **Reload open tabs**, so they read the new statuses.
+1. **Back up the database first.** Migrations 0047–0049 run automatically when the new server starts; they widen two checks and add two tables and a nullable column, and change no existing value (see **Knowledge fields** above). Keep the dump: rolling back needs it once anyone has saved knowledge info on the new version.
+2. **Reload open tabs.** A note left open from before the upgrade shows **Reload required** in its header, because headings gained a property for custom field values; changes in it that hadn't synced are lost.
 3. **Restart your MCP clients.** The descriptions and output schemas of the tools changed: `read_note_outline` and `create_note` now return `knowledgeFields`, and replies can list ignored knowledge lines.
-4. **Scripts that read or write knowledge comments:** every comment now has a `status` line, `status` takes `verified`, `needs-verify` and `obsolete` (the older `unverified` and `outdated` are still read), and a line whose value doesn't fit is left out and listed under `knowledge.ignored` instead of refusing the write (see [AI editing](ai-editing.md#knowledge-info) and the [CHANGELOG](../CHANGELOG.md)).
-5. **Rolling back** to v0.18.0: read item 4 of **Knowledge fields** above.
+4. **Scripts that read or write knowledge comments:** a custom field is an `x-<key>:` line, every comment now has a `status` line, `status` takes `verified`, `needs-verify` and `obsolete` (the older `unverified` and `outdated` are still read), and a line whose value doesn't fit is left out and listed under `knowledge.ignored` instead of refusing the write (see [AI editing](ai-editing.md#knowledge-info) and the [CHANGELOG](../CHANGELOG.md)).
+5. **Rolling back** to v0.18.0: read item 5 of **Knowledge fields** above.
 
 **Upgrading to v0.18 (faster search, tags, knowledge info and its index).**
 

@@ -133,7 +133,7 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     expect(r2 !== "too_complex" && "ok" in r2 && r2.ok === true, JSON.stringify(r2)).toBe(true);
   });
 
-  it("a heading created under the new schema stores the seven knowledge attributes as empty strings", async () => {
+  it("a heading created under the new schema stores every knowledge attribute as an empty string", async () => {
     const doc = new Y.Doc();
     const s = await EditorSession.open(rt, doc);
     try {
@@ -144,7 +144,7 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     const [h] = headingElements(doc);
     const attrs = h!.getAttributes();
     for (const name of KNOWLEDGE_PROP_NAMES) expect(attrs[name], name).toBe("");
-    expect(KNOWLEDGE_PROP_NAMES).toHaveLength(7);
+    expect(KNOWLEDGE_PROP_NAMES).toHaveLength(8);
   });
 
   it("replace_all with markdown that parses to the same content keeps every block id and every block fingerprint", async () => {
@@ -185,6 +185,31 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     });
     const now = measure(doc);
     expect(now.headingAttrs.hA).toEqual(expect.arrayContaining([...KNOWLEDGE_PROP_NAMES]));
+    const d = diffSnap(base, now);
+    expect(d.sectionsChanged).toEqual([]);
+    expect(d.perBlockChanged).toEqual([]);
+    expect(d.sameCanonChanged).toEqual([]);
+    expect(d.wholeChanged).toBe(false);
+    expect(d.versionChanged).toBe(false);
+  });
+
+  it("adding the knowledgeCustom prop leaves untouched headings' fingerprints unchanged", () => {
+    const filled = buildPreUpgradeDoc(preUpgradeBlocks());
+    filled.transact(() => {
+      for (const h of headingElements(filled)) {
+        h.setAttribute("knowledgeId", "k_0000000a");
+        h.setAttribute("knowledgeWhen", "alice reads this");
+        h.setAttribute("knowledgeStatus", "verified");
+      }
+    });
+    const base = measure(filled);
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(filled));
+    doc.transact(() => {
+      for (const h of headingElements(doc)) h.setAttribute("knowledgeCustom", "");
+    });
+    const now = measure(doc);
+    expect(now.headingAttrs.hA).toContain("knowledgeCustom");
     const d = diffSnap(base, now);
     expect(d.sectionsChanged).toEqual([]);
     expect(d.perBlockChanged).toEqual([]);

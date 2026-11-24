@@ -36,7 +36,7 @@ import { applyEdit, mergeAtBase, recordableAfter, StaleBase, updateNoteLinks, ty
 import { DOC_TOO_COMPLEX, type AskFn, type SyncApplyDocResult } from "./doc-jobs.js";
 import { applyVersionEdit, type ApplyVersionFailureCode, type ApplyVersionInput } from "./apply-version.js";
 import { visibleNoteTargets, type VisibleNoteTarget } from "./candidates.js";
-import { loadNoteState, titlesAsk } from "./read.js";
+import { docAsk, loadNoteState } from "./read.js";
 import { siteOriginOf, type ParseDetail, type ParsedMarkdown, type ParseError } from "./markdown.js";
 import { isEmptyKnowledgeReport, type KnowledgeWriteReport } from "./knowledge-write.js";
 import { ParserBusyError, type ParseOutcome } from "./parse-core.js";
@@ -439,11 +439,11 @@ export class NoteWriteService {
     let fields: KnowledgeFieldView | null = null;
     let zeroRegion = false;
     let bodyChecked = tagsOnly;
-    // The worker's two questions are answered here; the write quota is charged before parsing (a 400 parse failure still counts, like `edit_note` charging first) and not again on retries.
-    const titles = titlesAsk(db, input.userId);
+    // The worker's questions are answered here; the write quota is charged before parsing (a 400 parse failure still counts, like `edit_note` charging first) and not again on retries.
+    const lookup = docAsk(db, input.userId);
     let rateLimited = false;
     const ask: AskFn = async q => {
-      if (q.kind === "titles") return titles(q);
+      if (q.kind !== "charge") return lookup(q);
       if (charged) return true;
       chargeTicket = input.limiters.transferWrite.consumeTicket(input.userId);
       if (chargeTicket === null) {
@@ -488,7 +488,7 @@ export class NoteWriteService {
           zeroRegion = true;
           break;
         }
-        const a = await editing.runDoc(input.userId, { kind: "syncApply", state, plan: r.plan, normalizedId: r.normalizedId, noteId: input.noteId, fields }, { extraWeight: input.body.length });
+        const a = await editing.runDoc(input.userId, { kind: "syncApply", state, plan: r.plan, normalizedId: r.normalizedId, noteId: input.noteId, fields }, { ask: lookup, extraWeight: input.body.length });
         if (a === DOC_TOO_COMPLEX) return { ok: false, kind: "note_too_complex" };
         if ("kind" in a) return { ok: false, kind: "parse", code: "invalid_knowledge", knowledge: a.knowledge };
         if (hooks?.beforeMerge) await hooks.beforeMerge();

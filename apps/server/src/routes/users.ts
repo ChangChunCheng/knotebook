@@ -9,6 +9,7 @@ import {
 } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
 import { escapeLike } from "../db/like.js";
+import { knownUserIdsSql } from "../knowledge/members.js";
 import { readAvatarRefs } from "../avatars/read.js";
 import { sendError } from "../http/errors.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
@@ -40,18 +41,7 @@ export function usersRoutes(deps: UsersRouteDeps) {
       const prefix = `${escaped}%`;
       // lower() on both sides so JS and PG case rules can't disagree.
       const res = await deps.db.execute<{ id: string; email: string; display_name: string }>(sql`
-        with known as (
-          select other.user_id as id
-            from group_members mine
-            join group_members other on other.group_id = mine.group_id
-           where mine.user_id = ${me}
-          union
-          select ns.user_id as id
-            from notes n
-            join note_shares ns on ns.note_id = n.id
-           where n.owner_id = ${me}
-             and n.deleted_at is null
-        )
+        with known as (${knownUserIdsSql(me)})
         select u.id, u.email, u.display_name
           from known k
           join users u on u.id = k.id
