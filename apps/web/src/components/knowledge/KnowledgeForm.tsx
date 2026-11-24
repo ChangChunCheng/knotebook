@@ -1,7 +1,16 @@
-import { useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { KNOWLEDGE_STATES, knowledgeField, readKnowledgeInfo, type KnowledgeDraft, type KnowledgeEntry, type KnowledgeState } from "@knotebook/shared";
+import {
+  KNOWLEDGE_CUSTOM_TEXT_MAX,
+  KNOWLEDGE_STATES,
+  knowledgeField,
+  knowledgeTextLength,
+  readKnowledgeInfo,
+  type KnowledgeDraft,
+  type KnowledgeEntry,
+  type KnowledgeState,
+} from "@knotebook/shared";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,7 +19,27 @@ import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { isKnowledgeEligible, removeKnowledge, saveKnowledge, todayLocalDate } from "./commands";
 import { KnowledgeFieldsContext, knowledgeStatusOnlyView } from "./fields-context";
-import { draftForSave, draftOf, evidenceLabel, fieldOfError, isDraftFieldEnabled, singleLine, tooLongLength, type DraftField, type FormField } from "./form-state";
+import {
+  customFieldName,
+  customKeyOf,
+  customValueOf,
+  draftForSave,
+  draftOf,
+  evidenceLabel,
+  fieldOfError,
+  isDraftFieldEnabled,
+  optionLabel,
+  shownCustomFields,
+  singleLine,
+  storedCustomValue,
+  tooLongLength,
+  withCustomValue,
+  type CustomDraftError,
+  type CustomField,
+  type DraftField,
+  type FormField,
+} from "./form-state";
+import { MemberPicker } from "./MemberPicker";
 import { KnowledgeRefSourceContext, localKnowledgeRefSource } from "./ref-source";
 import { SupersedePicker } from "./SupersedePicker";
 
@@ -53,6 +82,10 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
     setTouched((s) => new Set(s).add(field));
     setFailure((f) => (f && (f.field === field || f.field === "form") ? null : f));
   };
+  const editCustom = (field: CustomField, value: string) => {
+    setDraft((d) => ({ ...d, custom: withCustomValue(d.custom, customKeyOf(field), value) }));
+    setFailure((f) => (f && (f.field === field.key || f.field === "form") ? null : f));
+  };
   const pickState = (value: KnowledgeState) => {
     if (value === "verified" && draft.state !== "verified" && on("verified")) edit("verified", todayLocalDate());
     edit("state", value);
@@ -78,6 +111,16 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
   const localSource = useMemo(() => localKnowledgeRefSource(getEntries, noteId, view), [getEntries, noteId, view]);
   const remoteSource = useContext(KnowledgeRefSourceContext);
 
+  const customFields = shownCustomFields(view);
+  const customInputs = useRef(new Map<string, HTMLInputElement>());
+  const customMessage = (field: CustomField, error: CustomDraftError): string => {
+    if (error === "tooLong") {
+      const n = knowledgeTextLength(storedCustomValue(field, customValueOf(draft.custom, customKeyOf(field))));
+      return t("knowledge.form.error.tooLong", { max: KNOWLEDGE_CUSTOM_TEXT_MAX, n });
+    }
+    return t(error === "linkInvalid" ? "knowledge.form.error.linkInvalid" : "knowledge.form.error.verifiedInvalid");
+  };
+
   const messageOf = (field: FormField, error: string): string => {
     if (error === "whenTooLong" || error === "conclusionTooLong") {
       const over = tooLongLength(error === "whenTooLong" ? "when" : "conclusion", draft, new Set(touched).add(field as keyof KnowledgeDraft));
@@ -94,6 +137,14 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
       dateRef.current.focus();
       return;
     }
+    for (const field of customFields) {
+      const input = customInputs.current.get(field.key);
+      if (field.type === "date" && input?.validity.badInput) {
+        setFailure({ field: field.key, message: t("knowledge.form.error.verifiedIncomplete") });
+        input.focus();
+        return;
+      }
+    }
     const result = saveKnowledge(editor, blockId, base, draftForSave(draft), noteId, view, touched);
     if (result.ok) {
       close();
@@ -101,6 +152,12 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
     }
     if (result.reason === "notEligible") {
       gone();
+      return;
+    }
+    if (result.reason === "customInvalid") {
+      const field = customFields.find((f) => f.key === result.field);
+      setFailure({ field: result.field, message: field ? customMessage(field, result.error) : "" });
+      document.getElementById(id(result.field))?.focus();
       return;
     }
     const field = fieldOfError(result.reason);
@@ -291,6 +348,47 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
           {statusError.message && <p id={statusError.describedBy} className={ERROR_TEXT}>{statusError.message}</p>}
         </div>
       )}
+
+      {customFields.map((field) => {
+        const key = customKeyOf(field);
+        const value = customValueOf(draft.custom, key);
+        const e = errorProps(field.key);
+        const labelId = id(`${field.key}-label`);
+        let control: ReactNode;
+        if (field.type === "select") {
+          const options = ["", ...(field.options ?? []).filter((o) => o.enabled).map((o) => o.key)].map((v) => ({ value: v, label: optionLabel(view, field.key, v, t) }));
+          if (!options.some((o) => o.value === value)) options.push({ value, label: optionLabel(view, field.key, value, t) });
+          control = <Select id={id(field.key)} variant="field" className="w-full" aria-labelledby={labelId} value={value} options={options} onValueChange={(v) => editCustom(field, v)} />;
+        } else if (field.type === "member") {
+          control = <MemberPicker id={id(field.key)} labelledBy={labelId} describedBy={e.describedBy} invalid={e.invalid} value={value} noteId={noteId} onChange={(v) => editCustom(field, v)} />;
+        } else {
+          control = (
+            <Input
+              id={id(field.key)}
+              ref={(el) => {
+                if (el) customInputs.current.set(field.key, el);
+                else customInputs.current.delete(field.key);
+              }}
+              type={field.type === "date" ? "date" : "text"}
+              inputMode={field.type === "link" ? "url" : undefined}
+              className={cn(field.type === "date" && "dark:[color-scheme:dark]")}
+              value={field.type === "date" ? value : singleLine(value)}
+              aria-invalid={e.invalid || undefined}
+              aria-describedby={e.describedBy}
+              onChange={(ev) => editCustom(field, ev.target.value)}
+            />
+          );
+        }
+        return (
+          <div key={field.key} className="mt-2" data-kb-custom-field={field.type}>
+            <label id={labelId} htmlFor={id(field.key)} className={cn(FIELD_LABEL, "mb-0.5 block")}>
+              {customFieldName(field)}
+            </label>
+            {control}
+            {e.message && <p id={e.describedBy} className={ERROR_TEXT}>{e.message}</p>}
+          </div>
+        );
+      })}
 
       {failure?.field === "form" && (
         <p role="alert" className={ERROR_TEXT}>

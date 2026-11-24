@@ -56,8 +56,15 @@
         "verifiedIncomplete": "請輸入完整的日期。",
         "supersededInvalid": "請從清單中選擇知識。",
         "supersededSelf": "不能選這條自己。",
-        "notEligible": "這個標題已不存在，或不能設知識資訊。"
+        "notEligible": "這個標題已不存在，或不能設知識資訊。",
+        "linkInvalid": "請輸入 http:// 或 https:// 開頭的連結，或本站的路徑。"
       }
+    },
+    "member": {
+      "me": "我",
+      "unknown": "未知成員",
+      "clear": "清除",
+      "placeholder": "搜尋成員"
     },
     "picker": {
       "placeholder": "搜尋知識",

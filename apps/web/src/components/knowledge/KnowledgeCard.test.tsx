@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
 import i18n from "@/i18n";
 import "@/i18n/knowledge-strings";
 import { KnowledgeCard, type KnowledgeCardProps } from "./KnowledgeCard";
 import type { KnowledgeFieldsValue } from "./fields-context";
-import { fieldView, knowledgeEntries, withFields, type KnowledgeFixture } from "./test-support";
+import { customFieldView, fieldView, knowledgeEntries, withFields, type KnowledgeFixture } from "./test-support";
 
 function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }, fields?: Partial<KnowledgeFieldsValue>) {
   const props: KnowledgeCardProps = {
@@ -239,5 +241,107 @@ describe("KnowledgeCard", () => {
     expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["何時讀", "結論", "依據", "最後驗證日"]);
     expect(container.textContent).toContain("待驗證・建議重新確認");
     await i18n.changeLanguage("en");
+  });
+});
+
+describe("KnowledgeCard custom fields", () => {
+  const NOTE = "11111111-2222-3333-4444-555555555555";
+  const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+  const GONE = "aaaaaaaa-0000-4000-8000-000000000009";
+  const CUSTOM = customFieldView([
+    { key: "team", type: "text", name: "Team" },
+    { key: "stage", type: "select", name: "Stage", options: [{ key: "draft", name: "Draft" }, { key: "old", name: "Old", enabled: false }] },
+    { key: "due", type: "date", name: "Due" },
+    { key: "docs", type: "link", name: "Docs" },
+    { key: "owner", type: "member", name: "Owner" },
+    { key: "hidden", type: "text", name: "Hidden", enabled: false },
+  ]);
+  const lookups: unknown[] = [];
+
+  beforeEach(() => {
+    lookups.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { ids?: string[] };
+        lookups.push(body);
+        const byId = (body.ids ?? []).filter((id) => id === ALICE).map((id) => ({ id, handle: "alice", displayName: "Alice Liddell" }));
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ byId, byToken: [] }) } as unknown as Response);
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function Location() {
+    return <output data-testid="location">{useLocation().pathname}</output>;
+  }
+
+  function customCard(custom: Record<string, string> | string, memberNoteId: string | null = NOTE) {
+    const knowledgeCustom = typeof custom === "string" ? custom : JSON.stringify(custom);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <MemoryRouter initialEntries={["/n/alice/start"]}>
+        <QueryClientProvider client={client}>
+          {withFields(<KnowledgeCard entry={one({ knowledgeCustom })} memberNoteId={memberNoteId} parent={null} outdatedAncestor={null} summary={null} replacement={null} variant="hover" canEdit={false} onEdit={vi.fn()} onJump={vi.fn()} />, { view: CUSTOM })}
+          <Location />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+  const rows = (root: HTMLElement) => [...root.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling!.textContent]);
+
+  it("enabled custom fields follow the built-in ones in settings order, empty ones read Not filled", () => {
+    const { container } = customCard({ hidden: "secret" });
+    expect(rows(container).slice(4)).toEqual([["Team", "Not filled"], ["Stage", "Not filled"], ["Due", "Not filled"], ["Docs", "Not filled"], ["Owner", "Not filled"]]);
+    expect(container.textContent).not.toContain("secret");
+  });
+
+  it("shows text, the option name, a turned-off option marked as such, and the date", () => {
+    const { container } = customCard({ team: "core", stage: "draft", due: "2026-03-04" });
+    expect(rows(container).slice(4, 7)).toEqual([["Team", "core"], ["Stage", "Draft"], ["Due", "2026-03-04"]]);
+    const hidden = customCard({ stage: "old" });
+    expect(rows(hidden.container)[5]).toEqual(["Stage", "Old (turned off)"]);
+  });
+
+  it("a safe link is a link, an outside one opens in a new tab, and a link with another scheme is shown as text", () => {
+    const outside = customCard({ docs: "https://example.com/a" });
+    const a = within(outside.container).getByRole("link", { name: "https://example.com/a" });
+    expect(a).toHaveAttribute("href", "https://example.com/a");
+    expect(a).toHaveAttribute("target", "_blank");
+    expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    outside.unmount();
+    const inside = customCard({ docs: "/n/alice/page" });
+    const own = within(inside.container).getByRole("link", { name: "/n/alice/page" });
+    expect(own).not.toHaveAttribute("target");
+    fireEvent.click(own);
+    expect(screen.getByTestId("location")).toHaveTextContent("/n/alice/page");
+    inside.unmount();
+    const unsafe = customCard({ docs: "javascript:alert(1)" });
+    expect(within(unsafe.container).queryByRole("link")).toBeNull();
+    expect(unsafe.container.textContent).toContain("javascript:alert(1)");
+  });
+
+  it("a member shows the name, and a member not found shows Unknown member", async () => {
+    const found = customCard({ owner: ALICE });
+    await waitFor(() => expect(rows(found.container)[8]).toEqual(["Owner", "Alice Liddell"]));
+    expect(lookups).toEqual([{ noteId: NOTE, ids: [ALICE] }]);
+    found.unmount();
+    const missing = customCard({ owner: GONE });
+    await waitFor(() => expect(rows(missing.container)[8]).toEqual(["Owner", "Unknown member"]));
+  });
+
+  it("without a note to look members up through, a member is left blank rather than called unknown", async () => {
+    const { container } = customCard({ owner: ALICE }, null);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(rows(container)[8]).toEqual(["Owner", ""]);
+    expect(lookups).toEqual([]);
+  });
+
+  it("broken custom data in the document doesn't break the card", () => {
+    for (const raw of ["not json", "[1,2]", '{"team":5,"BAD":"x"}', JSON.stringify({ team: "x".repeat(200_000) })]) {
+      const { container, unmount } = customCard(raw);
+      expect(rows(container)[4]![0]).toBe("Team");
+      unmount();
+    }
   });
 });

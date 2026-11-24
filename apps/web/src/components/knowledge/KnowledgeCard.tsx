@@ -1,12 +1,24 @@
 import { Fragment, useContext, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { isKnowledgeDate, knowledgeStateOf, type KnowledgeChildSummary, type KnowledgeEntry } from "@knotebook/shared";
+import { KNOWLEDGE_CUSTOM_LINK_MAX, isKnowledgeDate, knowledgeStateOf, safeKnowledgeHref, type KnowledgeChildSummary, type KnowledgeEntry } from "@knotebook/shared";
+import { Link } from "react-router";
+import { useKnowledgeMemberNames } from "@/api/knowledge-members";
 import { Button } from "@/components/ui/button";
 import { ROW_ICON_HIT_BORDERED } from "@/components/ui/hit-area";
 import { Pencil } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 import { KnowledgeFieldsContext } from "./fields-context";
-import { evidenceLabel, isDraftFieldEnabled, type DraftField } from "./form-state";
+import {
+  customFieldName,
+  customKeyOf,
+  customValueOf,
+  evidenceLabel,
+  isDraftFieldEnabled,
+  optionLabel,
+  shownCustomFields,
+  type CustomField,
+  type DraftField,
+} from "./form-state";
 
 export interface KnowledgeReplacementView {
   state: "found" | "otherNote" | "missing";
@@ -16,6 +28,8 @@ export interface KnowledgeReplacementView {
 
 export interface KnowledgeCardProps {
   entry: KnowledgeEntry;
+  /** The note whose access names the members in custom fields; without it member values stay blank. */
+  memberNoteId?: string | null;
   parent: KnowledgeEntry | null;
   outdatedAncestor: KnowledgeEntry | null;
   summary: KnowledgeChildSummary | null;
@@ -103,7 +117,56 @@ function Banners({ entry, outdatedAncestor, replacement, showDate, onJump }: Pic
   return null;
 }
 
-export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replacement, variant, canEdit, onEdit, onJump, footer }: KnowledgeCardProps): ReactNode {
+function CustomValue({ field, value, member }: { field: CustomField; value: string; member: string | undefined }): ReactNode {
+  const { t } = useTranslation();
+  const { view } = useContext(KnowledgeFieldsContext);
+  if (value === "") return t("knowledge.notFilled");
+  switch (field.type) {
+    case "select":
+      return optionLabel(view, field.key, value, t);
+    case "member":
+      return member;
+    case "link": {
+      // Collab content is never checked on the way in, so a link is followed only after this check.
+      const href = value.length <= KNOWLEDGE_CUSTOM_LINK_MAX ? safeKnowledgeHref(value) : null;
+      if (href === null) return value;
+      return href.startsWith("/") ? (
+        <Link to={href} className={cn(LINK_CLASS, "font-normal")}>
+          {value}
+        </Link>
+      ) : (
+        <a href={href} target="_blank" rel="noopener noreferrer" className={cn(LINK_CLASS, "font-normal")}>
+          {value}
+        </a>
+      );
+    }
+    default:
+      return value;
+  }
+}
+
+/** Only mounted when custom fields are shown: the member lookup needs a query client the built-in card doesn't. */
+function CustomRows({ fields, values, memberNoteId, divider }: { fields: CustomField[]; values: Readonly<Record<string, string>>; memberNoteId: string | null; divider: ReactNode }) {
+  const { t } = useTranslation();
+  const memberIds = fields.filter((f) => f.type === "member").map((f) => customValueOf(values, customKeyOf(f)));
+  const names = useKnowledgeMemberNames(memberNoteId, memberIds);
+  const memberName = (id: string) => names.get(id)?.displayName ?? (names.answered ? t("knowledge.member.unknown") : "");
+  return (
+    <>
+      {divider}
+      {fields.map((field) => {
+        const value = customValueOf(values, customKeyOf(field));
+        return (
+          <Field key={field.key} label={customFieldName(field)}>
+            <CustomValue field={field} value={value} member={field.type === "member" && value !== "" ? memberName(value) : undefined} />
+          </Field>
+        );
+      })}
+    </>
+  );
+}
+
+export function KnowledgeCard({ entry, memberNoteId = null, parent, outdatedAncestor, summary, replacement, variant, canEdit, onEdit, onJump, footer }: KnowledgeCardProps): ReactNode {
   const { t } = useTranslation();
   const { view, status } = useContext(KnowledgeFieldsContext);
   const sheet = variant === "sheet";
@@ -112,6 +175,8 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
   const on = (field: DraftField) => status !== "loading" && isDraftFieldEnabled(view, field);
   const valueOf = (field: Exclude<DraftField, "supersededBy">): string => (field === "evidence" ? evidenceLabel(view, info.evidence, t) : info[field] || notFilled);
   const groups = ([["when", "conclusion"], ["evidence"], ["verified"]] as const).map((g) => g.filter(on)).filter((g) => g.length > 0);
+  const customFields = status === "loading" ? [] : shownCustomFields(view);
+  const divider = <div role="presentation" className="col-span-2 my-1 border-t border-dashed border-border" />;
   const topRow = !sheet && (parent || canEdit);
   return (
     <div data-kb-knowledge-card={variant} className={cn("text-left text-popover-foreground", sheet ? "text-sm" : "text-[13px] leading-snug")}>
@@ -138,11 +203,11 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
       )}
       {/* The banner names the replacement and the date only while those fields are on: otherwise it would show values the settings hide. */}
       <Banners entry={entry} outdatedAncestor={outdatedAncestor} replacement={on("supersededBy") ? replacement : null} showDate={on("verified")} onJump={onJump} />
-      {groups.length > 0 && (
+      {(groups.length > 0 || customFields.length > 0) && (
         <dl className={cn("m-0 mt-2 grid gap-x-2 gap-y-0.5", sheet ? "grid-cols-[5.25rem_1fr]" : "grid-cols-[4.875rem_1fr]")}>
           {groups.map((group, i) => (
             <Fragment key={group[0]}>
-              {i > 0 && !sheet && <div role="presentation" className="col-span-2 my-1 border-t border-dashed border-border" />}
+              {i > 0 && !sheet && divider}
               {group.map((field) => (
                 <Field key={field} label={t(`knowledge.field.${field}`)}>
                   {valueOf(field)}
@@ -150,6 +215,7 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
               ))}
             </Fragment>
           ))}
+          {customFields.length > 0 && <CustomRows fields={customFields} values={info.custom} memberNoteId={memberNoteId} divider={groups.length > 0 && !sheet ? divider : null} />}
         </dl>
       )}
       {summary && (

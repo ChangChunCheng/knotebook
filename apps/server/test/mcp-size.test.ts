@@ -21,6 +21,7 @@ import {
   MCP_IMAGE_MAX_BYTES,
   MCP_LIST_WIRE_BUDGET,
   MCP_PAGE_MAX,
+  escapedLength,
 } from "../src/mcp/limits.js";
 import { fingerprintOf } from "../src/notes/editing/fingerprint.js";
 import { writeSearchIndex } from "../src/notes/search-index.js";
@@ -33,6 +34,7 @@ import { cookieOf, seedGroup, seedUser } from "./group-helpers.js";
 import { seedFolder, seedFolderChain, seedManyNotesInFolder, setNoteFolder } from "./folder-helpers.js";
 import { wireCost } from "../src/mcp/wire-budget.js";
 import { knowledgeForModel } from "../src/mcp/knowledge-output.js";
+import { KNOWLEDGE_FIELDS_OUTLINE_BUDGET, KNOWLEDGE_FIELDS_REPLY_BUDGET } from "../src/mcp/knowledge-fields-output.js";
 import { markTrashed } from "./trash-helpers.js";
 import type { Db } from "../src/db/index.js";
 import type { FastifyInstance } from "fastify";
@@ -435,6 +437,52 @@ describe("#108 single response size", () => {
     }
   });
 
+  // Twenty enabled custom select fields on top of the 30 basis options: every key at its maximum length, every name 60 `"`, 30 options each. The options cannot all fit, so the last fields are cut.
+  type FieldsOut = { status: string[]; fields: Array<{ key: string; options?: unknown[]; optionsTruncated?: true }> };
+  const withoutOptions = (out: FieldsOut): number => escapedLength(JSON.stringify({ ...out, fields: out.fields.map(({ options: _o, optionsTruncated: _t, ...f }) => f) }));
+
+  it("the first outline page with twenty long select fields of thirty options stays under the wire sentinel", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    await seedLongestCustomSelects(ctx);
+    const note = await ctx.createNote(o.id, "long headings");
+    const md = Array.from({ length: 120 }, (_, i) => `# ${String(i).padStart(4, "0")}${'"'.repeat(996)}`).join("\n\n");
+    const session = await ctx.loginAs(o.email, PASSWORD);
+    const client = await seedContent(ctx, session, note.id, md);
+    const { sc } = await callWireResult<{ sections: unknown[]; knowledgeFields: FieldsOut }>(ctx.app, o.token, "read_note_outline 第一頁＋20 個自訂單選", "read_note_outline", { note_id: note.id });
+    expect(sc.sections).toHaveLength(MCP_PAGE_MAX);
+    expect(sc.knowledgeFields.fields.filter(f => f.key.startsWith("x-"))).toHaveLength(20);
+    expect(sc.knowledgeFields.fields.at(-1)!.optionsTruncated).toBe(true);
+    const fixed = withoutOptions(sc.knowledgeFields);
+    console.log(`[knowledge fields] outline non-option part=${fixed} whole=${escapedLength(JSON.stringify(sc.knowledgeFields))}`);
+    expect(fixed).toBeLessThanOrEqual(KNOWLEDGE_FIELDS_REPLY_BUDGET);
+    expect(escapedLength(JSON.stringify(sc.knowledgeFields))).toBeLessThanOrEqual(KNOWLEDGE_FIELDS_OUTLINE_BUDGET);
+    client.disconnect();
+  });
+
+  it("a create_note reply with twenty long select fields and five full knowledge lists stays under the wire sentinel", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
+    await seedLongestCustomSelects(ctx);
+    const { wire, sc } = await callWireResult<{ note: { titleTruncated?: true }; knowledgeFields: FieldsOut }>(ctx.app, rwToken, "create_note＋20 個自訂單選", "create_note", { title: '"'.repeat(300) });
+    expect(sc.note.titleTruncated).toBe(true);
+    expect(sc.knowledgeFields.fields.filter(f => f.key.startsWith("x-"))).toHaveLength(20);
+    expect(sc.knowledgeFields.fields.at(-1)!.optionsTruncated).toBe(true);
+    const fixed = withoutOptions(sc.knowledgeFields);
+    console.log(`[knowledge fields] create_note non-option part=${fixed} whole=${escapedLength(JSON.stringify(sc.knowledgeFields))}`);
+    expect(fixed).toBeLessThanOrEqual(KNOWLEDGE_FIELDS_REPLY_BUDGET);
+    expect(escapedLength(JSON.stringify(sc.knowledgeFields))).toBeLessThanOrEqual(KNOWLEDGE_FIELDS_REPLY_BUDGET);
+    const worst = (n: number) => Array.from({ length: MCP_PAGE_MAX }, (_, i) => ({ id: `k_${String(i).padStart(8, "0")}${'"'.repeat(n)}`, heading: '"'.repeat(200) }));
+    const worstIgnored = Array.from({ length: MCP_PAGE_MAX }, () => ({ heading: '"'.repeat(200), key: '"'.repeat(80), value: '"'.repeat(200), reason: "unresolved_member" as const }));
+    for (const idLength of [0, 300, 3000]) {
+      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignored: worstIgnored, ignoredComments: 1 });
+      const total = wire + wireCost(knowledge) + 64;
+      console.log(`[knowledge fields] idLength=${idLength} create_note wire=${wire} with knowledge=${total}`);
+      expect(total).toBeLessThanOrEqual(MCP_MAX_WIRE);
+    }
+  });
+
   /**
    * Case (iii): 100 notes in which "every field is compliant but full length". **The largest response of all tools is this one** - the first two cases can't measure it (they only have one or two rows).
    *
@@ -830,6 +878,32 @@ async function seedLongestBasisOptions(ctx: CollabTestCtx): Promise<void> {
     enabled: true,
     ...(key === "evidence" ? { options: ["tested", "docs", "inferred", ...added].map(k => ({ key: k, name, enabled: true })) } : {}),
   }));
+  const res = await ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/** 30 basis options plus 20 custom select fields at their limits: 64-character keys, names of 60 `"`, 30 options each. */
+async function seedLongestCustomSelects(ctx: CollabTestCtx): Promise<void> {
+  const admin = await seedUser(ctx.db, { isAdmin: true });
+  const name = '"'.repeat(60);
+  const longKey = (prefix: string, i: number): string => `${prefix}${String(i).padStart(2, "0")}${"a".repeat(62 - prefix.length)}`;
+  const added = Array.from({ length: 27 }, (_, i) => longKey("o", i));
+  const custom = Array.from({ length: 20 }, (_, f) => ({
+    key: `x-${longKey("f", f)}`,
+    enabled: true,
+    name,
+    type: "select" as const,
+    options: Array.from({ length: 30 }, (_, i) => ({ key: longKey("p", i), name, enabled: true })),
+  }));
+  const fields = [
+    ...(["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+      key,
+      enabled: true,
+      ...(key === "evidence" ? { options: ["tested", "docs", "inferred", ...added].map(k => ({ key: k, name, enabled: true })) } : {}),
+    })),
+    ...custom,
+  ];
+  for (const f of custom) expect(f.key).toHaveLength(66);
   const res = await ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
   expect(res.statusCode, res.body).toBe(200);
 }

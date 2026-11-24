@@ -11,11 +11,13 @@ import * as Y from "yjs";
 import {
   KNOWLEDGE_PENDING_ID_PREFIX,
   YDOC_FRAGMENT,
+  knowledgeMemberTokensIn,
   sanitizeKnowledgeForWrite,
   type KnowledgeBlockShape,
   type KnowledgeFieldView,
   type KnowledgeIgnoredItem,
   type KnowledgeInfo,
+  type KnowledgeMemberMaps,
   type KnowledgeProblem,
 } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
@@ -60,8 +62,11 @@ export interface PlanSyncInput {
   exportedLinkText?: (targetId: string, text: string) => boolean;
   /** Shared across fingerprint-mismatch retries so the whole write-back has one worker-time budget; not given = a fresh budget for this run, and exhausting it fails the whole file (`unsupported_block`/`too_complex`). */
   fileBudget?: ParseBudget;
-  /** Given: a region's knowledge is compared as it would be stored, so a comment that reads the same as what is stored counts as `same`. */
-  knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; fields: KnowledgeFieldView };
+  /**
+   * Given: a region's knowledge is compared as it would be stored, so a comment that reads the same as what is stored counts as
+   * `same`. `members` is called once, after every region is parsed, with the member tokens they write.
+   */
+  knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; fields: KnowledgeFieldView; members?: (tokens: string[]) => Promise<KnowledgeMemberMaps> };
   yieldFn?: () => Promise<void>;
   now?: () => number;
 }
@@ -89,6 +94,7 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
   let boundaryChecks: number;
   const parsed: AnyPartialBlock[][] = [];
   const compared: AnyPartialBlock[][] = [];
+  const toCompare: Array<{ ri: number; unknownKeys: number }> = [];
   const neverSame = new Set<number>();
   const ignoredByRegion: KnowledgeIgnoredItem[][] = [];
   const firstTypes: Array<string | undefined> = [];
@@ -106,14 +112,14 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
   // Only for the comparison: what is written is `parsed`, which `applySync` checks again. A region with a comment that has no id
   // (new knowledge), one this check would refuse, or one with a line it would ignore is never `same`: an ignored line would
   // otherwise read as the stored value and go unreported.
-  const comparable = (ri: number, blocks: AnyPartialBlock[], unknownKeys: number): AnyPartialBlock[] => {
+  const comparable = (ri: number, blocks: AnyPartialBlock[], unknownKeys: number, members: KnowledgeMemberMaps | undefined): AnyPartialBlock[] => {
     const k = input.knowledge;
     if (k === undefined) return blocks;
     if (unknownKeys > 0 || hasPendingKnowledgeId(blocks)) {
       neverSame.add(ri);
       return blocks;
     }
-    const s = sanitizeKnowledgeForWrite({ after: blocks as unknown as readonly KnowledgeBlockShape[], current: k.current, noteId: null, fields: k.fields });
+    const s = sanitizeKnowledgeForWrite({ after: blocks as unknown as readonly KnowledgeBlockShape[], current: k.current, noteId: null, fields: k.fields, ...(members ? { members } : {}) });
     if (s.problem !== null || s.ignored.length > 0) {
       neverSame.add(ri);
       return blocks;
@@ -177,9 +183,13 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
         blocks[0] = { ...blocks[0]!, props: rest };
       }
       parsed.push(blocks);
-      compared.push(comparable(ri, blocks, p.ignoredKnowledge.length));
+      compared.push(blocks);
+      toCompare.push({ ri, unknownKeys: p.ignoredKnowledge.length });
       await budget();
     }
+    const k = input.knowledge;
+    const members = k?.members === undefined ? undefined : await k.members(knowledgeMemberTokensIn(toCompare.flatMap(c => parsed[c.ri]!) as unknown as readonly KnowledgeBlockShape[], k.fields));
+    for (const c of toCompare) compared[c.ri] = comparable(c.ri, parsed[c.ri]!, c.unknownKeys, members);
   }
   const s = await EditorSession.open(runtime, scratch);
   try {

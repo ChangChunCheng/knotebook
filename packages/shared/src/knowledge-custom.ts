@@ -66,6 +66,21 @@ export interface KnowledgeMemberMaps {
   idOf: ReadonlyMap<string, string>;
 }
 
+/** Per list in a `POST /api/knowledge/members` body. */
+export const KNOWLEDGE_MEMBERS_LOOKUP_MAX = 100;
+
+export interface KnowledgeMembersRequest {
+  noteId: string;
+  tokens?: string[];
+  ids?: string[];
+}
+
+/** `byToken` has only the tokens the caller can resolve; `byId` has every id that is an existing user, disabled ones included. */
+export interface KnowledgeMembersDto {
+  byId: Array<{ id: string; handle: string; displayName: string }>;
+  byToken: Array<{ token: string; id: string }>;
+}
+
 export function knowledgeMemberToken(userId: string, handleOf: ReadonlyMap<string, string>): string {
   return handleOf.get(userId) ?? `user:${userId}`;
 }
