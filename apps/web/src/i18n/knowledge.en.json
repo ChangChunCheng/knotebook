@@ -1,5 +1,7 @@
 {
   "knowledge": {
+    "notFilled": "Not filled",
+    "turnedOff": "{{name}} (turned off)",
     "iconLabel": "Knowledge info: {{status}}",
     "state": {
       "outdated": "Outdated",
@@ -26,8 +28,6 @@
       "obsolete": "Outdated"
     },
     "card": {
-      "notVerified": "Not verified",
-      "empty": "—",
       "quotedTitle": "{{title}}",
       "belongsTo": "Part of: {{title}}",
       "bannerNeedsReview": "Needs review · last verified {{date}}, worth checking again",
@@ -44,7 +44,7 @@
     },
     "form": {
       "title": "Knowledge info",
-      "markToday": "Mark verified today",
+      "today": "Today",
       "remove": "Remove knowledge info",
       "save": "Save",
       "cancel": "Cancel",
@@ -67,6 +67,24 @@
       "otherNotes": "Other notes",
       "searchFailed": "Couldn't search other notes.",
       "searchBusy": "Too many searches. Try again in a minute."
+    },
+    "aiIgnored": {
+      "title": "These knowledge info values weren't applied",
+      "line": "{{heading}} · {{field}}: {{value}} — {{reason}}",
+      "more": "and {{count}} more",
+      "reason": {
+        "unknown_field": "no such field",
+        "field_disabled": "this field is turned off",
+        "not_an_option": "not one of the options",
+        "bad_status": "not a valid status",
+        "bad_date": "not a valid date",
+        "bad_link": "not a valid link",
+        "unresolved_member": "no matching member",
+        "bad_ref": "not a valid knowledge reference",
+        "superseded_self": "can't be replaced by itself",
+        "too_long": "too long",
+        "line_break": "can't contain line breaks"
+      }
     }
   }
 }

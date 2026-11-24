@@ -4,17 +4,18 @@ import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
 import { BlockNoteEditor, getNodeById } from "@blocknote/core";
-import { AI_SSE_EVENTS, type AiActionDto, type NoteDto } from "@knotebook/shared";
+import { AI_SSE_EVENTS, DEFAULT_KNOWLEDGE_FIELD_VIEW, type AiActionDto, type KnowledgeFieldView, type KnowledgeFieldsDto, type NoteDto } from "@knotebook/shared";
 import { noteSchema } from "@/collab/schema";
 import { AiSessionProvider } from "@/components/ai/AiSession";
+import { KnowledgeFieldsContext, KnowledgeFieldsProvider, type KnowledgeFieldsValue } from "@/components/knowledge/fields-context";
 import { NoteEditorView } from "@/components/NoteEditor";
 import { Toaster } from "@/components/ui/toast";
 import { ThemeProvider } from "@/theme";
 import { FOLDER_LIST_EMPTY } from "@/test/folder-fixtures";
 
 /**
- * Shared Host for the AI box tests: follows the real mount chain in `NoteEditor.tsx` -
- * `AiSessionProvider` wraps `NoteEditorView`, the AI components are children of `<BlockNoteView>`, and `editor.portalElement`
+ * Shared Host for the AI box tests: follows the real mount chain in `NoteEditor.tsx` - the knowledge fields provider wraps
+ * `AiSessionProvider`, `AiSessionProvider` wraps `NoteEditorView`, the AI components are children of `<BlockNoteView>`, and `editor.portalElement`
  * is attached by BlockNoteView. Outer `MemoryRouter` + `QueryClientProvider`: the wikilink inline uses `useNavigate` / `useNotes`; `ThemeProvider`: the preview's `DiffEditor` uses `useTheme`.
  * It isn't `NoteEditor` itself - `NoteEditor` builds its editor with `useCreateBlockNote`, so tests can't get the instance to set a selection.
  */
@@ -46,7 +47,8 @@ function jsonResponse(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body), body: null } as unknown as Response;
 }
 
-export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[] }): { calls: AiCall[] } {
+/** `knowledgeFields`: what `GET /api/knowledge/fields?note=…` serves to a host rendered with `knowledgeFields: "fetch"`. */
+export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[]; knowledgeFields?: KnowledgeFieldView }): { calls: AiCall[] } {
   const calls: AiCall[] = [];
   const encoder = new TextEncoder();
   vi.stubGlobal(
@@ -57,6 +59,10 @@ export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[] })
       if (url === "/api/ai/actions" && method === "GET") return Promise.resolve(jsonResponse(200, { actions: opts.actions }));
       if (url === "/api/folders") return Promise.resolve(new Response(JSON.stringify(FOLDER_LIST_EMPTY), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url === "/api/notes" && method === "GET") return Promise.resolve(jsonResponse(200, opts.notes ?? []));
+      if (url.startsWith("/api/knowledge/fields?note=") && method === "GET") {
+        const dto: KnowledgeFieldsDto = { fields: (opts.knowledgeFields ?? DEFAULT_KNOWLEDGE_FIELD_VIEW).fields };
+        return Promise.resolve(jsonResponse(200, dto));
+      }
       if (url === "/api/ai" && method === "POST") {
         let controller!: ReadableStreamDefaultController<Uint8Array>;
         const stream = new ReadableStream<Uint8Array>({
@@ -92,7 +98,16 @@ export interface AiHostProps {
   editable?: boolean;
   onAutoClose?: () => void;
   sizeGuard?: (incomingBytes: number) => boolean;
+  /** Defaults to the built-in fields, ready. `"fetch"` mounts the real provider, which loads them through `stubAiFetch`. */
+  knowledgeFields?: KnowledgeFieldsValue | "fetch";
   children?: ReactNode;
+}
+
+const READY_FIELDS: KnowledgeFieldsValue = { view: DEFAULT_KNOWLEDGE_FIELD_VIEW, status: "ready" };
+
+function FieldsLayer({ noteId, fields, children }: { noteId: string; fields: AiHostProps["knowledgeFields"]; children: ReactNode }) {
+  if (fields === "fetch") return <KnowledgeFieldsProvider noteId={noteId}>{children}</KnowledgeFieldsProvider>;
+  return <KnowledgeFieldsContext.Provider value={fields ?? READY_FIELDS}>{children}</KnowledgeFieldsContext.Provider>;
 }
 
 async function noItems(): Promise<never[]> {
@@ -105,18 +120,20 @@ export function renderAiHost(props: AiHostProps) {
     <MemoryRouter>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
-          <AiSessionProvider editor={p.editor} noteId={p.noteId ?? "note-1"} editable={p.editable ?? true} onAutoClose={p.onAutoClose} sizeGuard={p.sizeGuard}>
-            <NoteEditorView
-              editor={p.editor}
-              editable={p.editable ?? true}
-              theme="light"
-              noteId={p.noteId ?? "note-1"}
-              getItems={noItems}
-              getSlashItems={noItems}
-            >
-              {p.children}
-            </NoteEditorView>
-          </AiSessionProvider>
+          <FieldsLayer noteId={p.noteId ?? "note-1"} fields={p.knowledgeFields}>
+            <AiSessionProvider editor={p.editor} noteId={p.noteId ?? "note-1"} editable={p.editable ?? true} onAutoClose={p.onAutoClose} sizeGuard={p.sizeGuard}>
+              <NoteEditorView
+                editor={p.editor}
+                editable={p.editable ?? true}
+                theme="light"
+                noteId={p.noteId ?? "note-1"}
+                getItems={noItems}
+                getSlashItems={noItems}
+              >
+                {p.children}
+              </NoteEditorView>
+            </AiSessionProvider>
+          </FieldsLayer>
           <Toaster />
         </QueryClientProvider>
       </ThemeProvider>
