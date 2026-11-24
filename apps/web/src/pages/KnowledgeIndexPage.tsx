@@ -94,7 +94,8 @@ function IndexView({ scope }: { scope: KnowledgeIndexScopeRef }): ReactNode {
     setSearchParams(writeIndexFilters({ ...filters, tagIds: filters.tagIds.filter((id) => !unknown.includes(id)) }), { replace: true });
   }, [filters, setSearchParams, unknownTags]);
   const names = scopeNames(scope, dto, t("sidebar.myNotes"));
-  const filtersActive = filters.tagIds.length > 0 || filters.status !== null || filters.evidence !== null;
+  const evidenceOn = dto?.fields.find((f) => f.key === "evidence")?.enabled ?? true;
+  const filtersActive = filters.tagIds.length > 0 || filters.status !== null || (evidenceOn && filters.evidence !== null);
   const notFound = query.error instanceof ApiFail && query.error.status === 404;
 
   let body: ReactNode;
@@ -106,7 +107,7 @@ function IndexView({ scope }: { scope: KnowledgeIndexScopeRef }): ReactNode {
         groupBy={dto.tagOptions.length > 0 ? filters.groupBy : "folder"}
         scopeTitle={names.title}
         filterBar={
-          dto.entries.length > 0 || filtersActive ? <IndexFilterBar filters={filters} tagOptions={dto.tagOptions} onChange={setFilters} /> : undefined
+          dto.entries.length > 0 || filtersActive ? <IndexFilterBar filters={filters} tagOptions={dto.tagOptions} fields={dto.fields} onChange={setFilters} /> : undefined
         }
       />
     );

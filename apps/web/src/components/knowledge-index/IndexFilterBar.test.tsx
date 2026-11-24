@@ -6,6 +6,7 @@ import "@/i18n/knowledge-index-strings";
 import { chooseOption, displayedLabel, optionLabels } from "@/test/ui-select";
 import { pressTrigger } from "@/test/menu-trigger";
 import type { IndexFilters } from "@/api/knowledge";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { IndexFilterBar } from "./IndexFilterBar";
 import { tag } from "./test-support";
 
@@ -81,10 +82,10 @@ describe("IndexFilterBar", () => {
     ]);
     expect(await optionLabels(screen.getByRole("combobox", { name: "Basis" }))).toEqual([
       "Basis: All",
+      "Basis: Not filled",
       "Basis: Tested",
       "Basis: Documentation",
       "Basis: Inferred",
-      "Basis: Unconfirmed",
     ]);
   });
 
@@ -113,5 +114,39 @@ describe("IndexFilterBar", () => {
     await i18n.changeLanguage("zh-TW");
     bar();
     expect(displayedLabel(screen.getByRole("combobox", { name: "狀態" }))).toBe("狀態：全部");
+  });
+});
+
+describe("IndexFilterBar basis filter follows the field settings", () => {
+  const fieldsWith = (evidence: { enabled: boolean; options?: Array<{ key: string; name: string | null; enabled: boolean }> }) =>
+    DEFAULT_KNOWLEDGE_FIELD_VIEW.fields.map((f) =>
+      f.key === "evidence"
+        ? { ...f, enabled: evidence.enabled, options: (evidence.options ?? []).map((o) => ({ ...o, builtin: false })) }
+        : f,
+    );
+
+  it("the basis filter lists renamed options in order and disappears when basis is off", async () => {
+    const onChange = vi.fn();
+    const fields = fieldsWith({
+      enabled: true,
+      options: [
+        { key: "docs", name: "Spec", enabled: true },
+        { key: "tested", name: null, enabled: false },
+        { key: "field-test", name: "Field test", enabled: true },
+      ],
+    });
+    const { rerender } = render(<IndexFilterBar filters={NONE} tagOptions={[]} fields={fields} onChange={onChange} />);
+    expect(await optionLabels(screen.getByRole("combobox", { name: "Basis" }))).toEqual(["Basis: All", "Basis: Not filled", "Basis: Spec", "Basis: Field test"]);
+    rerender(<IndexFilterBar filters={NONE} tagOptions={[]} fields={fieldsWith({ enabled: false })} onChange={onChange} />);
+    expect(screen.queryByRole("combobox", { name: "Basis" })).toBeNull();
+  });
+
+  it("a disabled option named in the address shows its name with a disabled marker", () => {
+    const fields = fieldsWith({ enabled: true, options: [{ key: "tested", name: null, enabled: false }, { key: "docs", name: "Spec", enabled: false }] });
+    const onChange = vi.fn();
+    const { rerender } = render(<IndexFilterBar filters={{ ...NONE, evidence: "tested" }} tagOptions={[]} fields={fields} onChange={onChange} />);
+    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Tested (disabled)");
+    rerender(<IndexFilterBar filters={{ ...NONE, evidence: "docs" }} tagOptions={[]} fields={fields} onChange={onChange} />);
+    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Spec (disabled)");
   });
 });
