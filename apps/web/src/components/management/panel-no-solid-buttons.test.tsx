@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
-import type { ApiTokenDto, GroupDto, IdentitiesDto, SiteLimitsDto, StorageUsageDto, UserDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type ApiTokenDto, type GroupDto, type IdentitiesDto, type SiteLimitsDto, type StorageUsageDto, type UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { ThemeProvider } from "@/theme";
 import { AppRoutes } from "@/App";
@@ -18,7 +18,7 @@ import { siteLimitChange, siteLimitsDto } from "@/test/site-limits-fixtures";
  * Matching is per token exactly: `hover:bg-brand-deep`, `bg-brand-soft` and `data-[state=checked]:bg-brand` are different tokens and unaffected.
  * `minButtons` guards against vacuous passes: the page must scan at least this many panel-level elements (button / a[class] / role=button).
  *
- * PANEL_PAGES ends with the four group pages and six site pages (endpoint fixtures in `PANEL3_GETS`, matched on exact URL by panelFetch).
+ * PANEL_PAGES ends with the four group pages and seven site pages (endpoint fixtures in `PANEL3_GETS`, matched on exact URL by panelFetch).
  */
 const SOLID_TOKENS = ["bg-brand-deep", "bg-brand", "bg-primary", "bg-destructive"];
 
@@ -66,6 +66,10 @@ const TAG_LIST = [
 ];
 /** Maximum-permission fixtures for the ten group/site pages (admin, canManageGroup/canManageMembers both true, at least one row per table). */
 const PANEL3_GETS: Record<string, unknown> = {
+  "/api/admin/knowledge-fields": {
+    fields: DEFAULT_KNOWLEDGE_FIELD_VIEW.fields,
+    limits: { customEnabledMax: 20, customTotalMax: 100, optionsMax: 30, nameMax: 60 },
+  },
   [`/api/groups/${GROUP_ID}/members`]: [
     { userId: "u-admin", email: "admin@example.com", displayName: "Admin", roleId: "r-admin", builtin: "admin" },
     { userId: "u-b", email: "b@example.com", displayName: "B", roleId: "r-member", builtin: "member" },
@@ -198,6 +202,7 @@ export const PANEL_PAGES: PanelPageCase[] = [
   { name: "site: sign-in", path: "/admin/login", ready: adminLoginReady, minButtons: 11 }, // 11: two access switches, Save of the "sign-in period and token" group (both items at default, so no restore-default button), Add sign-in service, the in-row auto-create-account switch, plug/pencil/icon/red trash, enable switch, details Copy
   { name: "site: storage plans", path: "/admin/storage", ready: async () => { await screen.findByRole("button", { name: "Edit Basic" }); await screen.findByLabelText("Keep all for (days)"); return screen.findByRole("switch", { name: "Delete automatically" }); }, minButtons: 10 }, // 10: New plan, Edit/Delete Basic, Save defaults, two default-plan dropdown triggers, the auto-versions switch, versions settings Save, trash switch, trash Save
   { name: "site: AI agents", path: "/admin/ai", ready: adminAiReady, minButtons: 15 }, // 15: providers (Add provider + plug/pencil/trash + switch), models (Add model + switch + pencil/trash), actions (Add action + move up/down + switch + pencil/trash)
+  { name: "site: knowledge fields", path: "/admin/knowledge-fields", ready: () => screen.findByRole("switch", { name: "Show When to read" }), minButtons: 18 }, // 18: six field switches (status locked one included), three option Show switches, six move arrows, Add option, Discard, Save
   { name: "site: site limits", path: "/admin/limits", ready: async () => within(await screen.findByRole("region", { name: "Rate limits" })).findByRole("button", { name: "Save" }), minButtons: 5 }, // 5: one Save in each of the three blocks, Back to auto for the parse worker count, Restore default for the note write count
 ];
 

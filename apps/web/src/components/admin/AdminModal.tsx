@@ -27,6 +27,7 @@ export function AdminModal() {
     { to: "/admin/login", label: t("admin.nav.auth") },
     { to: "/admin/storage", label: t("admin.nav.storage") },
     { to: "/admin/ai", label: t("admin.nav.ai") },
+    { to: "/admin/knowledge-fields", label: t("admin.nav.knowledgeFields") },
     { to: "/admin/limits", label: t("admin.nav.limits") },
   ];
 

@@ -436,6 +436,7 @@
       "storage": "儲存方案",
       "ai": "AI 代理",
       "auth": "登入",
+      "knowledgeFields": "知識欄位",
       "limits": "站台限制"
     }
   },
