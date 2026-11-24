@@ -46,11 +46,16 @@ describe("knowledge sentences in the tool strings", () => {
     expect(describeOf((readNoteOutlineOutput.note as unknown as z.ZodObject<{ tags: z.ZodTypeAny }>).shape.tags)).toBe(OUTLINE_TAGS_DESCRIBE);
   });
 
-  it("edit_note's markdown description names every key and both status values, and does not say current is a status value", () => {
-    for (const key of ["id", "when", "conclusion", "evidence", "verified", "status", "superseded_by"]) expect(WRITE_KNOWLEDGE_SENTENCE).toContain(key);
-    expect(WRITE_KNOWLEDGE_SENTENCE).toContain("status (unverified, shown as Needs review, or outdated; leave it out for current)");
-    expect(WRITE_KNOWLEDGE_SENTENCE).not.toMatch(/\bor current\b|\bcurrent or\b/);
-    for (const v of ["tested", "docs", "inferred", "unconfirmed"]) expect(WRITE_KNOWLEDGE_SENTENCE).toContain(v);
+  it("the write sentence names only id and status and points to the outline for the other fields", () => {
+    expect(WRITE_KNOWLEDGE_SENTENCE).not.toMatch(/tested|unconfirmed|conclusion|superseded_by|evidence/);
+    expect(WRITE_KNOWLEDGE_SENTENCE).toMatch(/verified, needs-verify or obsolete/);
+    expect(WRITE_KNOWLEDGE_SENTENCE).toContain("knowledgeFields");
+    expect(WRITE_KNOWLEDGE_SENTENCE).toContain("knowledge.ignored");
+    expect(INVALID_KNOWLEDGE_ERROR_SENTENCE).not.toMatch(/value|evidence|status|date/);
+  });
+
+  it("the output's describe text names the ignored list", () => {
+    expect(KNOWLEDGE_OUTPUT_DESCRIBE).toContain("ignored: ");
   });
 
   it("the output's wording matches its limits: the list cap is the page size", () => {
@@ -72,7 +77,7 @@ describe("knowledgeForModel", () => {
 
   it("is not truncated when every list fits, and carries from on renewed", () => {
     const out = knowledgeForModel({ ...emptyKnowledgeReport(), renewed: [{ ...ref(1), from: "k_00000009" }], ignoredComments: 2 });
-    expect(out).toEqual({ kept: [], created: [], removed: [], renewed: [{ id: "k_00000001", heading: "H1", from: "k_00000009" }], ignoredComments: 2, truncated: false });
+    expect(out).toEqual({ kept: [], created: [], removed: [], renewed: [{ id: "k_00000001", heading: "H1", from: "k_00000009" }], ignored: [], ignoredComments: 2, truncated: false });
   });
 
   it("cuts a heading at 200 characters as written in JSON and marks it, leaving short ones unmarked", () => {
@@ -95,9 +100,32 @@ describe("knowledgeForModel", () => {
   it("long headings use a list's wire budget before its 100 entries, so four full lists stay under the wire limit", () => {
     const long = (n: number) => ref(n, "y".repeat(200));
     const all = Array.from({ length: 100 }, (_, i) => long(i));
-    const out = knowledgeForModel({ kept: all, created: all, removed: all, renewed: all.map(r => ({ ...r, from: "k_00000000" })), ignoredComments: 0 });
+    const out = knowledgeForModel({ kept: all, created: all, removed: all, renewed: all.map(r => ({ ...r, from: "k_00000000" })), ignored: [], ignoredComments: 0 });
     expect(out.truncated).toBe(true);
     expect(JSON.stringify(out).length).toBeLessThan(56_000);
-    for (const list of [out.kept, out.created, out.removed, out.renewed]) expect(list.length).toBeGreaterThan(40);
+    for (const list of [out.kept, out.created, out.removed, out.renewed]) expect(list.length).toBeGreaterThan(30);
+  });
+
+  it("an ignored entry carries heading, key, value and reason, and cuts the heading, key and value at 200 characters as written in JSON", () => {
+    const out = knowledgeForModel({
+      ...emptyKnowledgeReport(),
+      ignored: [
+        { heading: "Alpha", key: "evidence", value: "vendor-doc", reason: "not_an_option" },
+        { heading: "h".repeat(300), key: "k".repeat(300), value: '"'.repeat(150), reason: "unknown_field" },
+      ],
+    });
+    expect(out.truncated).toBe(false);
+    expect(out.ignored[0]).toEqual({ heading: "Alpha", key: "evidence", value: "vendor-doc", reason: "not_an_option" });
+    expect(out.ignored[1]).toEqual({ heading: "h".repeat(200), headingTruncated: true, key: "k".repeat(200), keyTruncated: true, value: '"'.repeat(100), valueTruncated: true, reason: "unknown_field" });
+    expect(knowledgeOutputSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("the ignored list is cut by its own budget, so a long list of long values stops before 100 entries", () => {
+    const item = (n: number) => ({ heading: `${n}${'"'.repeat(200)}`, key: '"'.repeat(80), value: '"'.repeat(200), reason: "bad_date" as const });
+    const out = knowledgeForModel({ ...emptyKnowledgeReport(), ignored: Array.from({ length: 100 }, (_, i) => item(i)) });
+    expect(out.truncated).toBe(true);
+    expect(out.ignored.length).toBeGreaterThan(5);
+    expect(out.ignored.length).toBeLessThan(100);
+    expect(JSON.stringify(out.ignored).length).toBeLessThan(9_600 + 1_000);
   });
 });

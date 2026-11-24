@@ -1,12 +1,13 @@
 import { and, desc, eq, notInArray } from "drizzle-orm";
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
-import { AI_EDITS_RETENTION, YDOC_FRAGMENT, topLevelBlocks, type EditOp, type KnowledgeProblem, type NoteOutlineEntry } from "@knotebook/shared";
+import { AI_EDITS_RETENTION, YDOC_FRAGMENT, topLevelBlocks, type EditOp, type KnowledgeIgnoredItem, type KnowledgeProblem, type NoteOutlineEntry } from "@knotebook/shared";
 import type { CollabServer } from "../../collab/server.js";
 import type { VersionService } from "../../collab/versions.js";
 import { docClock } from "../../collab/store.js";
 import type { Db } from "../../db/index.js";
 import { noteAiEdits } from "../../db/schema.js";
+import { knowledgeFieldViewForNote } from "../../knowledge/fields/queries.js";
 import { syncLinksFromDoc } from "../links.js";
 import { capBlocks, NoteTooLargeError } from "../note-size.js";
 import { versionFingerprint } from "../version-fingerprint.js";
@@ -62,8 +63,9 @@ export interface ApplyInput {
   noteId: string; userId: string; tokenId: string | null; agentLabel: string | null; op: EditOp;
   sectionId?: string; markdown?: string; ifMatch?: string; candidates: readonly VisibleNoteTarget[];
   blocks?: AnyPartialBlock[]; unbound?: number;
-  /** With `blocks` (the create path, parsed earlier): how many knowledge comments the parse ignored. */
+  /** With `blocks` (the create path, parsed earlier): how many knowledge comments the parse ignored, and the comment lines it did not know. */
   ignoredKnowledgeComments?: number;
+  ignoredKnowledge?: KnowledgeIgnoredItem[];
   contentLength?: number;
   /** #398: parsed outside the per-note queue so a slow parse doesn't hold it; errors still come after the section/fingerprint checks. */
   preparsed?: ParseOutcome;
@@ -229,21 +231,21 @@ export async function forkAndCheck(deps: ApplyDeps, noteId: string): Promise<For
 async function prepareBlocks(
   deps: ApplyDeps,
   input: ApplyInput
-): Promise<{ blocks: AnyPartialBlock[]; unbound: number; ignoredKnowledgeComments: number; written?: ShownLinks } | { error: ParseError; detail?: ParseDetail; knowledge?: KnowledgeProblem }> {
-  if (input.op === "delete_section") return { blocks: [], unbound: 0, ignoredKnowledgeComments: 0 };
+): Promise<{ blocks: AnyPartialBlock[]; unbound: number; ignoredKnowledgeComments: number; ignoredKnowledge: KnowledgeIgnoredItem[]; written?: ShownLinks } | { error: ParseError; detail?: ParseDetail; knowledge?: KnowledgeProblem }> {
+  if (input.op === "delete_section") return { blocks: [], unbound: 0, ignoredKnowledgeComments: 0, ignoredKnowledge: [] };
   // Create path: `content` was already parsed; don't parse again. No test fails if this reparses (equivalent behaviour).
-  if (input.blocks !== undefined) return { blocks: input.blocks, unbound: input.unbound ?? 0, ignoredKnowledgeComments: input.ignoredKnowledgeComments ?? 0 };
+  if (input.blocks !== undefined) return { blocks: input.blocks, unbound: input.unbound ?? 0, ignoredKnowledgeComments: input.ignoredKnowledgeComments ?? 0, ignoredKnowledge: input.ignoredKnowledge ?? [] };
   // Parse before opening the editor so no lease is held while waiting on the worker. A parse failure opens and writes nothing.
   const parsed = input.preparsed ?? (await deps.editing.parser.parse({ owner: input.userId, markdown: input.markdown ?? "", candidates: input.candidates, siteOrigin: siteOriginOf(deps.editing.baseUrl) }));
   if ("error" in parsed) return { error: parsed.error, ...(parsed.detail ? { detail: parsed.detail } : {}), ...(parsed.knowledge ? { knowledge: parsed.knowledge } : {}) };
   // #387: keep link texts the writer read as having no custom text, even if the target was renamed since.
   const [kept, cleared] = deps.shownLinks ? deps.shownLinks.keepLabelFree(parsed.blocks, input.userId, input.candidates) : [parsed.blocks, []];
-  const ignoredKnowledgeComments = parsed.ignoredKnowledgeComments;
-  if (!deps.shownLinks) return { blocks: kept, unbound: parsed.unbound, ignoredKnowledgeComments };
+  const { ignoredKnowledgeComments, ignoredKnowledge } = parsed;
+  if (!deps.shownLinks) return { blocks: kept, unbound: parsed.unbound, ignoredKnowledgeComments, ignoredKnowledge };
   // Written links are recorded for the writer too (agents write them back as-is using the reply's fingerprint), only after a successful merge. Cleared original texts are recorded too: the stored snapshotTitle is now the current title, so their expiry wouldn't be extended otherwise.
   const written = shownLinkTextsOf(kept, new Map());
   written.free.push(...cleared);
-  return { blocks: kept, unbound: parsed.unbound, ignoredKnowledgeComments, written };
+  return { blocks: kept, unbound: parsed.unbound, ignoredKnowledgeComments, ignoredKnowledge, written };
 }
 
 /**
@@ -268,6 +270,8 @@ export async function applyEdit(deps: ApplyDeps, input: ApplyInput): Promise<App
   const b = await prepareBlocks(deps, input);
   const parseError = "error" in b ? { error: b.error, ...(b.detail ? { detail: b.detail } : {}), ...(b.knowledge ? { knowledge: b.knowledge } : {}) } : undefined;
   const blocks = "error" in b ? undefined : b.blocks;
+  // The worker can't reach the database.
+  const fields = await knowledgeFieldViewForNote(deps.db, input.noteId);
   for (let attempt = 0; attempt < DOC_MERGE_ATTEMPTS; attempt++) {
     const { state, watch } = await loadNoteState(deps, input.noteId, { watch: true });
     let r: Exclude<Awaited<ReturnType<typeof deps.editing.runDoc<"edit">>>, typeof DOC_TOO_COMPLEX>;
@@ -276,7 +280,7 @@ export async function applyEdit(deps: ApplyDeps, input: ApplyInput): Promise<App
       const out = await deps.editing.runDoc(
         input.userId,
         {
-          kind: "edit", state, op: input.op, noteId: input.noteId,
+          kind: "edit", state, op: input.op, noteId: input.noteId, fields,
           ...(input.sectionId !== undefined ? { sectionId: input.sectionId } : {}),
           ...(input.ifMatch !== undefined ? { ifMatch: input.ifMatch } : {}),
           ...(blocks !== undefined && input.op !== "delete_section" ? { blocks } : {}),
@@ -300,7 +304,9 @@ export async function applyEdit(deps: ApplyDeps, input: ApplyInput): Promise<App
     }
     const { beforeBlocks, afterIds, anchor } = r;
     const unbound = "error" in b ? 0 : b.unbound;
-    const knowledge: KnowledgeWriteReport = { ...r.knowledge, ignoredComments: "error" in b ? 0 : b.ignoredKnowledgeComments };
+    const knowledge: KnowledgeWriteReport = "error" in b
+      ? { ...r.knowledge, ignoredComments: 0 }
+      : { ...r.knowledge, ignored: [...b.ignoredKnowledge, ...r.knowledge.ignored], ignoredComments: b.ignoredKnowledgeComments };
     if (!("error" in b) && b.written) deps.shownLinks?.record(input.userId, b.written);
     if (deps.testHooks?.beforeRecord) await deps.testHooks.beforeRecord();
     const editId = await insertEditRecord(deps.db, {

@@ -200,6 +200,13 @@ describe("KnowledgeWriteReport helpers", () => {
     expect(m.ignoredComments).toBe(2);
     expect(m.kept).toHaveLength(1);
   });
+
+  it("an ignored value alone makes a report not empty, and merging keeps the ignored values in order", () => {
+    const a = { ...emptyKnowledgeReport(), ignored: [{ heading: "A", key: "evidence", value: "vendor-doc", reason: "not_an_option" as const }] };
+    const b = { ...emptyKnowledgeReport(), ignored: [{ heading: "B", key: "Owner", value: "bob", reason: "unknown_field" as const }] };
+    expect(isEmptyKnowledgeReport(a)).toBe(false);
+    expect(mergeKnowledgeReports([a, b]).ignored.map(i => i.heading)).toEqual(["A", "B"]);
+  });
 });
 
 const ALL_PROBLEMS: KnowledgeCommentProblem[] = [

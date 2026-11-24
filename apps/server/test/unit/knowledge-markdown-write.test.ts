@@ -139,9 +139,18 @@ describe("parseMarkdownForNote with knowledge comments", () => {
     expect(r).toMatchObject({ error: "invalid_knowledge", knowledge: { heading: long } });
   });
 
-  it("a key this version does not know does not fail the parse", () => {
+  it("a key this version does not know does not fail the parse and is listed in ignoredKnowledge", () => {
     const r = ok("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nOwner: x\nx-owner: bob\nwhen: w\n-->\n\nbody\n");
     expect(knowledgeOf(r.blocks[0])).toEqual({ knowledgeId: "k_8f3a2c1d", knowledgeWhen: "w" });
+    expect(r.ignoredKnowledge).toEqual([
+      { heading: "D1", key: "Owner", value: "x", reason: "unknown_field" },
+      { heading: "D1", key: "x-owner", value: "bob", reason: "unknown_field" },
+    ]);
+  });
+
+  it("markdown whose comments have only known keys, or no comments, ignores nothing", () => {
+    expect(ok(`## D1\n${COMMENT()}\n\nbody\n`).ignoredKnowledge).toEqual([]);
+    expect(ok("plain\n").ignoredKnowledge).toEqual([]);
   });
 
   it("values are not checked at parse time: evidence guess and a 300-character when go into the props as written", () => {

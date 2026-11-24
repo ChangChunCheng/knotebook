@@ -6,7 +6,7 @@ import { noteAiEdits, notes } from "../src/db/schema.js";
 import { knowledgeInfoById } from "../src/notes/editing/knowledge-write.js";
 import { loadNoteDoc } from "../src/notes/editing/read.js";
 import { versionFingerprint } from "../src/notes/version-fingerprint.js";
-import { seedNote, seedUser } from "./group-helpers.js";
+import { cookieOf, seedNote, seedUser } from "./group-helpers.js";
 import { seedBlocks } from "./bulk-transfer-helpers.js";
 import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
 import { buildCollabTestApp, signTestSession } from "./helpers.js";
@@ -36,9 +36,19 @@ async function setup(blocks: unknown[]) {
 }
 type S = Awaited<ReturnType<typeof setup>>;
 
-const knowledgeOf = (res: { json(): unknown }) => (res.json() as { knowledge?: { kept: Array<{ id: string; heading: string }>; created: Array<{ id: string; heading: string }>; removed: unknown[]; renewed: Array<{ id: string; heading: string; from: string }>; ignoredComments: number } }).knowledge;
+const knowledgeOf = (res: { json(): unknown }) => (res.json() as { knowledge?: { kept: Array<{ id: string; heading: string }>; created: Array<{ id: string; heading: string }>; removed: unknown[]; renewed: Array<{ id: string; heading: string; from: string }>; ignored: Array<{ heading: string; key: string; value: string; reason: string }>; ignoredComments: number } }).knowledge;
 const errOf = (res: { json(): unknown }) => (res.json() as { error: { code: string; message: string } }).error;
 const noteRows = async (s: S) => (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
+
+function fieldsBody(enabled: Partial<Record<"when" | "conclusion" | "evidence" | "verified" | "superseded_by", boolean>>) {
+  return {
+    fields: (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+      key,
+      enabled: enabled[key] ?? true,
+      ...(key === "evidence" ? { options: ["tested", "docs", "inferred"].map(o => ({ key: o, name: null, enabled: true })) } : {}),
+    })),
+  };
+}
 
 const TRICKY = ["a --> b", "x\ny", '"quoted"', "C:\\Users\\alice", " padded ", "中文 😀", "a\u2028b", "a\u0085b", "p | q", "end--!>"];
 
@@ -81,7 +91,7 @@ describe("rewrites", () => {
     const sec = await s.section("hA");
     const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: "## A\n\nnew body\n" });
     expect(res.statusCode, res.body).toBe(201);
-    expect(knowledgeOf(res)).toEqual({ kept: [{ id: K1, heading: "A" }], created: [], removed: [], renewed: [], ignoredComments: 0 });
+    expect(knowledgeOf(res)).toEqual({ kept: [{ id: K1, heading: "A" }], created: [], removed: [], renewed: [], ignored: [], ignoredComments: 0 });
     const info = (await s.infos()).get(K1)!;
     expect(info).toMatchObject({ when: "alice reads this", conclusion: "keep" });
     expect((await s.content()).markdown).toContain("new body");
@@ -93,7 +103,7 @@ describe("rewrites", () => {
     const sec = await s.section("hA");
     const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: "## Renamed\n\nnew body\n" });
     expect(res.statusCode, res.body).toBe(201);
-    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "A" }], renewed: [], ignoredComments: 0 });
+    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "A" }], renewed: [], ignored: [], ignoredComments: 0 });
     expect((await s.infos()).size).toBe(0);
     await s.ctx.destroy();
   });
@@ -178,7 +188,7 @@ describe("rewrites", () => {
     const sec = await s.section("hA");
     const res = await s.edit({ op: "delete_section", section_id: "hA", if_match: sec.section.fingerprint });
     expect(res.statusCode, res.body).toBe(201);
-    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "A" }], renewed: [], ignoredComments: 0 });
+    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "A" }], renewed: [], ignored: [], ignoredComments: 0 });
     await s.ctx.destroy();
   });
 
@@ -222,6 +232,93 @@ describe("what is rejected", () => {
     });
     expect(res.statusCode, res.body).toBe(201);
     expect((await s.infos()).get(K1)).toMatchObject({ when: "changed", evidence: "docs", verified: "", status: "unverified" });
+    expect(knowledgeOf(res)!.ignored).toEqual([
+      { heading: "A", key: "Owner", value: "bob", reason: "unknown_field" },
+      { heading: "A", key: "evidence", value: "vendor-doc", reason: "not_an_option" },
+      { heading: "A", key: "verified", value: "soon", reason: "bad_date" },
+      { heading: "A", key: "status", value: "current", reason: "bad_status" },
+    ]);
+    await s.ctx.destroy();
+  });
+
+  it("edit_note writes the valid fields and reports the value it ignored", async () => {
+    const s = await setup([KH("hA", "Alpha", K1, { knowledgeEvidence: "docs" }), P("a1", "body")]);
+    const sec = await s.section("hA");
+    const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: `## Alpha\n${comment([`id: ${K1}`, "when: new", "evidence: vendor-doc"])}\n\nbody\n` });
+    expect(res.statusCode, res.body).toBe(201);
+    const md = (await s.section("hA")).section.markdown;
+    expect(md).toContain("when: new");
+    expect(md).toContain("evidence: docs");
+    expect(knowledgeOf(res)!.ignored).toEqual([{ heading: "Alpha", key: "evidence", value: "vendor-doc", reason: "not_an_option" }]);
+    await s.ctx.destroy();
+  });
+
+  it("an unknown key in the comment is reported, not refused", async () => {
+    const s = await setup([KH("hA", "Alpha", K1), P("a1", "body")]);
+    const sec = await s.section("hA");
+    const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: `## Alpha\n${comment([`id: ${K1}`, "when: alice reads this", "Owner: bob"])}\n\nbody\n` });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [], renewed: [], ignored: [{ heading: "Alpha", key: "Owner", value: "bob", reason: "unknown_field" }], ignoredComments: 0 });
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "alice reads this" });
+    await s.ctx.destroy();
+  });
+
+  it("a replace_section that leaves out a turned-off field keeps its stored value", async () => {
+    const s = await setup([KH("hA", "Alpha", K1, { knowledgeConclusion: "keep" }), P("a1", "body"), KH("hB", "Beta", K2), P("b1", "other")]);
+    const admin = await seedUser(s.ctx.db, { isAdmin: true });
+    const putWhen = async (enabled: boolean) => {
+      const res = await s.ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: fieldsBody({ when: enabled }) });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    const before = await s.content();
+    const beta = before.outline.find(o => o.sectionId === "hB")!.fingerprint;
+    await putWhen(false);
+    const sec = await s.section("hA");
+    const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: `## Alpha\n${comment([`id: ${K1}`, "conclusion: changed"])}\n\nbody\n` });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(knowledgeOf(res)).toBeUndefined();
+    await putWhen(true);
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "alice reads this", conclusion: "changed" });
+    expect((await s.section("hA")).section.markdown).toContain("when: alice reads this");
+    expect((await s.content()).outline.find(o => o.sectionId === "hB")!.fingerprint).toBe(beta);
+    await s.ctx.destroy();
+  });
+
+  it("a value for a turned-off field is reported and not written", async () => {
+    const s = await setup([KH("hA", "Alpha", K1), P("a1", "body")]);
+    const admin = await seedUser(s.ctx.db, { isAdmin: true });
+    const put = await s.ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: fieldsBody({ when: false }) });
+    expect(put.statusCode, put.body).toBe(200);
+    const sec = await s.section("hA");
+    const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: `## Alpha\n${comment([`id: ${K1}`, "when: bob reads this"])}\n\nbody\n` });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(knowledgeOf(res)!.ignored).toEqual([{ heading: "Alpha", key: "when", value: "bob reads this", reason: "field_disabled" }]);
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "alice reads this" });
+    await s.ctx.destroy();
+  });
+
+  it("obsolete without superseded_by and knowledge with only a status are written", async () => {
+    const s = await setup([P("p1", "body")]);
+    const res = await s.edit({ op: "append", markdown: `## Old\n${comment(["status: obsolete"])}\n\nx\n\n## Bare\n${comment(["status: needs-verify"])}\n\ny\n` });
+    expect(res.statusCode, res.body).toBe(201);
+    const k = knowledgeOf(res)!;
+    expect(k.ignored).toEqual([]);
+    expect(k.created.map(c => c.heading)).toEqual(["Old", "Bare"]);
+    const infos = await s.infos();
+    expect(infos.get(k.created[0]!.id)).toMatchObject({ when: "", conclusion: "", status: "outdated", supersededBy: "" });
+    expect(infos.get(k.created[1]!.id)).toMatchObject({ when: "", conclusion: "", evidence: "", verified: "", status: "unverified" });
+    await s.ctx.destroy();
+  });
+
+  it("a malformed id still answers invalid_knowledge and writes nothing", async () => {
+    const s = await setup([KH("hA", "Alpha", K1), P("a1", "body")]);
+    const before = await s.content();
+    const sec = await s.section("hA");
+    const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: `## Alpha\n${comment(["id: K_bad", "when: w"])}\n\nbody\n` });
+    expect(res.statusCode).toBe(400);
+    expect(errOf(res).code).toBe("invalid_knowledge");
+    expect((await s.content()).fingerprint).toBe(before.fingerprint);
+    expect(await s.ctx.db.select().from(noteAiEdits).where(eq(noteAiEdits.noteId, s.note.id))).toHaveLength(0);
     await s.ctx.destroy();
   });
 
@@ -377,7 +474,7 @@ ${comment(["id: k_12345678", "when: w"])}
 x
 ` });
     expect(res.statusCode, res.body).toBe(201);
-    expect(knowledgeOf(res)).toEqual({ kept: [], created: [{ id: "k_12345678", heading: "A" }], removed: [], renewed: [], ignoredComments: 0 });
+    expect(knowledgeOf(res)).toEqual({ kept: [], created: [{ id: "k_12345678", heading: "A" }], removed: [], renewed: [], ignored: [], ignoredComments: 0 });
     await s.ctx.destroy();
   });
 
@@ -426,6 +523,22 @@ ${comment([`id: ${K1}`, "when: alice reads this", "conclusion: second", "status:
     await s.ctx.destroy();
   });
 
+  it("create with content answers knowledgeIgnored when a value was ignored, and has no such key otherwise", async () => {
+    const s = await setup([P("p1", "body")]);
+    const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
+    const create = (content: string) => s.ctx.app.inject({
+      method: "POST", url: "/api/notes", headers: { cookie, "content-type": "application/json", origin: "http://localhost:3000" },
+      payload: { title: "Fresh", content },
+    });
+    const bad = await create(`## D1\n${comment(["when: w", "verified: 2026-13-01"])}\n\nx\n`);
+    expect(bad.statusCode, bad.body).toBe(201);
+    expect((bad.json() as { knowledgeIgnored?: unknown }).knowledgeIgnored).toEqual([{ heading: "D1", key: "verified", value: "2026-13-01", reason: "bad_date" }]);
+    const good = await create(`## D1\n${comment(["when: w", "verified: 2026-11-01"])}\n\nx\n`);
+    expect(good.statusCode, good.body).toBe(201);
+    expect(good.json()).not.toHaveProperty("knowledgeIgnored");
+    await s.ctx.destroy();
+  });
+
   it("create with content whose comment has a malformed id is 400 invalid_knowledge naming the heading, and no note is created", async () => {
     const s = await setup([P("p1", "body")]);
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
@@ -446,7 +559,7 @@ describe("reply and bookkeeping", () => {
     const s = await setup([P("p1", "body")]);
     const res = await s.edit({ op: "append", markdown: `plain paragraph\n\n${comment(["when: nowhere"])}\n\nmore\n` });
     expect(res.statusCode, res.body).toBe(201);
-    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [], renewed: [], ignoredComments: 1 });
+    expect(knowledgeOf(res)).toEqual({ kept: [], created: [], removed: [], renewed: [], ignored: [], ignoredComments: 1 });
     expect((await s.infos()).size).toBe(0);
     await s.ctx.destroy();
   });

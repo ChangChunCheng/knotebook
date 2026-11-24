@@ -1,4 +1,4 @@
-import { eq, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   KNOWLEDGE_CUSTOM_ENABLED_MAX,
   KNOWLEDGE_CUSTOM_TOTAL_MAX,
@@ -49,10 +49,10 @@ export async function loadKnowledgeFieldView(db: DbOrTx, space: { groupId: strin
   return resolveKnowledgeFieldView(await loadKnowledgeFieldRows(db, space.groupId));
 }
 
-/** The note's space; a missing note gets the site view. */
+/** The note's space; a missing or trashed note gets the site view. */
 export async function knowledgeFieldViewForNote(db: DbOrTx, noteId: string): Promise<KnowledgeFieldView> {
   if (!UUID_RE.test(noteId)) return loadKnowledgeFieldView(db, { groupId: null });
-  const [row] = await db.select({ groupId: notes.groupId }).from(notes).where(eq(notes.id, noteId.toLowerCase()));
+  const [row] = await db.select({ groupId: notes.groupId }).from(notes).where(and(eq(notes.id, noteId.toLowerCase()), isNull(notes.deletedAt)));
   return loadKnowledgeFieldView(db, { groupId: row?.groupId ?? null });
 }
 

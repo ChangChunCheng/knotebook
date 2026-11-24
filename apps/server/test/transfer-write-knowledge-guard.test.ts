@@ -63,6 +63,7 @@ ${comment(["when: w", "evidence: bogus"])}
 x
 `);
     expect(r.statusCode, r.body).toBe(201);
+    expect(r.json().knowledge.ignored).toEqual([{ heading: "D1", key: "evidence", value: "bogus", reason: "not_an_option" }]);
     const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, r.json().id as string)).doc;
     expect([...knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)).values()]).toMatchObject([{ when: "w", evidence: "" }]);
     await s.ctx.destroy();
@@ -75,6 +76,7 @@ describe("file write-back and knowledge comments", () => {
     const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
     const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n`));
     expect(put.statusCode, put.body).toBe(200);
+    expect(put.json().knowledge.ignored).toEqual([{ heading: "Old way", key: "superseded_by", value: "nope", reason: "bad_ref" }]);
     expect([...(await s.infos()).values()]).toMatchObject([{ when: "w", status: "outdated", supersededBy: "" }]);
     await s.ctx.destroy();
   });

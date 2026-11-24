@@ -3,7 +3,6 @@
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
 import {
-  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   MAX_LINK_TARGETS,
   YDOC_FRAGMENT,
   extractLinkTargets,
@@ -15,7 +14,9 @@ import {
   topLevelBlocks,
   type EditOp,
   type KnowledgeBlockShape,
+  type KnowledgeFieldView,
   type KnowledgeHeadingRef,
+  type KnowledgeIgnoredItem,
   type KnowledgeInfo,
   type KnowledgeProblem,
   type NoteContentDto,
@@ -93,6 +94,7 @@ export type EditDocOp = {
   blocks?: AnyPartialBlock[];
   parseError?: { error: ParseError; detail?: ParseDetail; knowledge?: KnowledgeProblem };
   noteId: string;
+  fields: KnowledgeFieldView;
 };
 export type RevertDocOp = { kind: "revert"; state: Uint8Array; row: RevertRow; othersShareAnchor: boolean };
 /** Plan and apply are separate jobs because parsing a dense section can use hundreds of MiB; stacked with mount + apply it would exhaust the worker's memory, and split the pool can recycle the worker in between. Both jobs use the same doc state. */
@@ -109,8 +111,9 @@ export type SyncPlanDocOp = {
   salt: Uint8Array;
   baseBodySha: Uint8Array;
   budgetMs: number;
+  fields: KnowledgeFieldView;
 };
-export type SyncApplyDocOp = { kind: "syncApply"; state: Uint8Array; plan: SyncPlan; normalizedId: string | null; noteId: string };
+export type SyncApplyDocOp = { kind: "syncApply"; state: Uint8Array; plan: SyncPlan; normalizedId: string | null; noteId: string; fields: KnowledgeFieldView };
 export type SizeTrialDocOp = { kind: "sizeTrial"; state: Uint8Array; update: Uint8Array };
 export type DocOp = ReadDocOp | OutlineDocOp | ExportFileDocOp | EditDocOp | RevertDocOp | SyncPlanDocOp | SyncApplyDocOp | SizeTrialDocOp;
 
@@ -221,12 +224,13 @@ export async function editOnFork(
   runtime: EditingRuntime,
   fork: Y.Doc,
   sv: Uint8Array,
-  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined; keepIds?: boolean; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string } },
+  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined; keepIds?: boolean; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string; fields: KnowledgeFieldView } },
   blocks: AnyPartialBlock[],
 ): Promise<{ diff: Uint8Array; beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null; knowledge: KnowledgeEditReport }> {
   const { op, isEmptyDoc, section } = plan;
   let kept: KnowledgeHeadingRef[] = [];
   let resolvedRenewed: KnowledgeRenewal[] = [];
+  let ignored: KnowledgeIgnoredItem[] = [];
   // Without `plan.knowledge` (version apply) the blocks come from a stored version and are written as they are.
   const withKnowledge = (before: readonly AnyBlock[]): AnyPartialBlock[] => {
     const k = plan.knowledge;
@@ -238,9 +242,10 @@ export async function editOnFork(
       keep,
       taken: new Set(k.current.keys()),
     });
-    const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: k.fields });
     if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
     ({ kept } = r);
+    ({ ignored } = s);
     resolvedRenewed = r.renewed;
     return s.blocks as unknown as AnyPartialBlock[];
   };
@@ -307,7 +312,7 @@ export async function editOnFork(
     beforeBlocks,
     afterIds: w.value.afterIds.map(id => w.renamed.get(id) ?? id),
     anchor: w.value.anchor,
-    knowledge: { kept, created, removed, renewed },
+    knowledge: { kept, created, removed, renewed, ignored },
   };
 }
 
@@ -338,7 +343,7 @@ async function editOp(runtime: EditingRuntime, op: EditDocOp): Promise<EditDocRe
   const guard: MergeGuard = expect === null ? { kind: "none" } : targetIds === null || isEmptyDoc ? { kind: "any" } : { kind: "blocks", items: containerItems(fragment, targetIds), anchors: [] };
   let r: Awaited<ReturnType<typeof editOnFork>>;
   try {
-    r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section, keepIds: true, knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId } }, blocks);
+    r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section, keepIds: true, knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId, fields: op.fields } }, blocks);
   } catch (err) {
     if (err instanceof KnowledgeWriteError) return { ok: false, code: "invalid_knowledge", knowledge: err.problem };
     throw err;
@@ -401,6 +406,7 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
     candidates: op.candidates,
     siteOrigin: op.siteOrigin,
     exportedLinkText: exportedLinkTextOf(op.segments, key, salt),
+    knowledge: { current: knowledgeInfoById(curFragment), fields: op.fields },
   });
   if (!planned.ok) return { kind: "parse", code: planned.code, ...(planned.detail ? { detail: planned.detail } : {}), ...(planned.fence ? { fence: planned.fence } : {}), ...(planned.knowledge ? { knowledge: planned.knowledge } : {}), budgetLeft: left() };
   const p = planned.plan;
@@ -417,7 +423,7 @@ async function syncApplyOp(runtime: EditingRuntime, op: SyncApplyDocOp): Promise
   try {
     a = await applySync(runtime, fork, base.sv, op.plan, cur, {
       ...(op.normalizedId !== null ? { normalizedId: op.normalizedId } : {}),
-      knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId },
+      knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId, fields: op.fields },
     });
   } catch (err) {
     if (err instanceof KnowledgeWriteError) return { kind: "invalid_knowledge", knowledge: err.problem };
@@ -425,7 +431,7 @@ async function syncApplyOp(runtime: EditingRuntime, op: SyncApplyDocOp): Promise
   }
   // Write-back requires the whole note unchanged since download.
   const post = postOf(fork, base, a.diff, [], { kind: "any" }, a.perRegion.map(pr => pr.afterIds));
-  return { decisions: op.plan.decisions, unbound: op.plan.unbound, perRegion: a.perRegion, post, knowledge: { ...a.knowledge, ignoredComments: op.plan.ignoredKnowledgeComments } };
+  return { decisions: op.plan.decisions, unbound: op.plan.unbound, perRegion: a.perRegion, post, knowledge: { ...a.knowledge, ignored: [...op.plan.ignoredKnowledge, ...a.knowledge.ignored], ignoredComments: op.plan.ignoredKnowledgeComments } };
 }
 
 /** `RangeError` (stack/array/string limits) means too large or complex → `DOC_TOO_COMPLEX`; other errors are bugs and rethrown. */

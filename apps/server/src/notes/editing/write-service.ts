@@ -5,7 +5,7 @@
  */
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite, type EditOp, type KnowledgeBlockShape, type KnowledgeProblem } from "@knotebook/shared";
+import { resolveKnowledgeForWrite, sanitizeKnowledgeForWrite, type EditOp, type KnowledgeBlockShape, type KnowledgeFieldView, type KnowledgeProblem } from "@knotebook/shared";
 import { currentAgentLabel } from "../../auth/agent-label.js";
 import type { CollabServer } from "../../collab/server.js";
 import type { VersionService } from "../../collab/versions.js";
@@ -13,6 +13,7 @@ import type { Db } from "../../db/index.js";
 import { noteAiEdits, notes, transferBases, transferCreates } from "../../db/schema.js";
 import { isForeignKeyViolation, isNoteFolderSpaceViolation, isRetryableTxError, pgErrorSummary } from "../../db/pg-errors.js";
 import type { FixedWindowLimiter } from "../../http/rate-limit.js";
+import { knowledgeFieldViewForNote, loadKnowledgeFieldView } from "../../knowledge/fields/queries.js";
 import { redactDbError } from "../../lib/redact-db-error.js";
 import { hmacOf } from "../../transfer/base-hash.js";
 import { diffLines, hashAgentLines } from "../../transfer/line-diff.js";
@@ -435,6 +436,7 @@ export class NoteWriteService {
     let merged: MergeOutput | null = null;
     let syncApplied: SyncApplyDocResult | null = null;
     const fileBudget = applyDeps.editing.parser.fileBudget();
+    let fields: KnowledgeFieldView | null = null;
     let zeroRegion = false;
     let bodyChecked = tagsOnly;
     // The worker's two questions are answered here; the write quota is charged before parsing (a 400 parse failure still counts, like `edit_note` charging first) and not again on retries.
@@ -452,6 +454,7 @@ export class NoteWriteService {
       return true;
     };
     for (let attempt = 0; attempt < SYNC_MERGE_ATTEMPTS && merged === null && !zeroRegion && !bodyChecked; attempt++) {
+      fields ??= await knowledgeFieldViewForNote(db, input.noteId);
       const { state, watch } = await loadNoteState(applyDeps, input.noteId, { watch: true });
       try {
         const budgetMs = fileBudget.remainingMs;
@@ -460,7 +463,7 @@ export class NoteWriteService {
           {
             kind: "syncPlan", state: new Uint8Array(state), owner: input.userId, segments: base.segments, baseLineCount: base.lineKinds.length,
             body: diffIn === null ? null : { agentLines: diffIn.agentLines, diff: diffIn.diff },
-            candidates, siteOrigin: siteOriginOf(editing.baseUrl), key: new Uint8Array(input.key), salt: new Uint8Array(salt), baseBodySha: new Uint8Array(baseBodySha), budgetMs,
+            candidates, siteOrigin: siteOriginOf(editing.baseUrl), key: new Uint8Array(input.key), salt: new Uint8Array(salt), baseBodySha: new Uint8Array(baseBodySha), budgetMs, fields,
           },
           // Remaining budget + one time limit for the whole-export comparison (segments null); the "+ 1×" must match QUEUE_WAIT_TIMEOUT_FACTOR (4 = 3 + 1).
           { ask, extraWeight: input.body.length, timeoutMs: Math.max(0, budgetMs) + editing.parser.timeoutMs() },
@@ -485,7 +488,7 @@ export class NoteWriteService {
           zeroRegion = true;
           break;
         }
-        const a = await editing.runDoc(input.userId, { kind: "syncApply", state, plan: r.plan, normalizedId: r.normalizedId, noteId: input.noteId }, { extraWeight: input.body.length });
+        const a = await editing.runDoc(input.userId, { kind: "syncApply", state, plan: r.plan, normalizedId: r.normalizedId, noteId: input.noteId, fields }, { extraWeight: input.body.length });
         if (a === DOC_TOO_COMPLEX) return { ok: false, kind: "note_too_complex" };
         if ("kind" in a) return { ok: false, kind: "parse", code: "invalid_knowledge", knowledge: a.knowledge };
         if (hooks?.beforeMerge) await hooks.beforeMerge();
@@ -645,7 +648,7 @@ export class NoteWriteService {
     }
     // Charge before parsing (a failed parse counts once): otherwise unparseable files cost no quota and every request could make the server parse a whole large file. A parse failure leaves no note and no dedupe row.
     if (!input.limiters.transferWrite.consume(input.userId)) return { ok: false, kind: "rate_limited", retryAfterMs: input.limiters.transferWrite.retryAfterMs(input.userId) };
-    const pre = await this.prepareContent(log, { userId: input.userId, tokenId: input.tokenId, content: input.body });
+    const pre = await this.prepareContent(log, { userId: input.userId, tokenId: input.tokenId, content: input.body, scope: input.dest.scope });
     if (!pre.ok) return pre.kind === "parser_busy" ? pre : { ok: false, kind: "parse", code: pre.code, ...(pre.detail ? { detail: pre.detail } : {}), ...(pre.knowledge ? { knowledge: pre.knowledge } : {}) };
     if (this.deps.testHooks?.beforeCreateFromFile) await this.deps.testHooks.beforeCreateFromFile();
     let r: CreateWithContentResult;
@@ -675,7 +678,7 @@ export class NoteWriteService {
   }
 
   /** A new note has no knowledge yet, so the knowledge checks run here with nothing to compare against: a malformed id is refused before a note row exists. Bad values are only ignored, by the write itself. */
-  async prepareContent(log: FastifyBaseLogger, input: { userId: string; tokenId: string | null; content: string }): Promise<PreparedContent | PrepareContentFailure | ParserBusy> {
+  async prepareContent(log: FastifyBaseLogger, input: { userId: string; tokenId: string | null; content: string; scope: SlugScope }): Promise<PreparedContent | PrepareContentFailure | ParserBusy> {
     const candidates = await visibleNoteTargets(this.deps.db, input.userId);
     const agentLabel = input.tokenId ? await currentAgentLabel(this.deps.db, input.tokenId) : null;
     const editing = this.applyDeps(log).editing;
@@ -692,7 +695,7 @@ export class NoteWriteService {
       after: resolveKnowledgeForWrite({ before: [], after: shaped, keep: false, taken: new Set() }).blocks,
       current: new Map(),
       noteId: null,
-      fields: DEFAULT_KNOWLEDGE_FIELD_VIEW,
+      fields: await loadKnowledgeFieldView(this.deps.db, { groupId: "groupId" in input.scope ? input.scope.groupId : null }),
     });
     if (problem !== null) return { ok: false, kind: "parse", code: "invalid_knowledge", knowledge: problem };
     return { ok: true, candidates, agentLabel, prepared };
@@ -746,6 +749,7 @@ export class NoteWriteService {
             blocks,
             unbound: prepared.unbound,
             ignoredKnowledgeComments: prepared.ignoredKnowledgeComments,
+            ignoredKnowledge: prepared.ignoredKnowledge,
             contentLength: input.content.length,
           }),
         this.deps.queueWaitMs

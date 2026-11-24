@@ -384,11 +384,12 @@ describe("#108 single response size", () => {
       markdown: `# 0250-edited${"h".repeat(986)}`,
       if_match: target.fingerprint,
     });
-    // The same full outline page next to the worst `knowledge`: all four lists cut by their budget, every id and heading made of `"` (the most expensive character once mirrored).
+    // The same full outline page next to the worst `knowledge`: all five lists cut by their budget, every id, heading, key and value made of `"` (the most expensive character once mirrored).
     // Ids come from collab state, so their length has no limit of its own.
     const worst = (n: number) => Array.from({ length: MCP_PAGE_MAX }, (_, i) => ({ id: `k_${String(i).padStart(8, "0")}${'"'.repeat(n)}`, heading: '"'.repeat(200) }));
+    const worstIgnored = Array.from({ length: MCP_PAGE_MAX }, () => ({ heading: '"'.repeat(200), key: '"'.repeat(80), value: '"'.repeat(200), reason: "unresolved_member" as const }));
     for (const idLength of [0, 300, 3000]) {
-      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignoredComments: 1 });
+      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignored: worstIgnored, ignoredComments: 1 });
       expect(knowledge.truncated).toBe(true);
       const total = editWire + wireCost(knowledge);
       console.log(`[knowledge] idLength=${idLength} knowledge wire=${wireCost(knowledge)} total=${total}`);

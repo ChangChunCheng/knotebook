@@ -10,7 +10,6 @@ import type { Block } from "@blocknote/core";
 import * as Y from "yjs";
 import type { noteAiEdits } from "../db/schema.js";
 import {
-  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   YDOC_FRAGMENT,
   keptIdRenames,
   knowledgeRefsIn,
@@ -18,6 +17,7 @@ import {
   resolveKnowledgeForWrite,
   sanitizeKnowledgeForWrite,
   type KnowledgeBlockShape,
+  type KnowledgeFieldView,
   type KnowledgeInfo,
 } from "@knotebook/shared";
 import { KnowledgeWriteError, createdKnowledge, knowledgeIdsByBlock, mergeKnowledgeReports, type KnowledgeEditReport } from "../notes/editing/knowledge-write.js";
@@ -77,7 +77,7 @@ export async function applySync(
   plan: SyncPlan,
   cur: { ids: string[] },
   // `normalizedId`: the base had 0 blocks and the current doc is one empty paragraph; replaced once, like the `cur.ids.length === 0` case.
-  opts: { yieldFn?: () => Promise<void>; now?: () => number; normalizedId?: string; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string } } = {},
+  opts: { yieldFn?: () => Promise<void>; now?: () => number; normalizedId?: string; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string; fields: KnowledgeFieldView } } = {},
 ): Promise<Applied> {
   const yieldFn = opts.yieldFn ?? yieldToLoop;
   const now = opts.now ?? (() => performance.now());
@@ -123,11 +123,11 @@ export async function applySync(
         // A comment without an id takes the id of the heading it rewrites; headings written without a comment are never given knowledge.
         const old = d.kind === "rewrite" ? (pickBlocks(byId, d.survivors) as unknown as readonly KnowledgeBlockShape[]) : [];
         const r = resolveKnowledgeForWrite({ before: old, after: normalizeKnowledgeRefs(blocks as unknown as readonly KnowledgeBlockShape[], k.noteId), keep: false, taken });
-        const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+        const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: k.fields });
         if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
         for (const ref of [...r.created, ...r.renewed]) taken.add(ref.id);
         blocks = s.blocks as unknown as typeof blocks;
-        reports.push({ kept: r.kept, created: r.created, removed: [], renewed: r.renewed });
+        reports.push({ kept: r.kept, created: r.created, removed: [], renewed: r.renewed, ignored: s.ignored });
       }
       const p = d.place;
       let inserted: AnyBlock[];
