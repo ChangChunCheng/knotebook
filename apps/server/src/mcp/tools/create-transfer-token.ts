@@ -88,7 +88,7 @@ export const UPLOAD_NEXT =
   "token up (after a 429, wait a moment and retry); a 404 means the note is gone or you can no longer see it. " +
   "A 409 `storage_quota_exceeded` means the note's storage space has no room for this file: don't retry until space has been freed, and then ask for a new token. " +
   "A 409 `server_busy` means the server was busy and the token is used up: ask for a new token and retry. Once the server has started reading the file, a " +
-  "rejection (for example 413: too large, 415: not a PNG, JPEG, GIF or WebP image) still uses the token up.";
+  "rejection (for example 413: too large, 415: not a PNG, JPEG, GIF, WebP or SVG image) still uses the token up.";
 
 export const DOWNLOAD_NEXT =
   "Replace `<upload_id>` with the id from `/api/uploads/<id>` in the note's markdown. Any image uploaded to this note " +

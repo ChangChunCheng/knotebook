@@ -16,9 +16,9 @@ import { PNG, seedDoc, seedUpload } from "./copy-helpers.js";
 const MAX = 5_242_880;
 const NOT_READABLE = "No readable image with that id. It may not exist, or it may belong to a note you can't read.";
 const DESC_TOKEN =
-  "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image; larger ones are refused — download those with create_transfer_token instead.";
+  "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image (SVG comes back as its UTF-8 XML text); larger ones are refused — download those with create_transfer_token instead.";
 const DESC_SESSION =
-  "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image; larger ones are refused.";
+  "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to 5242880 bytes come back as an image (SVG comes back as its UTF-8 XML text); larger ones are refused.";
 /** Columns: images with a width are also read as `<figure>`; table cells aren't mentioned; the address is given as an example (old absolute URLs also contain the id). */
 const SECTION_SENTENCE =
   "An uploaded image's address contains its upload id, for example `/api/uploads/<id>` in `![name](/api/uploads/<id>)` or, for an image with a caption or shown at a set width, in `<figure><img … src=\"/api/uploads/<id>\" …>…</figure>`; see them with read_note_image.";
@@ -66,6 +66,22 @@ describe("#200 read_note_image", () => {
       expect(r.content[0]!.text).toBe(JSON.stringify(r.structuredContent));
       expect(r.structuredContent).toEqual({ noteId: n.id, uploadId: id, mimeType: "image/png", bytes: PNG.length });
     }
+  });
+
+  it("#389 SVG: content[1] is UTF-8 text (no image block), mirror equality, structuredContent carries mimeType image/svg+xml", async () => {
+    const { app, db, uploadsDir } = await buildTestApp();
+    const me = await seedUser(db);
+    const n = await seedNote(db, { ownerId: me.id });
+    const svgText = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
+    const svgBytes = Buffer.from(svgText, "utf-8");
+    const id = await seedUpload(db, uploadsDir, n.id, me.id, svgBytes, { mime: "image/svg+xml" });
+    const { token } = await seedTokenForUser(db, me.id, "notes:read");
+    const r = await read(app, token, n.id, id);
+    expect(r.isError).toBeUndefined();
+    expect(r.structuredContent).toEqual({ noteId: n.id, uploadId: id, mimeType: "image/svg+xml", bytes: svgBytes.length });
+    expect(r.content[0]).toEqual({ type: "text", text: JSON.stringify(r.structuredContent) });
+    expect(r.content[1]).toEqual({ type: "text", text: svgText });
+    expect(r.content.some(block => block.type === "image")).toBe(false);
   });
 
   it("not_found: a nonexistent note and an invisible note are byte-identical; a missing upload and a file absent from disk are byte-identical", async () => {

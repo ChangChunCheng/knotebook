@@ -130,6 +130,28 @@ describe("FilePanel (image block recovery + own Upload/Embed tabs)", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
+    it("SVG upload (#389): file input accepts image/* and uploading an image/svg+xml file writes the returned url", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(fakeResponse({ ok: true, status: 201, json: () => Promise.resolve({ id: "u-svg", url: "/api/uploads/u-svg" }) }));
+      stubFetch(fetchMock);
+
+      const blockId = insertBlock(editor, "image");
+      renderPanel(editor, "note-1", blockId);
+
+      const input = screen.getByLabelText("Choose an image file to upload");
+      expect(input).toHaveAttribute("accept", "image/*");
+      const svgFile = new File(['<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'], "icon.svg", {
+        type: "image/svg+xml",
+      });
+      fireEvent.change(input, { target: { files: [svgFile] } });
+
+      await waitFor(() => {
+        expect((editor.getBlock(blockId)!.props as Record<string, unknown>).url).toBe("/api/uploads/u-svg");
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
     it("upload failure (known error code): the inline error shows the matching errors.<code> text, not the generic one; the block is untouched (not the editor.uploadFile path that would wrongly delete the block)", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         fakeResponse({

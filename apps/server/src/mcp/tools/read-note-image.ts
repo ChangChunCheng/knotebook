@@ -9,7 +9,7 @@ import { resolveRole } from "../../notes/service.js";
 import { uploadFilePath } from "../../uploads/service.js";
 import { MCP_IMAGE_MAX_BYTES } from "../limits.js";
 import { authorizeNoteRead } from "../note-read.js";
-import { toolError, toolResultWithImage } from "../tool-result.js";
+import { toolError, toolResultWithImage, toolResultWithText } from "../tool-result.js";
 import type { McpToolCtx } from "../context.js";
 
 const UPLOAD_ID_RE = /^(?:\/api\/uploads\/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -22,10 +22,10 @@ export const UPLOAD_ID = z
 
 export const READ_NOTE_IMAGE_DESCRIPTION_TOKEN =
   "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to " +
-  `${MCP_IMAGE_MAX_BYTES} bytes come back as an image; larger ones are refused — download those with create_transfer_token instead.`;
+  `${MCP_IMAGE_MAX_BYTES} bytes come back as an image (SVG comes back as its UTF-8 XML text); larger ones are refused — download those with create_transfer_token instead.`;
 export const READ_NOTE_IMAGE_DESCRIPTION_SESSION =
   "Look at an image in a note. Pass the id from `/api/uploads/<id>` in read_note_section's markdown. Images up to " +
-  `${MCP_IMAGE_MAX_BYTES} bytes come back as an image; larger ones are refused.`;
+  `${MCP_IMAGE_MAX_BYTES} bytes come back as an image (SVG comes back as its UTF-8 XML text); larger ones are refused.`;
 
 export const readNoteImageInput = {
   note_id: NOTE_ID.describe("The note's id, as returned by list_notes or search_notes."),
@@ -34,7 +34,7 @@ export const readNoteImageInput = {
 export const readNoteImageOutput = {
   noteId: z.string(),
   uploadId: z.string(),
-  mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]),
   bytes: z.number(),
 };
 
@@ -73,5 +73,9 @@ export async function readNoteImage(args: { note_id: string; upload_id: string }
   }
   if (buf.length > MCP_IMAGE_MAX_BYTES) return tooLarge(ctx, buf.length, row.noteId); // DB size and the real file disagree
   const meta = { noteId: row.noteId, uploadId: row.id, mimeType: row.mime as z.infer<typeof readNoteImageOutput.mimeType>, bytes: buf.length };
+  // Most MCP clients reject `image/svg+xml` in image content blocks; return the XML source as text instead.
+  if (row.mime === "image/svg+xml") {
+    return toolResultWithText(meta, buf.toString("utf-8"));
+  }
   return toolResultWithImage(meta, { data: buf.toString("base64"), mimeType: row.mime });
 }
