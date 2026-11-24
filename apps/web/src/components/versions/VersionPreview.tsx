@@ -64,8 +64,11 @@ export function DiffEditor({
   marks: Map<string, DiffMark | DiffMarkInfo>;
   testId?: string;
   rootRef?: MutableRefObject<HTMLElement | null>;
-  /** The knowledge of the version this editor shows. `accept` picks which DOM blocks may carry an icon (the single column holds blocks that aren't part of that version). Omitted = no icons, as in the before/after dialog. */
-  knowledge?: { entries: readonly KnowledgeEntry[]; accept?: (outer: HTMLElement) => boolean };
+  /**
+   * The knowledge of the version this editor shows. `accept` picks which DOM blocks may carry an icon (the single column holds blocks that aren't part of that version). Omitted = no icons, as in the before/after dialog.
+   * `memberNoteId`: the previewed note, used only to name members in custom fields.
+   */
+  knowledge?: { entries: readonly KnowledgeEntry[]; accept?: (outer: HTMLElement) => boolean; memberNoteId?: string | null };
 }) {
   const { resolvedTheme } = useTheme();
   const editor = useCreateBlockNote(
@@ -117,7 +120,7 @@ export function DiffEditor({
         <BlockNoteView editor={editor} editable={false} theme={resolvedTheme} />
       </MediaZoomContext.Provider>
       {knowledge && (
-        <KnowledgeLayerLazy key={generation.current.n} container={box} entries={knowledge.entries} editable={false} noteId={null} controller={controller} accept={knowledge.accept} />
+        <KnowledgeLayerLazy key={generation.current.n} container={box} entries={knowledge.entries} editable={false} noteId={null} memberNoteId={knowledge.memberNoteId ?? null} controller={controller} accept={knowledge.accept} />
       )}
     </div>
   );
@@ -315,8 +318,8 @@ export function VersionPreview({ doc, forceSingle = false }: { doc: Y.Doc; force
   const sides = useMemo(() => (entries ? sideBySideMarks(entries) : null), [entries]);
   const nonText = useMemo(() => (entries && single ? collectNonText(entries, single.marks) : []), [entries, single]);
   // Each side's knowledge comes from its own blocks. The single column mixes both versions plus collapsed placeholders, so it shows the previewed version's (`a`) and skips blocks that version doesn't have.
-  const knowledgeA = useMemo(() => ({ entries: a ? knowledgeOf(a) : [] }), [a]);
-  const knowledgeB = useMemo(() => ({ entries: b ? knowledgeOf(b) : [] }), [b]);
+  const knowledgeA = useMemo(() => ({ entries: a ? knowledgeOf(a) : [], memberNoteId: noteId }), [a, noteId]);
+  const knowledgeB = useMemo(() => ({ entries: b ? knowledgeOf(b) : [], memberNoteId: noteId }), [b, noteId]);
   const knowledgeSingle = useMemo(
     () => ({
       entries: rekeyKnowledge(knowledgeA.entries, entries ?? []),
@@ -324,8 +327,9 @@ export function VersionPreview({ doc, forceSingle = false }: { doc: Y.Doc; force
         const info = single?.marks.get(outer.dataset.id!);
         return info?.mark !== "added" && info?.mark !== "collapsed";
       },
+      memberNoteId: noteId,
     }),
-    [knowledgeA, entries, single],
+    [knowledgeA, entries, single, noteId],
   );
 
   // Side-by-side exists only when the preview area is wide enough: narrow is always single; the user's chosen "side-by-side" stays in splitMode and returns when wide again. Same condition as the controller's `splitActive`.

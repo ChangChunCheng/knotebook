@@ -27,6 +27,8 @@ export interface KnowledgeLayerProps {
   entries: readonly KnowledgeEntry[];
   editable: boolean;
   noteId: string | null;
+  /** Names the members in custom fields; defaults to `noteId`. A version preview sets it while keeping `noteId` null. */
+  memberNoteId?: string | null;
   controller: KnowledgeController;
   accept?: (outer: HTMLElement) => boolean;
   replacementOf?: (entry: KnowledgeEntry) => KnowledgeReplacementView | null;
@@ -229,7 +231,7 @@ const IconItem = memo(
     a.hoverable === b.hoverable && a.phone === b.phone && a.editable === b.editable && a.surfaceOpen === b.surfaceOpen && a.ctxRef === b.ctxRef,
 );
 
-export function KnowledgeLayer({ container, entries, editable, noteId, controller, accept, replacementOf, editSurface, sheetFooter, editor }: KnowledgeLayerProps): ReactNode {
+export function KnowledgeLayer({ container, entries, editable, noteId, memberNoteId, controller, accept, replacementOf, editSurface, sheetFooter, editor }: KnowledgeLayerProps): ReactNode {
   const { t } = useTranslation();
   const places = useIconPlaces(container, entries, accept);
   const noHover = useNoHover();
@@ -252,7 +254,7 @@ export function KnowledgeLayer({ container, entries, editable, noteId, controlle
           </Button>
         )
     : undefined;
-  const ctx: KnowledgeContext = { container, entries, editable, noteId, controller, replacementOf, editSurface: editSurface ?? formFor, sheetFooter: sheetFooter ?? verifyFor };
+  const ctx: KnowledgeContext = { container, entries, editable, noteId, memberNoteId: memberNoteId ?? noteId, controller, replacementOf, editSurface: editSurface ?? formFor, sheetFooter: sheetFooter ?? verifyFor };
   ctxRef.current = ctx;
   if (entries.length === 0 && controller.state === null) return null;
   const seen = new Set<string>();

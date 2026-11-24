@@ -16,6 +16,7 @@ export interface KnowledgeContext {
   entries: readonly KnowledgeEntry[];
   editable: boolean;
   noteId: string | null;
+  memberNoteId: string | null;
   controller: KnowledgeController;
   replacementOf?: (entry: KnowledgeEntry) => KnowledgeReplacementView | null;
   editSurface?: (blockId: string, close: () => void) => ReactNode;
@@ -50,6 +51,7 @@ export function LiveCard({ ctx, blockId, variant, onEdit }: { ctx: KnowledgeCont
   return (
     <KnowledgeCard
       entry={entry}
+      memberNoteId={ctx.memberNoteId}
       parent={model.parent}
       outdatedAncestor={model.outdatedAncestor}
       summary={model.summary}

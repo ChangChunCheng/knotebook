@@ -4,7 +4,10 @@ import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
 import { BlockNoteEditor, getNodeById } from "@blocknote/core";
-import { AI_SSE_EVENTS, DEFAULT_KNOWLEDGE_FIELD_VIEW, type AiActionDto, type KnowledgeFieldView, type KnowledgeFieldsDto, type NoteDto } from "@knotebook/shared";
+import {
+  AI_SSE_EVENTS, DEFAULT_KNOWLEDGE_FIELD_VIEW, type AiActionDto, type KnowledgeFieldView, type KnowledgeFieldsDto, type KnowledgeMembersDto, type KnowledgeMembersRequest,
+  type NoteDto,
+} from "@knotebook/shared";
 import { noteSchema } from "@/collab/schema";
 import { AiSessionProvider } from "@/components/ai/AiSession";
 import { KnowledgeFieldsContext, KnowledgeFieldsProvider, type KnowledgeFieldsValue } from "@/components/knowledge/fields-context";
@@ -48,8 +51,16 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 /** `knowledgeFields`: what `GET /api/knowledge/fields?note=…` serves to a host rendered with `knowledgeFields: "fetch"`. */
-export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[]; knowledgeFields?: KnowledgeFieldView }): { calls: AiCall[] } {
+export function stubAiFetch(opts: {
+  actions: AiActionDto[];
+  notes?: NoteDto[];
+  knowledgeFields?: KnowledgeFieldView;
+  /** Answers `POST /api/knowledge/members`; without it the endpoint fails with 500. An answer of `"hang"` never comes until aborted. */
+  members?: (body: KnowledgeMembersRequest) => KnowledgeMembersDto | "hang";
+}): { calls: AiCall[]; memberLookups: KnowledgeMembersRequest[]; memberSignals: AbortSignal[] } {
   const calls: AiCall[] = [];
+  const memberLookups: KnowledgeMembersRequest[] = [];
+  const memberSignals: AbortSignal[] = [];
   const encoder = new TextEncoder();
   vi.stubGlobal(
     "fetch",
@@ -62,6 +73,18 @@ export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[]; k
       if (url.startsWith("/api/knowledge/fields?note=") && method === "GET") {
         const dto: KnowledgeFieldsDto = { fields: (opts.knowledgeFields ?? DEFAULT_KNOWLEDGE_FIELD_VIEW).fields };
         return Promise.resolve(jsonResponse(200, dto));
+      }
+      if (url === "/api/knowledge/members" && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as KnowledgeMembersRequest;
+        memberLookups.push(body);
+        const signal = init?.signal as AbortSignal | undefined;
+        if (signal) memberSignals.push(signal);
+        if (!opts.members) return Promise.resolve(jsonResponse(500, { error: { code: "internal", message: "test failure" } }));
+        const answer = opts.members(body);
+        if (answer === "hang") {
+          return new Promise<Response>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+        }
+        return Promise.resolve(jsonResponse(200, answer));
       }
       if (url === "/api/ai" && method === "POST") {
         let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -89,7 +112,7 @@ export function stubAiFetch(opts: { actions: AiActionDto[]; notes?: NoteDto[]; k
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }),
   );
-  return { calls };
+  return { calls, memberLookups, memberSignals };
 }
 
 export interface AiHostProps {

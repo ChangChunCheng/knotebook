@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { KnowledgeEntry } from "@knotebook/shared";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, listKnowledgeInBlocks, readKnowledgeInfo } from "@knotebook/shared";
 import i18n from "@/i18n";
@@ -13,7 +14,7 @@ import { KnowledgeForm } from "./KnowledgeForm";
 import { KnowledgeLayer } from "./KnowledgeLayer";
 import { KnowledgeRefSourceContext, type KnowledgeRefSource } from "./ref-source";
 import type { KnowledgeFieldsValue } from "./fields-context";
-import { fieldView, stubMedia, withFields } from "./test-support";
+import { customFieldView, fieldView, stubMedia, withFields } from "./test-support";
 import "@/i18n/knowledge-strings";
 
 const NOTE = "11111111-2222-3333-4444-555555555555";
@@ -628,6 +629,33 @@ describe("edit surface in the layer", () => {
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Knowledge info" })).toBeNull());
   });
 
+  it("Escape with the member list open closes only the list; a second Escape closes the form", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve(null) } as unknown as Response)));
+    try {
+      const m = mountEditor([heading("Alpha", "a", K(1))], { collab: true });
+      cleanups.push(m.destroy);
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 0, 600, 30));
+      vi.spyOn(Range.prototype, "getClientRects").mockImplementation(() => [new DOMRect(0, 0, 200, 30)] as unknown as DOMRectList);
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <Host editor={m.editor} container={m.container} fields={{ view: customFieldView([{ key: "owner", type: "member", name: "Owner" }]) }} />
+        </QueryClientProvider>,
+      );
+      openEdit("a");
+      const combo = await screen.findByRole("combobox", { name: "Owner" });
+      fireEvent.focus(combo);
+      expect(combo).toHaveAttribute("aria-expanded", "true");
+      fireEvent.keyDown(combo, { key: "Escape" });
+      await waitFor(() => expect(combo.getAttribute("aria-expanded")).toBe("false"));
+      expect(screen.getByRole("heading", { name: "Knowledge info" })).toBeInTheDocument();
+      fireEvent.keyDown(combo, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("heading", { name: "Knowledge info" })).toBeNull());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("opens on a heading that is not knowledge yet and Save turns it into knowledge", async () => {
     const editor = layerWith([heading("Plain", "b"), P("para", "p")]);
     openEdit("b");
@@ -711,5 +739,95 @@ describe("edit surface in the layer", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByRole("button", { name: "Edit" })).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Mark as verified" })).toBeNull();
+  });
+});
+
+describe("KnowledgeForm custom fields", () => {
+  const CUSTOM = customFieldView([
+    { key: "team", type: "text", name: "Team" },
+    { key: "stage", type: "select", name: "Stage", options: [{ key: "draft", name: "Draft" }, { key: "done", name: "Done" }, { key: "old", name: "Old", enabled: false }] },
+    { key: "off", type: "text", name: "Retired", enabled: false },
+    { key: "due", type: "date", name: "Due" },
+    { key: "docs", type: "link", name: "Docs" },
+    { key: "owner", type: "member", name: "Owner" },
+  ]);
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const body = url === "/api/knowledge/members" ? { byId: [], byToken: [] } : url === "/api/auth/me" ? null : { users: [] };
+        return Promise.resolve({ ok: url !== "/api/auth/me", status: url === "/api/auth/me" ? 401 : 200, json: () => Promise.resolve(body) } as unknown as Response);
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderCustom(editor: AnyEditor, blockId: string, close = vi.fn()) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        {withFields(<KnowledgeForm editor={editor} blockId={blockId} getEntries={() => entriesOf(editor)} noteId={NOTE} phone={false} close={close} />, { view: CUSTOM })}
+      </QueryClientProvider>,
+    );
+    return close;
+  }
+
+  it("each enabled custom field gets its input in settings order and turned-off ones are absent", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeCustom: '{"off":"kept"}' }))]);
+    renderCustom(editor, "a");
+    const form = document.querySelector("form")!;
+    const labels = [...form.querySelectorAll("label, [id$='status-label'], [id$='-label']")].map((el) => el.textContent);
+    expect(labels.slice(-5)).toEqual(["Team", "Stage", "Due", "Docs", "Owner"]);
+    expect(labels).not.toContain("Retired");
+    expect(input("Team").type).toBe("text");
+    expect(input("Due").type).toBe("date");
+    expect(screen.getByRole("combobox", { name: "Owner" })).toBeInTheDocument();
+  });
+
+  it("the single choice offers Not filled and the enabled options, plus a stored turned-off option marked as such", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeCustom: '{"stage":"old"}' }))]);
+    renderCustom(editor, "a");
+    const trigger = screen.getByRole("combobox", { name: "Stage" });
+    expect(trigger.querySelector("[data-select-text]")!.textContent).toBe("Old (turned off)");
+    const sizers = [...trigger.querySelectorAll("[data-select-sizer]")].map((n) => n.textContent);
+    expect(sizers).toEqual(["Not filled", "Draft", "Done", "Old (turned off)"]);
+  });
+
+  it("filled custom values are saved under their keys, keeping a turned-off field's value", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified", knowledgeCustom: '{"off":"kept"}' }))]);
+    const close = renderCustom(editor, "a");
+    fireEvent.change(input("Team"), { target: { value: "core" } });
+    fireEvent.change(input("Due"), { target: { value: "2026-03-04" } });
+    fireEvent.change(input("Docs"), { target: { value: "https://example.com/a" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(close).toHaveBeenCalled();
+    expect(editor.getBlock("a")!.props.knowledgeCustom).toBe('{"docs":"https://example.com/a","due":"2026-03-04","off":"kept","team":"core"}');
+  });
+
+  it("a link with another scheme is shown as text and blocks saving in the form", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
+    const close = renderCustom(editor, "a");
+    fireEvent.change(input("Docs"), { target: { value: "javascript:alert(1)" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(close).not.toHaveBeenCalled();
+    expect(input("Docs")).toHaveAttribute("aria-invalid", "true");
+    expect(document.getElementById(input("Docs").getAttribute("aria-describedby")!)).toHaveTextContent("Enter a link starting with http:// or https://, or a path on this site.");
+    expect(document.activeElement).toBe(input("Docs"));
+    expect(infoOf(editor, "a")!.custom).toEqual({});
+    fireEvent.change(input("Docs"), { target: { value: "/n/alice/page" } });
+    expect(input("Docs")).not.toHaveAttribute("aria-invalid");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("a custom text over the limit blocks saving with the length message", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
+    const close = renderCustom(editor, "a");
+    fireEvent.change(input("Team"), { target: { value: "t".repeat(301) } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(close).not.toHaveBeenCalled();
+    expect(document.getElementById(input("Team").getAttribute("aria-describedby")!)).toHaveTextContent("At most 300 characters (now 301).");
   });
 });

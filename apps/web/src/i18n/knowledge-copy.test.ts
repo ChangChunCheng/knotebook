@@ -103,6 +103,11 @@ describe("knowledge copy literals", () => {
     "knowledge.form.error.notEligible": "這個標題已不存在，或不能設知識資訊。",
     "knowledge.picker.placeholder": "搜尋知識",
     "knowledge.picker.none": "沒有相符的知識",
+    "knowledge.form.error.linkInvalid": "請輸入 http:// 或 https:// 開頭的連結，或本站的路徑。",
+    "knowledge.member.me": "我",
+    "knowledge.member.unknown": "未知成員",
+    "knowledge.member.clear": "清除",
+    "knowledge.member.placeholder": "搜尋成員",
   };
   const EN: Record<string, string> = {
     "knowledge.notFilled": "Not filled",
@@ -151,6 +156,11 @@ describe("knowledge copy literals", () => {
     "knowledge.form.error.notEligible": "This heading no longer exists or can't hold knowledge info.",
     "knowledge.picker.placeholder": "Search knowledge",
     "knowledge.picker.none": "No matching knowledge",
+    "knowledge.form.error.linkInvalid": "Enter a link starting with http:// or https://, or a path on this site.",
+    "knowledge.member.me": "Me",
+    "knowledge.member.unknown": "Unknown member",
+    "knowledge.member.clear": "Clear",
+    "knowledge.member.placeholder": "Search people",
   };
   for (const [key, text] of Object.entries(ZH)) it(`zh ${key}`, () => expect(get(knowledgeZhTW, key)).toBe(text));
   for (const [key, text] of Object.entries(EN)) it(`en ${key}`, () => expect(get(knowledgeEn, key)).toBe(text));

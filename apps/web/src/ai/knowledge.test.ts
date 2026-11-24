@@ -3,11 +3,11 @@ import * as Y from "yjs";
 import type { Block, BlockNoteEditor } from "@blocknote/core";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
 import type { EditorRef } from "@/components/wikilink/menu";
-import { fieldView } from "@/components/knowledge/test-support";
+import { customFieldView, fieldView } from "@/components/knowledge/test-support";
 import { createTestEditor } from "@/test/ai-host";
 import { captureAnchor } from "./anchor";
 import { aiMarkdownOf } from "./note-markdown";
-import { aiKnowledgeContext, applyAiResult, prepareAiResult, type PreparedResult } from "./apply";
+import { aiKnowledgeContext, aiResultMemberTokens, applyAiResult, finishAiResult, parseAiResult, prepareAiResult, type PreparedResult } from "./apply";
 
 vi.mock("@/components/ui/toast", () => ({ toast: vi.fn() }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
@@ -342,5 +342,47 @@ describe("applying a result with knowledge in the editor", () => {
     editor.removeBlocks(["hA"]);
     await tick();
     expect(applyAiResult(editor, anchor, prepared)).toEqual({ ok: false, reason: "missing" });
+  });
+});
+
+describe("custom member fields in AI results", () => {
+  const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+  const BOB = "aaaaaaaa-0000-4000-8000-000000000002";
+  const MEMBER = customFieldView([{ key: "owner", type: "member", name: "Owner" }]);
+  const members = (handles: Record<string, string>, tokens: Record<string, string>) => ({ handleOf: new Map(Object.entries(handles)), idOf: new Map(Object.entries(tokens)) });
+
+  it("the markdown for the AI writes a stored member by handle, or user:<id> without one", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    expect(aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER, handleOf: new Map([[BOB, "bob"]]) } })).toContain("x-owner: bob");
+    expect(aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER } })).toContain(`x-owner: user:${BOB}`);
+  });
+
+  it("an AI result naming a member by handle stores the user id", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const md = `## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: when 1\nconclusion: conclusion 1\nx-owner: Alice\n-->\n\nbody`;
+    const parsed = parseAiResult(editor, md, { notes: [], placement: "top" });
+    if ("empty" in parsed || "invalid" in parsed) throw new Error("expected a parse");
+    expect(aiResultMemberTokens(parsed, MEMBER)).toEqual(["alice"]);
+    const context = aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({}, { alice: ALICE }));
+    const prepared = finishAiResult(parsed, context);
+    if ("invalid" in prepared) throw new Error("expected a result");
+    expect(prepared.ignoredKnowledge).toEqual([]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: ALICE }));
+  });
+
+  it("a handle that can't be resolved is listed as ignored and the stored member stays", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    const md = `## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: when 1\nconclusion: conclusion 1\nx-owner: mallory\n-->\n\nbody`;
+    const prepared = ok(prepareAiResult(editor, md, { notes: [], placement: "top", knowledge: aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({ [BOB]: "bob" }, {})) }));
+    expect(prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "x-owner", value: "mallory", reason: "unresolved_member" }]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: BOB }));
+  });
+
+  it("the stored member written back by its handle is kept without a lookup", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    const md = aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER, handleOf: new Map([[BOB, "bob"]]) } }).replace("body", "rewritten");
+    const prepared = ok(prepareAiResult(editor, md, { notes: [], placement: "top", knowledge: aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({ [BOB]: "bob" }, {})) }));
+    expect(prepared.ignoredKnowledge).toEqual([]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: BOB }));
   });
 });

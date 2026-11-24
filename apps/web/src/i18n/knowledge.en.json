@@ -56,8 +56,15 @@
         "verifiedIncomplete": "Enter a complete date.",
         "supersededInvalid": "Choose one of the listed knowledge.",
         "supersededSelf": "A piece of knowledge can't replace itself.",
-        "notEligible": "This heading no longer exists or can't hold knowledge info."
+        "notEligible": "This heading no longer exists or can't hold knowledge info.",
+        "linkInvalid": "Enter a link starting with http:// or https://, or a path on this site."
       }
+    },
+    "member": {
+      "me": "Me",
+      "unknown": "Unknown member",
+      "clear": "Clear",
+      "placeholder": "Search people"
     },
     "picker": {
       "placeholder": "Search knowledge",
