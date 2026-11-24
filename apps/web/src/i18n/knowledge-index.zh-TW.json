@@ -34,6 +34,8 @@
       "status": "狀態",
       "evidence": "依據",
       "all": "全部",
+      "notFilled": "未填",
+      "disabledOption": "{{name}}（已停用）",
       "labelled": "{{name}}：{{value}}",
       "clear": "清除篩選"
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INDEX_COLLATOR_LOCALE, INDEX_COLLATOR_OPTIONS, orderIndexNotes } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, INDEX_COLLATOR_LOCALE, INDEX_COLLATOR_OPTIONS, orderIndexNotes } from "@knotebook/shared";
 import { FOLDER_COLLATOR } from "@/components/sidebar/folder-index";
 import { buildIndexSections, type IndexRowModel } from "./sections";
 import { indexDto, indexEntry, indexNote, tag } from "./test-support";
@@ -210,5 +210,35 @@ describe("outdated rows across notes", () => {
     ];
     const [section] = buildIndexSections({ dto: indexDto({ notes: tagged, entries }), groupBy: "tag", ...base });
     expect(section!.rows.map((r) => r.entry.knowledgeId)).toEqual(["b_ok", "a_old"]);
+  });
+});
+
+describe("nesting follows the first enabled leading field", () => {
+  const off = (...keys: string[]) => DEFAULT_KNOWLEDGE_FIELD_VIEW.fields.map((f) => (keys.includes(f.key) ? { ...f, enabled: false } : f));
+  const entries = [
+    indexEntry({ noteId: N1, knowledgeId: "k_parent", ord: 0, when: "Parent when", conclusion: "Parent conclusion" }),
+    indexEntry({ noteId: N1, knowledgeId: "k_noWhen", ord: 1, parentKnowledgeId: "k_parent", when: "", conclusion: "Has conclusion" }),
+    indexEntry({ noteId: N1, knowledgeId: "k_noConc", ord: 2, parentKnowledgeId: "k_parent", when: "Has when", conclusion: "" }),
+    indexEntry({ noteId: N1, knowledgeId: "k_bare", ord: 3, parentKnowledgeId: "k_parent", when: "", conclusion: "" }),
+  ];
+  const build = (fields: ReturnType<typeof off>) =>
+    buildIndexSections({ dto: indexDto({ notes: [indexNote({ id: N1 })], entries, fields }), groupBy: "folder", ...base })[0]!.rows;
+
+  it("with defaults a child without when to read nests under its parent, as before", () => {
+    const rows = build(off());
+    expect(rows.map((r) => r.entry.knowledgeId)).toEqual(["k_parent", "k_noConc"]);
+    expect(rows[0]!.nested.map((r) => r.entry.knowledgeId)).toEqual(["k_noWhen", "k_bare"]);
+  });
+
+  it("with when to read off a child nests by its conclusion", () => {
+    const rows = build(off("when"));
+    expect(rows.map((r) => r.entry.knowledgeId)).toEqual(["k_parent", "k_noWhen"]);
+    expect(rows[0]!.nested.map((r) => r.entry.knowledgeId)).toEqual(["k_noConc", "k_bare"]);
+  });
+
+  it("with both off every child stands alone", () => {
+    const rows = build(off("when", "conclusion"));
+    expect(rows.map((r) => r.entry.knowledgeId)).toEqual(["k_parent", "k_noWhen", "k_noConc", "k_bare"]);
+    expect(rows.every((r) => r.nested.length === 0)).toBe(true);
   });
 });

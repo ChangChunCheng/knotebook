@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   KNOWLEDGE_INDEX_TAG_FILTER_MAX,
   KNOWLEDGE_ID_RE,
+  isKnowledgeFieldEnabled,
   SEARCH_QUERY_MAX,
   isKnowledgeIndexEvidenceFilter,
   normalizeKnowledgeIndexStatusFilter,
@@ -14,6 +15,7 @@ import type { Db } from "../db/index.js";
 import { sendError } from "../http/errors.js";
 import type { FixedWindowLimiter } from "../http/rate-limit.js";
 import { redactDbError } from "../lib/redact-db-error.js";
+import { loadKnowledgeFieldView } from "../knowledge/fields/queries.js";
 import { loadKnowledgeIndex } from "../knowledge/index-query.js";
 import {
   INVALID_INDEX_EVIDENCE_MESSAGE,
@@ -81,10 +83,15 @@ export function knowledgeRoutes(deps: KnowledgeRouteDeps) {
       try {
         const scope = await resolveKnowledgeScope(deps.db, userId, ref);
         if (scope === null) return scopeNotFound(reply);
+        const groupId = scope.kind === "group" ? scope.groupId : scope.kind === "folder" && scope.space.kind === "group" ? scope.space.groupId : null;
+        const fields = await loadKnowledgeFieldView(deps.db, { groupId });
+        // A filter on a turned-off field is dropped, not an error: a bookmarked address keeps working.
+        const evidence = isKnowledgeFieldEnabled(fields, "evidence") ? (parsed.data.evidence ?? null) : null;
         const dto = await loadKnowledgeIndex(deps.db, {
           userId,
           scope,
-          filters: { tagIds: parsed.data.tags ?? [], status: parsed.data.status ?? null, evidence: parsed.data.evidence ?? null },
+          fields,
+          filters: { tagIds: parsed.data.tags ?? [], status: parsed.data.status ?? null, evidence },
         });
         return reply.send(dto);
       } catch (err) {

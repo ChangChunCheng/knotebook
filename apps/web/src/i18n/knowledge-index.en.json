@@ -34,6 +34,8 @@
       "status": "Status",
       "evidence": "Basis",
       "all": "All",
+      "notFilled": "Not filled",
+      "disabledOption": "{{name}} (disabled)",
       "labelled": "{{name}}: {{value}}",
       "clear": "Clear filters"
     }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import type { KnowledgeIndexDto, KnowledgeIndexScopeRef } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type KnowledgeIndexDto, type KnowledgeIndexScopeRef } from "@knotebook/shared";
 import { knowledgeIndexApiPath, knowledgeIndexKey, useKnowledgeIndex, type IndexQueryFilters } from "./knowledge";
 
 const NONE: IndexQueryFilters = { tagIds: [], status: null, evidence: null };
@@ -17,6 +17,7 @@ function dto(over: Partial<KnowledgeIndexDto> = {}): KnowledgeIndexDto {
     tagOptions: [],
     truncated: false,
     backfillPending: false,
+    fields: DEFAULT_KNOWLEDGE_FIELD_VIEW.fields,
     ...over,
   };
 }

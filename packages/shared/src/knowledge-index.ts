@@ -1,5 +1,5 @@
 import { KNOWLEDGE_BUILTIN_EVIDENCE, type KnowledgeState, type KnowledgeStatus } from "./knowledge.js";
-import { KNOWLEDGE_KEY_RE } from "./knowledge-fields.js";
+import { KNOWLEDGE_KEY_RE, type KnowledgeFieldDef } from "./knowledge-fields.js";
 import type { KnowledgeChildSummary, KnowledgeIconKind } from "./knowledge-list.js";
 import type { NoteTagDto } from "./tags.js";
 
@@ -78,6 +78,8 @@ export interface KnowledgeIndexDto {
   tagOptions: NoteTagDto[];
   truncated: boolean;
   backfillPending: boolean;
+  /** The space's effective field settings, including turned-off fields. */
+  fields: KnowledgeFieldDef[];
 }
 export interface KnowledgeRefCandidateDto { noteId: string; noteTitle: string; path: string; knowledgeId: string; blockId: string; heading: string; conclusion: string }
 export interface KnowledgeRefsDto { candidates: KnowledgeRefCandidateDto[] }
