@@ -57,6 +57,8 @@ describe("knowledge bundle: both locales have the same key set, top level is onl
 
 describe("knowledge copy literals", () => {
   const ZH: Record<string, string> = {
+    "knowledge.notFilled": "未填",
+    "knowledge.turnedOff": "{{name}}（已停用）",
     "knowledge.iconLabel": "知識資訊：{{status}}",
     "knowledge.state.outdated": "過時",
     "knowledge.state.needsReview": "待驗證",
@@ -74,7 +76,6 @@ describe("knowledge copy literals", () => {
     "knowledge.status.verified": "已驗證",
     "knowledge.status.needs-verify": "待驗證",
     "knowledge.status.obsolete": "過時",
-    "knowledge.card.notVerified": "未驗證",
     "knowledge.card.quotedTitle": "「{{title}}」",
     "knowledge.card.belongsTo": "屬於：{{title}}",
     "knowledge.card.bannerNeedsReview": "待驗證・上次驗證 {{date}}，建議重新確認",
@@ -89,7 +90,7 @@ describe("knowledge copy literals", () => {
     "knowledge.card.untitled": "未命名標題",
     "knowledge.card.markVerified": "標記為已驗證",
     "knowledge.form.title": "知識資訊",
-    "knowledge.form.markToday": "標記今天已驗證",
+    "knowledge.form.today": "今天",
     "knowledge.form.remove": "移除知識資訊",
     "knowledge.form.save": "儲存",
     "knowledge.form.cancel": "取消",
@@ -105,6 +106,8 @@ describe("knowledge copy literals", () => {
     "knowledge.picker.none": "沒有相符的知識",
   };
   const EN: Record<string, string> = {
+    "knowledge.notFilled": "Not filled",
+    "knowledge.turnedOff": "{{name}} (turned off)",
     "knowledge.iconLabel": "Knowledge info: {{status}}",
     "knowledge.state.outdated": "Outdated",
     "knowledge.state.needsReview": "Needs review",
@@ -122,7 +125,6 @@ describe("knowledge copy literals", () => {
     "knowledge.status.verified": "Verified",
     "knowledge.status.needs-verify": "Needs review",
     "knowledge.status.obsolete": "Outdated",
-    "knowledge.card.notVerified": "Not verified",
     "knowledge.card.quotedTitle": "{{title}}",
     "knowledge.card.belongsTo": "Part of: {{title}}",
     "knowledge.card.bannerNeedsReview": "Needs review · last verified {{date}}, worth checking again",
@@ -137,7 +139,7 @@ describe("knowledge copy literals", () => {
     "knowledge.card.untitled": "Untitled heading",
     "knowledge.card.markVerified": "Mark as verified",
     "knowledge.form.title": "Knowledge info",
-    "knowledge.form.markToday": "Mark verified today",
+    "knowledge.form.today": "Today",
     "knowledge.form.remove": "Remove knowledge info",
     "knowledge.form.save": "Save",
     "knowledge.form.cancel": "Cancel",

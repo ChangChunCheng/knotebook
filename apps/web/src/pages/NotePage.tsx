@@ -56,6 +56,7 @@ import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
 import { ShareDialog } from "@/components/ShareDialog";
 import { TitleInput } from "@/components/TitleInput";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
+import { KnowledgeFieldsProvider } from "@/components/knowledge/fields-context";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -801,11 +802,14 @@ export default function NotePage() {
             />
             {/* Outside the header: its state lives on this page, shared by both triggers. */}
             <AiEditsDialog note={note} open={editsOpen} onOpenChange={setEditsOpen} />
-            {/* Narrow-width full page. It always opens before the dialog (a modal dialog blocks the menu), and both are z-50 portals to body with the later mount on top, so the dialog always overlays the page. */}
+            {/* Narrow-width full page. It always opens before the dialog (a modal dialog blocks the menu), and both are z-50 portals to body with the later mount on top, so the dialog always overlays the page.
+                As the editor's sibling it is outside the editor's field settings, and the cards in its preview need their own. */}
             {versions.mode === "sheet" && (
-              <VersionsLazyBoundary noteId={noteId ?? null} errorClassName={VERSIONS_ERROR_FRAME.floating}>
-                <VersionsSheet doc={doc} lastEdited={note.lastEdited} returnFocusRef={noteMenuTriggerRef} />
-              </VersionsLazyBoundary>
+              <KnowledgeFieldsProvider noteId={noteId!}>
+                <VersionsLazyBoundary noteId={noteId ?? null} errorClassName={VERSIONS_ERROR_FRAME.floating}>
+                  <VersionsSheet doc={doc} lastEdited={note.lastEdited} returnFocusRef={noteMenuTriggerRef} />
+                </VersionsLazyBoundary>
+              </KnowledgeFieldsProvider>
             )}
             {versions.dialog !== null && (
               <VersionsLazyBoundary noteId={noteId ?? null} errorClassName={VERSIONS_ERROR_FRAME.floating}>
