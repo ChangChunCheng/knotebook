@@ -1,7 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { useTranslation } from "react-i18next";
-import type { KnowledgeEntry } from "@knotebook/shared";
+import { knowledgeStateOf, type KnowledgeEntry } from "@knotebook/shared";
 import "@/i18n/knowledge-strings";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useIsPhone, useNoHover } from "@/lib/layout-tiers";
@@ -242,7 +242,7 @@ export function KnowledgeLayer({ container, entries, editable, noteId, controlle
     : undefined;
   const verifyFor = editor && editable
     ? (entry: KnowledgeEntry) =>
-        entry.info.status === "outdated" ? null : (
+        knowledgeStateOf(entry.info) === "obsolete" ? null : (
           <Button type="button" variant="outline" className="h-11 flex-1 text-[15px]" onClick={() => void markKnowledgeVerified(editor, entry.blockId)}>
             {t("knowledge.card.markVerified")}
           </Button>

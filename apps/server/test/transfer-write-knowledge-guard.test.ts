@@ -30,7 +30,7 @@ knotebook: 1
 title: "Fresh"
 ---
 ## D1
-${comment(["when: w", "status: outdated"])}
+${comment(["when: w", "evidence: bogus"])}
 
 x
 `);
@@ -53,16 +53,26 @@ x
 });
 
 describe("file write-back and knowledge comments", () => {
-  it("a comment that says outdated without superseded_by is 400 invalid_knowledge naming the heading, and nothing is written", async () => {
+  it("a comment whose superseded_by isn't a reference is 400 invalid_knowledge naming the heading, and nothing is written", async () => {
     const s = await setup();
     const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
-    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated"])}\n\nx\n`));
+    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n`));
     expect(put.statusCode, put.body).toBe(400);
     expect(put.json().error).toEqual({
       code: "invalid_knowledge",
-      message: 'The knowledge comment under the heading "Old way" says outdated without a `superseded_by`. Nothing was written.',
+      message: "The knowledge comment under the heading \"Old way\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written.",
     });
     expect((await s.infos()).size).toBe(0);
+    await s.ctx.destroy();
+  });
+
+  it("a comment that says outdated without superseded_by is written with no replacement", async () => {
+    const s = await setup();
+    const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated"])}\n\nx\n`));
+    expect(put.statusCode, put.body).toBe(200);
+    const [info] = [...(await s.infos()).values()];
+    expect(info).toMatchObject({ when: "w", status: "outdated", supersededBy: "" });
     await s.ctx.destroy();
   });
 

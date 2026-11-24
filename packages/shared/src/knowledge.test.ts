@@ -8,10 +8,13 @@ import {
   knowledgeInfoToProps,
   knowledgePropsPatch,
   knowledgeTextLength,
+  knowledgeStateOf,
   normalizeKnowledgeText,
   parseKnowledgeRef,
+  parseKnowledgeStatusInput,
   readKnowledgeInfo,
   renewKnowledgeId,
+  storedStatusOf,
   validateKnowledgeDraft,
   type KnowledgeDraft,
   type KnowledgeInfo,
@@ -27,11 +30,13 @@ afterEach(() => {
 });
 
 describe("readKnowledgeInfo", () => {
-  it("returns null for an empty id and normalizes unknown evidence and status to empty", () => {
+  it("returns null for an empty id, keeps a basis in key format and reads an unknown status as unverified", () => {
     expect(readKnowledgeInfo(undefined)).toBeNull();
     expect(readKnowledgeInfo({})).toBeNull();
     expect(readKnowledgeInfo({ knowledgeId: "" , knowledgeWhen: "x" })).toBeNull();
-    expect(readKnowledgeInfo({ knowledgeId: "k_1234abcd", knowledgeEvidence: "guess", knowledgeStatus: "stale" })).toEqual(info());
+    expect(readKnowledgeInfo({ knowledgeId: "k_1234abcd", knowledgeEvidence: "guess", knowledgeStatus: "stale" })).toEqual(
+      info({ evidence: "guess", status: "unverified" }),
+    );
     expect(readKnowledgeInfo({ knowledgeId: "k_1234abcd", knowledgeEvidence: "tested", knowledgeStatus: "outdated" })).toEqual(
       info({ evidence: "tested", status: "outdated" }),
     );
@@ -46,6 +51,38 @@ describe("readKnowledgeInfo", () => {
         knowledgeVerified: null, knowledgeSupersededBy: undefined,
       }),
     ).toEqual(info());
+  });
+
+  it("an unknown stored status reads as unverified and an unknown basis as empty", () => {
+    const read = readKnowledgeInfo({ knowledgeId: "k_00000001", knowledgeStatus: "bogus", knowledgeEvidence: "Bad Key", knowledgeVerified: "2026-01-02" })!;
+    expect([read.status, read.evidence, knowledgeStateOf(read)]).toEqual(["unverified", "", "needs-verify"]);
+    expect(readKnowledgeInfo({ knowledgeId: "k_00000001", knowledgeEvidence: "vendor-doc" })!.evidence).toBe("vendor-doc");
+    expect(readKnowledgeInfo({ knowledgeId: "k_00000001", knowledgeStatus: ["verified"], knowledgeVerified: "" })!.status).toBe("");
+    expect(readKnowledgeInfo({ knowledgeId: "k_00000001", knowledgeStatus: "verified" })!.status).toBe("verified");
+  });
+
+  it("a stored basis of unconfirmed reads as no basis", () => {
+    expect(readKnowledgeInfo({ knowledgeId: "k_00000001", knowledgeEvidence: "unconfirmed" })!.evidence).toBe("");
+  });
+});
+
+describe("knowledge state", () => {
+  it.each([
+    [{ status: "", verified: "2026-01-02" }, "verified"],
+    [{ status: "", verified: "" }, "needs-verify"],
+    [{ status: "", verified: "2026-02-30" }, "needs-verify"],
+    [{ status: "verified", verified: "" }, "verified"],
+    [{ status: "unverified", verified: "2026-01-02" }, "needs-verify"],
+    [{ status: "outdated", verified: "2026-01-02" }, "obsolete"],
+  ] as const)("knowledgeStateOf(%o) is %s", (input, state) => expect(knowledgeStateOf(input)).toBe(state));
+
+  it.each([
+    ["verified", "verified"], ["needs-verify", "unverified"], ["unverified", "unverified"], ["obsolete", "outdated"],
+    ["outdated", "outdated"], ["", ""], ["current", null], ["Verified", null],
+  ] as const)("parseKnowledgeStatusInput(%s) is %s", (input, out) => expect(parseKnowledgeStatusInput(input)).toBe(out));
+
+  it("storedStatusOf maps each state to the string stored in the document", () => {
+    expect([storedStatusOf("verified"), storedStatusOf("needs-verify"), storedStatusOf("obsolete")]).toEqual(["verified", "unverified", "outdated"]);
   });
 });
 
@@ -90,29 +127,36 @@ describe("text helpers", () => {
 });
 
 describe("validateKnowledgeDraft", () => {
-  const blank: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "" };
+  const blank: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
+
+  it("a draft with nothing but a state is valid, and obsolete needs no replacement", () => {
+    const empty = { when: "", conclusion: "", evidence: "", verified: "", supersededBy: "" };
+    expect(validateKnowledgeDraft({ ...empty, state: "needs-verify" }, null, null)).toBeNull();
+    expect(validateKnowledgeDraft({ ...empty, state: "obsolete" }, null, null)).toBeNull();
+    expect(validateKnowledgeDraft({ ...empty, state: "obsolete", supersededBy: "nope" }, null, null)).toBe("supersededInvalid");
+  });
 
   it("reports each rule", () => {
-    expect(validateKnowledgeDraft(blank, null, null)).toBe("empty");
-    expect(validateKnowledgeDraft({ ...blank, status: "outdated" }, null, null)).toBe("supersededRequired");
+    expect(validateKnowledgeDraft(blank, null, null)).toBeNull();
+    expect(validateKnowledgeDraft({ ...blank, state: "obsolete" }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...blank, when: "a".repeat(201) }, null, null)).toBe("whenTooLong");
     expect(validateKnowledgeDraft({ ...blank, when: "a".repeat(200) }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...blank, conclusion: "a".repeat(301) }, null, null)).toBe("conclusionTooLong");
     expect(validateKnowledgeDraft({ ...blank, conclusion: "a".repeat(300) }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...blank, verified: "2026-02-30" }, null, null)).toBe("verifiedInvalid");
     expect(
-      validateKnowledgeDraft({ ...blank, status: "outdated", supersededBy: "k_1234abcd" }, { noteId: null, knowledgeId: "k_1234abcd" }, null),
+      validateKnowledgeDraft({ ...blank, state: "obsolete", supersededBy: "k_1234abcd" }, { noteId: null, knowledgeId: "k_1234abcd" }, null),
     ).toBe("supersededSelf");
     expect(validateKnowledgeDraft({ ...blank, evidence: "docs" }, null, null)).toBeNull();
   });
 
-  it("whitespace-only fields count as empty", () => {
-    expect(validateKnowledgeDraft({ ...blank, when: "   ", conclusion: " 	 " }, null, null)).toBe("empty");
+  it("whitespace-only fields are still a valid draft", () => {
+    expect(validateKnowledgeDraft({ ...blank, when: "   ", conclusion: " 	 " }, null, null)).toBeNull();
     expect(validateKnowledgeDraft({ ...blank, when: " x " }, null, null)).toBeNull();
   });
 
   it("an outdated draft whose replacement does not parse as a reference is rejected", () => {
-    const outdated = (supersededBy: string): KnowledgeDraft => ({ ...blank, status: "outdated", supersededBy });
+    const outdated = (supersededBy: string): KnowledgeDraft => ({ ...blank, state: "obsolete", supersededBy });
     expect(validateKnowledgeDraft(outdated("not-a-ref"), null, null)).toBe("supersededInvalid");
     expect(validateKnowledgeDraft(outdated("k_XYZ"), null, null, new Set())).toBe("supersededInvalid");
     expect(validateKnowledgeDraft(outdated("k_00000009"), null, null)).toBeNull();
@@ -121,7 +165,7 @@ describe("validateKnowledgeDraft", () => {
 
   it("a reference to another note's knowledge with the same id is not a self reference", () => {
     const other = "11111111-1111-4111-8111-111111111111";
-    const draft: KnowledgeDraft = { ...blank, status: "outdated", supersededBy: `${other}#k_1234abcd` };
+    const draft: KnowledgeDraft = { ...blank, state: "obsolete", supersededBy: `${other}#k_1234abcd` };
     expect(validateKnowledgeDraft(draft, { noteId: null, knowledgeId: "k_1234abcd" }, "22222222-2222-4222-8222-222222222222")).toBeNull();
     expect(validateKnowledgeDraft(draft, { noteId: null, knowledgeId: "k_1234abcd" }, other)).toBe("supersededSelf");
   });
@@ -134,9 +178,9 @@ describe("validateKnowledgeDraft", () => {
     expect(validateKnowledgeDraft(draft, null, null)).toBe("whenTooLong");
   });
 
-  it("with touched still applies the empty and superseded rules", () => {
-    expect(validateKnowledgeDraft(blank, null, null, new Set())).toBe("empty");
-    expect(validateKnowledgeDraft({ ...blank, status: "outdated" }, null, null, new Set())).toBe("supersededRequired");
+  it("with touched still applies the replacement rule", () => {
+    expect(validateKnowledgeDraft(blank, null, null, new Set())).toBeNull();
+    expect(validateKnowledgeDraft({ ...blank, state: "obsolete", supersededBy: "garbage" }, null, null, new Set())).toBe("supersededInvalid");
   });
 });
 

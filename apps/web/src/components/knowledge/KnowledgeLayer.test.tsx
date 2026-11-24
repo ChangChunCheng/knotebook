@@ -128,19 +128,19 @@ describe("KnowledgeLayer", () => {
     const byId = (id: string) => document.querySelector<HTMLButtonElement>(`[data-block-id="${id}"]`)!;
     expect(byId("a")).toHaveAttribute("data-kind", "verified");
     expect(byId("a")).toHaveAccessibleName("Knowledge info: Verified");
-    expect(byId("b")).toHaveAttribute("data-kind", "noVerifiedDate");
-    expect(byId("b")).toHaveAccessibleName("Knowledge info: Not verified");
+    expect(byId("b")).toHaveAttribute("data-kind", "needsReview");
+    expect(byId("b")).toHaveAccessibleName("Knowledge info: Needs review");
     expect(byId("c")).toHaveAttribute("data-kind", "needsReview");
     expect(byId("c")).toHaveAccessibleName("Knowledge info: Needs review");
     expect(byId("d")).toHaveAttribute("data-kind", "outdated");
     expect(byId("d")).toHaveAccessibleName("Knowledge info: Outdated");
     // "e" sits under the outdated "d" in the heading outline.
     expect(byId("e")).toHaveAttribute("data-kind", "outdated");
-    expect(new Set([...icons()].map((i) => i.querySelector("svg")!.getAttribute("data-icon"))).size).toBe(4);
+    expect(new Set([...icons()].map((i) => i.querySelector("svg")!.getAttribute("data-icon"))).size).toBe(3);
   });
 
   it("KnowledgeGlyph renders no button, takes no focus and is hidden from assistive technology", () => {
-    for (const kind of ["verified", "noVerifiedDate", "needsReview", "outdated"] as const) {
+    for (const kind of ["verified", "needsReview", "outdated"] as const) {
       const { container, unmount } = render(<KnowledgeGlyph kind={kind} className="extra" />);
       expect(container.querySelectorAll("button")).toHaveLength(0);
       const glyph = container.firstElementChild!;
@@ -350,7 +350,7 @@ describe("KnowledgeLayer", () => {
     expect(icons()[1]).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("needs-review and outdated icons carry a pale fill with a fixed dark-mode value; the other kinds have none", async () => {
+  it("needs-review and outdated icons carry a pale fill with a fixed dark-mode value; verified has none", async () => {
     const entries = knowledgeEntries([
       { id: "k_00000001", blockId: "a", props: { knowledgeVerified: "2026-10-01" } },
       { id: "k_00000002", blockId: "b" },
@@ -367,7 +367,7 @@ describe("KnowledgeLayer", () => {
     const fill = (id: string) => cls(id).match(/(?<![:\w-])bg-\[#[0-9a-f]{6}\]/)![0];
     expect(fill("c")).not.toBe(fill("d"));
     expect(cls("a")).not.toMatch(/\bbg-/);
-    expect(cls("b")).not.toMatch(/\bbg-/);
+    expect(fill("b")).toBe(fill("c"));
   });
 
   it("hovering the icon of an open surface shows no second card", async () => {

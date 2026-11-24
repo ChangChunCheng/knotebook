@@ -204,7 +204,7 @@ describe("KnowledgeWriteReport helpers", () => {
 
 const ALL_PROBLEMS: KnowledgeCommentProblem[] = [
   "not_multiline", "bad_line", "duplicate_key", "bad_value", "unstorable", "blank_line_missing", "two_comments", "unclosed",
-  "too_long", "line_break", "bad_id", "bad_evidence", "bad_status", "bad_date", "bad_ref", "empty", "superseded_required", "superseded_self",
+  "too_long", "line_break", "bad_id", "bad_evidence", "bad_status", "bad_date", "bad_ref", "superseded_self",
 ];
 
 describe("knowledgeProblemMessage", () => {
@@ -218,8 +218,8 @@ describe("knowledgeProblemMessage", () => {
   });
 
   it("names an empty heading", () => {
-    expect(knowledgeProblemMessage({ problem: "empty", heading: "" })).toBe(
-      "The knowledge comment under an empty heading sets none of when, conclusion, evidence, verified, status and superseded_by. Nothing was written.",
+    expect(knowledgeProblemMessage({ problem: "superseded_self", heading: "" })).toBe(
+      "The knowledge comment under an empty heading names itself in `superseded_by`. Nothing was written.",
     );
   });
 

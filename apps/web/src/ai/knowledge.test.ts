@@ -177,12 +177,21 @@ describe("prepareAiResult with knowledge", () => {
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nevidence: bogus\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\nwhen: again\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n-->\nbody without a blank line",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\n-->\n\nbody",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nwhen: w\n-->\n\nbody",
+      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nsuperseded_by: nope\n-->\n\nbody",
+      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: current\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n\nbody that never closes the comment",
       "## T\n<!-- knotebook:knowledge\nid: not-an-id\nwhen: w\n-->\n\nbody",
     ];
     for (const md of cases) expect(prepare(editor, md, sendIds(editor)), md).toEqual({ invalid: "invalid_knowledge" });
+  });
+
+  it("a comment with only an id, and outdated without superseded_by, are written with no replacement", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const onlyId = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(onlyId.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005" });
+    const outdated = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nwhen: w\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(outdated.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005", knowledgeStatus: "outdated" });
+    expect(headingProps(outdated.blocks, 0).knowledgeSupersededBy ?? "").toBe("");
   });
 
   it("a pending id written by the model is refused and never reaches the blocks", () => {

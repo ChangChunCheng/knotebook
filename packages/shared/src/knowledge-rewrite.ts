@@ -1,11 +1,14 @@
 import { alignBlocks, alignInlineText, alignItemOf, type AlignSource } from "./block-align.js";
 import {
+  KNOWLEDGE_BUILTIN_EVIDENCE,
   KNOWLEDGE_CONCLUSION_MAX,
   KNOWLEDGE_ID_RE,
+  KNOWLEDGE_STORED_STATUSES,
   KNOWLEDGE_WHEN_MAX,
   formatKnowledgeRef,
   generateKnowledgeId,
   isKnowledgeDate,
+  knowledgeStateOf,
   knowledgeTextLength,
   parseKnowledgeRef,
   readKnowledgeInfo,
@@ -161,8 +164,8 @@ export function normalizeKnowledgeRefs<B extends KnowledgeBlockShape>(after: rea
   });
 }
 
-const EVIDENCE = new Set(["", "tested", "docs", "inferred"]);
-const STATUS = new Set(["", "unverified", "outdated"]);
+const EVIDENCE = new Set<string>(["", ...KNOWLEDGE_BUILTIN_EVIDENCE]);
+const STATUS = new Set<string>(["", ...KNOWLEDGE_STORED_STATUSES]);
 const LINE_BREAK = /[\r\n\u{85}\u{2028}\u{2029}]/u;
 
 type Fields = Pick<KnowledgeInfo, "when" | "conclusion" | "evidence" | "verified" | "status" | "supersededBy">;
@@ -186,7 +189,7 @@ export function knowledgeWriteProblem(
     const fields: Fields = {
       when: str(b.props?.knowledgeWhen),
       conclusion: str(b.props?.knowledgeConclusion),
-      evidence: str(b.props?.knowledgeEvidence) as Fields["evidence"],
+      evidence: str(b.props?.knowledgeEvidence),
       verified: str(b.props?.knowledgeVerified),
       status: str(b.props?.knowledgeStatus) as Fields["status"],
       supersededBy: str(b.props?.knowledgeSupersededBy),
@@ -203,9 +206,7 @@ export function knowledgeWriteProblem(
     if (!STATUS.has(fields.status)) return fail("bad_status", "status");
     if (fields.verified !== "" && !isKnowledgeDate(fields.verified)) return fail("bad_date", "verified");
     if (fields.supersededBy !== "" && parseKnowledgeRef(fields.supersededBy) === null) return fail("bad_ref", "superseded_by");
-    const semantic = validateKnowledgeDraft(fields, { noteId: null, knowledgeId: id }, noteId);
-    if (semantic === "empty") return fail("empty");
-    if (semantic === "supersededRequired") return fail("superseded_required", "superseded_by");
+    const semantic = validateKnowledgeDraft({ ...fields, state: knowledgeStateOf(fields) }, { noteId: null, knowledgeId: id }, noteId);
     if (semantic === "supersededSelf") return fail("superseded_self", "superseded_by");
   }
   return null;

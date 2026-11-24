@@ -53,6 +53,22 @@ describe("backfill", () => {
     expect(await backfillKnowledgeIndex(db, captureLog().log)).toMatchObject({ candidates: 0, done: 0, skipped: 0, failed: 0 });
   });
 
+  it("a note indexed by extractor version 1 is extracted again", async () => {
+    const { db } = await freshDb();
+    const u = await seedUser(db);
+    const n = (await seedNote(db, { ownerId: u.id })).id;
+    const blocks = [kh("h", kid(1), "Heading", { when: "legacy" })];
+    await seedNoteState(db, n, knowledgeDoc(blocks), 1);
+    await writeKnowledgeIndex(db, n, 1, extractKnowledgeForIndex(knowledgeDoc(blocks)));
+    // What the previous extractor left: its version and the icon it used for knowledge without a date.
+    await db.execute(sql`update note_knowledge_state set extractor_version = 1 where note_id = ${n}::uuid`);
+    await db.execute(sql`update note_knowledge set icon = 'noVerifiedDate' where note_id = ${n}::uuid`);
+    const r = await backfillKnowledgeIndex(db, captureLog().log);
+    expect(r).toMatchObject({ candidates: 1, done: 1, failed: 0 });
+    expect(await knowledgeState(db, n)).toMatchObject({ extractorVersion: 2 });
+    expect((await knowledgeRows(db, n)).map((row) => row.icon)).toEqual(["needsReview"]);
+  });
+
   it("a note whose bytes hold no knowledge attribute name gets an empty state row without being decoded", async () => {
     const { db } = await freshDb();
     const u = await seedUser(db);

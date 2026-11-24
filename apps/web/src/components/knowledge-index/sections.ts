@@ -33,7 +33,7 @@ export interface IndexSectionModel {
 const byIdOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 function replacementOf(entry: KnowledgeIndexEntryDto, dto: KnowledgeIndexDto): IndexReplacement | null {
-  if (entry.status !== "outdated" || entry.supersededBy === null) return null;
+  if (entry.state !== "obsolete" || entry.supersededBy === null) return null;
   const found = dto.replacements[entry.supersededBy];
   if (found) return { state: "found", target: found };
   const ref = parseKnowledgeRef(entry.supersededBy);

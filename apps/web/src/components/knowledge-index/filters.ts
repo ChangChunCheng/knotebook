@@ -2,7 +2,7 @@ import {
   KNOWLEDGE_INDEX_TAG_FILTER_MAX,
   UUID_RE,
   isKnowledgeIndexEvidenceFilter,
-  isKnowledgeIndexStatusFilter,
+  normalizeKnowledgeIndexStatusFilter,
 } from "@knotebook/shared";
 import type { IndexFilters } from "@/api/knowledge";
 
@@ -19,7 +19,7 @@ export function readIndexFilters(params: URLSearchParams): IndexFilters {
   return {
     groupBy: params.get("group") === "tag" ? "tag" : "folder",
     tagIds,
-    status: isKnowledgeIndexStatusFilter(status) ? status : null,
+    status: normalizeKnowledgeIndexStatusFilter(status),
     evidence: isKnowledgeIndexEvidenceFilter(evidence) ? evidence : null,
   };
 }

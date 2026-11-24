@@ -563,8 +563,9 @@ export const noteKnowledge = pgTable(
     check("nk_knowledge_id_chk", sql`${t.knowledgeId} ~ '^k_[0-9a-f]{8}$'`),
     check("nk_block_id_chk", sql`${t.blockId} ~ '^[A-Za-z0-9_-]{1,64}$'`),
     check("nk_level_chk", sql`${t.level} between 1 and 6`),
-    check("nk_evidence_chk", sql`${t.evidence} in ('', 'tested', 'docs', 'inferred')`),
-    check("nk_status_chk", sql`${t.status} in ('', 'unverified', 'outdated')`),
+    // Same pattern as KNOWLEDGE_KEY_RE.
+    check("nk_evidence_chk", sql`${t.evidence} = '' or ${t.evidence} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+    check("nk_status_chk", sql`${t.status} in ('', 'verified', 'unverified', 'outdated')`),
     check("nk_icon_chk", sql`${t.icon} in ('outdated', 'needsReview', 'noVerifiedDate', 'verified')`),
     check("nk_superseded_chk", sql`${t.supersededKnowledgeId} is null or ${t.supersededKnowledgeId} ~ '^k_[0-9a-f]{8}$'`),
     check("nk_superseded_pair_chk", sql`${t.supersededNoteId} is null or ${t.supersededKnowledgeId} is not null`),

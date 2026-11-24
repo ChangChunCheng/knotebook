@@ -197,16 +197,19 @@ describe("rewrites", () => {
 });
 
 describe("what is rejected", () => {
-  it("outdated without superseded_by is 400 invalid_knowledge when it changes the knowledge, and accepted when it is what the note already stores", async () => {
+  it("outdated without superseded_by is accepted, both when it is what the note already stores and when it is new; a superseded_by that isn't a reference is 400", async () => {
     const s = await setup([KH("hA", "A", K1, { knowledgeStatus: "outdated" }), P("a1", "body"), H("hB", "B"), P("b1", "other")]);
     const sec = await s.section("hA");
     const same = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: sec.section.markdown });
     expect(same.statusCode, same.body).toBe(201);
     const secB = await s.section("hB");
-    const bad = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB.section.fingerprint, markdown: `## New\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
+    const bad = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB.section.fingerprint, markdown: `## New\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
     expect(bad.statusCode).toBe(400);
     expect(errOf(bad).code).toBe("invalid_knowledge");
-    expect(errOf(bad).message).toBe('The knowledge comment under the heading "New" says outdated without a `superseded_by`. Nothing was written.');
+    expect(errOf(bad).message).toBe("The knowledge comment under the heading \"New\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written.");
+    const secB2 = await s.section("hB");
+    const good = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB2.section.fingerprint, markdown: `## New\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
+    expect(good.statusCode, good.body).toBe(201);
     await s.ctx.destroy();
   });
 
@@ -397,16 +400,16 @@ ${comment([`id: ${K1}`, "when: alice reads this", "conclusion: second"])}`);
     await s.ctx.destroy();
   });
 
-  it("create with content whose comment says outdated without superseded_by is 400 invalid_knowledge naming the heading, and no note is created", async () => {
+  it("create with content whose comment has a superseded_by that isn't a reference is 400 invalid_knowledge naming the heading, and no note is created", async () => {
     const s = await setup([P("p1", "body")]);
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
     const rowsBefore = await noteRows(s);
     const res = await s.ctx.app.inject({
       method: "POST", url: "/api/notes", headers: { cookie, "content-type": "application/json", origin: "http://localhost:3000" },
-      payload: { title: "Fresh", content: `## D1\n${comment(["when: w", "status: outdated"])}\n\nx\n` },
+      payload: { title: "Fresh", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` },
     });
     expect(res.statusCode, res.body).toBe(400);
-    expect(errOf(res)).toEqual({ code: "invalid_knowledge", message: 'The knowledge comment under the heading "D1" says outdated without a `superseded_by`. Nothing was written.' });
+    expect(errOf(res)).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written." });
     expect(await noteRows(s)).toBe(rowsBefore);
     await s.ctx.destroy();
   });

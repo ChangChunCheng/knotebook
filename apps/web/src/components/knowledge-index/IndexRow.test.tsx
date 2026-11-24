@@ -88,13 +88,13 @@ describe("IndexRow", () => {
     expect(screen.getByText("→ replaced by knowledge that no longer exists")).toBeInTheDocument();
   });
 
-  it("a parent row shows the summary line, adding the outdated count only when there is one", () => {
-    const first = view(row({ summary: { total: 3, verified: 1, noVerifiedDate: 1, needsReview: 1, outdated: 0 } }));
-    expect(first.container).toHaveTextContent("3 below: 1 verified, 1 not verified, 1 need review");
+  it("a parent row shows the summary line in three classes, adding the outdated count only when there is one", () => {
+    const first = view(row({ summary: { total: 3, verified: 1, needsReview: 2, outdated: 0 } }));
+    expect(first.container).toHaveTextContent("3 below: 1 verified, 2 need review");
     expect(first.container.textContent).not.toContain("outdated");
     first.unmount();
-    const second = view(row({ summary: { total: 3, verified: 0, noVerifiedDate: 1, needsReview: 1, outdated: 1 } }));
-    expect(second.container).toHaveTextContent("3 below: 0 verified, 1 not verified, 1 need review, 1 outdated");
+    const second = view(row({ summary: { total: 3, verified: 1, needsReview: 1, outdated: 1 } }));
+    expect(second.container).toHaveTextContent("3 below: 1 verified, 1 need review, 1 outdated");
     second.unmount();
   });
 

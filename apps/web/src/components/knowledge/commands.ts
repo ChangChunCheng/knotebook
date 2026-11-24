@@ -3,9 +3,11 @@ import {
   EMPTY_KNOWLEDGE_PROPS,
   generateKnowledgeId,
   knowledgeInfoToProps,
+  knowledgeStateOf,
   listKnowledgeInBlocks,
   normalizeKnowledgeText,
   readKnowledgeInfo,
+  storedStatusOf,
   validateKnowledgeDraft,
   type KnowledgeDraft,
   type KnowledgeDraftError,
@@ -53,20 +55,25 @@ function currentInfo(editor: AnyEditor, blockId: string): KnowledgeInfo | null {
   return readKnowledgeInfo(editor.getBlock(blockId)?.props as Record<string, unknown> | undefined);
 }
 
+type TextField = Exclude<keyof KnowledgeDraft, "state">;
+
 const PROP_OF = {
   when: "knowledgeWhen",
   conclusion: "knowledgeConclusion",
   evidence: "knowledgeEvidence",
   verified: "knowledgeVerified",
-  status: "knowledgeStatus",
   supersededBy: "knowledgeSupersededBy",
-} as const satisfies Record<keyof KnowledgeDraft, KnowledgePropName>;
+} as const satisfies Record<TextField, KnowledgePropName>;
+const TEXT_FIELDS = Object.keys(PROP_OF) as TextField[];
 
-function stored(field: keyof KnowledgeDraft, value: string): string {
+function stored(field: TextField, value: string): string {
   return field === "when" || field === "conclusion" ? normalizeKnowledgeText(value) : value.trim();
 }
 
-/** A single `updateBlock`, so one undo step restores the whole edit. */
+/**
+ * A single `updateBlock`, so one undo step restores the whole edit. A change to a heading saved without a status writes the explicit
+ * status with it: that heading is read through its verified date, so clearing the date would otherwise turn it into needs review.
+ */
 export function saveKnowledge(
   editor: AnyEditor,
   blockId: string,
@@ -83,19 +90,26 @@ export function saveKnowledge(
 
   const patch: Patch = {};
   const currentProps = current ? knowledgeInfoToProps(current) : null;
-  for (const field of Object.keys(PROP_OF) as Array<keyof KnowledgeDraft>) {
+  const stateChanged = base === null || knowledgeStateOf(base) !== draft.state;
+  let fieldChanged = false;
+  for (const field of TEXT_FIELDS) {
     // Compared before normalizing: an untouched value written elsewhere (say with line breaks) must not be rewritten.
     if (base ? base[field] === draft[field] : draft[field] === "") continue;
+    fieldChanged = true;
     const value = stored(field, draft[field]);
     if (currentProps?.[PROP_OF[field]] !== value) patch[PROP_OF[field]] = value;
   }
   // The knowledge was removed while the form was open: nothing is left to keep, so every filled field is written again.
   if (!current && base) {
-    for (const field of Object.keys(PROP_OF) as Array<keyof KnowledgeDraft>) {
+    for (const field of TEXT_FIELDS) {
       const value = stored(field, draft[field]);
       if (value !== "") patch[PROP_OF[field]] = value;
     }
   }
+  const status = storedStatusOf(draft.state);
+  // An explicit status a collaborator set while the form was open is theirs to keep unless this form changed the state.
+  const settleLegacy = fieldChanged && currentProps?.knowledgeStatus === "";
+  if ((stateChanged || !current || settleLegacy) && currentProps?.knowledgeStatus !== status) patch.knowledgeStatus = status;
 
   let knowledgeId = current?.id ?? "";
   if (!current) {
@@ -108,14 +122,12 @@ export function saveKnowledge(
   return { ok: true, knowledgeId };
 }
 
-/** Marking verified settles a pending review; outdated knowledge has no date worth refreshing. */
+/** Outdated knowledge has no date worth refreshing. */
 export function markKnowledgeVerified(editor: AnyEditor, blockId: string, now: Date = new Date()): boolean {
   if (!writable(editor, blockId)) return false;
   const current = currentInfo(editor, blockId);
-  if (!current || current.status === "outdated") return false;
-  const patch: Patch = { knowledgeVerified: todayLocalDate(now) };
-  if (current.status === "unverified") patch.knowledgeStatus = "";
-  editor.updateBlock(blockId, { props: patch } as never);
+  if (!current || knowledgeStateOf(current) === "obsolete") return false;
+  editor.updateBlock(blockId, { props: { knowledgeVerified: todayLocalDate(now), knowledgeStatus: "verified" } satisfies Patch } as never);
   return true;
 }
 

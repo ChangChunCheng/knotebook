@@ -6,7 +6,7 @@ import {
   KNOWLEDGE_ID_RE,
   SEARCH_QUERY_MAX,
   isKnowledgeIndexEvidenceFilter,
-  isKnowledgeIndexStatusFilter,
+  normalizeKnowledgeIndexStatusFilter,
   type KnowledgeIndexScopeRef,
   type KnowledgeRefsDto,
 } from "@knotebook/shared";
@@ -44,7 +44,11 @@ const tagsSchema = z
 const indexQuerySchema = z
   .object({
     tags: tagsSchema.optional(),
-    status: z.string().refine(isKnowledgeIndexStatusFilter, INVALID_INDEX_STATUS_MESSAGE).optional(),
+    status: z
+      .string()
+      .refine((v) => normalizeKnowledgeIndexStatusFilter(v) !== null, INVALID_INDEX_STATUS_MESSAGE)
+      .transform((v) => normalizeKnowledgeIndexStatusFilter(v)!)
+      .optional(),
     evidence: z.string().refine(isKnowledgeIndexEvidenceFilter, INVALID_INDEX_EVIDENCE_MESSAGE).optional(),
   })
   .strict();

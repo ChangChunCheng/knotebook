@@ -1,18 +1,19 @@
 import {
   KNOWLEDGE_CONCLUSION_MAX,
   KNOWLEDGE_WHEN_MAX,
+  knowledgeStateOf,
   knowledgeTextLength,
   type KnowledgeDraft,
   type KnowledgeDraftError,
   type KnowledgeInfo,
 } from "@knotebook/shared";
 
-export const EMPTY_DRAFT: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "" };
+export const EMPTY_DRAFT: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
 
 export function draftOf(info: KnowledgeInfo | null): KnowledgeDraft {
   if (!info) return EMPTY_DRAFT;
-  const { id: _id, ...rest } = info;
-  return rest;
+  const { when, conclusion, evidence, verified, supersededBy } = info;
+  return { when, conclusion, evidence, verified, state: knowledgeStateOf(info), supersededBy };
 }
 
 /** A single-line input can't show a line break written elsewhere; the stored value stays as it is until the field is edited. */
@@ -22,7 +23,7 @@ export function singleLine(text: string): string {
 
 /** A replacement only means something for outdated knowledge. */
 export function draftForSave(draft: KnowledgeDraft): KnowledgeDraft {
-  return draft.status === "outdated" ? draft : { ...draft, supersededBy: "" };
+  return draft.state === "obsolete" ? draft : { ...draft, supersededBy: "" };
 }
 
 export type FormField = keyof KnowledgeDraft | "form";
@@ -32,10 +33,8 @@ export function fieldOfError(error: KnowledgeDraftError): FormField {
     case "whenTooLong": return "when";
     case "conclusionTooLong": return "conclusion";
     case "verifiedInvalid": return "verified";
-    case "supersededRequired":
     case "supersededInvalid":
     case "supersededSelf": return "supersededBy";
-    case "empty": return "form";
   }
 }
 

@@ -155,12 +155,12 @@ body
     await s.ctx.destroy();
   });
 
-  it("whose content says outdated without superseded_by is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
+  it("whose content has a superseded_by that isn't a reference is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
     const s = await setup([P("p1", "x")]);
     const before = (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
-    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
+    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
     expect(r.isError).toBe(true);
-    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: 'The knowledge comment under the heading "D1" says outdated without a `superseded_by`. Nothing was written.' });
+    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written." });
     expect((await s.ctx.db.select({ id: notes.id }).from(notes)).length).toBe(before);
     expect(await s.ctx.db.select().from(notes).where(eq(notes.title, "Bad"))).toHaveLength(0);
     await s.ctx.destroy();
@@ -225,20 +225,24 @@ describe("each claim in the new describe text holds", () => {
     await s.ctx.destroy();
   });
 
-  it("status current is refused and only unverified or outdated are accepted", async () => {
+  it("status current is refused and only verified, unverified or outdated are accepted", async () => {
     const s = await setup([P("p1", "x")]);
     const bad = await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: current"])}\n\nx\n` });
     expect(bad.structuredContent.code).toBe("invalid_knowledge");
     const good = knowledgeOf(await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: unverified"])}\n\nx\n` }))!;
     expect((await s.infos()).get(good.created[0]!.id)).toMatchObject({ status: "unverified" });
+    const verified = knowledgeOf(await s.edit({ op: "append", markdown: `## V\n${comment(["when: w", "status: verified"])}\n\nx\n` }))!;
+    expect((await s.infos()).get(verified.created[0]!.id)).toMatchObject({ status: "verified" });
     await s.ctx.destroy();
   });
 
-  it("outdated needs superseded_by, which may be a knowledge id or <note id>#<knowledge id> in another note", async () => {
+  it("superseded_by may be a knowledge id or <note id>#<knowledge id> in another note, and outdated can leave it out", async () => {
     const s = await setup([KH("hA", "A", K1), P("a1", "x")]);
     const other = "22222222-2222-4222-8222-222222222222";
     const k = (await written(s, `## Old\n${comment(["when: w", "status: outdated", `superseded_by: ${other}#k_00000002`])}\n\nx\n`))!;
     expect((await s.infos()).get(k.created[0]!.id)).toMatchObject({ status: "outdated", supersededBy: `${other}#k_00000002` });
+    const none = (await written(s, `## Gone\n${comment(["when: w", "status: outdated"])}\n\nx\n`))!;
+    expect((await s.infos()).get(none.created[0]!.id)).toMatchObject({ status: "outdated", supersededBy: "" });
     await s.ctx.destroy();
   });
 

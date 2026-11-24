@@ -8,7 +8,7 @@ export const KNOWLEDGE_COMMENT_KEYS: readonly KnowledgeCommentKey[] = ["id", "wh
 export type KnowledgeCommentProblem =
   | "not_multiline" | "bad_line" | "duplicate_key" | "bad_value" | "unstorable" | "blank_line_missing" | "two_comments" | "unclosed"
   | "too_long" | "line_break" | "bad_id" | "bad_evidence" | "bad_status" | "bad_date" | "bad_ref"
-  | "empty" | "superseded_required" | "superseded_self";
+  | "superseded_self";
 
 /** Raw strings as written (after decoding); `evidence: unconfirmed` is already mapped to "". Values are not checked here. `id` null = the line was left out. */
 export interface KnowledgeCommentFields {

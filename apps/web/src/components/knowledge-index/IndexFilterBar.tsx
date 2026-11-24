@@ -96,6 +96,9 @@ export function IndexFilterBar({
   const { t } = useTranslation();
   const hasTags = tagOptions.length > 0;
   const active = filters.tagIds.length > 0 || filters.status !== null || filters.evidence !== null;
+  const builtinEvidence = KNOWLEDGE_INDEX_EVIDENCE_FILTERS as readonly string[];
+  // An address can name any option key; it stays visible as the chosen value.
+  const evidenceValues = filters.evidence === null || builtinEvidence.includes(filters.evidence) ? builtinEvidence : [...builtinEvidence, filters.evidence];
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       {hasTags && <GroupBy value={filters.groupBy} onChange={(groupBy) => onChange({ ...filters, groupBy })} />}
@@ -111,8 +114,8 @@ export function IndexFilterBar({
         <ValueSelect<KnowledgeIndexEvidenceFilter>
           name={t("knowledgeIndex.filter.evidence")}
           value={filters.evidence}
-          values={KNOWLEDGE_INDEX_EVIDENCE_FILTERS}
-          labelOf={(v) => t(`knowledge.evidence.${v}`)}
+          values={evidenceValues}
+          labelOf={(v) => (builtinEvidence.includes(v) ? t(`knowledge.evidence.${v}`) : v)}
           onChange={(evidence) => onChange({ ...filters, evidence })}
         />
         {active && (

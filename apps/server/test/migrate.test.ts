@@ -15,7 +15,7 @@ import { apiTokens, authProviders, folders, groupMembers, groupRoles, groups, no
 const drizzleDirForTest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 
 /** Drizzle's serialization of `schema.ts`; the declaration-drift guard compares against the latest snapshot (update the file name with each new migration). */
-const SNAPSHOT_FILE = "meta/0046_snapshot.json";
+const SNAPSHOT_FILE = "meta/0047_snapshot.json";
 const snapshotLatest = JSON.parse(readFileSync(path.join(drizzleDirForTest, SNAPSHOT_FILE), "utf8")) as {
   tables: Record<string, {
     checkConstraints?: Record<string, { name: string; value: string }>;
@@ -4046,7 +4046,9 @@ describe("0045_knowledge-index", () => {
   });
 
   it("each check rejects a bad value with 23514 and its own name: knowledge id, block id, level 0 and 7, evidence, status, icon, superseded pair", async () => {
-    const { pool } = await freshDb();
+    // Up to this migration only: a later one widens the evidence check.
+    const { pool } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag("0045_knowledge-index"));
     const { note } = await seedNote(pool, "alice-nk1@example.com");
     const bad: [string, Record<string, unknown>][] = [
       ["nk_knowledge_id_chk", { knowledge_id: "k_0123ABCD" }],
@@ -4142,7 +4144,7 @@ describe("0046_tag-custom-colors", () => {
     await insertColor(pool, owner, "old", "yellow");
     expect(await outcome(insertColor(pool, owner, "early", "#e03e3e"))).toBe("23514:tags_color_chk");
     await runMigrations(db);
-    expect(journalEntries().at(-1)!.tag).toBe(TAG);
+    expect(idxOfTag(TAG)).toBe(idxOfTag(PREV_TAG) + 1);
     expect((await pool.query(`select name, color from tags`)).rows).toEqual([{ name: "old", color: "yellow" }]);
     expect(await outcome(insertColor(pool, owner, "new", "#e03e3e"))).toBe("ok");
   });
@@ -4170,5 +4172,90 @@ describe("0046_tag-custom-colors", () => {
     expect(statements).toHaveLength(2);
     expect(statements[0]).toBe(`ALTER TABLE "tags" DROP CONSTRAINT "tags_color_chk";`);
     expect(statements[1]).toMatch(/^ALTER TABLE "tags" ADD CONSTRAINT "tags_color_chk" CHECK \(/);
+  });
+});
+
+describe("0047_knowledge-status-checks", () => {
+  const TAG = "0047_knowledge-status-checks";
+  const PREV_TAG = "0046_tag-custom-colors";
+  type Pool = import("pg").Pool;
+  const outcome = async (p: Promise<unknown>) => {
+    try { await p; } catch (e) { const x = e as { code?: string; constraint?: string }; return `${x.code}:${x.constraint}`; }
+    return "ok";
+  };
+  const seedNote = async (pool: Pool, email: string) => {
+    const owner = (await pool.query(`insert into users (email, display_name) values ($1, $1) returning id`, [email])).rows[0].id as string;
+    return (await pool.query(`insert into notes (owner_id) values ($1) returning id`, [owner])).rows[0].id as string;
+  };
+  const kid = (n: number) => `k_${n.toString(16).padStart(8, "0")}`;
+  const insertRow = (pool: Pool, noteId: string, over: Record<string, unknown> = {}) => {
+    const row = { note_id: noteId, knowledge_id: kid(1), block_id: "b1", ord: 0, level: 2, heading: "h", read_when: "w", conclusion: "c", evidence: "", status: "", icon: "verified", ...over };
+    const keys = Object.keys(row);
+    return pool.query(`insert into note_knowledge (${keys.join(", ")}) values (${keys.map((_, i) => `$${i + 1}`).join(", ")})`, Object.values(row));
+  };
+
+  const ACCEPTED = ["", "a", "0", "vendor-doc", "a".repeat(64)];
+  const REJECTED = ["Docs", "-a", "a".repeat(65), "abé", "ａｂｃ", "İa", "ab\n", "a_b"];
+
+  async function outcomes(pool: Pool, email: string): Promise<{ accepted: string[]; rejected: string[] }> {
+    const note = await seedNote(pool, email);
+    const accepted: string[] = [];
+    const rejected: string[] = [];
+    let i = 0;
+    for (const evidence of [...ACCEPTED, ...REJECTED]) {
+      const result = await outcome(insertRow(pool, note, { knowledge_id: kid(++i), evidence }));
+      if (result === "ok") accepted.push(evidence);
+      else {
+        expect(result, JSON.stringify(evidence)).toBe("23514:nk_evidence_chk");
+        rejected.push(evidence);
+      }
+    }
+    return { accepted, rejected };
+  }
+
+  it("before it a new basis key and the verified status are refused; after it existing rows are unchanged and both are accepted", async () => {
+    const { pool, db } = await freshEmptyDb();
+    await applyMigrationsThrough(pool, idxOfTag(PREV_TAG));
+    const note = await seedNote(pool, "alice-ks0@example.com");
+    await insertRow(pool, note, { evidence: "docs", status: "unverified", icon: "needsReview" });
+    await insertRow(pool, note, { knowledge_id: kid(2), icon: "noVerifiedDate", desc_no_date: 2 });
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(3), evidence: "vendor-doc" }))).toBe("23514:nk_evidence_chk");
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(4), status: "verified" }))).toBe("23514:nk_status_chk");
+    const before = (await pool.query(`select * from note_knowledge order by knowledge_id`)).rows;
+    await runMigrations(db);
+    expect(idxOfTag(TAG)).toBe(idxOfTag(PREV_TAG) + 1);
+    expect((await pool.query(`select * from note_knowledge order by knowledge_id`)).rows).toEqual(before);
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(3), evidence: "vendor-doc" }))).toBe("ok");
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(4), status: "verified" }))).toBe("ok");
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(5), status: "current" }))).toBe("23514:nk_status_chk");
+    expect(await outcome(insertRow(pool, note, { knowledge_id: kid(6), icon: "noVerifiedDate" }))).toBe("ok");
+  });
+
+  it("refuses the same basis keys on a UTF-8 and a C locale database", async () => {
+    const utf8 = await freshDb();
+    const locale = (await utf8.pool.query(`select datctype from pg_database where datname = current_database()`)).rows[0];
+    expect(locale.datctype).toMatch(/utf-?8/i);
+    const c = await freshEmptyDb({ cLocale: true });
+    await runMigrations(c.db);
+    expect((await c.pool.query(`select datctype from pg_database where datname = current_database()`)).rows[0].datctype).toBe("C");
+
+    const onUtf8 = await outcomes(utf8.pool, "alice-ks1@example.com");
+    const onC = await outcomes(c.pool, "alice-ks2@example.com");
+    expect(onUtf8).toEqual({ accepted: ACCEPTED, rejected: REJECTED });
+    expect(onC).toEqual(onUtf8);
+  });
+
+  it("SQL file only replaces two checks; no CONCURRENTLY/line-leading COMMIT", () => {
+    const sqlText = readFileSync(path.join(drizzleDirForTest, `${TAG}.sql`), "utf8");
+    expect(sqlText).not.toMatch(/CONCURRENTLY/i);
+    expect(sqlText).not.toMatch(/^\s*COMMIT/im);
+    const statements = sqlText.split("--> statement-breakpoint").map(s => s.replace(/^\s*--.*$/gm, "").trim()).filter(s => s.length > 0);
+    expect(statements).toHaveLength(4);
+    expect(statements.slice(0, 2).sort()).toEqual([
+      `ALTER TABLE "note_knowledge" DROP CONSTRAINT "nk_evidence_chk";`,
+      `ALTER TABLE "note_knowledge" DROP CONSTRAINT "nk_status_chk";`,
+    ]);
+    expect(statements[2]).toMatch(/^ALTER TABLE "note_knowledge" ADD CONSTRAINT "nk_evidence_chk" CHECK \(/);
+    expect(statements[3]).toMatch(/^ALTER TABLE "note_knowledge" ADD CONSTRAINT "nk_status_chk" CHECK \(/);
   });
 });

@@ -4,7 +4,6 @@
     "state": {
       "outdated": "Outdated",
       "needsReview": "Needs review",
-      "noVerifiedDate": "Not verified",
       "verified": "Verified"
     },
     "field": {
@@ -22,9 +21,9 @@
       "unconfirmed": "Unconfirmed"
     },
     "status": {
-      "current": "Current",
-      "unverified": "Needs review",
-      "outdated": "Outdated"
+      "verified": "Verified",
+      "needs-verify": "Needs review",
+      "obsolete": "Outdated"
     },
     "card": {
       "notVerified": "Not verified",
@@ -37,7 +36,7 @@
       "bannerInheritedOutdated": "Outdated: <ref/> above is outdated",
       "refOtherNote": "knowledge in another note",
       "refMissing": "knowledge that no longer exists",
-      "summary": "{{total}} below: {{verified}} verified, {{noDate}} not verified, {{review}} need review",
+      "summary": "{{total}} below: {{verified}} verified, {{review}} need review",
       "summaryOutdated": ", {{outdated}} outdated",
       "edit": "Edit",
       "untitled": "Untitled heading",
@@ -50,12 +49,12 @@
       "save": "Save",
       "cancel": "Cancel",
       "escHint": "Esc to cancel",
+      "optional": "Optional",
       "error": {
         "empty": "Fill in at least one field.",
         "tooLong": "At most {{max}} characters (now {{n}}).",
         "verifiedInvalid": "Enter a valid date.",
         "verifiedIncomplete": "Enter a complete date.",
-        "supersededRequired": "Choose the knowledge that replaces this one.",
         "supersededInvalid": "Choose one of the listed knowledge.",
         "supersededSelf": "A piece of knowledge can't replace itself.",
         "notEligible": "This heading no longer exists or can't hold knowledge info."

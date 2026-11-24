@@ -22,13 +22,11 @@ const REASONS: Record<KnowledgeCommentProblem, (p: KnowledgeProblem) => string> 
   line_break: p => `has a line break in \`${key(p)}\`: write it on one line`,
   bad_id: () => "has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge)",
   bad_evidence: () => "has an `evidence` other than tested, docs, inferred or unconfirmed",
-  bad_status: () => "has a `status` other than unverified or outdated (leave it out for current)",
+  bad_status: () => "has a `status` other than verified, unverified or outdated (it can be left out)",
   bad_date: () => "has a `verified` that isn't a date written YYYY-MM-DD",
   bad_ref: () => "has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>",
   blank_line_missing: () => "needs a blank line after its -->",
   two_comments: () => "is the second knowledge comment under that heading",
-  empty: () => "sets none of when, conclusion, evidence, verified, status and superseded_by",
-  superseded_required: () => "says outdated without a `superseded_by`",
   superseded_self: () => "names itself in `superseded_by`",
 };
 

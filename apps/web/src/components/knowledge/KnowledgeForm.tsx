@@ -1,7 +1,7 @@
 import { useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { KNOWLEDGE_EVIDENCE, readKnowledgeInfo, type KnowledgeDraft, type KnowledgeEntry, type KnowledgeEvidence, type KnowledgeStatus } from "@knotebook/shared";
+import { KNOWLEDGE_BUILTIN_EVIDENCE, KNOWLEDGE_STATES, readKnowledgeInfo, type KnowledgeDraft, type KnowledgeEntry } from "@knotebook/shared";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,6 @@ export interface KnowledgeFormProps {
   close: () => void;
 }
 
-const STATUS_VALUES: readonly KnowledgeStatus[] = ["", "unverified", "outdated"];
 const FIELD_LABEL = "text-xs text-muted-foreground";
 const ERROR_TEXT = "mt-1 text-xs text-red-700 dark:text-red-300";
 
@@ -95,7 +94,7 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
     }
     const field = fieldOfError(result.reason);
     setFailure({ field, message: messageOf(field, result.reason) });
-    const target = field === "form" ? "when" : field === "status" ? "status-0" : field;
+    const target = field === "form" ? "when" : field === "state" ? "status-0" : field;
     document.getElementById(id(target))?.focus();
   };
 
@@ -145,7 +144,9 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
     );
   };
 
-  const evidenceOptions = [{ value: "", label: t("knowledge.evidence.unconfirmed") }, ...KNOWLEDGE_EVIDENCE.map((v) => ({ value: v, label: t(`knowledge.evidence.${v}`) }))];
+  const evidenceOptions = [{ value: "", label: t("knowledge.evidence.unconfirmed") }, ...KNOWLEDGE_BUILTIN_EVIDENCE.map((v) => ({ value: v, label: t(`knowledge.evidence.${v}`) }))];
+  // A stored key outside the builtin options shows as itself rather than as no basis.
+  if (draft.evidence !== "" && !evidenceOptions.some((o) => o.value === draft.evidence)) evidenceOptions.push({ value: draft.evidence, label: draft.evidence });
   const statusError = errorProps("supersededBy");
   const verifiedError = errorProps("verified");
   const title = t("knowledge.form.title");
@@ -175,7 +176,7 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
           aria-labelledby={id("evidence-label")}
           value={draft.evidence}
           options={evidenceOptions}
-          onValueChange={(v) => edit("evidence", v as KnowledgeEvidence)}
+          onValueChange={(v) => edit("evidence", v)}
         />
       </div>
 
@@ -191,16 +192,16 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
             const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
             if (step === 0) return;
             event.preventDefault();
-            const next = (STATUS_VALUES.indexOf(draft.status) + step + STATUS_VALUES.length) % STATUS_VALUES.length;
-            edit("status", STATUS_VALUES[next]!);
+            const next = (KNOWLEDGE_STATES.indexOf(draft.state) + step + KNOWLEDGE_STATES.length) % KNOWLEDGE_STATES.length;
+            edit("state", KNOWLEDGE_STATES[next]!);
             radioRefs.current[next]?.focus();
           }}
         >
-          {STATUS_VALUES.map((value, i) => {
-            const checked = draft.status === value;
+          {KNOWLEDGE_STATES.map((value, i) => {
+            const checked = draft.state === value;
             return (
               <button
-                key={value || "current"}
+                key={value}
                 ref={(el) => {
                   radioRefs.current[i] = el;
                 }}
@@ -210,27 +211,32 @@ export function KnowledgeForm({ editor, blockId, getEntries, noteId, phone, clos
                 aria-checked={checked}
                 tabIndex={checked ? 0 : -1}
                 data-state={checked ? "on" : "off"}
-                onClick={() => edit("status", value)}
+                onClick={() => edit("state", value)}
                 className={cn(
                   "flex-1 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                   i > 0 && "border-l border-input",
                   !checked && "text-muted-foreground hover:bg-muted",
-                  checked && value === "unverified" && "bg-amber-100 font-semibold text-amber-900 dark:bg-amber-400/15 dark:text-amber-200",
-                  checked && value !== "unverified" && "bg-accent font-semibold text-accent-foreground",
+                  checked && value === "needs-verify" && "bg-amber-100 font-semibold text-amber-900 dark:bg-amber-400/15 dark:text-amber-200",
+                  checked && value !== "needs-verify" && "bg-accent font-semibold text-accent-foreground",
                 )}
               >
-                {t(`knowledge.status.${value === "" ? "current" : value}`)}
+                {t(`knowledge.status.${value}`)}
               </button>
             );
           })}
         </div>
       </div>
 
-      {draft.status === "outdated" && (
+      {draft.state === "obsolete" && (
         <div className="mt-2">
-          <span id={id("supersededBy-label")} className={cn(FIELD_LABEL, "mb-0.5 block")}>
-            {t("knowledge.field.supersededBy")}
-          </span>
+          <div className="mb-0.5 flex items-baseline gap-1.5">
+            <span id={id("supersededBy-label")} className={FIELD_LABEL}>
+              {t("knowledge.field.supersededBy")}
+            </span>
+            <span data-kb-optional="" className="text-[11px] text-muted-foreground/80">
+              {t("knowledge.form.optional")}
+            </span>
+          </div>
           <SupersedePicker
             id={id("supersededBy")}
             labelledBy={id("supersededBy-label")}

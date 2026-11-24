@@ -215,14 +215,15 @@ describe("knowledgeWriteProblem", () => {
   const problem = (props: Record<string, unknown>, current: KnowledgeInfo[] = [], noteId: string | null = NOTE) =>
     knowledgeWriteProblem([H(2, "D1", { knowledgeId: "k_00000001", ...props })], new Map(current.map(i => [i.id, i])), noteId);
 
-  it("outdated without superseded_by is superseded_required unless it equals the stored knowledge with that id", () => {
-    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated" })).toEqual({ problem: "superseded_required", key: "superseded_by", heading: "D1" });
+  it("outdated without superseded_by is accepted, new or stored", () => {
+    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated" })).toBeNull();
     expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated" }, [info({ status: "outdated" })])).toBeNull();
     expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" })).toBeNull();
   });
 
-  it("a knowledge with no field set is empty; superseded_by naming itself is superseded_self", () => {
-    expect(problem({})).toEqual({ problem: "empty", heading: "D1" });
+  it("a knowledge with no field set is accepted; superseded_by naming itself is superseded_self", () => {
+    expect(problem({})).toBeNull();
+    expect(problem({ knowledgeStatus: "verified" })).toBeNull();
     expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000001" })).toMatchObject({ problem: "superseded_self", key: "superseded_by" });
     expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${NOTE}#k_00000001` })).toMatchObject({ problem: "superseded_self" });
     expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${OTHER}#k_00000001` })).toBeNull();

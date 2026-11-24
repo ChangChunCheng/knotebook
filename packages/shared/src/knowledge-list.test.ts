@@ -65,7 +65,18 @@ describe("listKnowledge", () => {
     expect(by.e!.parentBlockId).toBeNull();
   });
 
-  it("icon: inherited outdated wins over needs review, then no verified date, then verified", () => {
+  it("a legacy heading without status or date is needs review, and summaries have three classes", () => {
+    const entries = listKnowledge([
+      H("p", 1, "P", K("k_00000001", { knowledgeVerified: "2026-01-02" })),
+      H("a", 2, "A", K("k_00000002")),
+      H("b", 2, "B", K("k_00000003", { knowledgeStatus: "verified" })),
+      H("c", 2, "C", K("k_00000004", { knowledgeStatus: "outdated" })),
+    ]);
+    expect(entries.slice(1).map((e) => e.icon)).toEqual(["needsReview", "verified", "outdated"]);
+    expect(summarizeKnowledgeDescendants(entries, "p")).toEqual({ total: 3, verified: 1, needsReview: 1, outdated: 1 });
+  });
+
+  it("icon: inherited outdated wins over needs review, then verified", () => {
     const entries = listKnowledge([
       H("a", 1, "A", K("k_00000001", { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000009" })),
       H("b", 2, "B", K("k_00000002", { knowledgeStatus: "unverified", knowledgeVerified: "2026-01-01" })),
@@ -79,7 +90,7 @@ describe("listKnowledge", () => {
     expect(by.b!.outdated).toBe(true);
     expect(by.b!.info.status).toBe("unverified");
     expect(by.c!.icon).toBe("needsReview");
-    expect(by.d!.icon).toBe("noVerifiedDate");
+    expect(by.d!.icon).toBe("needsReview");
     expect(by.d!.outdated).toBe(false);
     expect(by.e!.icon).toBe("verified");
   });
@@ -128,8 +139,8 @@ describe("summaries", () => {
   ]);
 
   it("counts every knowledge descendant by its icon and is null without descendants", () => {
-    expect(summarizeKnowledgeDescendants(entries, "a")).toEqual({ total: 5, verified: 1, noVerifiedDate: 1, needsReview: 1, outdated: 2 });
-    expect(summarizeKnowledgeDescendants(entries, "b")).toEqual({ total: 2, verified: 0, noVerifiedDate: 1, needsReview: 1, outdated: 0 });
+    expect(summarizeKnowledgeDescendants(entries, "a")).toEqual({ total: 5, verified: 1, needsReview: 2, outdated: 2 });
+    expect(summarizeKnowledgeDescendants(entries, "b")).toEqual({ total: 2, verified: 0, needsReview: 2, outdated: 0 });
     expect(summarizeKnowledgeDescendants(entries, "c")).toBeNull();
     expect(summarizeKnowledgeDescendants(entries, "g")).toBeNull();
     expect(summarizeKnowledgeDescendants(entries, "missing")).toBeNull();

@@ -1,8 +1,8 @@
 import * as Y from "yjs";
-import { readKnowledgeInfo, type KnowledgeInfo } from "./knowledge.js";
+import { knowledgeStateOf, readKnowledgeInfo, type KnowledgeInfo } from "./knowledge.js";
 import { topLevelBlocks } from "./note-sections.js";
 
-export type KnowledgeIconKind = "outdated" | "needsReview" | "noVerifiedDate" | "verified";
+export type KnowledgeIconKind = "outdated" | "needsReview" | "verified";
 
 export interface KnowledgeTopLevelItem {
   blockId: string;
@@ -27,16 +27,13 @@ export interface KnowledgeEntry {
 export interface KnowledgeChildSummary {
   total: number;
   verified: number;
-  noVerifiedDate: number;
   needsReview: number;
   outdated: number;
 }
 
 function iconOf(info: KnowledgeInfo, outdated: boolean): KnowledgeIconKind {
   if (outdated) return "outdated";
-  if (info.status === "unverified") return "needsReview";
-  if (info.verified === "") return "noVerifiedDate";
-  return "verified";
+  return knowledgeStateOf(info) === "needs-verify" ? "needsReview" : "verified";
 }
 
 export function listKnowledge(items: readonly KnowledgeTopLevelItem[]): KnowledgeEntry[] {
@@ -177,13 +174,12 @@ export function listKnowledgeInFragment(fragment: Y.XmlFragment): KnowledgeEntry
 }
 
 function emptySummary(): KnowledgeChildSummary {
-  return { total: 0, verified: 0, noVerifiedDate: 0, needsReview: 0, outdated: 0 };
+  return { total: 0, verified: 0, needsReview: 0, outdated: 0 };
 }
 
 function addToSummary(summary: KnowledgeChildSummary, icon: KnowledgeIconKind): void {
   summary.total += 1;
   if (icon === "verified") summary.verified += 1;
-  else if (icon === "noVerifiedDate") summary.noVerifiedDate += 1;
   else if (icon === "needsReview") summary.needsReview += 1;
   else summary.outdated += 1;
 }

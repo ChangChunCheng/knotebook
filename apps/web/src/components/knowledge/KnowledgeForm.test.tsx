@@ -75,12 +75,26 @@ describe("KnowledgeForm layout", () => {
     expect(document.body.textContent).not.toMatch(/\d+\s*\/\s*\d+/);
   });
 
+  it("the status control has Verified, Needs review and Outdated, and a legacy dated heading opens as Verified", () => {
+    const legacy = mount([heading("Alpha", "a", K(1, { knowledgeVerified: "2026-01-02" })), heading("Beta", "b", K(2)), heading("Plain", "c")]);
+    const radiosOf = () => within(screen.getByRole("radiogroup", { name: "Status" })).getAllByRole("radio");
+    const view = renderForm(legacy, "a");
+    expect(radiosOf().map((r) => r.textContent)).toEqual(["Verified", "Needs review", "Outdated"]);
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+    view.unmount();
+    const undated = renderForm(legacy, "b");
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    undated.unmount();
+    renderForm(legacy, "c");
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+  });
+
   it("status is three segmented buttons and the selected Needs review button is amber", () => {
     const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
     renderForm(editor, "a");
     const group = screen.getByRole("radiogroup", { name: "Status" });
     const radios = within(group).getAllByRole("radio");
-    expect(radios.map((r) => r.textContent)).toEqual(["Current", "Needs review", "Outdated"]);
+    expect(radios.map((r) => r.textContent)).toEqual(["Verified", "Needs review", "Outdated"]);
     expect(radios.map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
     expect(radios[1]!.className).toContain("amber");
     fireEvent.click(radios[0]!);
@@ -89,7 +103,7 @@ describe("KnowledgeForm layout", () => {
   });
 
   it("arrow keys move the status selection", () => {
-    const editor = mount([heading("Alpha", "a", K(1))]);
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "verified" }))]);
     renderForm(editor, "a");
     const radios = within(screen.getByRole("radiogroup")).getAllByRole("radio");
     radios[0]!.focus();
@@ -153,18 +167,19 @@ describe("KnowledgeForm saving", () => {
     expect(infoOf(editor, "a")!.conclusion).toBe("conclusion 1");
   });
 
-  it("saving every field empty shows the error and writes nothing; Remove clears the knowledge", () => {
+  it("saving every field empty keeps the knowledge with its status; Remove clears the knowledge", () => {
     const editor = mount([heading("Alpha", "a", K(1))]);
-    const { close } = renderForm(editor, "a");
+    const { close, unmount } = renderForm(editor, "a");
     fireEvent.change(input("When to read"), { target: { value: "" } });
     fireEvent.change(input("Conclusion"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("alert").textContent).toBe("Fill in at least one field.");
-    expect(close).not.toHaveBeenCalled();
-    expect(infoOf(editor, "a")).not.toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(infoOf(editor, "a")).toMatchObject({ id: "k_00000001", when: "", conclusion: "", status: "unverified" });
+    unmount();
+    const again = renderForm(editor, "a");
     fireEvent.click(screen.getByRole("button", { name: "Remove knowledge info" }));
     expect(infoOf(editor, "a")).toBeNull();
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(again.close).toHaveBeenCalledTimes(1);
   });
 
   it("a half-typed date refuses to save and says so instead of clearing the stored date", () => {
@@ -259,9 +274,9 @@ describe("KnowledgeForm replacement picker", () => {
   const three = () => mount([heading("Alpha", "a", K(1)), heading("Beta", "b", K(2)), heading("Gamma", "c", K(3))]);
   const pickOutdated = () => fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
 
-  it("choosing Outdated shows the replacement picker between status and last verified, and Save is refused until one is picked", () => {
+  it("choosing Outdated shows the optional replacement picker between status and last verified", () => {
     const editor = three();
-    const { close, container } = renderForm(editor, "a");
+    const { container } = renderForm(editor, "a");
     expect(screen.queryByRole("combobox", { name: "Replaced by" })).toBeNull();
     pickOutdated();
     const picker = screen.getByRole("combobox", { name: "Replaced by" });
@@ -269,9 +284,16 @@ describe("KnowledgeForm replacement picker", () => {
     expect(names.indexOf("Status")).toBeLessThan(names.indexOf("Replaced by"));
     expect(names.indexOf("Replaced by")).toBeLessThan(names.indexOf("Last verified"));
     expect(picker).toBeInTheDocument();
+    expect(container.querySelector("[data-kb-optional]")!.textContent).toBe("Optional");
+  });
+
+  it("Outdated can be saved with Replaced by left empty", () => {
+    const editor = three();
+    const { close } = renderForm(editor, "a");
+    pickOutdated();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByText("Choose the knowledge that replaces this one.")).toBeInTheDocument();
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(infoOf(editor, "a")).toMatchObject({ status: "outdated", supersededBy: "" });
   });
 
   it("the picker lists the note's other knowledge but not this one, and stores a bare id", async () => {
@@ -317,9 +339,9 @@ describe("KnowledgeForm replacement picker", () => {
   it("switching away from Outdated drops the replacement", () => {
     const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" })), heading("Beta", "b", K(2))]);
     renderForm(editor, "a");
-    fireEvent.click(screen.getByRole("radio", { name: "Current" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Verified" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(infoOf(editor, "a")).toMatchObject({ status: "", supersededBy: "" });
+    expect(infoOf(editor, "a")).toMatchObject({ status: "verified", supersededBy: "" });
   });
 });
 
@@ -551,7 +573,7 @@ describe("edit surface in the layer", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: "Edit" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Mark as verified" }));
-    expect(infoOf(editor, "a")).toMatchObject({ verified: todayLocalDate(), status: "" });
+    expect(infoOf(editor, "a")).toMatchObject({ verified: todayLocalDate(), status: "verified" });
   });
 
   it("the phone sheet has no actions for a viewer", async () => {

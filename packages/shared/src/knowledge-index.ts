@@ -1,4 +1,5 @@
-import type { KnowledgeEvidence, KnowledgeStatus } from "./knowledge.js";
+import { KNOWLEDGE_BUILTIN_EVIDENCE, type KnowledgeState, type KnowledgeStatus } from "./knowledge.js";
+import { KNOWLEDGE_KEY_RE } from "./knowledge-fields.js";
 import type { KnowledgeChildSummary, KnowledgeIconKind } from "./knowledge-list.js";
 import type { NoteTagDto } from "./tags.js";
 
@@ -8,18 +9,22 @@ export const KNOWLEDGE_INDEX_HEADING_MAX = 200;
 export const KNOWLEDGE_INDEX_TAG_FILTER_MAX = 20;
 export const KNOWLEDGE_REFS_LIMIT = 20;
 
-export const KNOWLEDGE_ICON_KINDS = ["outdated", "needsReview", "noVerifiedDate", "verified"] as const satisfies readonly KnowledgeIconKind[];
+export const KNOWLEDGE_ICON_KINDS = ["outdated", "needsReview", "verified"] as const satisfies readonly KnowledgeIconKind[];
 
-export const KNOWLEDGE_INDEX_STATUS_FILTERS = ["noVerifiedDate", "needsReview", "outdated"] as const;
+export const KNOWLEDGE_INDEX_STATUS_FILTERS = ["verified", "needsReview", "outdated"] as const;
 export type KnowledgeIndexStatusFilter = (typeof KNOWLEDGE_INDEX_STATUS_FILTERS)[number];
-export const KNOWLEDGE_INDEX_EVIDENCE_FILTERS = ["tested", "docs", "inferred", "unconfirmed"] as const;
-export type KnowledgeIndexEvidenceFilter = (typeof KNOWLEDGE_INDEX_EVIDENCE_FILTERS)[number];
+/** The builtin options; any option key is also accepted as a filter value. */
+export const KNOWLEDGE_INDEX_EVIDENCE_FILTERS = [...KNOWLEDGE_BUILTIN_EVIDENCE, "unconfirmed"] as const;
+/** "unconfirmed" = no basis; otherwise an option key. */
+export type KnowledgeIndexEvidenceFilter = string;
 
-export function isKnowledgeIndexStatusFilter(v: unknown): v is KnowledgeIndexStatusFilter {
-  return typeof v === "string" && (KNOWLEDGE_INDEX_STATUS_FILTERS as readonly string[]).includes(v);
+/** "noVerifiedDate" reads as needs review so bookmarked addresses keep working. */
+export function normalizeKnowledgeIndexStatusFilter(v: unknown): KnowledgeIndexStatusFilter | null {
+  if (v === "noVerifiedDate") return "needsReview";
+  return typeof v === "string" && (KNOWLEDGE_INDEX_STATUS_FILTERS as readonly string[]).includes(v) ? (v as KnowledgeIndexStatusFilter) : null;
 }
 export function isKnowledgeIndexEvidenceFilter(v: unknown): v is KnowledgeIndexEvidenceFilter {
-  return typeof v === "string" && (KNOWLEDGE_INDEX_EVIDENCE_FILTERS as readonly string[]).includes(v);
+  return typeof v === "string" && (v === "unconfirmed" || KNOWLEDGE_KEY_RE.test(v));
 }
 
 // Must match the sidebar's folder collation so the index lists folders in the order the tree shows them.
@@ -48,9 +53,12 @@ export interface KnowledgeIndexEntryDto {
   heading: string;
   when: string;
   conclusion: string;
-  evidence: KnowledgeEvidence;
+  /** "" = none; otherwise an option key. */
+  evidence: string;
   verified: string | null;
+  /** As stored; `state` is what it means. */
   status: KnowledgeStatus;
+  state: KnowledgeState;
   icon: KnowledgeIconKind;
   parentKnowledgeId: string | null;
   /** Always `formatKnowledgeRef({ noteId, knowledgeId }, null)`, i.e. "<noteId>#k_…". */

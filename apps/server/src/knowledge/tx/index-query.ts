@@ -6,8 +6,8 @@ import {
   KNOWLEDGE_INDEX_MAX,
   canonicalNotePath,
   formatKnowledgeRef,
+  knowledgeStateOf,
   orderIndexNotes,
-  type KnowledgeEvidence,
   type KnowledgeIndexDto,
   type KnowledgeIndexEntryDto,
   type KnowledgeIndexFolderDto,
@@ -107,6 +107,7 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
 
   const refs = new Map<string, { noteId: string; knowledgeId: string }>();
   const entries: KnowledgeIndexEntryDto[] = rows.map((r) => {
+    const status = r.status as KnowledgeStatus;
     // Only a row that is itself outdated has a replacement; a NULL or own note id both mean the same note.
     let supersededBy: string | null = null;
     if (r.status === "outdated" && r.supersededKnowledgeId !== null) {
@@ -123,16 +124,18 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
       heading: r.heading,
       when: r.readWhen,
       conclusion: r.conclusion,
-      evidence: r.evidence as KnowledgeEvidence,
+      evidence: r.evidence,
       verified: r.verified,
-      status: r.status as KnowledgeStatus,
-      icon: r.icon as KnowledgeIndexEntryDto["icon"],
+      status,
+      state: knowledgeStateOf({ status, verified: r.verified ?? "" }),
+      // The previous extractor wrote "noVerifiedDate" and counted it apart; both are needs review now.
+      icon: r.icon === "noVerifiedDate" ? "needsReview" : (r.icon as KnowledgeIndexEntryDto["icon"]),
       parentKnowledgeId: r.parentKnowledgeId,
       supersededBy,
       summary:
         r.descTotal === 0
           ? null
-          : { total: r.descTotal, verified: r.descVerified, noVerifiedDate: r.descNoDate, needsReview: r.descNeedsReview, outdated: r.descOutdated },
+          : { total: r.descTotal, verified: r.descVerified, needsReview: r.descNoDate + r.descNeedsReview, outdated: r.descOutdated },
     };
   });
 

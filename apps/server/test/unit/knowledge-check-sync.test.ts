@@ -4,7 +4,7 @@
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
-import { BLOCK_ANCHOR_RE, KNOWLEDGE_EVIDENCE, KNOWLEDGE_ICON_KINDS, KNOWLEDGE_ID_RE, KNOWLEDGE_STATUSES } from "@knotebook/shared";
+import { BLOCK_ANCHOR_RE, KNOWLEDGE_ICON_KINDS, KNOWLEDGE_ID_RE, KNOWLEDGE_KEY_RE, KNOWLEDGE_STORED_STATUSES } from "@knotebook/shared";
 import { noteKnowledge } from "../../src/db/schema.js";
 
 const dialect = new PgDialect();
@@ -17,14 +17,15 @@ const listed = (sqlText: string): string[] => [...sqlText.matchAll(/'([^']*)'/g)
 const pattern = (sqlText: string): string => /~ '([^']*)'/.exec(sqlText)![1]!;
 
 describe("note_knowledge checks match shared constants", () => {
-  it("nk_evidence_chk lists '' and exactly KNOWLEDGE_EVIDENCE", () => {
-    expect(listed(checkSql("nk_evidence_chk"))).toEqual(["", ...KNOWLEDGE_EVIDENCE]);
+  it("nk_evidence_chk allows '' or the option key format", () => {
+    expect(pattern(checkSql("nk_evidence_chk"))).toBe(KNOWLEDGE_KEY_RE.source);
+    expect(listed(checkSql("nk_evidence_chk"))[0]).toBe("");
   });
-  it("nk_status_chk lists '' and exactly KNOWLEDGE_STATUSES", () => {
-    expect(listed(checkSql("nk_status_chk"))).toEqual(["", ...KNOWLEDGE_STATUSES]);
+  it("nk_status_chk lists '' and exactly KNOWLEDGE_STORED_STATUSES", () => {
+    expect(listed(checkSql("nk_status_chk"))).toEqual(["", ...KNOWLEDGE_STORED_STATUSES]);
   });
-  it("nk_icon_chk lists exactly KNOWLEDGE_ICON_KINDS", () => {
-    expect(listed(checkSql("nk_icon_chk")).sort()).toEqual([...KNOWLEDGE_ICON_KINDS].sort());
+  it("nk_icon_chk still accepts the legacy kind next to KNOWLEDGE_ICON_KINDS", () => {
+    expect(listed(checkSql("nk_icon_chk")).sort()).toEqual([...KNOWLEDGE_ICON_KINDS, "noVerifiedDate"].sort());
   });
   it("nk_knowledge_id_chk's pattern accepts and rejects the same ids as KNOWLEDGE_ID_RE", () => {
     const re = new RegExp(pattern(checkSql("nk_knowledge_id_chk")));

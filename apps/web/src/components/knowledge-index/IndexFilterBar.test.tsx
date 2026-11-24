@@ -71,11 +71,11 @@ describe("IndexFilterBar", () => {
     expect(onChange).toHaveBeenLastCalledWith({ ...NONE, tagIds: [T2.id] });
   });
 
-  it("status and basis selects list All and the options in the knowledge wording", async () => {
+  it("the index status filter has three values; status and basis selects list All and the options in the knowledge wording", async () => {
     bar();
     expect(await optionLabels(screen.getByRole("combobox", { name: "Status" }))).toEqual([
       "Status: All",
-      "Status: Not verified",
+      "Status: Verified",
       "Status: Needs review",
       "Status: Outdated",
     ]);

@@ -52,6 +52,22 @@ describe("KnowledgeCard", () => {
     expect(screen.getByText("Needs review · worth checking again")).toBeInTheDocument();
   });
 
+  it("a legacy heading without a date shows the needs review banner and outdated without a replacement says only Outdated", () => {
+    const legacy = card({ entry: one() });
+    expect(legacy.container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+    legacy.unmount();
+    const dated = card({ entry: one({ knowledgeVerified: "2026-10-30" }) });
+    expect(dated.container.querySelector("[data-kb-knowledge-banner]")).toBeNull();
+    dated.unmount();
+    const outdated = card({ entry: one({ knowledgeStatus: "outdated" }) });
+    expect(outdated.container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
+  });
+
+  it("a basis that is not one of the builtin options shows its key", () => {
+    const { container } = card({ entry: one({ knowledgeEvidence: "vendor-doc" }) });
+    expect([...container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("vendor-doc");
+  });
+
   it("an outdated knowledge shows the red banner whose title link jumps to the replacement; another note's replacement shows the fallback text unlinked", () => {
     const open = vi.fn();
     const entry = one({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" });
@@ -130,7 +146,7 @@ describe("KnowledgeCard", () => {
     ]);
     const view = card({ entry: entries[0]!, summary: summarizeKnowledgeDescendants(entries, "p") });
     const summary = view.container.querySelector("p")!;
-    expect(summary.textContent).toBe("3 below: 1 verified, 1 not verified, 1 need review");
+    expect(summary.textContent).toBe("3 below: 1 verified, 2 need review");
     expect(view.container.querySelector("[data-kb-knowledge-card]")!.lastElementChild).toBe(summary);
     view.unmount();
 
@@ -139,7 +155,7 @@ describe("KnowledgeCard", () => {
       { id: "k_00000002", blockId: "a", level: 2, props: { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000009" } },
     ]);
     const second = card({ entry: withOutdated[0]!, summary: summarizeKnowledgeDescendants(withOutdated, "p") });
-    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 not verified, 0 need review, 1 outdated");
+    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 need review, 1 outdated");
   });
 
   it("Edit with a pencil icon sits at the top right only when canEdit", () => {

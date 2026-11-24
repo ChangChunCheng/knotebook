@@ -217,10 +217,10 @@ describe("what is listed", () => {
     const [parent, child] = dto.entries;
     expect(parent).toEqual({
       noteId: n.id, knowledgeId: kid(1), blockId: "p", ord: 0, level: 1, heading: "Parent", when: "Deploying", conclusion: "Use blue-green",
-      evidence: "tested", verified: "2026-01-02", status: "", icon: "verified", parentKnowledgeId: null, supersededBy: null,
-      summary: { total: 1, verified: 0, noVerifiedDate: 0, needsReview: 1, outdated: 0 },
+      evidence: "tested", verified: "2026-01-02", status: "", state: "verified", icon: "verified", parentKnowledgeId: null, supersededBy: null,
+      summary: { total: 1, verified: 0, needsReview: 1, outdated: 0 },
     });
-    expect(child).toMatchObject({ knowledgeId: kid(2), parentKnowledgeId: kid(1), status: "unverified", icon: "needsReview", verified: null, summary: null });
+    expect(child).toMatchObject({ knowledgeId: kid(2), parentKnowledgeId: kid(1), status: "unverified", state: "needs-verify", icon: "needsReview", verified: null, summary: null });
     expect(dto.tagOptions).toEqual([{ id: tag!.id, name: "ops", color: "blue" }]);
   });
 
@@ -268,12 +268,58 @@ describe("filters", () => {
     expect(none.tagOptions.map(t => t.name)).toEqual(["a", "B"]);
   });
 
-  it("status=needsReview, noVerifiedDate and outdated keep only that icon kind, inherited outdated included", async () => {
+  it("status=verified, needsReview and outdated keep only that icon kind, inherited outdated included; noVerifiedDate reads as needsReview", async () => {
     const { app, alice } = await setup();
     const q = async (status: string) => knowledgeIds(await okIndex(app, alice.id, "me", `?status=${status}`)).filter(id => id !== kid(9));
-    expect(await q("needsReview")).toEqual([kid(2)]);
-    expect(await q("noVerifiedDate")).toEqual([kid(3)]);
+    expect(await q("verified")).toEqual([kid(1)]);
+    expect(await q("needsReview")).toEqual([kid(2), kid(3)]);
+    expect(await q("noVerifiedDate")).toEqual([kid(2), kid(3)]);
     expect(await q("outdated")).toEqual([kid(4), kid(5)]);
+  });
+
+  it("rows written by the previous extractor read as three classes", async () => {
+    const { app, db, pool } = await ctx();
+    const alice = await seedUser(db);
+    const n = await seedNote(db, { ownerId: alice.id }, { title: "Legacy" });
+    await pool.query(
+      `insert into note_knowledge (note_id, knowledge_id, block_id, ord, level, heading, read_when, conclusion, evidence, status, icon, desc_total, desc_verified, desc_no_date, desc_needs_review, desc_outdated)
+        values ($1::uuid, $2, 'b1', 0, 1, 'Old', 'w', '', '', '', 'noVerifiedDate', 3, 0, 2, 1, 0)`,
+      [n.id, kid(1)],
+    );
+    const [entry] = (await okIndex(app, alice.id, "me")).entries;
+    expect(entry).toMatchObject({ icon: "needsReview", state: "needs-verify", status: "", summary: { total: 3, verified: 0, needsReview: 3, outdated: 0 } });
+  });
+
+  it("the needsReview filter matches legacy and current rows, and noVerifiedDate is an alias", async () => {
+    const { app, db, pool } = await ctx();
+    const alice = await seedUser(db);
+    const legacy = await seedNote(db, { ownerId: alice.id }, { title: "Legacy" });
+    await pool.query(
+      `insert into note_knowledge (note_id, knowledge_id, block_id, ord, level, heading, read_when, conclusion, evidence, status, icon)
+        values ($1::uuid, $2, 'b1', 0, 1, 'Old', 'w', '', '', '', 'noVerifiedDate')`,
+      [legacy.id, kid(1)],
+    );
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "Current", [
+      kh("a", kid(2), "Review", { level: 1, status: "unverified" }),
+      kh("b", kid(3), "Fine", { level: 1, status: "verified" }),
+    ]);
+    for (const status of ["needsReview", "noVerifiedDate"]) {
+      expect(knowledgeIds(await okIndex(app, alice.id, "me", `?status=${status}`)), status).toEqual([kid(1), kid(2)]);
+    }
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?status=verified"))).toEqual([kid(3)]);
+  });
+
+  it("a custom basis key is accepted as a filter value and unconfirmed means none", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "Keys", [
+      kh("a", kid(1), "Vendor", { level: 1, evidence: "vendor-doc" }),
+      kh("b", kid(2), "None", { level: 1 }),
+      kh("c", kid(3), "Tested", { level: 1, evidence: "tested" }),
+    ]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=vendor-doc"))).toEqual([kid(1)]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=unconfirmed"))).toEqual([kid(2)]);
+    expect((await okIndex(app, alice.id, "me")).entries.find(e => e.knowledgeId === kid(1))!.evidence).toBe("vendor-doc");
   });
 
   it("evidence=unconfirmed keeps entries with empty evidence; tested keeps tested", async () => {
@@ -289,7 +335,7 @@ describe("filters", () => {
     const { app, alice } = await setup();
     const tooMany = Array.from({ length: 21 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`).join(",");
     const twenty = Array.from({ length: 20 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`).join(",");
-    for (const qs of ["?status=verified", "?status=", "?evidence=guess", `?tags=${tooMany}`, "?tags=not-a-uuid", `?tags=${UNKNOWN},`, "?foo=1", "?status=outdated&status=outdated"]) {
+    for (const qs of ["?status=needs-verify", "?status=", "?evidence=Guess", "?evidence=", `?evidence=${"a".repeat(65)}`, `?tags=${tooMany}`, "?tags=not-a-uuid", `?tags=${UNKNOWN},`, "?foo=1", "?status=outdated&status=outdated"]) {
       const res = await getIndex(app, alice.id, "me", qs);
       expect(res.statusCode, qs).toBe(400);
       expect(res.json().error.code, qs).toBe("invalid_body");

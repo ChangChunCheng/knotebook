@@ -4,7 +4,6 @@
     "state": {
       "outdated": "過時",
       "needsReview": "待驗證",
-      "noVerifiedDate": "未驗證",
       "verified": "已驗證"
     },
     "field": {
@@ -22,9 +21,9 @@
       "unconfirmed": "未確認"
     },
     "status": {
-      "current": "正常",
-      "unverified": "待驗證",
-      "outdated": "過時"
+      "verified": "已驗證",
+      "needs-verify": "待驗證",
+      "obsolete": "過時"
     },
     "card": {
       "notVerified": "未驗證",
@@ -37,7 +36,7 @@
       "bannerInheritedOutdated": "過時：上層<ref/>已過時",
       "refOtherNote": "另一篇筆記中的知識",
       "refMissing": "已不存在的知識",
-      "summary": "底下 {{total}} 條：{{verified}} 條已驗證、{{noDate}} 條未驗證、{{review}} 條待驗證",
+      "summary": "底下 {{total}} 條：{{verified}} 條已驗證、{{review}} 條待驗證",
       "summaryOutdated": "、{{outdated}} 條過時",
       "edit": "編輯",
       "untitled": "未命名標題",
@@ -50,12 +49,12 @@
       "save": "儲存",
       "cancel": "取消",
       "escHint": "Esc 取消",
+      "optional": "選填",
       "error": {
         "empty": "至少要填一個欄位。",
         "tooLong": "最多 {{max}} 字（目前 {{n}} 字）。",
         "verifiedInvalid": "請輸入正確的日期。",
         "verifiedIncomplete": "請輸入完整的日期。",
-        "supersededRequired": "請選擇取代這條的知識。",
         "supersededInvalid": "請從清單中選擇知識。",
         "supersededSelf": "不能選這條自己。",
         "notEligible": "這個標題已不存在，或不能設知識資訊。"

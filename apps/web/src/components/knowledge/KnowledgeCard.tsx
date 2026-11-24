@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import type { KnowledgeChildSummary, KnowledgeEntry } from "@knotebook/shared";
+import { KNOWLEDGE_BUILTIN_EVIDENCE, isKnowledgeDate, knowledgeStateOf, type KnowledgeChildSummary, type KnowledgeEntry } from "@knotebook/shared";
 import { Button } from "@/components/ui/button";
 import { ROW_ICON_HIT_BORDERED } from "@/components/ui/hit-area";
 import { Pencil } from "@/components/ui/icons";
@@ -89,10 +89,10 @@ function Banners({ entry, outdatedAncestor, replacement, onJump }: Pick<Knowledg
       </Banner>
     );
   }
-  if (entry.info.status === "unverified") {
+  if (knowledgeStateOf(entry.info) === "needs-verify") {
     return (
       <Banner tone="amber">
-        {entry.info.verified !== ""
+        {isKnowledgeDate(entry.info.verified)
           ? t("knowledge.card.bannerNeedsReview", { date: entry.info.verified })
           : t("knowledge.card.bannerNeedsReviewNoDate")}
       </Banner>
@@ -106,6 +106,10 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
   const sheet = variant === "sheet";
   const empty = t("knowledge.card.empty");
   const { info } = entry;
+  const evidenceLabel = (key: string): string =>
+    key === "" ? t("knowledge.evidence.unconfirmed")
+    : (KNOWLEDGE_BUILTIN_EVIDENCE as readonly string[]).includes(key) ? t(`knowledge.evidence.${key}`)
+    : key;
   const divider = sheet ? null : <div role="presentation" className="col-span-2 my-1 border-t border-dashed border-border" />;
   const topRow = !sheet && (parent || canEdit);
   return (
@@ -136,13 +140,13 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
         <Field label={t("knowledge.field.when")}>{info.when || empty}</Field>
         <Field label={t("knowledge.field.conclusion")}>{info.conclusion || empty}</Field>
         {divider}
-        <Field label={t("knowledge.field.evidence")}>{info.evidence === "" ? t("knowledge.evidence.unconfirmed") : t(`knowledge.evidence.${info.evidence}`)}</Field>
+        <Field label={t("knowledge.field.evidence")}>{evidenceLabel(info.evidence)}</Field>
         {divider}
         <Field label={t("knowledge.field.verified")}>{info.verified === "" ? t("knowledge.card.notVerified") : info.verified}</Field>
       </dl>
       {summary && (
         <p className="m-0 mt-2 border-t border-dashed border-border pt-2 text-xs text-muted-foreground">
-          {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, noDate: summary.noVerifiedDate, review: summary.needsReview })}
+          {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, review: summary.needsReview })}
           {summary.outdated > 0 ? t("knowledge.card.summaryOutdated", { outdated: summary.outdated }) : ""}
         </p>
       )}
