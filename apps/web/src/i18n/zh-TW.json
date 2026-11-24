@@ -436,6 +436,7 @@
       "storage": "儲存方案",
       "ai": "AI 代理",
       "auth": "登入",
+      "knowledgeFields": "知識欄位",
       "limits": "站台限制"
     }
   },
@@ -1106,6 +1107,10 @@
     "invalid_tags": "這個標籤已無法使用。",
     "merge_same_tag": "請選另一個標籤來合併。",
     "invalid_knowledge": "那段文字裡的知識註解格式不對，所以沒有改動。",
+    "knowledge_key_invalid": "這個選項的 key 不合格式。請用小寫英文字母、數字與連字號，且不能用保留字。",
+    "knowledge_key_taken": "有兩個選項的 key 相同。",
+    "knowledge_fields_limit": "一個欄位最多 30 個選項。",
+    "knowledge_fields_incomplete": "設定在你開啟頁面後有變動。請重新載入再試一次。",
     "fallback": "發生未預期的錯誤。"
   }
 }

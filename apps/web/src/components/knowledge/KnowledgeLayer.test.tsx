@@ -9,7 +9,8 @@ import { useKnowledgeController, type KnowledgeController } from "./controller";
 import { KnowledgeGlyph } from "./KnowledgeIcon";
 import { KnowledgeLayer } from "./KnowledgeLayer";
 import { useKnowledgeEntries } from "./use-knowledge-entries";
-import { blocksHtml, knowledgeEntries, stubLayout, stubMedia, type KnowledgeFixture } from "./test-support";
+import type { KnowledgeFieldsValue } from "./fields-context";
+import { blocksHtml, fieldView, knowledgeEntries, stubLayout, stubMedia, withFields, type KnowledgeFixture } from "./test-support";
 
 const ALL = [
   { blockId: "a", title: "Alpha" },
@@ -25,12 +26,14 @@ function Host({
   accept,
   editSurface,
   html = blocksHtml(ALL),
+  fields,
 }: {
   entries: readonly KnowledgeEntry[];
   editable?: boolean;
   accept?: (outer: HTMLElement) => boolean;
   editSurface?: (blockId: string, close: () => void) => ReactNode;
   html?: string;
+  fields?: Partial<KnowledgeFieldsValue>;
 }) {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const controller = useKnowledgeController();
@@ -38,7 +41,7 @@ function Host({
   return (
     <div ref={setEl} data-testid="col">
       <div dangerouslySetInnerHTML={{ __html: html }} />
-      <KnowledgeLayer container={el} entries={entries} editable={editable} noteId="n1" controller={controller} accept={accept} editSurface={editSurface} />
+      {withFields(<KnowledgeLayer container={el} entries={entries} editable={editable} noteId="n1" controller={controller} accept={accept} editSurface={editSurface} />, fields)}
     </div>
   );
 }
@@ -128,19 +131,19 @@ describe("KnowledgeLayer", () => {
     const byId = (id: string) => document.querySelector<HTMLButtonElement>(`[data-block-id="${id}"]`)!;
     expect(byId("a")).toHaveAttribute("data-kind", "verified");
     expect(byId("a")).toHaveAccessibleName("Knowledge info: Verified");
-    expect(byId("b")).toHaveAttribute("data-kind", "noVerifiedDate");
-    expect(byId("b")).toHaveAccessibleName("Knowledge info: Not verified");
+    expect(byId("b")).toHaveAttribute("data-kind", "needsReview");
+    expect(byId("b")).toHaveAccessibleName("Knowledge info: Needs review");
     expect(byId("c")).toHaveAttribute("data-kind", "needsReview");
     expect(byId("c")).toHaveAccessibleName("Knowledge info: Needs review");
     expect(byId("d")).toHaveAttribute("data-kind", "outdated");
     expect(byId("d")).toHaveAccessibleName("Knowledge info: Outdated");
     // "e" sits under the outdated "d" in the heading outline.
     expect(byId("e")).toHaveAttribute("data-kind", "outdated");
-    expect(new Set([...icons()].map((i) => i.querySelector("svg")!.getAttribute("data-icon"))).size).toBe(4);
+    expect(new Set([...icons()].map((i) => i.querySelector("svg")!.getAttribute("data-icon"))).size).toBe(3);
   });
 
   it("KnowledgeGlyph renders no button, takes no focus and is hidden from assistive technology", () => {
-    for (const kind of ["verified", "noVerifiedDate", "needsReview", "outdated"] as const) {
+    for (const kind of ["verified", "needsReview", "outdated"] as const) {
       const { container, unmount } = render(<KnowledgeGlyph kind={kind} className="extra" />);
       expect(container.querySelectorAll("button")).toHaveLength(0);
       const glyph = container.firstElementChild!;
@@ -350,7 +353,7 @@ describe("KnowledgeLayer", () => {
     expect(icons()[1]).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("needs-review and outdated icons carry a pale fill with a fixed dark-mode value; the other kinds have none", async () => {
+  it("needs-review and outdated icons carry a pale fill with a fixed dark-mode value; verified has none", async () => {
     const entries = knowledgeEntries([
       { id: "k_00000001", blockId: "a", props: { knowledgeVerified: "2026-10-01" } },
       { id: "k_00000002", blockId: "b" },
@@ -367,7 +370,7 @@ describe("KnowledgeLayer", () => {
     const fill = (id: string) => cls(id).match(/(?<![:\w-])bg-\[#[0-9a-f]{6}\]/)![0];
     expect(fill("c")).not.toBe(fill("d"));
     expect(cls("a")).not.toMatch(/\bbg-/);
-    expect(cls("b")).not.toMatch(/\bbg-/);
+    expect(fill("b")).toBe(fill("c"));
   });
 
   it("hovering the icon of an open surface shows no second card", async () => {
@@ -559,6 +562,26 @@ describe("KnowledgeLayer ref source", () => {
     fireEvent.click(icons()[0]!);
     await screen.findByText(/knowledge in another note/);
     expect(screen.queryByRole("button", { name: "Elsewhere" })).toBeNull();
+  });
+
+  it("with the replacement field off another note's reference is not looked up and the banner says only Outdated", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <Host entries={knowledgeEntries(outdatedTo(`${OTHER}#k_0000000f`))} fields={{ view: fieldView({ off: ["superseded_by"] }) }} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(icons()).toHaveLength(1));
+    fireEvent.click(icons()[0]!);
+    const banner = await waitFor(() => {
+      const found = document.querySelector("[data-kb-knowledge-banner='red']");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(banner.textContent).toBe("Outdated");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 30)));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("a same-note reference makes no request", async () => {

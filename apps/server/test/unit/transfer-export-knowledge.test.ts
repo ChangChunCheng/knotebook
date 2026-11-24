@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeFieldView } from "@knotebook/shared";
+import { DOC_TOO_COMPLEX, executeDocOp } from "../../src/notes/editing/doc-jobs.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { exportNoteForTransfer } from "../../src/transfer/export-note.js";
@@ -28,8 +30,8 @@ const note = (n: number, withKnowledge: boolean): unknown[] =>
 describe("a note with knowledge comments downloads like one without, plus the comment lines", () => {
   it("the segment table has no more fallback grouping calls or cap hits than the same note without knowledge, and every heading's segment holds its comment lines", async () => {
     const n = 120;
-    const plain = await exportNoteForTransfer(rt, await docWith(note(n, false)), new Map());
-    const rich = await exportNoteForTransfer(rt, await docWith(note(n, true)), new Map());
+    const plain = await exportNoteForTransfer(rt, await docWith(note(n, false)), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    const rich = await exportNoteForTransfer(rt, await docWith(note(n, true)), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(plain.segments).not.toBeNull();
     expect(rich.segments).not.toBeNull();
     expect(rich.stats.groupCalls).toBe(plain.stats.groupCalls);
@@ -45,9 +47,26 @@ describe("a note with knowledge comments downloads like one without, plus the co
         `when: when ${i}`,
         `conclusion: conclusion ${i}`,
         "evidence: tested",
+        "status: needs-verify",
         "-->",
       ]);
     }
+  });
+
+  it("a downloaded file has the same comment as read_note_section, both written with the fields the op carries", async () => {
+    const fields = resolveKnowledgeFieldView({ defs: [], site: [{ fieldRef: "when", optionKey: "", enabled: false, name: null, position: null }] });
+    const doc = await docWith(note(3, true));
+    const state = Y.encodeStateAsUpdate(doc);
+    const ask = async () => [];
+    const read = await executeDocOp(rt, { kind: "read", state, wantShown: false, fields }, ask);
+    const file = await executeDocOp(rt, { kind: "exportFile", state, key: new Uint8Array(32), salt: new Uint8Array(16), fields }, ask);
+    if (read === DOC_TOO_COMPLEX || file === DOC_TOO_COMPLEX || typeof read.result === "string" || !("markdown" in read.result)) throw new Error("unexpected result");
+    expect(file.body).toBe(read.result.markdown);
+    expect(file.body).toContain("<!-- knotebook:knowledge\nid: k_00000001\nconclusion: conclusion 0\nevidence: tested\nstatus: needs-verify\n-->");
+    expect(file.body).not.toContain("when:");
+    const withDefaults = await executeDocOp(rt, { kind: "exportFile", state, key: new Uint8Array(32), salt: new Uint8Array(16), fields: DEFAULT_KNOWLEDGE_FIELD_VIEW }, ask);
+    if (withDefaults === DOC_TOO_COMPLEX) throw new Error("unexpected result");
+    expect(withDefaults.body).toContain("when: when 0\n");
   });
 
   it("a coloured toggle heading, an empty heading and a heading with only an id still line up", async () => {
@@ -57,7 +76,7 @@ describe("a note with knowledge comments downloads like one without, plus the co
       { type: "heading", props: { level: 3, knowledgeId: "k_00000009" }, content: "Only an id" },
       { type: "paragraph", content: "tail" },
     ];
-    const ex = await exportNoteForTransfer(rt, await docWith(blocks), new Map());
+    const ex = await exportNoteForTransfer(rt, await docWith(blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(ex.segments).not.toBeNull();
     expect(ex.segments!.map(s => s.ids.length).reduce((a, b) => a + b, 0)).toBe(ex.ids.length);
   });

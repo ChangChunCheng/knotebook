@@ -1,6 +1,7 @@
 import type { NoteGroupDto } from "./groups.js";
 import type { AvatarRef } from "./avatar.js";
 import type { NoteTagDto } from "./tags.js";
+import type { KnowledgeIgnoredItem } from "./knowledge-markdown.js";
 
 export type Role = "owner" | "editor" | "viewer" | "none";
 
@@ -82,7 +83,7 @@ export interface NoteEditResultDto {
   outline: NoteOutlineEntry[];
   /** [[…]] links in this write that matched no unique note and stayed plain text. */
   unboundWikilinks: number;
-  /** Only present when the write kept, created, removed or renewed knowledge info, or ignored a knowledge comment. */
+  /** Only present when the write kept, created, removed or renewed knowledge info, or ignored a knowledge comment or value. */
   knowledge?: NoteKnowledgeReportDto;
 }
 export interface NoteKnowledgeRefDto {
@@ -97,6 +98,8 @@ export interface NoteKnowledgeReportDto {
   removed: NoteKnowledgeRefDto[];
   /** Knowledge whose id another heading already had, so it got a new one; `from` is the id it had. */
   renewed: Array<NoteKnowledgeRefDto & { from: string }>;
+  /** Values that were not written; a field whose value was ignored keeps what it stored. */
+  ignored: KnowledgeIgnoredItem[];
   /** Knowledge comments that were not right after a top-level heading. */
   ignoredComments: number;
 }

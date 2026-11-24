@@ -1,7 +1,7 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { useTranslation } from "react-i18next";
-import type { KnowledgeEntry } from "@knotebook/shared";
+import { knowledgeStateOf, type KnowledgeEntry } from "@knotebook/shared";
 import "@/i18n/knowledge-strings";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useIsPhone, useNoHover } from "@/lib/layout-tiers";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { createRemoteKnowledgeRefSource } from "@/api/knowledge-ref-source";
 import { markKnowledgeVerified } from "./commands";
 import { isReturningFocus, type KnowledgeController } from "./controller";
+import { KnowledgeFieldsContext, knowledgeStatusOnlyView } from "./fields-context";
 import { KnowledgeForm } from "./KnowledgeForm";
 import { KnowledgeIconButton } from "./KnowledgeIcon";
 import type { KnowledgeReplacementView } from "./KnowledgeCard";
@@ -237,13 +238,16 @@ export function KnowledgeLayer({ container, entries, editable, noteId, controlle
   const refSource = useMemo(() => (noteId ? createRemoteKnowledgeRefSource(noteId) : null), [noteId]);
   const ctxRef = useRef<KnowledgeContext>(null as never);
   const getEntries = useCallback(() => ctxRef.current.entries, []);
+  const fields = useContext(KnowledgeFieldsContext);
+  // Unlike the form, this writes without showing the date: with unknown settings it must not fill a field that may be turned off.
+  const verifyFields = fields.status === "ready" ? fields.view : knowledgeStatusOnlyView();
   const formFor = editor && editable
     ? (blockId: string, close: () => void) => <KnowledgeForm key={blockId} editor={editor} blockId={blockId} getEntries={getEntries} noteId={noteId} phone={phone} close={close} />
     : undefined;
   const verifyFor = editor && editable
     ? (entry: KnowledgeEntry) =>
-        entry.info.status === "outdated" ? null : (
-          <Button type="button" variant="outline" className="h-11 flex-1 text-[15px]" onClick={() => void markKnowledgeVerified(editor, entry.blockId)}>
+        knowledgeStateOf(entry.info) === "obsolete" ? null : (
+          <Button type="button" variant="outline" className="h-11 flex-1 text-[15px]" onClick={() => void markKnowledgeVerified(editor, entry.blockId, verifyFields)}>
             {t("knowledge.card.markVerified")}
           </Button>
         )

@@ -425,6 +425,10 @@ If deleting a group with **transfer** is refused because the receiving admin's p
 
 Deleting a note moves it to the trash, where it can be restored or permanently deleted. How long notes stay there is a site setting: 7 days by default, any whole number of days from 1 to 3650, or no limit (notes then stay until someone permanently deletes them). Site admins set it in **Site admin → Storage plans**, under **Trash** (or with `PATCH /api/admin/trash/settings`, see [the API reference](api.md)); a new value applies from the next clean-up pass. The server permanently deletes expired notes, with their attachments, in a background pass once an hour, the first one 5 minutes after it starts, at most 2,000 notes per pass (oldest first). A note usually outlasts its retention period by up to an hour; when more than 2,000 are due at once — after shortening the retention period, for example — it takes several passes to clear them all (see [Known limitations](./known-limitations.md)). Attachments of notes in the trash keep counting toward their space's storage plan until the notes are permanently deleted. Site admins have no special access to the trash: like everyone else, they see only their own personal notes there and the group notes that their role in a group can both edit and delete.
 
+## Knowledge fields
+
+Which knowledge info fields headings carry is a site setting: site admins turn the built-in fields on and off and edit the options of **Basis** in **Site admin → Knowledge fields** (or with `GET` and `PUT /api/admin/knowledge-fields`, see [the API reference](api.md)). Every space, personal and group alike, uses the site's settings. With nothing saved, all five built-in fields are on and **Basis** has **Tested**, **Documentation** and **Inferred**; only differences from that are stored, in the `knowledge_field_defs` and `knowledge_field_overrides` tables. Turning a field off hides it and keeps its values in the notes. What each setting does is in [Knowledge info](./knowledge.md#choosing-the-fields).
+
 ## Content Security Policy
 
 Knotebook serves its HTML with a Content-Security-Policy header (plus `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`). It is not configurable — there is no environment variable for it. Three consequences for a self-hosted deployment:
@@ -568,6 +572,28 @@ then start that build. Steps 2 and 3 are for the bundled database; with your own
 2. **Rolling back:** the previous version doesn't read the two columns, so they stay. A copy downloaded while the previous version ran has no tags hash; after upgrading again, such a copy is compared with the note's tags as they are when it is sent back. A copy downloaded before the upgrade is treated the same way.
 
 **Knowledge index (migration 0045).** The migration only adds two tables, `note_knowledge` and `note_knowledge_state`, and changes no existing row; back up as usual before upgrading. The first start after upgrading builds the index for existing notes in the background, after the server is already answering requests; the `app` log shows `knowledge index backfill started` and `knowledge index backfill finished`. Rolling back is harmless: an older server ignores the two tables, and after you upgrade again the background run redoes the notes that were edited while the older server ran.
+
+**Knowledge fields (migrations 0047 and 0048).**
+
+1. **Migration 0047 only widens two checks on `note_knowledge`**: `nk_status_chk` also accepts `verified`, and `nk_evidence_chk` accepts any option key (lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters) as well as an empty value. It changes no row. Back up the database first as usual.
+2. **Migration 0048 only adds two tables**, `knowledge_field_defs` (the basis options an admin added) and `knowledge_field_overrides` (what differs from the default settings: fields turned off, options renamed, hidden or moved). It fills nothing in and changes no existing row; with no rows, the settings are the defaults (see [Knowledge fields](#knowledge-fields)).
+3. **Nothing in the notes is rewritten.** The new statuses are worked out when a note is read: knowledge saved without a status reads as verified when it has a last verified date and as needs review when it doesn't. The knowledge index is built again in the background, note by note, after the first start; until a note is done, its rows read the same way.
+4. **Rolling back:** if anyone saved knowledge info after the upgrade — in the form, with **Mark as verified**, through MCP, the API or a file sent back, or with an AI action in the editor — or an admin changed the knowledge field settings, restore the database dump taken before the upgrade instead of only switching back to the previous image. The previous image does start on the upgraded database, because both migrations only widen and add, but it then gets these wrong:
+   - knowledge marked **Verified** reads as current there: with a last verified date it still shows a green check, without one a gray *i*; a basis option added by an admin reads as **Unconfirmed**;
+   - an MCP `replace_section` or `replace_all`, or an AI rewrite in the editor, over a part that holds such knowledge is refused with `bad_status` or `bad_evidence`, even when it doesn't touch the knowledge;
+   - outdated knowledge with no replacement, and knowledge with only a status, fall under its older rules (`superseded_required`, `empty`): changing them through MCP is refused, and saving them in the form is blocked;
+   - the field settings aren't read: every field is shown, and options an admin renamed or hid are back to their defaults;
+   - the knowledge index is rebuilt by its own background run, with its own reading of each note.
+
+   The two tables and the wider checks stay; after upgrading again the settings saved before apply again.
+
+**Upgrading to v0.19 (configurable knowledge fields).**
+
+1. **Back up the database first.** Migrations 0047 and 0048 run automatically when the new server starts; they widen two checks and add two tables, and change no existing value (see **Knowledge fields** above). Keep the dump: rolling back needs it once anyone has saved knowledge info on the new version.
+2. **Reload open tabs**, so they read the new statuses.
+3. **Restart your MCP clients.** The descriptions and output schemas of the tools changed: `read_note_outline` and `create_note` now return `knowledgeFields`, and replies can list ignored knowledge lines.
+4. **Scripts that read or write knowledge comments:** every comment now has a `status` line, `status` takes `verified`, `needs-verify` and `obsolete` (the older `unverified` and `outdated` are still read), and a line whose value doesn't fit is left out and listed under `knowledge.ignored` instead of refusing the write (see [AI editing](ai-editing.md#knowledge-info) and the [CHANGELOG](../CHANGELOG.md)).
+5. **Rolling back** to v0.18.0: read item 4 of **Knowledge fields** above.
 
 **Upgrading to v0.18 (faster search, tags, knowledge info and its index).**
 

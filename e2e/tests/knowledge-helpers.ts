@@ -105,7 +105,7 @@ export function iconsIn(scope: Page | Locator): Locator {
   return scope.getByRole("button", { name: /^Knowledge info: / });
 }
 
-export function iconOf(scope: Page | Locator, status: "Verified" | "Not verified" | "Needs review" | "Outdated"): Locator {
+export function iconOf(scope: Page | Locator, status: "Verified" | "Needs review" | "Outdated"): Locator {
   return scope.getByRole("button", { name: `Knowledge info: ${status}`, exact: true });
 }
 
@@ -135,8 +135,9 @@ export function hoverCardOf(page: Page): Locator {
 export interface KnowledgeFields {
   when?: string;
   conclusion?: string;
-  status?: "Needs review" | "Outdated";
-  evidence?: "Tested" | "Documentation" | "Inferred";
+  status?: "Verified" | "Needs review" | "Outdated";
+  /** The option's name as the Basis list shows it. */
+  evidence?: string;
   /** A heading in this note, picked from This note. */
   replacedBy?: string;
   /** A heading in another note: typed in, then picked once Other notes has it. */
@@ -169,7 +170,7 @@ export async function fillForm(page: Page, fields: KnowledgeFields): Promise<voi
     await combo.fill(fields.replacedByOther);
     await form.getByRole("option", { name: new RegExp(`^${reEscape(fields.replacedByOther)}`) }).click();
   }
-  if (fields.verifiedToday) await form.getByRole("button", { name: "Mark verified today", exact: true }).click();
+  if (fields.verifiedToday) await form.getByRole("button", { name: "Today", exact: true }).click();
 }
 
 export async function saveForm(page: Page): Promise<void> {
@@ -195,6 +196,41 @@ export async function makeKnowledge(page: Page, headingText: string, fields: Kno
   await openFormFromSlash(page, headingText);
   await fillForm(page, fields);
   await saveForm(page);
+}
+
+interface AdminKnowledgeField {
+  key: string;
+  builtin: boolean;
+  name: string | null;
+  enabled: boolean;
+  options?: Array<{ key: string; name: string | null; enabled: boolean; builtin: boolean }>;
+}
+
+const BUILTIN_EVIDENCE = ["tested", "docs", "inferred"];
+
+/**
+ * Puts the site's knowledge fields back to how a new site has them; `page` must be signed in as an admin. Options and
+ * custom fields can't be deleted, so the ones a spec added are left turned off. Every knowledge spec shares one stack, so
+ * a spec that changes these settings calls this when it is done.
+ */
+export async function resetKnowledgeFields(page: Page): Promise<void> {
+  const current = await page.request.get("/api/admin/knowledge-fields");
+  expect(current.status(), await current.text()).toBe(200);
+  const { fields } = (await current.json()) as { fields: AdminKnowledgeField[] };
+  const body = {
+    fields: fields.map((field) => {
+      const out: Record<string, unknown> = { key: field.key, enabled: field.builtin };
+      if (!field.builtin) out.name = field.name;
+      if (field.options) {
+        const builtin = BUILTIN_EVIDENCE.filter((key) => field.options!.some((o) => o.key === key)).map((key) => ({ key, name: null, enabled: true }));
+        const added = field.options.filter((o) => !BUILTIN_EVIDENCE.includes(o.key)).map((o) => ({ key: o.key, name: o.name, enabled: false }));
+        out.options = field.key === "evidence" ? [...builtin, ...added] : field.options.map((o) => ({ key: o.key, name: o.name, enabled: o.enabled }));
+      }
+      return out;
+    }),
+  };
+  const res = await page.request.put("/api/admin/knowledge-fields", { data: body });
+  expect(res.status(), await res.text()).toBe(200);
 }
 
 /** The index page's title; a not-found index has none, so callers that expect it wait for its text instead. */

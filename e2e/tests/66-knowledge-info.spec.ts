@@ -48,7 +48,7 @@ async function hoverBlockMenu(page: Page, text: string): Promise<void> {
   await page.getByRole("button", { name: "Open block menu" }).click();
 }
 
-test("66-1 typing /info in a heading opens the form; saving shows a Not verified icon that survives a reload", async ({ browser }) => {
+test("66-1 typing /info in a heading opens the form; saving shows a Needs review icon that survives a reload", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { viewport: DESKTOP });
@@ -63,21 +63,21 @@ test("66-1 typing /info in a heading opens the form; saving shows a Not verified
     await fillForm(page, { when: "Before touching the sync code" });
     await saveForm(page);
 
-    const icon = iconOf(page, "Not verified");
+    const icon = iconOf(page, "Needs review");
     await expect(icon).toBeVisible();
     const style = await headingStyle(blockOuter(page, "Release notes"));
     expect(style.paddingRight).toBe("28px");
 
     await page.reload();
     await waitForNoteTitle(page, title);
-    await expect(iconOf(page, "Not verified")).toBeVisible({ timeout: 15_000 });
+    await expect(iconOf(page, "Needs review")).toBeVisible({ timeout: 15_000 });
     await expect(headingLine(page, "Release notes")).toBeVisible();
   } finally {
     await context.close();
   }
 });
 
-test("66-2 hovering the icon shows the card; Mark verified today turns the icon Verified", async ({ browser }) => {
+test("66-2 hovering the icon shows the card; picking Verified fills in today's date and turns the icon Verified", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { viewport: DESKTOP });
@@ -87,20 +87,22 @@ test("66-2 hovering the icon shows the card; Mark verified today turns the icon 
     await openNote(page, note, title);
     await makeKnowledge(page, "Retry policy", { when: "When a job fails twice", conclusion: "Back off before the third try" });
 
-    await iconOf(page, "Not verified").hover();
+    await iconOf(page, "Needs review").hover();
     const card = hoverCardOf(page);
     await expect(card).toBeVisible();
     await expect(card).toContainText("When a job fails twice");
     await expect(card).toContainText("Back off before the third try");
-    await expect(card.getByText("Not verified", { exact: true })).toBeVisible();
+    await expect(card.locator('[data-kb-knowledge-banner="amber"]')).toHaveText("Needs review · worth checking again");
+    await expect(card.getByText("Not filled", { exact: true })).toHaveCount(2);
 
     // With a pointer that hovers, the card has its own Edit button and a click on the icon goes straight to the form.
     await card.getByRole("button", { name: "Edit" }).click();
     await expect(formOf(page)).toBeVisible();
-    await fillForm(page, { verifiedToday: true });
+    const today = await localToday(page);
+    await fillForm(page, { status: "Verified" });
+    await expect(formOf(page).getByLabel("Last verified", { exact: true })).toHaveValue(today);
     await saveForm(page);
 
-    const today = await localToday(page);
     const icon = iconOf(page, "Verified");
     await expect(icon).toBeVisible();
     await page.mouse.move(0, 0);
@@ -168,7 +170,7 @@ test("66-4 an outdated parent strikes through its knowledge child and its icon s
     await expect.poll(async () => (await headingStyle(blockOuter(page, "Old guide"))).decoration).toContain("line-through");
     expect((await headingStyle(blockOuter(page, "New guide"))).decoration).not.toContain("line-through");
     await expect(iconForBlock(page, detailId)).toHaveAccessibleName("Knowledge info: Outdated");
-    await expect(iconOf(page, "Not verified")).toHaveCount(1);
+    await expect(iconOf(page, "Needs review")).toHaveCount(1);
 
     await iconForBlock(page, detailId).hover();
     const banner = hoverCardOf(page).locator('[data-kb-knowledge-banner="red"]');

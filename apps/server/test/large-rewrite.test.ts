@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { noteAiEdits } from "../src/db/schema.js";
 import { NoteWriteService } from "../src/notes/editing/write-service.js";
 import { seedDoc } from "./copy-helpers.js";
@@ -40,7 +40,7 @@ describe("#553 large rewrites through the real write path (default parse worker 
     Y.applyUpdate(copy, state);
     const blocks = paragraphs(BIG, "new").map((text, i) => ({ id: `n${i}`, type: "paragraph" as const, content: text }));
     const t0 = performance.now();
-    const r = await testEditingRuntime.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state, op: "replace_all", blocks });
+    const r = await testEditingRuntime.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state, op: "replace_all", blocks });
     log("worker replace_all 10,000 -> 10,000", performance.now() - t0);
     expect(r).not.toBe("too_complex");
     if (r === "too_complex" || !r.ok) throw new Error(`not ok: ${JSON.stringify(r)}`);

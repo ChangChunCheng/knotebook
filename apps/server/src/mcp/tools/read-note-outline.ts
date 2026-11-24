@@ -26,6 +26,8 @@ import { NOTE_ID } from "../../notes/schemas.js";
 import type { DbOrTx } from "../../db/tx.js";
 import { noteSummarySchema, ownerForModel } from "../dto.js";
 import { loadFolderPath, truncateFolderPath } from "../folder-fields.js";
+import { loadKnowledgeFieldView } from "../../knowledge/fields/queries.js";
+import { KNOWLEDGE_FIELDS_DESCRIBE, KNOWLEDGE_FIELDS_OUTLINE_BUDGET, knowledgeFieldsForModel, knowledgeFieldsOutputSchema } from "../knowledge-fields-output.js";
 import { OUTLINE_TAGS_DESCRIBE } from "../knowledge-strings.js";
 import { MCP_FOLDER_NAME_MAX, MCP_PAGE_MAX, truncateText } from "../limits.js";
 import { NOTE_NOT_FOUND_MESSAGE, authorizeNoteRead, readOutlineForTool } from "../note-read.js";
@@ -84,6 +86,7 @@ export const readNoteOutlineOutput = {
   titleFingerprint: z
     .string()
     .describe("The fingerprint of the note's whole title, even when `note.title` is cut. Renaming the note needs it as `if_match`."),
+  knowledgeFields: knowledgeFieldsOutputSchema.optional().describe(KNOWLEDGE_FIELDS_DESCRIBE),
 };
 
 /** The caller's folder (group notes and owners: `notes.folder_id`; sharees: their own placement) with its full path; null at the root or if the folder is deleted between the two statements. */
@@ -143,7 +146,9 @@ export async function readNoteOutline(args: ReadNoteOutlineArgs, ctx: McpToolCtx
   if ("error" in read) return read.error;
   const { outline } = read;
   const title = truncateText(header.title);
-  const page = buildOutlinePage(outline, args.section_offset ?? 0);
+  const offset = args.section_offset ?? 0;
+  const page = buildOutlinePage(outline, offset);
+  const knowledgeFields = offset === 0 ? knowledgeFieldsForModel(await loadKnowledgeFieldView(ctx.db, { groupId: header.groupId }), KNOWLEDGE_FIELDS_OUTLINE_BUDGET) : undefined;
   return toolResult({
     note: {
       id: args.note_id,
@@ -158,5 +163,6 @@ export async function readNoteOutline(args: ReadNoteOutlineArgs, ctx: McpToolCtx
     ...page,
     lastEdited: await loadLastEdited(ctx.db, args.note_id),
     titleFingerprint: fingerprintOf(header.title),
+    ...(knowledgeFields ? { knowledgeFields } : {}),
   });
 }

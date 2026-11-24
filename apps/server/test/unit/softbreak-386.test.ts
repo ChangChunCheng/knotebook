@@ -4,6 +4,7 @@
  * Verified directly at both ends, the write pipeline (`parseMarkdownForNote`) and the read side (`readNoteContentFromDoc`);
  * the end-to-end cases for each write path (REST / MCP / batch write-back / create) are in the integration test `test/softbreak-write-paths.test.ts`.
  */
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -49,7 +50,7 @@ async function storedBlocks(doc: Y.Doc): Promise<unknown> {
   }
 }
 async function readMd(doc: Y.Doc): Promise<string> {
-  const r = await readNoteContentFromDoc(rt, doc);
+  const r = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 }

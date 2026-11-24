@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { YDOC_FRAGMENT, DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { matchesBase } from "../../src/transfer/decide.js";
@@ -55,7 +55,7 @@ async function run(blocks: unknown[], edit: (body: string) => string, human: ((e
   const planned = await planInMemory(rt, b, agent, forkOf(live), opts);
   if (!planned.ok) return { error: planned.code, final: null, eqAgent: false, kept: [], marks: [], top: topOf(live), baseIds: b.ids, uniqueIds: true };
   const r = await applyInMemory(rt, b, agent, live, opts);
-  const final = (await exportNoteForTransfer(rt, live, new Map())).body;
+  const final = (await exportNoteForTransfer(rt, live, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })).body;
   const top = topOf(live);
   const after = new Set(top.map(x => x.id));
   const ids = allBlockIds(live);

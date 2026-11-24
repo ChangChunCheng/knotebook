@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
+import { Fragment, useContext, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import type { KnowledgeChildSummary, KnowledgeEntry } from "@knotebook/shared";
+import { isKnowledgeDate, knowledgeStateOf, type KnowledgeChildSummary, type KnowledgeEntry } from "@knotebook/shared";
 import { Button } from "@/components/ui/button";
 import { ROW_ICON_HIT_BORDERED } from "@/components/ui/hit-area";
 import { Pencil } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
+import { KnowledgeFieldsContext } from "./fields-context";
+import { evidenceLabel, isDraftFieldEnabled, type DraftField } from "./form-state";
 
 export interface KnowledgeReplacementView {
   state: "found" | "otherNote" | "missing";
@@ -50,7 +52,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Banners({ entry, outdatedAncestor, replacement, onJump }: Pick<KnowledgeCardProps, "entry" | "outdatedAncestor" | "replacement" | "onJump">) {
+function Banners({ entry, outdatedAncestor, replacement, showDate, onJump }: Pick<KnowledgeCardProps, "entry" | "outdatedAncestor" | "replacement" | "onJump"> & { showDate: boolean }) {
   const { t } = useTranslation();
   const untitled = t("knowledge.card.untitled");
   // The title never goes through the translation string: Trans would parse any markup a heading contains.
@@ -89,10 +91,10 @@ function Banners({ entry, outdatedAncestor, replacement, onJump }: Pick<Knowledg
       </Banner>
     );
   }
-  if (entry.info.status === "unverified") {
+  if (knowledgeStateOf(entry.info) === "needs-verify") {
     return (
       <Banner tone="amber">
-        {entry.info.verified !== ""
+        {showDate && isKnowledgeDate(entry.info.verified)
           ? t("knowledge.card.bannerNeedsReview", { date: entry.info.verified })
           : t("knowledge.card.bannerNeedsReviewNoDate")}
       </Banner>
@@ -103,10 +105,13 @@ function Banners({ entry, outdatedAncestor, replacement, onJump }: Pick<Knowledg
 
 export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replacement, variant, canEdit, onEdit, onJump, footer }: KnowledgeCardProps): ReactNode {
   const { t } = useTranslation();
+  const { view, status } = useContext(KnowledgeFieldsContext);
   const sheet = variant === "sheet";
-  const empty = t("knowledge.card.empty");
+  const notFilled = t("knowledge.notFilled");
   const { info } = entry;
-  const divider = sheet ? null : <div role="presentation" className="col-span-2 my-1 border-t border-dashed border-border" />;
+  const on = (field: DraftField) => status !== "loading" && isDraftFieldEnabled(view, field);
+  const valueOf = (field: Exclude<DraftField, "supersededBy">): string => (field === "evidence" ? evidenceLabel(view, info.evidence, t) : info[field] || notFilled);
+  const groups = ([["when", "conclusion"], ["evidence"], ["verified"]] as const).map((g) => g.filter(on)).filter((g) => g.length > 0);
   const topRow = !sheet && (parent || canEdit);
   return (
     <div data-kb-knowledge-card={variant} className={cn("text-left text-popover-foreground", sheet ? "text-sm" : "text-[13px] leading-snug")}>
@@ -131,18 +136,25 @@ export function KnowledgeCard({ entry, parent, outdatedAncestor, summary, replac
           {t("knowledge.card.belongsTo", { title: parent.heading || t("knowledge.card.untitled") })}
         </button>
       )}
-      <Banners entry={entry} outdatedAncestor={outdatedAncestor} replacement={replacement} onJump={onJump} />
-      <dl className={cn("m-0 mt-2 grid gap-x-2 gap-y-0.5", sheet ? "grid-cols-[5.25rem_1fr]" : "grid-cols-[4.875rem_1fr]")}>
-        <Field label={t("knowledge.field.when")}>{info.when || empty}</Field>
-        <Field label={t("knowledge.field.conclusion")}>{info.conclusion || empty}</Field>
-        {divider}
-        <Field label={t("knowledge.field.evidence")}>{info.evidence === "" ? t("knowledge.evidence.unconfirmed") : t(`knowledge.evidence.${info.evidence}`)}</Field>
-        {divider}
-        <Field label={t("knowledge.field.verified")}>{info.verified === "" ? t("knowledge.card.notVerified") : info.verified}</Field>
-      </dl>
+      {/* The banner names the replacement and the date only while those fields are on: otherwise it would show values the settings hide. */}
+      <Banners entry={entry} outdatedAncestor={outdatedAncestor} replacement={on("supersededBy") ? replacement : null} showDate={on("verified")} onJump={onJump} />
+      {groups.length > 0 && (
+        <dl className={cn("m-0 mt-2 grid gap-x-2 gap-y-0.5", sheet ? "grid-cols-[5.25rem_1fr]" : "grid-cols-[4.875rem_1fr]")}>
+          {groups.map((group, i) => (
+            <Fragment key={group[0]}>
+              {i > 0 && !sheet && <div role="presentation" className="col-span-2 my-1 border-t border-dashed border-border" />}
+              {group.map((field) => (
+                <Field key={field} label={t(`knowledge.field.${field}`)}>
+                  {valueOf(field)}
+                </Field>
+              ))}
+            </Fragment>
+          ))}
+        </dl>
+      )}
       {summary && (
         <p className="m-0 mt-2 border-t border-dashed border-border pt-2 text-xs text-muted-foreground">
-          {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, noDate: summary.noVerifiedDate, review: summary.needsReview })}
+          {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, review: summary.needsReview })}
           {summary.outdated > 0 ? t("knowledge.card.summaryOutdated", { outdated: summary.outdated }) : ""}
         </p>
       )}

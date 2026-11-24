@@ -24,7 +24,7 @@ function Summary({ row }: { row: IndexRowModel }): ReactNode {
   if (summary === null) return null;
   return (
     <span className="mt-0.5 block text-xs text-muted-foreground">
-      {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, noDate: summary.noVerifiedDate, review: summary.needsReview })}
+      {t("knowledge.card.summary", { total: summary.total, verified: summary.verified, review: summary.needsReview })}
       {summary.outdated > 0 && t("knowledge.card.summaryOutdated", { outdated: summary.outdated })}
     </span>
   );

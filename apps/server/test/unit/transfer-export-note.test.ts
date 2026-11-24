@@ -2,7 +2,7 @@ import { stat } from "node:fs";
 import { createServer, connect, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks, DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { fingerprintForIds, topLevelFingerprints } from "../../src/notes/editing/fingerprint.js";
 import { readNoteContentFromDoc } from "../../src/notes/editing/read.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -43,7 +43,7 @@ describe("exportNoteForTransfer: 129 shapes", () => {
     async (_label, shape) => {
       const doc = await docWith(shape.blocks);
       const m0 = rt.mounts;
-      const ex = await exportNoteForTransfer(rt, doc, SHAPE_TITLES);
+      const ex = await exportNoteForTransfer(rt, doc, SHAPE_TITLES, { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       expect(rt.mounts - m0, "一篇只 mount 一次（含群組匯出）").toBe(1);
       expect(rt.inFlight).toBe(0);
       expect(ex.segments).not.toBeNull();
@@ -51,7 +51,7 @@ describe("exportNoteForTransfer: 129 shapes", () => {
       expect(ex.stats.groupCalls).toBe(shape.groupCalls);
       expect(ex.stats.groupUsedWhilePerMatched).toBe(shape.groupUsedWhilePerMatched);
       for (const s of ex.segments!) expect(s.fps).toEqual(s.ids.map(id => ex.fps[ex.ids.indexOf(id)]));
-      const mcp = await readNoteContentFromDoc(rt, doc, undefined, SHAPE_TITLES);
+      const mcp = await readNoteContentFromDoc(rt, doc, undefined, SHAPE_TITLES, undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
       if (typeof mcp === "string" || !("markdown" in mcp)) throw new Error("unexpected read shape");
       expect(ex.body).toBe(mcp.markdown);
       expect(ex.fps).toEqual(ex.ids.map(id => fingerprintForIds(frag(doc), [id])));
@@ -61,11 +61,11 @@ describe("exportNoteForTransfer: 129 shapes", () => {
 
   it("wikilink target not visible (titles empty): body still = MCP read-out, and differs from when visible", async () => {
     const doc = await docWith(byName("wikilink in para + bullet").blocks);
-    const hidden = await exportNoteForTransfer(rt, doc, new Map());
-    const mcp = await readNoteContentFromDoc(rt, doc, undefined, new Map());
+    const hidden = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    const mcp = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
     if (typeof mcp === "string" || !("markdown" in mcp)) throw new Error("unexpected read shape");
     expect(hidden.body).toBe(mcp.markdown);
-    const shown = await exportNoteForTransfer(rt, doc, SHAPE_TITLES);
+    const shown = await exportNoteForTransfer(rt, doc, SHAPE_TITLES, { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(shown.body).not.toBe(hidden.body);
     expect(shown.body).toContain("Other note");
     expect(SHAPE_TITLES.has(SHAPE_LINK_TARGET)).toBe(true);
@@ -76,7 +76,7 @@ describe("exportNoteForTransfer: other", () => {
   it("zero-block document: empty body, zero segments, no mount", async () => {
     const doc = new Y.Doc();
     const m0 = rt.mounts;
-    const ex = await exportNoteForTransfer(rt, doc, new Map());
+    const ex = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(rt.mounts - m0).toBe(0);
     expect(ex).toMatchObject({ body: "", lines: [], ids: [], fps: [], types: [], segments: [], lineKinds: [] });
   });
@@ -103,13 +103,13 @@ describe("exportNoteForTransfer: other", () => {
     cs[1]!.setAttribute("id", cs[0]!.getAttribute("id")!);
     expect(topLevelFingerprints(frag(doc)).ids[0]).toBe(topLevelFingerprints(frag(doc)).ids[1]);
     const m0 = rt.mounts;
-    const ex = await exportNoteForTransfer(rt, doc, new Map());
+    const ex = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(rt.mounts - m0).toBe(1);
     expect(rt.inFlight).toBe(0);
     expect(ex.segments).toBeNull();
     expect(ex.lines).toEqual(["p0", "", "p1", "", "p2"]);
     expect(ex.lineKinds).toEqual([0, 0, 0, 0, 0]);
-    const mcp = await readNoteContentFromDoc(rt, doc, undefined, new Map());
+    const mcp = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
     if (typeof mcp === "string" || !("markdown" in mcp)) throw new Error("unexpected read shape");
     expect(ex.body).toBe(mcp.markdown);
   });
@@ -117,8 +117,7 @@ describe("exportNoteForTransfer: other", () => {
   it("yield within one note (count): 1 after mount, 1 after the whole-note export, plus 2 for 120 blocks at every 50 = 4 yields; the lease is still held while yielding (inFlight 1); back to zero afterwards", async () => {
     const doc = await docWith(paras(120));
     const seen: number[] = [];
-    const ex = await exportNoteForTransfer(rt, doc, new Map(), {
-      yieldEveryBlocks: 50,
+    const ex = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, yieldEveryBlocks: 50,
       yieldAfterMs: Infinity,
       yieldFn: async () => {
         seen.push(rt.inFlight);
@@ -133,7 +132,7 @@ describe("exportNoteForTransfer: other", () => {
   it("yield within one note (time): yieldAfterMs 0 -> yields on every block (plus 1 after mount and 1 after the whole-note export)", async () => {
     const doc = await docWith(paras(120));
     let n = 0;
-    const ex = await exportNoteForTransfer(rt, doc, new Map(), { yieldEveryBlocks: Infinity, yieldAfterMs: 0, yieldFn: async () => void n++ });
+    const ex = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, yieldEveryBlocks: Infinity, yieldAfterMs: 0, yieldFn: async () => void n++ });
     expect(ex.stats.yields).toBeGreaterThanOrEqual(122);
     expect(n).toBe(ex.stats.yields);
   }, 60_000);
@@ -145,7 +144,7 @@ describe("exportNoteForTransfer: other", () => {
       ticked = true;
     });
     const before = ticked;
-    const ex = await exportNoteForTransfer(rt, doc, new Map(), { yieldEveryBlocks: 50, yieldAfterMs: Infinity });
+    const ex = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, yieldEveryBlocks: 50, yieldAfterMs: Infinity });
     expect(before).toBe(false);
     expect(ex.stats.yields).toBe(3);
     expect(ticked).toBe(true);
@@ -153,8 +152,8 @@ describe("exportNoteForTransfer: other", () => {
 
   it("forceUnmergeable -> segments null, lineKinds all 0, body as usual", async () => {
     const doc = await docWith(byName("numbered start 5").blocks);
-    const normal = await exportNoteForTransfer(rt, doc, new Map());
-    const forced = await exportNoteForTransfer(rt, doc, new Map(), { forceUnmergeable: true });
+    const normal = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    const forced = await exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, forceUnmergeable: true });
     expect(forced.segments).toBeNull();
     expect(forced.lineKinds).toEqual(forced.lines.map(() => 0));
     expect(forced.body).toBe(normal.body);
@@ -163,11 +162,11 @@ describe("exportNoteForTransfer: other", () => {
 
   it("lineKinds of a numbered segment's lines is 1, others 0 (numbered start 5, 12 items, numbered/para/numbered)", async () => {
     for (const name of ["numbered start 5", "numbered 12 items w/ child on 10"]) {
-      const ex = await exportNoteForTransfer(rt, await docWith(byName(name).blocks), new Map());
+      const ex = await exportNoteForTransfer(rt, await docWith(byName(name).blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
       expect(ex.lines.length, name).toBeGreaterThan(0);
       expect(ex.lineKinds, name).toEqual(ex.lines.map(() => 1));
     }
-    const ex = await exportNoteForTransfer(rt, await docWith(byName("numbered, para, numbered").blocks), new Map());
+    const ex = await exportNoteForTransfer(rt, await docWith(byName("numbered, para, numbered").blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     const want = new Array<number>(ex.lines.length).fill(0);
     for (const s of ex.segments!) {
       const t = ex.types[ex.ids.indexOf(s.ids[0]!)];
@@ -180,13 +179,13 @@ describe("exportNoteForTransfer: other", () => {
 
   it("k26 (inline colour + table, placeholder digit count) alignment: the table block forms a segment of its own", async () => {
     const shape = TRANSFER_SHAPES.find(s => s.name.startsWith("k26 "))!;
-    const ex = await exportNoteForTransfer(rt, await docWith(shape.blocks), new Map());
+    const ex = await exportNoteForTransfer(rt, await docWith(shape.blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(ex.segments).not.toBeNull();
     expect(ex.segments!.map(s => s.ids.length)).toEqual(shape.segs.map(s => s.length));
   });
 
   it("lines/types/ids agree: lines = bodyLines(normalizeBody(body)), types follow the top level", async () => {
-    const ex = await exportNoteForTransfer(rt, await docWith(byName("heading->bullet->heading").blocks), new Map());
+    const ex = await exportNoteForTransfer(rt, await docWith(byName("heading->bullet->heading").blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(ex.types).toEqual(["heading", "bulletListItem", "heading"]);
     expect(ex.lines).toEqual(ex.body.replace(/\n+$/, "").split("\n"));
   });
@@ -227,7 +226,7 @@ describe("the default yield really crosses timers + poll (two setImmediate)", ()
       fired = true;
     }, 0);
     busy(5);
-    await exportNoteForTransfer(rt, doc, titles, { yieldEveryBlocks: Infinity, yieldAfterMs: Infinity });
+    await exportNoteForTransfer(rt, doc, titles, { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, yieldEveryBlocks: Infinity, yieldAfterMs: Infinity });
     expect(firedBeforeFull).toBe(true);
   }, 60_000);
 
@@ -253,7 +252,7 @@ describe("the default yield really crosses timers + poll (two setImmediate)", ()
       await fromIoCallback();
       cli.write("x");
       busy(20);
-      await exportNoteForTransfer(rt, doc, titles, { yieldEveryBlocks: Infinity, yieldAfterMs: Infinity });
+      await exportNoteForTransfer(rt, doc, titles, { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, yieldEveryBlocks: Infinity, yieldAfterMs: Infinity });
       expect(gotBeforeFull).toBe(true);
     } finally {
       cli.destroy();

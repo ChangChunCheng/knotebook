@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { alignInlineText } from "./block-align.js";
-import { KNOWLEDGE_ID_RE, type KnowledgeInfo } from "./knowledge.js";
+import { KNOWLEDGE_ID_RE, knowledgeStateOf, type KnowledgeInfo, type KnowledgeStatus } from "./knowledge.js";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeFieldView, type KnowledgeBuiltinFieldKey, type KnowledgeFieldView } from "./knowledge-fields.js";
 import { KNOWLEDGE_PENDING_ID_PREFIX } from "./knowledge-html.js";
-import { knowledgePairs, knowledgeRefsIn, knowledgeWriteProblem, normalizeKnowledgeRefs, resolveKnowledgeForWrite, type KnowledgeBlockShape } from "./knowledge-rewrite.js";
+import { knowledgePairs, knowledgeRefsIn, normalizeKnowledgeRefs, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite, type KnowledgeBlockShape } from "./knowledge-rewrite.js";
 
 const NOTE = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -210,67 +211,211 @@ function KNOWLEDGE_PROP_NAMES_OF(b: KnowledgeBlockShape): Record<string, unknown
   return out;
 }
 
-describe("knowledgeWriteProblem", () => {
+describe("sanitizeKnowledgeForWrite", () => {
   const info = (over: Partial<KnowledgeInfo> = {}): KnowledgeInfo => ({ id: "k_00000001", when: "w", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "", ...over });
-  const problem = (props: Record<string, unknown>, current: KnowledgeInfo[] = [], noteId: string | null = NOTE) =>
-    knowledgeWriteProblem([H(2, "D1", { knowledgeId: "k_00000001", ...props })], new Map(current.map(i => [i.id, i])), noteId);
+  const viewWith = (enabled: Partial<Record<KnowledgeBuiltinFieldKey, boolean>>, hiddenOptions: string[] = []): KnowledgeFieldView =>
+    resolveKnowledgeFieldView({
+      defs: [],
+      site: [
+        ...Object.entries(enabled).map(([fieldRef, on]) => ({ fieldRef: fieldRef as KnowledgeBuiltinFieldKey, optionKey: "", enabled: on, name: null, position: null })),
+        ...hiddenOptions.map(key => ({ fieldRef: "evidence" as const, optionKey: key, enabled: false, name: null, position: null })),
+      ],
+    });
+  const run = (blocks: KnowledgeBlockShape[], current: KnowledgeInfo[] = [], fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW, noteId: string | null = NOTE) =>
+    sanitizeKnowledgeForWrite({ after: blocks, current: new Map(current.map(i => [i.id, i])), noteId, fields });
+  const one = (props: Record<string, unknown>, current: KnowledgeInfo[] = [], fields?: KnowledgeFieldView, noteId?: string | null) => {
+    const r = run([H(2, "Alpha", { knowledgeId: "k_00000001", ...props })], current, fields, noteId);
+    return { ...r, props: propsOf(r.blocks[0]!) };
+  };
+  const ignoredOf = (props: Record<string, unknown>, current: KnowledgeInfo[] = [], fields?: KnowledgeFieldView, noteId?: string | null) => one(props, current, fields, noteId).ignored;
 
-  it("outdated without superseded_by is superseded_required unless it equals the stored knowledge with that id", () => {
-    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated" })).toEqual({ problem: "superseded_required", key: "superseded_by", heading: "D1" });
-    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated" }, [info({ status: "outdated" })])).toBeNull();
-    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" })).toBeNull();
+  it("a heading written back as a 0.18 file had it changes nothing and ignores nothing", () => {
+    const stored = info({ when: "w", status: "", verified: "2026-01-02", evidence: "" });
+    const before = { knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeConclusion: "", knowledgeEvidence: "", knowledgeVerified: "2026-01-02", knowledgeStatus: "", knowledgeSupersededBy: "" };
+    const r = one(before, [stored]);
+    expect(r.props).toEqual({ level: 2, ...before });
+    expect(r.ignored).toEqual([]);
+    expect(r.problem).toBeNull();
   });
 
-  it("a knowledge with no field set is empty; superseded_by naming itself is superseded_self", () => {
-    expect(problem({})).toEqual({ problem: "empty", heading: "D1" });
-    expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000001" })).toMatchObject({ problem: "superseded_self", key: "superseded_by" });
-    expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${NOTE}#k_00000001` })).toMatchObject({ problem: "superseded_self" });
-    expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${OTHER}#k_00000001` })).toBeNull();
-    expect(problem({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${NOTE}#k_00000001` }, [], null)).toBeNull();
+  it("writing verified over a legacy verified heading keeps the stored empty status", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeVerified: "2026-01-02", knowledgeStatus: "verified" }, [info({ verified: "2026-01-02" })]);
+    expect(r.props.knowledgeStatus).toBe("");
+    expect(r.ignored).toEqual([]);
   });
 
-  it("value checks: bad id, evidence guess, status current, 2026-02-30, x#k_1, 201 code points in when, 301 in conclusion", () => {
-    expect(knowledgeWriteProblem([H(2, "D1", { knowledgeId: "k_zz", knowledgeWhen: "w" })], new Map(), NOTE)).toMatchObject({ problem: "bad_id", key: "id" });
-    expect(problem({ knowledgeWhen: "w", knowledgeEvidence: "guess" })).toMatchObject({ problem: "bad_evidence", key: "evidence" });
-    expect(problem({ knowledgeWhen: "w", knowledgeStatus: "current" })).toMatchObject({ problem: "bad_status", key: "status" });
-    expect(problem({ knowledgeWhen: "w", knowledgeVerified: "2026-02-30" })).toMatchObject({ problem: "bad_date", key: "verified" });
-    expect(problem({ knowledgeWhen: "w", knowledgeSupersededBy: "x#k_1" })).toMatchObject({ problem: "bad_ref", key: "superseded_by" });
-    expect(problem({ knowledgeWhen: "w".repeat(201) })).toMatchObject({ problem: "too_long", key: "when" });
-    expect(problem({ knowledgeConclusion: "c".repeat(301) })).toMatchObject({ problem: "too_long", key: "conclusion" });
-    expect(problem({ knowledgeWhen: "w", knowledgeEvidence: "tested", knowledgeStatus: "unverified", knowledgeVerified: "2026-02-28", knowledgeSupersededBy: `${OTHER}#k_00000002` })).toBeNull();
+  it("writing verified while clearing the date stores the explicit status", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeVerified: "", knowledgeStatus: "verified" }, [info({ verified: "2026-01-02" })]);
+    expect(r.props).toMatchObject({ knowledgeStatus: "verified", knowledgeVerified: "" });
   });
 
-  it("a line break (CR, LF, U+0085, U+2028, U+2029) in when or conclusion is line_break with the key", () => {
+  it("leaving out the status and the date makes stored legacy knowledge needs verify", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeVerified: "", knowledgeStatus: "" }, [info({ verified: "2026-01-02" })]);
+    expect(r.props.knowledgeStatus).toBe("");
+    expect(knowledgeStateOf({ status: r.props.knowledgeStatus as KnowledgeStatus, verified: r.props.knowledgeVerified as string })).toBe("needs-verify");
+  });
+
+  it("a status written by its outside name or its old name is stored by the stored name", () => {
+    expect(one({ knowledgeStatus: "needs-verify" }).props.knowledgeStatus).toBe("unverified");
+    expect(one({ knowledgeStatus: "obsolete" }).props.knowledgeStatus).toBe("outdated");
+    expect(one({ knowledgeStatus: "unverified" }).props.knowledgeStatus).toBe("unverified");
+    expect(one({ knowledgeStatus: "verified" }).props.knowledgeStatus).toBe("verified");
+  });
+
+  it("a basis that is not an offered option keeps the stored value and is reported", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeEvidence: "vendor-doc" }, [info({ evidence: "docs" })]);
+    expect(r.props.knowledgeEvidence).toBe("docs");
+    expect(r.ignored).toEqual([{ heading: "Alpha", key: "evidence", value: "vendor-doc", reason: "not_an_option" }]);
+    expect(r.problem).toBeNull();
+  });
+
+  it("a stored basis key that is not an option is written back silently; a malformed one is ignored and reported", () => {
+    const stored = info({ evidence: "vendor-doc" });
+    const same = one({ knowledgeWhen: "w", knowledgeEvidence: "vendor-doc" }, [stored]);
+    expect(same.props.knowledgeEvidence).toBe("vendor-doc");
+    expect(same.ignored).toEqual([]);
+    const changed = one({ knowledgeWhen: "changed", knowledgeEvidence: "vendor-doc" }, [stored]);
+    expect(changed.props).toMatchObject({ knowledgeWhen: "changed", knowledgeEvidence: "vendor-doc" });
+    expect(changed.ignored).toEqual([]);
+    const bad = one({ knowledgeWhen: "w", knowledgeEvidence: "Vendor Doc" }, [stored]);
+    expect(bad.props.knowledgeEvidence).toBe("vendor-doc");
+    expect(bad.ignored).toEqual([{ heading: "Alpha", key: "evidence", value: "Vendor Doc", reason: "not_an_option" }]);
+    expect(bad.problem).toBeNull();
+  });
+
+  it("unconfirmed is an empty basis", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeEvidence: "unconfirmed" }, [info()]);
+    expect(r.props.knowledgeEvidence).toBe("");
+    expect(r.ignored).toEqual([]);
+    expect(one({ knowledgeEvidence: "unconfirmed" }).props.knowledgeEvidence).toBe("");
+  });
+
+  it("a turned-off field keeps its stored value whether the comment leaves it out or changes it", () => {
+    const view = viewWith({ when: false });
+    const stored = [info({ when: "w", conclusion: "c" })];
+    const left = one({ knowledgeWhen: "", knowledgeConclusion: "c2" }, stored, view);
+    expect(left.props).toMatchObject({ knowledgeWhen: "w", knowledgeConclusion: "c2" });
+    expect(left.ignored).toEqual([]);
+    const changed = one({ knowledgeWhen: "x", knowledgeConclusion: "c2" }, stored, view);
+    expect(changed.props.knowledgeWhen).toBe("w");
+    expect(changed.ignored).toEqual([{ heading: "Alpha", key: "when", value: "x", reason: "field_disabled" }]);
+  });
+
+  it("changing only a turned-off field keeps its stored value and reports it", () => {
+    const r = one({ knowledgeWhen: "x", knowledgeConclusion: "c" }, [info({ when: "w", conclusion: "c" })], viewWith({ when: false }));
+    expect(r.props).toMatchObject({ knowledgeWhen: "w", knowledgeConclusion: "c" });
+    expect(r.ignored).toEqual([{ heading: "Alpha", key: "when", value: "x", reason: "field_disabled" }]);
+    expect(r.problem).toBeNull();
+    expect(one({ knowledgeWhen: "w", knowledgeConclusion: "c" }, [info({ when: "w", conclusion: "c" })], viewWith({ when: false })).ignored).toEqual([]);
+  });
+
+  it("a turned-off field is not compared, so the rest written unchanged is taken as stored", () => {
+    const r = one({ knowledgeWhen: "", knowledgeConclusion: "c" }, [info({ when: "w", conclusion: "c" })], viewWith({ when: false }));
+    expect(r.props.knowledgeWhen).toBe("w");
+    expect(r.ignored).toEqual([]);
+  });
+
+  it("new knowledge with a bad date stores no date and reports it", () => {
+    const r = one({ knowledgeVerified: "2026-13-01" });
+    expect(r.props.knowledgeVerified).toBe("");
+    expect(r.ignored).toEqual([{ heading: "Alpha", key: "verified", value: "2026-13-01", reason: "bad_date" }]);
+  });
+
+  it("an unknown status keeps the stored one", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeStatus: "current" }, [info({ status: "unverified" })]);
+    expect(r.props.knowledgeStatus).toBe("unverified");
+    expect(r.ignored).toEqual([{ heading: "Alpha", key: "status", value: "current", reason: "bad_status" }]);
+    expect(one({ knowledgeStatus: "current" }).props.knowledgeStatus).toBe("");
+  });
+
+  it("obsolete without a replacement is accepted", () => {
+    const r = one({ knowledgeWhen: "w", knowledgeStatus: "obsolete", knowledgeSupersededBy: "" });
+    expect(r.props.knowledgeStatus).toBe("outdated");
+    expect(r.ignored).toEqual([]);
+    expect(ignoredOf({ knowledgeStatus: "outdated" }, [info({ status: "outdated" })])).toEqual([]);
+  });
+
+  it("a hidden option already stored is written back silently but cannot be newly chosen", () => {
+    const view = viewWith({}, ["inferred"]);
+    const r = run(
+      [H(2, "Alpha", { knowledgeId: "k_00000001", knowledgeWhen: "changed", knowledgeEvidence: "inferred" }), H(2, "Beta", { knowledgeId: "k_00000002", knowledgeEvidence: "inferred" })],
+      [info({ evidence: "inferred" })],
+      view,
+    );
+    expect(propsOf(r.blocks[0]!)).toMatchObject({ knowledgeWhen: "changed", knowledgeEvidence: "inferred" });
+    expect(propsOf(r.blocks[1]!).knowledgeEvidence).toBe("");
+    expect(r.ignored).toEqual([{ heading: "Beta", key: "evidence", value: "inferred", reason: "not_an_option" }]);
+  });
+
+  it("a malformed id refuses the whole write unless the heading is stored and unchanged", () => {
+    const bad = (props: Record<string, unknown>, current: KnowledgeInfo[] = []) =>
+      run([H(2, "Alpha", { knowledgeId: "K_bad", ...props })], current.map(i => ({ ...i, id: "K_bad" })));
+    expect(bad({ knowledgeWhen: "w" }).problem).toEqual({ problem: "bad_id", key: "id", heading: "Alpha" });
+    expect(bad({ knowledgeWhen: "w" }, [info()]).problem).toBeNull();
+    const legacy = info({ verified: "2026-01-02" });
+    const exported = bad({ knowledgeWhen: "w", knowledgeVerified: "2026-01-02", knowledgeStatus: "verified" }, [legacy]);
+    expect(exported.problem).toBeNull();
+    expect(propsOf(exported.blocks[0]!)).toMatchObject({ knowledgeId: "K_bad", knowledgeWhen: "w", knowledgeVerified: "2026-01-02", knowledgeStatus: "" });
+    expect(bad({ knowledgeWhen: "changed" }, [info()]).problem).toMatchObject({ problem: "bad_id" });
+  });
+
+  it("line breaks and over-long text keep the stored value", () => {
     for (const code of [0x0d, 0x0a, 0x85, 0x2028, 0x2029]) {
       const text = `a${String.fromCharCode(code)}b`;
-      expect(problem({ knowledgeWhen: text })).toMatchObject({ problem: "line_break", key: "when" });
-      expect(problem({ knowledgeWhen: "w", knowledgeConclusion: text })).toMatchObject({ problem: "line_break", key: "conclusion" });
+      expect(ignoredOf({ knowledgeWhen: text })).toEqual([{ heading: "Alpha", key: "when", value: text, reason: "line_break" }]);
+      expect(ignoredOf({ knowledgeConclusion: text })).toEqual([{ heading: "Alpha", key: "conclusion", value: text, reason: "line_break" }]);
     }
-    expect(problem({ knowledgeWhen: "a\tb" })).toBeNull();
-  });
-
-  it("a stored knowledge with a line break, an over-long when or an unreadable evidence is accepted when written back unchanged", () => {
-    const long = "w".repeat(250);
-    const stored = [info({ when: "x\r\ny", conclusion: "c d" }), info({ when: long })];
-    expect(problem({ knowledgeWhen: "x\r\ny", knowledgeConclusion: "c d" }, [stored[0]!])).toBeNull();
-    expect(problem({ knowledgeWhen: long }, [stored[1]!])).toBeNull();
-    // Changing any one field brings the checks back.
-    expect(problem({ knowledgeWhen: long, knowledgeConclusion: "now" }, [stored[1]!])).toMatchObject({ problem: "too_long", key: "when" });
-    // Evidence the reader drops (stored as something unknown) comes back as empty, which equals what is stored once read.
-    expect(problem({ knowledgeWhen: "w", knowledgeEvidence: "" }, [info({ evidence: "" })])).toBeNull();
+    const r = one({ knowledgeWhen: "a\nb", knowledgeConclusion: "c".repeat(301) }, [info({ when: "w", conclusion: "c" })]);
+    expect(r.props).toMatchObject({ knowledgeWhen: "w", knowledgeConclusion: "c" });
+    expect(r.ignored.map(i => [i.key, i.reason])).toEqual([["when", "line_break"], ["conclusion", "too_long"]]);
+    expect(ignoredOf({ knowledgeWhen: "a\tb" })).toEqual([]);
+    expect(ignoredOf({ knowledgeWhen: "w".repeat(201) })).toMatchObject([{ key: "when", reason: "too_long" }]);
   });
 
   it("200 CJK characters with an emoji fit when; 300 fit conclusion", () => {
-    expect(problem({ knowledgeWhen: `${"測".repeat(199)}😀` })).toBeNull();
-    expect(problem({ knowledgeWhen: `${"測".repeat(200)}😀` })).toMatchObject({ problem: "too_long" });
-    expect(problem({ knowledgeConclusion: "結".repeat(300) })).toBeNull();
-    expect(problem({ knowledgeConclusion: `${"結".repeat(299)}😀` })).toBeNull();
+    expect(ignoredOf({ knowledgeWhen: `${"測".repeat(199)}😀` })).toEqual([]);
+    expect(ignoredOf({ knowledgeWhen: `${"測".repeat(200)}😀` })).toMatchObject([{ reason: "too_long" }]);
+    expect(ignoredOf({ knowledgeConclusion: "結".repeat(300) })).toEqual([]);
+    expect(ignoredOf({ knowledgeConclusion: `${"結".repeat(299)}😀` })).toEqual([]);
   });
 
-  it("reports the first problem in document order and checks only top-level knowledge headings", () => {
-    const blocks = [P("x"), H(2, "Fine", { knowledgeId: "k_00000001", knowledgeWhen: "w" }), H(2, "Broken", { knowledgeId: "k_00000002", knowledgeEvidence: "guess", knowledgeWhen: "w" }), H(2, "Plain")];
-    expect(knowledgeWriteProblem(blocks, new Map(), NOTE)).toMatchObject({ problem: "bad_evidence", heading: "Broken" });
-    expect(knowledgeWriteProblem([H(2, "Plain")], new Map(), NOTE)).toBeNull();
+  it("a replacement that is not a reference or names this very knowledge keeps the stored value", () => {
+    expect(ignoredOf({ knowledgeSupersededBy: "x#k_1" })).toEqual([{ heading: "Alpha", key: "superseded_by", value: "x#k_1", reason: "bad_ref" }]);
+    expect(ignoredOf({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000001" })).toMatchObject([{ key: "superseded_by", reason: "superseded_self" }]);
+    expect(ignoredOf({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${NOTE}#k_00000001` })).toMatchObject([{ reason: "superseded_self" }]);
+    expect(ignoredOf({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${OTHER}#k_00000001` })).toEqual([]);
+    expect(ignoredOf({ knowledgeStatus: "outdated", knowledgeSupersededBy: `${NOTE}#k_00000001` }, [], undefined, null)).toEqual([]);
+    const kept = one({ knowledgeSupersededBy: "k_00000001" }, [info({ supersededBy: "k_00000002" })]);
+    expect(kept.props.knowledgeSupersededBy).toBe("k_00000002");
+  });
+
+  it("a stored knowledge with a line break or an over-long when is accepted when written back unchanged", () => {
+    const long = "w".repeat(250);
+    expect(ignoredOf({ knowledgeWhen: "x\r\ny", knowledgeConclusion: "c d" }, [info({ when: "x\r\ny", conclusion: "c d" })])).toEqual([]);
+    expect(ignoredOf({ knowledgeWhen: long }, [info({ when: long })])).toEqual([]);
+    // Unchanged fields are not checked even when another field changes.
+    const r = one({ knowledgeWhen: long, knowledgeConclusion: "now" }, [info({ when: long })]);
+    expect(r.props).toMatchObject({ knowledgeWhen: long, knowledgeConclusion: "now" });
+    expect(r.ignored).toEqual([]);
+  });
+
+  it("every problem in every heading is reported in document order; only knowledge headings are looked at", () => {
+    const blocks = [P("x"), H(2, "Fine", { knowledgeId: "k_00000001", knowledgeWhen: "w" }), H(2, "Broken", { knowledgeId: "k_00000002", knowledgeEvidence: "guess", knowledgeVerified: "soon" }), H(2, "Plain")];
+    const r = run(blocks);
+    expect(r.problem).toBeNull();
+    expect(r.ignored).toEqual([
+      { heading: "Broken", key: "evidence", value: "guess", reason: "not_an_option" },
+      { heading: "Broken", key: "verified", value: "soon", reason: "bad_date" },
+    ]);
+    expect(r.blocks[0]).toBe(blocks[0]);
+    expect(r.blocks[3]).toBe(blocks[3]);
+  });
+
+  it("leaves its input untouched", () => {
+    const blocks = [H(2, "Alpha", { knowledgeId: "k_00000001", knowledgeEvidence: "guess" })];
+    const r = run(blocks);
+    expect(propsOf(blocks[0]!).knowledgeEvidence).toBe("guess");
+    expect(propsOf(r.blocks[0]!).knowledgeEvidence).toBe("");
   });
 });
 

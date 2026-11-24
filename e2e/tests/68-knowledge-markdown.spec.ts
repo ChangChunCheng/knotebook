@@ -35,14 +35,14 @@ test("68-1 a note's knowledge info is in the markdown read_note_section and the 
     const title = `E2E knowledge read ${RUN}`;
     const note = await apiCreateNote(page, title, NOTE_MARKDOWN);
     await openNote(page, note, title);
-    await expect(iconOf(page, "Not verified")).toHaveCount(1);
+    await expect(iconOf(page, "Needs review")).toHaveCount(1);
     agent = await createAgent(browser, page);
 
     const section = await readSection(agent, note.id, "Retry policy");
     expect(section.markdown).toMatch(/^## Retry policy\n<!-- knotebook:knowledge\nid: k_[0-9a-f]{8}\n/);
     expect(section.markdown).toContain(`\nwhen: ${WHEN}\n`);
     expect(section.markdown).toContain(`\nconclusion: ${CONCLUSION}\n`);
-    expect(section.markdown).toContain("\nevidence: tested\n-->\n\nBody text.");
+    expect(section.markdown).toContain("\nevidence: tested\nstatus: needs-verify\n-->\n\nBody text.");
 
     const other = await readSection(agent, note.id, "Other");
     expect(other.markdown).not.toContain("knotebook:knowledge");
@@ -55,7 +55,7 @@ test("68-1 a note's knowledge info is in the markdown read_note_section and the 
   }
 });
 
-test("68-2 edit_note replace_section keeps the knowledge without a comment, follows a comment that changed a field, and refuses a bad comment without touching the note", async ({ browser }) => {
+test("68-2 edit_note replace_section keeps the knowledge without a comment, follows a comment that changed a field, leaves out and reports a value that doesn't fit, and refuses a malformed comment without touching the note", async ({ browser }) => {
   test.setTimeout(180_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { viewport: DESKTOP });
@@ -99,15 +99,31 @@ when: ${newWhen}
     await expectHoverCard(page, newWhen);
     await expect(hoverCardOf(page)).not.toContainText(WHEN);
 
-    // A comment that isn't valid: an error, and the note stays as it was.
+    // A status it doesn't know: that line is left out and reported, the rest is written.
     const third = await readSection(agent, note.id, "Retry policy");
+    expect(third.markdown).toContain("\nstatus: needs-verify\n");
+    const ignoredWrite = await callToolOk(agent, "edit_note", {
+      note_id: note.id,
+      op: "replace_section",
+      section_id: third.sectionId,
+      markdown: third.markdown.replace("status: needs-verify", "status: bogus").replace("Rewritten body.", "Body after the ignored line."),
+      if_match: third.fingerprint,
+    });
+    expect((ignoredWrite.structuredContent!.knowledge as { ignored: unknown }).ignored).toEqual([{ heading: "Retry policy", key: "status", value: "bogus", reason: "bad_status" }]);
+    await expect(editorLocator(page).getByText("Body after the ignored line.", { exact: true })).toBeVisible({ timeout: 15_000 });
+    const fourth = await readSection(agent, note.id, "Retry policy");
+    expect(fourth.markdown).toContain("\nstatus: needs-verify\n");
+    expect(knowledgeIdIn(fourth.markdown)).toBe(knowledgeId);
+    await expect(iconOf(page, "Needs review")).toHaveCount(1);
+
+    // A comment that isn't laid out as key: value lines: an error, and the note stays as it was.
     const before = await restMarkdown(agent, note.id);
     const bad = await callTool(agent, "edit_note", {
       note_id: note.id,
       op: "replace_section",
-      section_id: third.sectionId,
-      markdown: "## Retry policy\n<!-- knotebook:knowledge\nstatus: bogus\n-->\n\nShould not appear.\n",
-      if_match: third.fingerprint,
+      section_id: fourth.sectionId,
+      markdown: "## Retry policy\n<!-- knotebook:knowledge\nnot a key and value\n-->\n\nShould not appear.\n",
+      if_match: fourth.fingerprint,
     });
     expect(bad.isError).toBe(true);
     const problem = JSON.parse(errorText(bad)) as { code: string; message: string };
@@ -115,7 +131,7 @@ when: ${newWhen}
     expect(problem.message).toContain('"Retry policy"');
     expect(problem.message).toContain("Nothing was written");
     expect(await restMarkdown(agent, note.id)).toBe(before);
-    await expect(editorLocator(page).getByText("Rewritten body.", { exact: true })).toBeVisible();
+    await expect(editorLocator(page).getByText("Body after the ignored line.", { exact: true })).toBeVisible();
     await expect(editorLocator(page).getByText("Should not appear.", { exact: true })).toHaveCount(0);
     await expectHoverCard(page, newWhen);
   } finally {
@@ -139,7 +155,7 @@ test("68-3 create_note with a knowledge comment opens with the icon and the card
 
     await page.goto(note.url);
     await waitForNoteTitle(page, title);
-    await expect(iconOf(page, "Not verified")).toBeVisible({ timeout: 15_000 });
+    await expect(iconOf(page, "Needs review")).toBeVisible({ timeout: 15_000 });
     await expectHoverCard(page, WHEN);
     await expect(iconsIn(page)).toHaveCount(1);
   } finally {
@@ -183,7 +199,7 @@ test("68-4 reverting an AI edit that dropped the knowledge brings the icon, the 
     await expect(history).toBeHidden();
 
     await expect(headingWithText(page, "Retry policy")).toBeVisible({ timeout: 15_000 });
-    await expect(iconOf(page, "Not verified")).toBeVisible();
+    await expect(iconOf(page, "Needs review")).toBeVisible();
     await expectHoverCard(page, WHEN);
     const restored = await readSection(agent, note.id, "Retry policy");
     expect(knowledgeIdIn(restored.markdown)).toBe(knowledgeId);

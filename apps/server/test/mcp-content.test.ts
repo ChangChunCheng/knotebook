@@ -179,7 +179,7 @@ describe("#108 read_note_outline", () => {
     const out = payloadOf<OutlinePayload>(call);
     // #381: the only fingerprint is the title's `titleFingerprint` (rename's if_match); no whole-note or per-section body fingerprint appears (the two checks below).
     expect(Object.keys(out).sort()).toEqual(
-      ["folder", "lastEdited", "nextSectionOffset", "note", "sections", "titleFingerprint", "totalChars", "truncated"].sort()
+      ["folder", "knowledgeFields", "lastEdited", "nextSectionOffset", "note", "sections", "titleFingerprint", "totalChars", "truncated"].sort()
     );
     expect(out.titleFingerprint).toBe(fingerprintOf(out.note.title));
     expect(Object.keys(out.note).sort()).toEqual(["id", "owner", "role", "tags", "title"].sort());

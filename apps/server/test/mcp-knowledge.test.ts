@@ -9,7 +9,7 @@ import { setNoteTagsByNamesInTx } from "../src/tags/tx/note-tags.js";
 import { MCP_PAGE_MAX } from "../src/mcp/limits.js";
 import { seedBlocks, callTool, type ToolCallResult } from "./bulk-transfer-helpers.js";
 import { seedTokenForUser } from "./editing-helpers.js";
-import { seedNote, seedShare, seedUser } from "./group-helpers.js";
+import { cookieOf, seedGroup, seedNote, seedShare, seedUser } from "./group-helpers.js";
 import { buildCollabTestApp } from "./helpers.js";
 import { mcpPost, rpc } from "./mcp-helpers.js";
 
@@ -19,7 +19,7 @@ const KH = (id: string, text: string, knowledgeId: string, extra: Record<string,
 const P = (id: string, text: string) => ({ id, type: "paragraph", content: text });
 const comment = (lines: string[]) => `<!-- knotebook:knowledge\n${lines.join("\n")}\n-->`;
 
-interface KnowledgeOut { kept: Array<{ id: string; heading: string; headingTruncated?: true }>; created: Array<{ id: string; heading: string; headingTruncated?: true }>; removed: Array<{ id: string; heading: string; headingTruncated?: true }>; renewed: Array<{ id: string; heading: string; from: string }>; ignoredComments: number; truncated: boolean }
+interface KnowledgeOut { kept: Array<{ id: string; heading: string; headingTruncated?: true }>; created: Array<{ id: string; heading: string; headingTruncated?: true }>; removed: Array<{ id: string; heading: string; headingTruncated?: true }>; renewed: Array<{ id: string; heading: string; from: string }>; ignored: Array<{ heading: string; key: string; value: string; reason: string; headingTruncated?: true; keyTruncated?: true; valueTruncated?: true }>; ignoredComments: number; truncated: boolean }
 const ok = (r: ToolCallResult): Record<string, unknown> => {
   expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
   expect(r.content[0]!.text).toBe(JSON.stringify(r.structuredContent));
@@ -44,9 +44,20 @@ async function setup(blocks: unknown[]) {
   };
   const edit = (args: Record<string, unknown>) => call("edit_note", { note_id: note.id, ...args });
   const infos = async () => knowledgeInfoById((await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, note.id)).doc.getXmlFragment(YDOC_FRAGMENT));
-  return { ctx, u, pat, note, call, section, wholeFingerprint, edit, infos };
+  const putFields = async (opts: { off?: string[]; extraOptions?: Array<{ key: string; name: string }> }) => {
+    const admin = await seedUser(ctx.db, { isAdmin: true });
+    const fields = (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+      key,
+      enabled: !(opts.off ?? []).includes(key),
+      ...(key === "evidence" ? { options: [...["tested", "docs", "inferred"].map(o => ({ key: o, name: null, enabled: true })), ...(opts.extraOptions ?? []).map(o => ({ ...o, enabled: true }))] } : {}),
+    }));
+    const res = await ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
+    expect(res.statusCode, res.body).toBe(200);
+  };
+  return { ctx, u, pat, note, call, section, wholeFingerprint, edit, infos, putFields };
 }
 type S = Awaited<ReturnType<typeof setup>>;
+interface FieldsOut { status: string[]; fields: Array<{ key: string; name: string; type: string; options?: Array<{ key: string; name: string }>; optionsTruncated?: true }> }
 
 describe("tool schemas", () => {
   it("tools/list shows knowledge in edit_note's and create_note's output schema and tags in read_note_outline's note", async () => {
@@ -56,9 +67,15 @@ describe("tool schemas", () => {
     const tools = res.json().result.tools as Array<{ name: string; outputSchema: Schema }>;
     const out = (n: string) => tools.find(t => t.name === n)!.outputSchema;
     expect(Object.keys(out("edit_note").properties)).toContain("knowledge");
-    expect(Object.keys(out("edit_note").properties.knowledge!.properties ?? {}).sort()).toEqual(["created", "ignoredComments", "kept", "removed", "renewed", "truncated"]);
+    expect(Object.keys(out("edit_note").properties.knowledge!.properties ?? {}).sort()).toEqual(["created", "ignored", "ignoredComments", "kept", "removed", "renewed", "truncated"]);
     expect(Object.keys(out("create_note").properties)).toContain("knowledge");
     expect(Object.keys(out("read_note_outline").properties.note!.properties ?? {})).toContain("tags");
+    for (const tool of ["read_note_outline", "create_note"]) {
+      const fields = out(tool).properties.knowledgeFields!;
+      expect(Object.keys(fields.properties ?? {}).sort(), tool).toEqual(["fields", "status"]);
+      const entry = (fields.properties!.fields as { items: { properties: Record<string, unknown> } }).items;
+      expect(Object.keys(entry.properties).sort(), tool).toEqual(["key", "name", "options", "optionsTruncated", "type"]);
+    }
     await s.ctx.destroy();
   });
 });
@@ -82,7 +99,58 @@ describe("reading", () => {
   it("read_note_section returns the comment under a knowledge heading", async () => {
     const s = await setup([KH("hA", "A", K1, { knowledgeConclusion: "keep" }), P("a1", "body")]);
     const sec = await s.section("hA");
-    expect(sec.markdown).toBe(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep"])}\n\nbody\n`);
+    expect(sec.markdown).toBe(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep", "status: needs-verify"])}\n\nbody\n`);
+    await s.ctx.destroy();
+  });
+
+  it("the first outline page lists the space's enabled fields and later pages don't", async () => {
+    const s = await setup([P("p0", "intro"), ...Array.from({ length: 120 }, (_, i) => H(`h${i}`, `Heading ${i}`))]);
+    const before = ok(await s.call("read_note_outline", { note_id: s.note.id })).knowledgeFields as FieldsOut;
+    expect(before.fields.map(f => [f.key, f.name, f.type])).toEqual([
+      ["when", "When to read", "text"],
+      ["conclusion", "Conclusion", "text"],
+      ["evidence", "Basis", "select"],
+      ["verified", "Last verified", "date"],
+      ["superseded_by", "Replaced by", "ref"],
+    ]);
+    await s.putFields({ off: ["conclusion"], extraOptions: [{ key: "vendor-doc", name: "Vendor docs" }] });
+    const first = ok(await s.call("read_note_outline", { note_id: s.note.id }));
+    const fields = first.knowledgeFields as FieldsOut;
+    expect(fields.status).toEqual(["verified", "needs-verify", "obsolete"]);
+    expect(fields.fields.map(f => f.key)).toEqual(["when", "evidence", "verified", "superseded_by"]);
+    expect(fields.fields.find(f => f.key === "evidence")!.options).toEqual([
+      { key: "tested", name: "Tested" },
+      { key: "docs", name: "Documentation" },
+      { key: "inferred", name: "Inferred" },
+      { key: "vendor-doc", name: "Vendor docs" },
+    ]);
+    expect(fields.fields.filter(f => f.key !== "evidence").every(f => !("options" in f))).toBe(true);
+    expect(ok(await s.call("read_note_outline", { note_id: s.note.id, section_offset: 0 }))).toHaveProperty("knowledgeFields");
+    const later = ok(await s.call("read_note_outline", { note_id: s.note.id, section_offset: MCP_PAGE_MAX }));
+    expect((later.sections as unknown[]).length).toBeGreaterThan(0);
+    expect(later).not.toHaveProperty("knowledgeFields");
+    await s.ctx.destroy();
+  });
+
+  it("read_note_section leaves out a turned-off field that has a stored value", async () => {
+    const s = await setup([KH("hA", "A", K1, { knowledgeConclusion: "c" }), P("a1", "body")]);
+    await s.putFields({ off: ["conclusion"] });
+    const sec = await s.section("hA");
+    expect(sec.markdown).toBe(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "status: needs-verify"])}\n\nbody\n`);
+    expect(sec.markdown).not.toContain("conclusion:");
+    const rest = await s.ctx.app.inject({ method: "GET", url: `/api/notes/${s.note.id}/content`, headers: { authorization: `Bearer ${s.pat.token}` } });
+    expect((rest.json() as { markdown: string }).markdown).toBe(sec.markdown);
+    expect((await s.infos()).get(K1)).toMatchObject({ conclusion: "c" });
+    await s.ctx.destroy();
+  });
+
+  it("a group note's outline lists the site's fields, as the group has no settings of its own", async () => {
+    const s = await setup([P("p1", "x")]);
+    await s.putFields({ off: ["when"] });
+    const g = await seedGroup(s.ctx.db, "Team", [{ userId: s.u.id, role: "member" }]);
+    const gn = await seedNote(s.ctx.db, { groupId: g.id }, { title: "Group note" });
+    const fields = ok(await s.call("read_note_outline", { note_id: gn.id })).knowledgeFields as FieldsOut;
+    expect(fields.fields.map(f => f.key)).toEqual(["conclusion", "evidence", "verified", "superseded_by"]);
     await s.ctx.destroy();
   });
 });
@@ -92,7 +160,7 @@ describe("edit_note", () => {
     const s = await setup([KH("hA", "A", K1), P("a1", "old")]);
     const sec = await s.section("hA");
     const k = knowledgeOf(await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.fingerprint, markdown: "## A\n\nnew\n" }));
-    expect(k).toEqual({ kept: [{ id: K1, heading: "A" }], created: [], removed: [], renewed: [], ignoredComments: 0, truncated: false });
+    expect(k).toEqual({ kept: [{ id: K1, heading: "A" }], created: [], removed: [], renewed: [], ignored: [], ignoredComments: 0, truncated: false });
     expect((await s.infos()).get(K1)).toMatchObject({ when: "alice reads this" });
     await s.ctx.destroy();
   });
@@ -135,7 +203,7 @@ describe("create_note", () => {
   it("with content holding a comment after a paragraph reports ignoredComments 1; one under a heading is listed in created", async () => {
     const s = await setup([P("p1", "x")]);
     const ignored = knowledgeOf(await s.call("create_note", { title: "A", content: `text\n\n${comment(["when: nowhere"])}\n\nmore\n` }))!;
-    expect(ignored).toEqual({ kept: [], created: [], removed: [], renewed: [], ignoredComments: 1, truncated: false });
+    expect(ignored).toEqual({ kept: [], created: [], removed: [], renewed: [], ignored: [], ignoredComments: 1, truncated: false });
     const created = knowledgeOf(await s.call("create_note", { title: "B", content: `## D1\n${comment(["when: w"])}\n\nbody\n` }))!;
     expect(created.created).toHaveLength(1);
     expect(created.created[0]!.heading).toBe("D1");
@@ -151,18 +219,40 @@ ${comment(["id: k_12345678", "when: w"])}
 
 body
 ` }))!;
-    expect(k).toEqual({ kept: [], created: [{ id: "k_12345678", heading: "A" }], removed: [], renewed: [], ignoredComments: 0, truncated: false });
+    expect(k).toEqual({ kept: [], created: [{ id: "k_12345678", heading: "A" }], removed: [], renewed: [], ignored: [], ignoredComments: 0, truncated: false });
     await s.ctx.destroy();
   });
 
-  it("whose content says outdated without superseded_by is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
+  it("whose content has a malformed id is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
     const s = await setup([P("p1", "x")]);
     const before = (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
-    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
+    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["id: K_bad", "when: w"])}\n\nx\n` });
     expect(r.isError).toBe(true);
-    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: 'The knowledge comment under the heading "D1" says outdated without a `superseded_by`. Nothing was written.' });
+    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge). Nothing was written." });
     expect((await s.ctx.db.select({ id: notes.id }).from(notes)).length).toBe(before);
     expect(await s.ctx.db.select().from(notes).where(eq(notes.title, "Bad"))).toHaveLength(0);
+    await s.ctx.destroy();
+  });
+
+  it("whose content has a superseded_by that isn't a reference creates the note with no replacement", async () => {
+    const s = await setup([P("p1", "x")]);
+    const r = await s.call("create_note", { title: "Loose", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
+    expect(knowledgeOf(r)!.ignored).toEqual([{ heading: "D1", key: "superseded_by", value: "nope", reason: "bad_ref" }]);
+    const id = (ok(r).note as { id: string }).id;
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, id)).doc;
+    expect([...knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)).values()]).toMatchObject([{ when: "w", status: "outdated", supersededBy: "" }]);
+    await s.ctx.destroy();
+  });
+
+  it("create_note's reply carries the target space's field definitions, with content or without", async () => {
+    const s = await setup([P("p1", "x")]);
+    await s.putFields({ off: ["verified"], extraOptions: [{ key: "vendor-doc", name: "Vendor docs" }] });
+    const g = await seedGroup(s.ctx.db, "Team", [{ userId: s.u.id, role: "member" }]);
+    const outline = ok(await s.call("read_note_outline", { note_id: s.note.id })).knowledgeFields as FieldsOut;
+    expect(outline.fields.map(f => f.key)).toEqual(["when", "conclusion", "evidence", "superseded_by"]);
+    for (const args of [{ title: "Empty" }, { title: "Filled", content: `## D1\n${comment(["when: w"])}\n\nbody\n` }, { title: "In group", group_id: g.id }, { title: "In group filled", group_id: g.id, content: "text\n" }]) {
+      expect(ok(await s.call("create_note", args)).knowledgeFields, args.title).toEqual(outline);
+    }
     await s.ctx.destroy();
   });
 
@@ -194,11 +284,42 @@ describe("each claim in the new describe text holds", () => {
     await s.ctx.destroy();
   });
 
-  it("leaving out a line other than id empties that field", async () => {
-    const s = await setup([KH("hA", "A", K1, { knowledgeConclusion: "was", knowledgeEvidence: "tested" }), P("a1", "body")]);
+  it("leaving out status on obsolete knowledge doesn't keep obsolete: it is read from the last-verified date again", async () => {
+    const K2 = "k_00000002";
+    const s = await setup([KH("hA", "A", K1, { knowledgeStatus: "outdated", knowledgeVerified: "2026-10-20" }), P("a1", "body"), KH("hB", "B", K2, { knowledgeStatus: "outdated" }), P("b1", "body")]);
+    for (const [id, kid, expected] of [["hA", K1, "verified"], ["hB", K2, "needs-verify"]] as const) {
+      const sec = await s.section(id);
+      expect(sec.markdown, id).toContain("status: obsolete\n");
+      const markdown = sec.markdown.replace("status: obsolete\n", "");
+      ok(await s.edit({ op: "replace_section", section_id: id, if_match: sec.fingerprint, markdown }));
+      expect((await s.infos()).get(kid)!.status, id).not.toBe("outdated");
+      expect((await s.section(id)).markdown, id).toContain(`status: ${expected}\n`);
+    }
+    await s.ctx.destroy();
+  });
+
+  it("leaving out a line empties a field the outline lists; a field it doesn't list keeps its value", async () => {
+    const s = await setup([KH("hA", "A", K1, { knowledgeConclusion: "was", knowledgeEvidence: "tested", knowledgeVerified: "2026-10-20" }), P("a1", "body")]);
+    await s.putFields({ off: ["verified"] });
+    const listed = (ok(await s.call("read_note_outline", { note_id: s.note.id })).knowledgeFields as FieldsOut).fields.map(f => f.key);
+    expect(listed).toContain("conclusion");
+    expect(listed).not.toContain("verified");
     const sec = await s.section("hA");
     ok(await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.fingerprint, markdown: `## A\n${comment([`id: ${K1}`, "when: still"])}\n\nbody\n` }));
-    expect((await s.infos()).get(K1)).toMatchObject({ when: "still", conclusion: "", evidence: "" });
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "still", conclusion: "", evidence: "", verified: "2026-10-20" });
+    await s.ctx.destroy();
+  });
+
+  it("knowledgeFields gives each listed key's type, and a select field's options, which are the values a comment can write", async () => {
+    const s = await setup([P("p1", "x")]);
+    await s.putFields({ extraOptions: [{ key: "vendor-doc", name: "Vendor docs" }] });
+    const fields = (ok(await s.call("read_note_outline", { note_id: s.note.id })).knowledgeFields as FieldsOut).fields;
+    for (const f of fields) expect(["text", "select", "date", "link", "member", "ref"], f.key).toContain(f.type);
+    const options = fields.filter(f => f.type === "select").flatMap(f => f.options!.map(o => o.key));
+    expect(options).toContain("vendor-doc");
+    const k = knowledgeOf(await s.edit({ op: "append", markdown: `## B\n${comment(["evidence: vendor-doc"])}\n\nx\n` }))!;
+    expect(k.ignored).toEqual([]);
+    expect([...(await s.infos()).values()]).toMatchObject([{ evidence: "vendor-doc" }]);
     await s.ctx.destroy();
   });
 
@@ -225,20 +346,55 @@ describe("each claim in the new describe text holds", () => {
     await s.ctx.destroy();
   });
 
-  it("status current is refused and only unverified or outdated are accepted", async () => {
+  it("status current is not stored, and verified, needs-verify, obsolete and the old unverified and outdated are", async () => {
     const s = await setup([P("p1", "x")]);
-    const bad = await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: current"])}\n\nx\n` });
-    expect(bad.structuredContent.code).toBe("invalid_knowledge");
-    const good = knowledgeOf(await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: unverified"])}\n\nx\n` }))!;
-    expect((await s.infos()).get(good.created[0]!.id)).toMatchObject({ status: "unverified" });
+    const status = async (heading: string, value: string) => {
+      const k = knowledgeOf(await s.edit({ op: "append", markdown: `## ${heading}\n${comment(["when: w", `status: ${value}`])}\n\nx\n` }))!;
+      return (await s.infos()).get(k.created[0]!.id)!.status;
+    };
+    expect(await status("C", "current")).toBe("");
+    expect(await status("U", "unverified")).toBe("unverified");
+    expect(await status("N", "needs-verify")).toBe("unverified");
+    expect(await status("V", "verified")).toBe("verified");
+    expect(await status("O", "obsolete")).toBe("outdated");
+    expect(await status("D", "outdated")).toBe("outdated");
     await s.ctx.destroy();
   });
 
-  it("outdated needs superseded_by, which may be a knowledge id or <note id>#<knowledge id> in another note", async () => {
+  it("superseded_by may be a knowledge id or <note id>#<knowledge id> in another note, and outdated can leave it out", async () => {
     const s = await setup([KH("hA", "A", K1), P("a1", "x")]);
     const other = "22222222-2222-4222-8222-222222222222";
     const k = (await written(s, `## Old\n${comment(["when: w", "status: outdated", `superseded_by: ${other}#k_00000002`])}\n\nx\n`))!;
     expect((await s.infos()).get(k.created[0]!.id)).toMatchObject({ status: "outdated", supersededBy: `${other}#k_00000002` });
+    const none = (await written(s, `## Gone\n${comment(["when: w", "status: outdated"])}\n\nx\n`))!;
+    expect((await s.infos()).get(none.created[0]!.id)).toMatchObject({ status: "outdated", supersededBy: "" });
+    await s.ctx.destroy();
+  });
+
+  it("a line whose key isn't known, or whose value doesn't fit its field, isn't written: it is listed in knowledge.ignored and the field keeps its value", async () => {
+    const s = await setup([KH("hA", "A", K1, { knowledgeEvidence: "docs", knowledgeVerified: "2026-10-01" }), P("a1", "body")]);
+    const sec = await s.section("hA");
+    const k = knowledgeOf(await s.edit({
+      op: "replace_section", section_id: "hA", if_match: sec.fingerprint,
+      markdown: `## A\n${comment([`id: ${K1}`, "when: changed", "evidence: guess", "verified: 2026-02-30", "status: maybe", "Owner: bob"])}\n\nbody\n`,
+    }))!;
+    expect(k.ignored).toEqual([
+      { heading: "A", key: "Owner", value: "bob", reason: "unknown_field" },
+      { heading: "A", key: "evidence", value: "guess", reason: "not_an_option" },
+      { heading: "A", key: "verified", value: "2026-02-30", reason: "bad_date" },
+      { heading: "A", key: "status", value: "maybe", reason: "bad_status" },
+    ]);
+    expect(k.truncated).toBe(false);
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "changed", evidence: "docs", verified: "2026-10-01" });
+    await s.ctx.destroy();
+  });
+
+  it("left out, status is verified when the knowledge has a last-verified date and needs-verify otherwise", async () => {
+    const s = await setup([P("p1", "x")]);
+    const k = (await written(s, `## Dated\n${comment(["verified: 2026-11-01"])}\n\nx\n\n## Undated\n${comment(["when: w"])}\n\ny\n`))!;
+    const md = (await s.ctx.app.inject({ method: "GET", url: `/api/notes/${s.note.id}/content`, headers: { authorization: `Bearer ${s.pat.token}` } })).json() as { markdown: string };
+    expect(md.markdown).toContain(`id: ${k.created[0]!.id}\nverified: 2026-11-01\nstatus: verified`);
+    expect(md.markdown).toContain(`id: ${k.created[1]!.id}\nwhen: w\nstatus: needs-verify`);
     await s.ctx.destroy();
   });
 

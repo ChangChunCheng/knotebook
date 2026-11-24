@@ -66,7 +66,7 @@ test("69-1 a file's tags line and knowledge comment come down with the note; a c
     const panel = await showSidebarTab(page, "My notes");
     await expect(dots(noteLink(panel, title).locator("xpath=ancestor::li[1]"), "Alpha, Beta")).toBeVisible();
     // The text and the knowledge were not touched.
-    await expect(iconOf(page, "Not verified")).toBeVisible();
+    await expect(iconOf(page, "Needs review")).toBeVisible();
 
     const again = await writeFile(files, await downloadFile(files, note.id));
     expect(again.status, JSON.stringify(again.body)).toBe(200);
@@ -124,7 +124,7 @@ test("69-3 a changed knowledge comment sent back updates the card, and a file wi
     const title = `E2E file knowledge ${RUN}`;
     const note = await apiCreateNote(page, title, noteMarkdown("Retry policy"));
     await openNote(page, note, title);
-    await expect(iconOf(page, "Not verified")).toBeVisible();
+    await expect(iconOf(page, "Needs review")).toBeVisible();
     agent = await createAgent(browser, page);
     files = await openFiles(agent, { space: "personal" });
 
@@ -156,7 +156,7 @@ test("69-3 a changed knowledge comment sent back updates the card, and a file wi
   }
 });
 
-test("69-4 a file whose comment is not valid is refused with invalid_knowledge and the note stays as it was", async ({ browser }) => {
+test("69-4 a file whose comment is malformed is refused with invalid_knowledge and the note stays as it was; a status it doesn't know is left out and reported", async ({ browser }) => {
   test.setTimeout(120_000);
   const alice = await createAccount(browser, "alice");
   const { context, page } = await openAs(browser, alice, { viewport: DESKTOP });
@@ -170,7 +170,7 @@ test("69-4 a file whose comment is not valid is refused with invalid_knowledge a
     files = await openFiles(agent, { space: "personal" });
 
     const file = await downloadFile(files, note.id);
-    const bad = await writeFile(files, replaceLineStartingWith(file, "conclusion: ", "status: bogus").replace("Body text.", "Should not appear."));
+    const bad = await writeFile(files, replaceLineStartingWith(file, "conclusion: ", "not a key and value").replace("Body text.", "Should not appear."));
     expect(bad.status, JSON.stringify(bad.body)).toBe(400);
     expect(bad.body).toMatchObject({ error: { code: "invalid_knowledge" } });
     await expect(editorLocator(page).getByText("Body text.", { exact: true })).toBeVisible();
@@ -179,6 +179,13 @@ test("69-4 a file whose comment is not valid is refused with invalid_knowledge a
     // The base line is salted per download, so it differs even when the note is the same.
     const withoutBase = (text: string): string => text.replace(/^base: .*$/m, "");
     expect(withoutBase(await downloadFile(files, note.id))).toBe(withoutBase(file));
+
+    const unknownStatus = await writeFile(files, replaceLineStartingWith(file, "status: ", "status: bogus"));
+    expect(unknownStatus.status, JSON.stringify(unknownStatus.body)).toBe(200);
+    expect(unknownStatus.body).toMatchObject({ result: "applied", knowledge: { ignored: [{ heading: "Retry policy", key: "status", value: "bogus", reason: "bad_status" }] } });
+    expect((await readSection(agent, note.id, "Retry policy")).markdown).toContain("\nstatus: needs-verify\n");
+    await expect(iconOf(page, "Needs review")).toHaveCount(1);
+    await expectHoverCard(page, CONCLUSION);
   } finally {
     await revokeFiles(files);
     await closeAgent(agent);
@@ -252,7 +259,7 @@ test.describe("selection AI (ai-stub /echo)", () => {
       const title = `E2E selection AI knowledge ${RUN}`;
       const note = await apiCreateNote(page, title, noteMarkdown("Original rule"));
       await openNote(page, note, title);
-      await expect(iconOf(page, "Not verified")).toBeVisible();
+      await expect(iconOf(page, "Needs review")).toBeVisible();
       agent = await createAgent(browser, page);
       const knowledgeId = knowledgeIdIn((await readSection(agent, note.id, "Original rule")).markdown);
 

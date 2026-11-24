@@ -140,5 +140,9 @@ export const ERROR_CODES = [
   "tag_name_taken",
   "merge_same_tag",
   "invalid_knowledge",
+  "knowledge_key_invalid",
+  "knowledge_key_taken",
+  "knowledge_fields_limit",
+  "knowledge_fields_incomplete",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

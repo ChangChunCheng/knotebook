@@ -4,15 +4,17 @@ import { and, asc, inArray, sql } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import {
   KNOWLEDGE_INDEX_MAX,
+  isKnowledgeFieldEnabled,
   canonicalNotePath,
   formatKnowledgeRef,
+  knowledgeStateOf,
   orderIndexNotes,
-  type KnowledgeEvidence,
   type KnowledgeIndexDto,
   type KnowledgeIndexEntryDto,
   type KnowledgeIndexFolderDto,
   type KnowledgeIndexNoteDto,
   type KnowledgeIndexReplacementDto,
+  type KnowledgeFieldView,
   type KnowledgeIndexScopeDto,
   type KnowledgeStatus,
   type NoteTagDto,
@@ -29,6 +31,7 @@ export interface KnowledgeIndexQueryInput {
   userId: string;
   scope: KnowledgeScope;
   filters: KnowledgeIndexFilters;
+  fields: KnowledgeFieldView;
 }
 
 const tagKey = (t: NoteTagDto): string => t.name.toLowerCase();
@@ -54,7 +57,14 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
   await tx.setTransaction({ isolationLevel: "repeatable read", accessMode: "read only" });
   // Correlated subqueries per note: their estimated cost passes jit_above_cost, and compiling costs more than the run.
   await tx.execute(sql`set local jit = off`);
-  const { userId, scope, filters } = input;
+  const { userId, scope, filters, fields } = input;
+  const on = {
+    when: isKnowledgeFieldEnabled(fields, "when"),
+    conclusion: isKnowledgeFieldEnabled(fields, "conclusion"),
+    evidence: isKnowledgeFieldEnabled(fields, "evidence"),
+    verified: isKnowledgeFieldEnabled(fields, "verified"),
+    supersededBy: isKnowledgeFieldEnabled(fields, "superseded_by"),
+  };
   const noFilters = filters.tagIds.length === 0 && filters.status === null && filters.evidence === null;
 
   const matched = await scopedNoteBranch(tx, userId, scope, {
@@ -107,9 +117,10 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
 
   const refs = new Map<string, { noteId: string; knowledgeId: string }>();
   const entries: KnowledgeIndexEntryDto[] = rows.map((r) => {
+    const status = r.status as KnowledgeStatus;
     // Only a row that is itself outdated has a replacement; a NULL or own note id both mean the same note.
     let supersededBy: string | null = null;
-    if (r.status === "outdated" && r.supersededKnowledgeId !== null) {
+    if (on.supersededBy && r.status === "outdated" && r.supersededKnowledgeId !== null) {
       const ref = { noteId: r.supersededNoteId ?? r.noteId, knowledgeId: r.supersededKnowledgeId };
       supersededBy = formatKnowledgeRef(ref, null);
       refs.set(supersededBy, ref);
@@ -121,18 +132,20 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
       ord: r.ord,
       level: r.level,
       heading: r.heading,
-      when: r.readWhen,
-      conclusion: r.conclusion,
-      evidence: r.evidence as KnowledgeEvidence,
-      verified: r.verified,
-      status: r.status as KnowledgeStatus,
-      icon: r.icon as KnowledgeIndexEntryDto["icon"],
+      when: on.when ? r.readWhen : "",
+      conclusion: on.conclusion ? r.conclusion : "",
+      evidence: on.evidence ? r.evidence : "",
+      verified: on.verified ? r.verified : null,
+      status,
+      state: knowledgeStateOf({ status, verified: r.verified ?? "" }),
+      // The previous extractor wrote "noVerifiedDate" and counted it apart; both are needs review now.
+      icon: r.icon === "noVerifiedDate" ? "needsReview" : (r.icon as KnowledgeIndexEntryDto["icon"]),
       parentKnowledgeId: r.parentKnowledgeId,
       supersededBy,
       summary:
         r.descTotal === 0
           ? null
-          : { total: r.descTotal, verified: r.descVerified, noVerifiedDate: r.descNoDate, needsReview: r.descNeedsReview, outdated: r.descOutdated },
+          : { total: r.descTotal, verified: r.descVerified, needsReview: r.descNoDate + r.descNeedsReview, outdated: r.descOutdated },
     };
   });
 
@@ -182,5 +195,6 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
     tagOptions,
     truncated,
     backfillPending: pending.length > 0,
+    fields: fields.fields,
   };
 }

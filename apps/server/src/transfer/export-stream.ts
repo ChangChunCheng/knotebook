@@ -14,12 +14,15 @@
 import { setImmediate as setImmediateP } from "node:timers/promises";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger, FastifyReply } from "fastify";
+import type { KnowledgeFieldView } from "@knotebook/shared";
 import type { UserGate } from "../auth/session.js";
 import type { BulkRange } from "../auth/transfer-token.js";
 import type { Db } from "../db/index.js";
 import { transferTokens } from "../db/schema.js";
 import { pgErrorSummary } from "../db/pg-errors.js";
 import { TRANSFER_WRITE_BODY_LIMIT } from "../http/body-limits.js";
+import { loadKnowledgeFieldView } from "../knowledge/fields/queries.js";
+import { KNOWLEDGE_FIELDS_OUTLINE_BUDGET, knowledgeFieldsForModel } from "../mcp/knowledge-fields-output.js";
 import { ParserBusyError } from "../notes/editing/parse-core.js";
 import { insertBases, pruneBases, type TransferBaseInsert } from "./bases.js";
 import { buildNoteFile, type NoteFile, type NoteFileDeps } from "./note-file.js";
@@ -30,6 +33,8 @@ import { TarAbortError, TarGzWriter } from "./tar.js";
 export const TRANSFER_EXPORT_MAX_NOTES = 3000;
 export const EXPORT_BATCH = 50;
 export const EXPORT_BUSY_RETRY_AFTER_S = 30;
+/** The `knowledgeFieldSets` key of personal notes, own or shared; a group note's key is its group id. */
+export const PERSONAL_FIELD_SET = "personal";
 
 export type ExportOutcome = "done" | "aborted" | "client_closed";
 
@@ -97,7 +102,18 @@ export async function streamExport(p: StreamExportParams): Promise<void> {
   };
 
   const order = [...p.layout.files.entries()].sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
-  const manifestNotes: Array<{ path: string; id: string; role: string; mergeable?: false; tooLargeToSend?: true }> = [];
+  const manifestNotes: Array<{ path: string; id: string; role: string; knowledgeFields: string; mergeable?: false; tooLargeToSend?: true }> = [];
+  // One settings lookup per space for the whole export. The same view writes the files and the manifest, so the two always agree.
+  const fieldViews = new Map<string, KnowledgeFieldView>();
+  const fieldViewOf = async (groupId: string | null): Promise<{ key: string; view: KnowledgeFieldView }> => {
+    const key = groupId ?? PERSONAL_FIELD_SET;
+    let view = fieldViews.get(key);
+    if (view === undefined) {
+      view = await loadKnowledgeFieldView(p.db, { groupId });
+      fieldViews.set(key, view);
+    }
+    return { key, view };
+  };
   const skipped: Array<{ id: string; reason: "gone" | "failed" | "busy" }> = [];
   let notMergeable = 0;
   let written = 0;
@@ -127,10 +143,13 @@ export async function streamExport(p: StreamExportParams): Promise<void> {
           continue;
         }
         let nf: NoteFile;
+        let fieldSet: string;
         try {
           const failWith = p.hooks?.forceFailNote?.(id);
           if (failWith !== undefined) throw new Error(`${row.title} ${failWith}`);
-          nf = await buildNoteFile(p.fileDeps, p.userId, row, { forceUnmergeable: p.hooks?.forceUnmergeable?.(id) === true });
+          const fv = await fieldViewOf(row.groupId);
+          fieldSet = fv.key;
+          nf = await buildNoteFile(p.fileDeps, p.userId, row, fv.view, { forceUnmergeable: p.hooks?.forceUnmergeable?.(id) === true });
         } catch (err) {
           // Log counts only: the error text may carry a title or content. A busy worker is `busy`, distinct from `failed`, so the caller knows to retry that note later.
           skipped.push({ id, reason: err instanceof ParserBusyError ? "busy" : "failed" });
@@ -141,7 +160,7 @@ export async function streamExport(p: StreamExportParams): Promise<void> {
         bases.push(nf.base);
         if (!nf.mergeable) notMergeable++;
         manifestNotes.push({
-          path, id, role: row.role,
+          path, id, role: row.role, knowledgeFields: fieldSet,
           ...(nf.mergeable ? {} : { mergeable: false as const }),
           ...(nf.file.length > TRANSFER_WRITE_BODY_LIMIT ? { tooLargeToSend: true as const } : {}),
         });
@@ -164,6 +183,7 @@ export async function streamExport(p: StreamExportParams): Promise<void> {
         range: p.range,
         folders: p.layout.dirs,
         notes: manifestNotes,
+        knowledgeFieldSets: Object.fromEntries([...new Set(manifestNotes.map(n => n.knowledgeFields))].map(k => [k, knowledgeFieldsForModel(fieldViews.get(k)!, KNOWLEDGE_FIELDS_OUTLINE_BUDGET)])),
         skipped,
       };
       await writer.addFile(".knotebook/manifest.json", Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8"));

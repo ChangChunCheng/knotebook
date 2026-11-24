@@ -81,6 +81,7 @@ const AdminGroupsSection = lazy(() => import("./components/admin/AdminSections")
 const AdminLoginSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminLoginSection })));
 const AdminStorageSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminStorageSection })));
 const AdminAiSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminAiSection })));
+const AdminKnowledgeFieldsSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminKnowledgeFieldsSection })));
 const AdminLimitsSection = lazy(() => import("./components/admin/AdminSections").then(m => ({ default: m.AdminLimitsSection })));
 
 // `key={chunk}`: sibling routes share element type and position, so React would reuse one boundary and carry its
@@ -272,6 +273,7 @@ export function AppRoutes() {
                 <Route path="/admin/login" element={<AdminLoginSection />} />
                 <Route path="/admin/storage" element={<AdminStorageSection />} />
                 <Route path="/admin/ai" element={<AdminAiSection />} />
+                <Route path="/admin/knowledge-fields" element={<AdminKnowledgeFieldsSection />} />
                 <Route path="/admin/limits" element={<AdminLimitsSection />} />
               </Route>
               <Route path="/admin/*" element={<Navigate to="/admin/users" replace />} />

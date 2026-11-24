@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { KnowledgeEntry } from "@knotebook/shared";
-import { listKnowledgeInBlocks, readKnowledgeInfo } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, listKnowledgeInBlocks, readKnowledgeInfo } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { P, mountEditor, type AnyEditor, type PartialBlockLike } from "@/test/columns-fixtures";
 import { PHONE_QUERY } from "@/lib/layout-tiers";
@@ -12,7 +12,8 @@ import { useKnowledgeController, type KnowledgeController } from "./controller";
 import { KnowledgeForm } from "./KnowledgeForm";
 import { KnowledgeLayer } from "./KnowledgeLayer";
 import { KnowledgeRefSourceContext, type KnowledgeRefSource } from "./ref-source";
-import { stubMedia } from "./test-support";
+import type { KnowledgeFieldsValue } from "./fields-context";
+import { fieldView, stubMedia, withFields } from "./test-support";
 import "@/i18n/knowledge-strings";
 
 const NOTE = "11111111-2222-3333-4444-555555555555";
@@ -43,20 +44,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderForm(editor: AnyEditor, blockId: string, over: { close?: () => void; phone?: boolean } = {}) {
+function renderForm(editor: AnyEditor, blockId: string, over: { close?: () => void; phone?: boolean; fields?: Partial<KnowledgeFieldsValue> } = {}) {
   const close = over.close ?? vi.fn();
-  const view = render(<KnowledgeForm editor={editor} blockId={blockId} getEntries={() => entriesOf(editor)} noteId={NOTE} phone={over.phone ?? false} close={close} />);
+  const view = render(withFields(<KnowledgeForm editor={editor} blockId={blockId} getEntries={() => entriesOf(editor)} noteId={NOTE} phone={over.phone ?? false} close={close} />, over.fields));
   return { close, ...view };
 }
 const input = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
 const infoOf = (editor: AnyEditor, id: string) => readKnowledgeInfo(editor.getBlock(id)!.props as Record<string, unknown>);
 
 describe("KnowledgeForm layout", () => {
-  it("fields come in the order when to read, conclusion, basis, status, last verified, with Remove in the title row only for existing knowledge", () => {
+  it("fields come in the order status, when to read, conclusion, basis, last verified, with Remove in the title row only for existing knowledge", () => {
     const editor = mount([heading("Alpha", "a", K(1)), heading("Plain", "b")]);
     const { container, unmount } = renderForm(editor, "a");
     const order = [...container.querySelectorAll("label, [id$='status-label']")].map((el) => el.textContent);
-    expect(order).toEqual(["When to read", "Conclusion", "Basis", "Status", "Last verified"]);
+    expect(order).toEqual(["Status", "When to read", "Conclusion", "Basis", "Last verified"]);
     const titleRow = container.querySelector("h2")!.parentElement!;
     expect(within(titleRow).getByRole("button", { name: "Remove knowledge info" })).toBeInTheDocument();
     unmount();
@@ -75,12 +76,26 @@ describe("KnowledgeForm layout", () => {
     expect(document.body.textContent).not.toMatch(/\d+\s*\/\s*\d+/);
   });
 
+  it("the status control has Verified, Needs review and Outdated, and a legacy dated heading opens as Verified", () => {
+    const legacy = mount([heading("Alpha", "a", K(1, { knowledgeVerified: "2026-01-02" })), heading("Beta", "b", K(2)), heading("Plain", "c")]);
+    const radiosOf = () => within(screen.getByRole("radiogroup", { name: "Status" })).getAllByRole("radio");
+    const view = renderForm(legacy, "a");
+    expect(radiosOf().map((r) => r.textContent)).toEqual(["Verified", "Needs review", "Outdated"]);
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+    view.unmount();
+    const undated = renderForm(legacy, "b");
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    undated.unmount();
+    renderForm(legacy, "c");
+    expect(radiosOf().map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+  });
+
   it("status is three segmented buttons and the selected Needs review button is amber", () => {
     const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
     renderForm(editor, "a");
     const group = screen.getByRole("radiogroup", { name: "Status" });
     const radios = within(group).getAllByRole("radio");
-    expect(radios.map((r) => r.textContent)).toEqual(["Current", "Needs review", "Outdated"]);
+    expect(radios.map((r) => r.textContent)).toEqual(["Verified", "Needs review", "Outdated"]);
     expect(radios.map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
     expect(radios[1]!.className).toContain("amber");
     fireEvent.click(radios[0]!);
@@ -89,7 +104,7 @@ describe("KnowledgeForm layout", () => {
   });
 
   it("arrow keys move the status selection", () => {
-    const editor = mount([heading("Alpha", "a", K(1))]);
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "verified" }))]);
     renderForm(editor, "a");
     const radios = within(screen.getByRole("radiogroup")).getAllByRole("radio");
     radios[0]!.focus();
@@ -98,14 +113,108 @@ describe("KnowledgeForm layout", () => {
     expect(document.activeElement).toBe(radios[1]);
   });
 
-  it("Mark verified today sits next to the date and fills today's local date", () => {
-    const editor = mount([heading("Alpha", "a", K(1))]);
+  it("Today sits next to the date and fills today's local date without changing the status", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
     renderForm(editor, "a");
     const date = input("Last verified");
-    const button = screen.getByRole("button", { name: "Mark verified today" });
+    const button = screen.getByRole("button", { name: "Today" });
     expect(date.parentElement).toBe(button.parentElement);
     fireEvent.click(button);
     expect(date.value).toBe(todayLocalDate());
+    expect(screen.getByRole("radio", { name: "Needs review" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("choosing Verified fills today's date when the date field is on", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified", knowledgeVerified: "2025-01-02" }))]);
+    const { unmount } = renderForm(editor, "a");
+    fireEvent.click(screen.getByRole("radio", { name: "Verified" }));
+    expect(input("Last verified").value).toBe(todayLocalDate());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(infoOf(editor, "a")).toMatchObject({ status: "verified", verified: todayLocalDate() });
+    unmount();
+
+    const off = mount([heading("Beta", "b", K(2, { knowledgeStatus: "unverified", knowledgeVerified: "2025-01-02" }))]);
+    renderForm(off, "b", { fields: { view: fieldView({ off: ["verified"] }) } });
+    fireEvent.click(screen.getByRole("radio", { name: "Verified" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(infoOf(off, "b")).toMatchObject({ status: "verified", verified: "2025-01-02" });
+  });
+
+  it("arrow keys onto Verified fill today's date too", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified" }))]);
+    renderForm(editor, "a");
+    const radios = within(screen.getByRole("radiogroup")).getAllByRole("radio");
+    fireEvent.keyDown(radios[1]!, { key: "ArrowLeft" });
+    expect(radios[0]!.getAttribute("aria-checked")).toBe("true");
+    expect(input("Last verified").value).toBe(todayLocalDate());
+  });
+
+  it("hides turned-off fields", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "outdated" }))]);
+    const { container } = renderForm(editor, "a", { fields: { view: fieldView({ off: ["conclusion", "evidence", "verified", "superseded_by"] }) } });
+    expect(screen.queryByRole("textbox", { name: "Conclusion" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "When to read" })).toBeInTheDocument();
+    const order = [...container.querySelectorAll("label, span[id$='-label']")].map((el) => el.textContent);
+    expect(order).toEqual(["Status", "When to read"]);
+    expect(screen.queryByRole("combobox", { name: "Replaced by" })).toBeNull();
+  });
+
+  it("with when to read and conclusion off the checked status takes the first focus", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "verified" }))]);
+    const { container } = renderForm(editor, "a", { fields: { view: fieldView({ off: ["when", "conclusion"] }) } });
+    expect(container.querySelector("[data-kb-autofocus]")).toBe(screen.getByRole("radio", { name: "Verified" }));
+  });
+
+  it("the basis list offers renamed options and shows a stored hidden one as turned off", () => {
+    const sizers = (root: HTMLElement) => [...root.querySelectorAll("[data-select-sizer]")].map((n) => n.textContent);
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeEvidence: "inferred" })), heading("Beta", "b", K(2, { knowledgeEvidence: "tested" }))]);
+    const renamed = renderForm(editor, "b", { fields: { view: fieldView({ options: [{ key: "docs", name: "Spec" }] }) } });
+    expect(sizers(renamed.container)).toEqual(["Not filled", "Tested", "Spec", "Inferred"]);
+    renamed.unmount();
+
+    const hidden = renderForm(editor, "a", { fields: { view: fieldView({ options: [{ key: "inferred", enabled: false }] }) } });
+    const trigger = screen.getByRole("combobox", { name: "Basis" });
+    expect(trigger.querySelector("[data-select-text]")!.textContent).toBe("Inferred (turned off)");
+    expect(sizers(hidden.container)).toEqual(["Not filled", "Tested", "Documentation", "Inferred (turned off)"]);
+    fireEvent.change(input("When to read"), { target: { value: "edited" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(infoOf(editor, "a")).toMatchObject({ when: "edited", evidence: "inferred" });
+  });
+
+  it("an empty basis reads Not filled", () => {
+    const editor = mount([heading("Alpha", "a", K(1))]);
+    renderForm(editor, "a");
+    expect(screen.getByRole("combobox", { name: "Basis" }).querySelector("[data-select-text]")!.textContent).toBe("Not filled");
+  });
+
+  it("Save stays disabled while the fields are loading, and only the status shows", () => {
+    const editor = mount([heading("Alpha", "a", K(1))]);
+    const { close } = renderForm(editor, "a", { fields: { status: "loading" } });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    expect(screen.queryByLabelText("When to read")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
+    fireEvent.click(save);
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Outdated" }), { key: "Enter" });
+    expect(close).not.toHaveBeenCalled();
+    expect(infoOf(editor, "a")!.status).toBe("");
+  });
+
+  it("when the fields fail to load the form shows the builtin defaults and can save", () => {
+    const editor = mount([heading("Alpha", "a", K(1, { knowledgeEvidence: "docs", knowledgeVerified: "2026-01-02", knowledgeStatus: "verified" }))]);
+    const spy = vi.spyOn(editor, "updateBlock");
+    const { close } = renderForm(editor, "a", { fields: { status: "error", view: DEFAULT_KNOWLEDGE_FIELD_VIEW } });
+    for (const label of ["When to read", "Conclusion", "Basis", "Last verified"]) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
+    expect(screen.getByRole("combobox", { name: "Replaced by" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Verified" }));
+    fireEvent.change(input("Last verified"), { target: { value: "2026-01-02" } });
+    fireEvent.change(input("Conclusion"), { target: { value: "edited" } });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls.at(-1)![1]).toEqual({ props: { knowledgeConclusion: "edited" } });
   });
 
   it("the footer shows the Esc hint on the left and Cancel, Save on the right", () => {
@@ -123,7 +232,7 @@ describe("KnowledgeForm layout", () => {
     render(
       <Dialog open>
         <DialogContent>
-          <KnowledgeForm editor={editor} blockId="a" getEntries={() => entriesOf(editor)} noteId={NOTE} phone close={() => {}} />
+          {withFields(<KnowledgeForm editor={editor} blockId="a" getEntries={() => entriesOf(editor)} noteId={NOTE} phone close={() => {}} />)}
         </DialogContent>
       </Dialog>,
     );
@@ -153,18 +262,39 @@ describe("KnowledgeForm saving", () => {
     expect(infoOf(editor, "a")!.conclusion).toBe("conclusion 1");
   });
 
-  it("saving every field empty shows the error and writes nothing; Remove clears the knowledge", () => {
+  it("emptying every field of existing knowledge that needs review asks for a field instead of saving; Remove clears the knowledge", () => {
     const editor = mount([heading("Alpha", "a", K(1))]);
-    const { close } = renderForm(editor, "a");
+    const { close, unmount } = renderForm(editor, "a");
     fireEvent.change(input("When to read"), { target: { value: "" } });
-    fireEvent.change(input("Conclusion"), { target: { value: "" } });
+    fireEvent.change(input("Conclusion"), { target: { value: " " } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("alert").textContent).toBe("Fill in at least one field.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Fill in at least one field.");
     expect(close).not.toHaveBeenCalled();
-    expect(infoOf(editor, "a")).not.toBeNull();
+    expect(infoOf(editor, "a")).toMatchObject({ id: "k_00000001", when: "when 1", conclusion: "conclusion 1", status: "" });
+    fireEvent.change(input("Conclusion"), { target: { value: "kept" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    unmount();
+    const again = renderForm(editor, "a");
     fireEvent.click(screen.getByRole("button", { name: "Remove knowledge info" }));
     expect(infoOf(editor, "a")).toBeNull();
+    expect(again.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("emptying every field while choosing Verified or Outdated saves just the status", () => {
+    const editor = mount([heading("Alpha", "a", K(1)), heading("Beta", "b", K(2))]);
+    const { close, unmount } = renderForm(editor, "a");
+    fireEvent.change(input("When to read"), { target: { value: "" } });
+    fireEvent.change(input("Conclusion"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(close).toHaveBeenCalledTimes(1);
+    expect(infoOf(editor, "a")).toMatchObject({ id: "k_00000001", when: "", conclusion: "", status: "outdated" });
+    unmount();
+    const fresh = mount([heading("Plain", "c")]);
+    const created = renderForm(fresh, "c");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(created.close).toHaveBeenCalledTimes(1);
+    expect(infoOf(fresh, "c")).toMatchObject({ status: "unverified" });
   });
 
   it("a half-typed date refuses to save and says so instead of clearing the stored date", () => {
@@ -259,19 +389,26 @@ describe("KnowledgeForm replacement picker", () => {
   const three = () => mount([heading("Alpha", "a", K(1)), heading("Beta", "b", K(2)), heading("Gamma", "c", K(3))]);
   const pickOutdated = () => fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
 
-  it("choosing Outdated shows the replacement picker between status and last verified, and Save is refused until one is picked", () => {
+  it("choosing Outdated shows the optional replacement picker after last verified", () => {
     const editor = three();
-    const { close, container } = renderForm(editor, "a");
+    const { container } = renderForm(editor, "a");
     expect(screen.queryByRole("combobox", { name: "Replaced by" })).toBeNull();
     pickOutdated();
     const picker = screen.getByRole("combobox", { name: "Replaced by" });
     const names = [...container.querySelectorAll("label, span[id$='-label']")].map((el) => el.textContent);
-    expect(names.indexOf("Status")).toBeLessThan(names.indexOf("Replaced by"));
-    expect(names.indexOf("Replaced by")).toBeLessThan(names.indexOf("Last verified"));
+    expect(names.indexOf("Status")).toBeLessThan(names.indexOf("Last verified"));
+    expect(names.indexOf("Last verified")).toBeLessThan(names.indexOf("Replaced by"));
     expect(picker).toBeInTheDocument();
+    expect(container.querySelector("[data-kb-optional]")!.textContent).toBe("Optional");
+  });
+
+  it("Outdated can be saved with Replaced by left empty", () => {
+    const editor = three();
+    const { close } = renderForm(editor, "a");
+    pickOutdated();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByText("Choose the knowledge that replaces this one.")).toBeInTheDocument();
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(infoOf(editor, "a")).toMatchObject({ status: "outdated", supersededBy: "" });
   });
 
   it("the picker lists the note's other knowledge but not this one, and stores a bare id", async () => {
@@ -317,9 +454,9 @@ describe("KnowledgeForm replacement picker", () => {
   it("switching away from Outdated drops the replacement", () => {
     const editor = mount([heading("Alpha", "a", K(1, { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" })), heading("Beta", "b", K(2))]);
     renderForm(editor, "a");
-    fireEvent.click(screen.getByRole("radio", { name: "Current" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Verified" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(infoOf(editor, "a")).toMatchObject({ status: "", supersededBy: "" });
+    expect(infoOf(editor, "a")).toMatchObject({ status: "verified", supersededBy: "" });
   });
 });
 
@@ -331,7 +468,7 @@ describe("KnowledgeForm replacement picker with a ref source", () => {
     const close = vi.fn();
     render(
       <KnowledgeRefSourceContext.Provider value={source}>
-        <KnowledgeForm editor={editor} blockId="a" getEntries={() => entriesOf(editor)} noteId={NOTE} phone={false} close={close} />
+        {withFields(<KnowledgeForm editor={editor} blockId="a" getEntries={() => entriesOf(editor)} noteId={NOTE} phone={false} close={close} />)}
       </KnowledgeRefSourceContext.Provider>,
     );
     fireEvent.click(screen.getByRole("radio", { name: "Outdated" }));
@@ -442,21 +579,21 @@ describe("KnowledgeForm replacement picker with a ref source", () => {
 });
 
 let lastController: KnowledgeController | null = null;
-function Host({ editor, container, editable = true }: { editor: AnyEditor; container: HTMLElement; editable?: boolean }) {
+function Host({ editor, container, editable = true, fields }: { editor: AnyEditor; container: HTMLElement; editable?: boolean; fields?: Partial<KnowledgeFieldsValue> }) {
   const controller = useKnowledgeController();
   lastController = controller;
   const [entries, setEntries] = useState(() => entriesOf(editor));
   useEffect(() => editor.onChange(() => setEntries(entriesOf(editor))), [editor]);
-  return <KnowledgeLayer container={container} entries={entries} editable={editable} noteId={NOTE} controller={controller} editor={editor} />;
+  return withFields(<KnowledgeLayer container={container} entries={entries} editable={editable} noteId={NOTE} controller={controller} editor={editor} />, fields);
 }
 
 describe("edit surface in the layer", () => {
-  function layerWith(content: PartialBlockLike[], editable = true) {
+  function layerWith(content: PartialBlockLike[], editable = true, fields?: Partial<KnowledgeFieldsValue>) {
     const m = mountEditor(content, { collab: true });
     cleanups.push(m.destroy);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, 0, 600, 30));
     vi.spyOn(Range.prototype, "getClientRects").mockImplementation(() => [new DOMRect(0, 0, 200, 30)] as unknown as DOMRectList);
-    render(<Host editor={m.editor} container={m.container} editable={editable} />);
+    render(<Host editor={m.editor} container={m.container} editable={editable} fields={fields} />);
     return m.editor;
   }
   const openEdit = (id: string) => act(() => lastController!.open(id, "edit", null));
@@ -551,7 +688,20 @@ describe("edit surface in the layer", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: "Edit" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Mark as verified" }));
-    expect(infoOf(editor, "a")).toMatchObject({ verified: todayLocalDate(), status: "" });
+    expect(infoOf(editor, "a")).toMatchObject({ verified: todayLocalDate(), status: "verified" });
+  });
+
+  it.each([
+    ["the date field is off", { view: fieldView({ off: ["verified"] }) }],
+    ["the fields are still loading", { status: "loading" as const }],
+    ["the fields failed to load", { status: "error" as const }],
+  ])("Mark as verified changes only the status when %s", async (_name, fields) => {
+    stubMedia([PHONE_QUERY]);
+    const editor = layerWith([heading("Alpha", "a", K(1, { knowledgeStatus: "unverified", knowledgeVerified: "2025-01-02" })), P("para", "p")], true, fields);
+    act(() => lastController!.open("a", "view", null));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mark as verified" }));
+    expect(infoOf(editor, "a")).toMatchObject({ verified: "2025-01-02", status: "verified" });
   });
 
   it("the phone sheet has no actions for a viewer", async () => {

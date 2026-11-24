@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { YDOC_FRAGMENT, readKnowledgeInfo, topLevelBlocks, type KnowledgeDraft, type KnowledgeInfo } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, readKnowledgeInfo, topLevelBlocks, type KnowledgeDraft, type KnowledgeInfo } from "@knotebook/shared";
+import { fieldView } from "./test-support";
 import type { EditorRef } from "@/components/wikilink/menu";
 
 vi.mock("@/components/ui/toast", () => ({ toast: vi.fn() }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
 const { BlockNoteEditor: BNEditor } = await import("@blocknote/core");
-const { currentKnowledgeTarget, isKnowledgeEligible, markKnowledgeVerified, removeKnowledge, saveKnowledge, todayLocalDate } = await import("./commands");
+const { currentKnowledgeTarget, isClearedAll, isKnowledgeEligible, markKnowledgeVerified, removeKnowledge, saveKnowledge, todayLocalDate } = await import("./commands");
+const { draftOf } = await import("./form-state");
 
 type Ed = BlockNoteEditor<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- BlockNote's three generics
 const tick = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,16 +72,17 @@ function pair(blocks: unknown[]) {
   return { a, b, ea: open(a), eb: open(b) };
 }
 
-const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", status: "", supersededBy: "" };
+const EMPTY: KnowledgeDraft = { when: "", conclusion: "", evidence: "", verified: "", state: "needs-verify", supersededBy: "" };
 const draft = (over: Partial<KnowledgeDraft>): KnowledgeDraft => ({ ...EMPTY, ...over });
 const infoOf = (editor: Ed, id: string): KnowledgeInfo | null => readKnowledgeInfo(editor.getBlock(id)?.props as Record<string, unknown>);
 const K1 = { knowledgeId: "k_00000001", knowledgeWhen: "alice reads", knowledgeConclusion: "bob concludes" };
+const D = DEFAULT_KNOWLEDGE_FIELD_VIEW;
 
 describe("saveKnowledge", () => {
-  it("saving on a plain top-level heading creates knowledge with a new id and only the filled props", async () => {
+  it("saving on a plain top-level heading creates knowledge with a new id, the filled props and the chosen status", async () => {
     const doc = seeded([H("h1", "Title"), P("p1", "x")]);
     const editor = open(doc);
-    const result = saveKnowledge(editor, "h1", null, draft({ when: "alice" }), null);
+    const result = saveKnowledge(editor, "h1", null, draft({ when: "alice" }), null, D);
     await tick();
     expect(result.ok).toBe(true);
     const attrs = attrsOf(doc, "h1");
@@ -87,33 +90,76 @@ describe("saveKnowledge", () => {
     expect(attrs.knowledgeWhen).toBe("alice");
     expect(attrs.knowledgeConclusion ?? "").toBe("");
     expect(attrs.knowledgeEvidence ?? "").toBe("");
-    expect(attrs.knowledgeStatus ?? "").toBe("");
+    expect(attrs.knowledgeStatus).toBe("unverified");
   });
 
   it("a new id never collides with another heading's id", () => {
     const editor = open(seeded([H("h1", "A", K1), H("h2", "B")]));
-    const result = saveKnowledge(editor, "h2", null, draft({ when: "x" }), null);
+    const result = saveKnowledge(editor, "h2", null, draft({ when: "x" }), null, D);
     expect(result.ok && result.knowledgeId).not.toBe("k_00000001");
   });
 
-  it("saving with every field empty writes nothing and reports empty", async () => {
+  it("saving with every field empty creates knowledge with just an id and a status", async () => {
     const doc = seeded([H("h1", "Title")]);
     const editor = open(doc);
-    const update = vi.fn();
-    doc.on("update", update);
-    expect(saveKnowledge(editor, "h1", null, EMPTY, null)).toEqual({ ok: false, reason: "empty" });
+    const result = saveKnowledge(editor, "h1", null, { ...EMPTY, state: "obsolete" }, null, D);
     await tick();
-    expect(update).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(attrsOf(doc, "h1")).toMatchObject({ knowledgeStatus: "outdated" });
+    expect(attrsOf(doc, "h1").knowledgeSupersededBy ?? "").toBe("");
+  });
+
+  it("saving a legacy verified heading unchanged writes nothing", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "", knowledgeVerified: "2026-01-02" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    expect(saveKnowledge(editor, "h1", base, draftOf(base), null, D)).toEqual({ ok: true, knowledgeId: "k_00000001" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("changing one field of a legacy heading writes the explicit status with it", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeVerified: "2026-01-02" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    saveKnowledge(editor, "h1", base, { ...draftOf(base), conclusion: "c" }, null, D);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeConclusion: "c", knowledgeStatus: "verified" } });
+  });
+
+  it("clearing the date while the form shows verified keeps it verified", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeVerified: "2026-01-02" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    saveKnowledge(editor, "h1", base, { ...draftOf(base), verified: "" }, null, D);
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeVerified: "", knowledgeStatus: "verified" } });
+  });
+
+  it("a status a collaborator set while the form was open survives saving another field", async () => {
+    const { a, b, ea, eb } = pair([H("h1", "Title", { ...K1, knowledgeStatus: "verified" })]);
+    const base = infoOf(ea, "h1")!;
+    eb.updateBlock("h1", { props: { knowledgeStatus: "outdated" } } as never);
+    await tick();
+    saveKnowledge(ea, "h1", base, { ...draftOf(base), conclusion: "edited by a" }, null, D);
+    await tick();
+    for (const doc of [a, b]) expect(attrsOf(doc, "h1")).toMatchObject({ knowledgeConclusion: "edited by a", knowledgeStatus: "outdated" });
+  });
+
+  it("changing only the status writes only the status", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "verified" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    saveKnowledge(editor, "h1", base, { ...draftOf(base), state: "needs-verify" }, null, D);
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeStatus: "unverified" } });
   });
 
   it("saving writes only the props that differ from the snapshot taken when the form opened", () => {
     const editor = open(seeded([H("h1", "Title", K1)]));
     const base = infoOf(editor, "h1")!;
     const spy = vi.spyOn(editor, "updateBlock");
-    const result = saveKnowledge(editor, "h1", base, draft({ when: base.when, conclusion: "new conclusion" }), null);
+    const result = saveKnowledge(editor, "h1", base, draft({ when: base.when, conclusion: "new conclusion" }), null, D);
     expect(result).toEqual({ ok: true, knowledgeId: "k_00000001" });
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeConclusion: "new conclusion" } });
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeConclusion: "new conclusion", knowledgeStatus: "unverified" } });
   });
 
   it("a field a collaborator changed after the form opened keeps their value when the form saves another field", async () => {
@@ -121,7 +167,7 @@ describe("saveKnowledge", () => {
     const base = infoOf(ea, "h1")!;
     eb.updateBlock("h1", { props: { knowledgeConclusion: "from b" } } as never);
     await tick();
-    saveKnowledge(ea, "h1", base, draft({ when: "from a", conclusion: base.conclusion }), null);
+    saveKnowledge(ea, "h1", base, draft({ when: "from a", conclusion: base.conclusion }), null, D);
     await tick();
     expect(attrsOf(a, "h1").knowledgeWhen).toBe("from a");
     expect(attrsOf(a, "h1").knowledgeConclusion).toBe("from b");
@@ -130,8 +176,8 @@ describe("saveKnowledge", () => {
   it("two editors changing different fields at the same time keep both changes", async () => {
     const { a, b, ea, eb } = pair([H("h1", "Title", K1)]);
     const base = infoOf(ea, "h1")!;
-    saveKnowledge(ea, "h1", base, draft({ when: "a when", conclusion: base.conclusion }), null);
-    saveKnowledge(eb, "h1", base, draft({ when: base.when, conclusion: "b conclusion" }), null);
+    saveKnowledge(ea, "h1", base, draft({ when: "a when", conclusion: base.conclusion }), null, D);
+    saveKnowledge(eb, "h1", base, draft({ when: base.when, conclusion: "b conclusion" }), null, D);
     await tick();
     for (const doc of [a, b]) {
       expect(attrsOf(doc, "h1").knowledgeWhen).toBe("a when");
@@ -141,7 +187,7 @@ describe("saveKnowledge", () => {
 
   it("pasted line breaks are saved as spaces and the text is trimmed", () => {
     const editor = open(seeded([H("h1", "Title")]));
-    saveKnowledge(editor, "h1", null, draft({ when: "  first\r\nsecond\nthird ", conclusion: "x" }), null);
+    saveKnowledge(editor, "h1", null, draft({ when: "  first\r\nsecond\nthird ", conclusion: "x" }), null, D);
     expect(infoOf(editor, "h1")!.when).toBe("first second third");
   });
 
@@ -149,7 +195,7 @@ describe("saveKnowledge", () => {
     const doc = seeded([H("h1", "Title", K1)]);
     const editor = open(doc);
     const base = infoOf(editor, "h1")!;
-    saveKnowledge(editor, "h1", base, draft({ when: "w2", conclusion: "c2", evidence: "tested", verified: "2026-01-02", status: "unverified" }), null);
+    saveKnowledge(editor, "h1", base, draft({ when: "w2", conclusion: "c2", evidence: "tested", verified: "2026-01-02", state: "needs-verify" }), null, D);
     await tick();
     expect(infoOf(editor, "h1")).toMatchObject({ when: "w2", conclusion: "c2", evidence: "tested", verified: "2026-01-02", status: "unverified" });
     editor.undo();
@@ -164,8 +210,8 @@ describe("saveKnowledge", () => {
     editor.removeBlocks(["h3"]);
     const update = vi.fn();
     doc.on("update", update);
-    expect(saveKnowledge(editor, "h1", null, draft({ when: "x" }), null)).toEqual({ ok: false, reason: "notEligible" });
-    expect(saveKnowledge(editor, "h3", null, draft({ when: "x" }), null)).toEqual({ ok: false, reason: "notEligible" });
+    expect(saveKnowledge(editor, "h1", null, draft({ when: "x" }), null, D)).toEqual({ ok: false, reason: "notEligible" });
+    expect(saveKnowledge(editor, "h3", null, draft({ when: "x" }), null, D)).toEqual({ ok: false, reason: "notEligible" });
     await tick();
     expect(update).not.toHaveBeenCalled();
   });
@@ -177,13 +223,13 @@ describe("saveKnowledge", () => {
     editor.nestBlock();
     await tick();
     expect(isKnowledgeEligible(editor, "c1")).toBe(false);
-    expect(saveKnowledge(editor, "c1", null, draft({ when: "x" }), null)).toEqual({ ok: false, reason: "notEligible" });
+    expect(saveKnowledge(editor, "c1", null, draft({ when: "x" }), null, D)).toEqual({ ok: false, reason: "notEligible" });
   });
 
   it("a read-only editor refuses every write", () => {
     const editor = open(seeded([H("h1", "A", K1)]), false);
-    expect(saveKnowledge(editor, "h1", null, draft({ when: "x" }), null)).toEqual({ ok: false, reason: "notEligible" });
-    expect(markKnowledgeVerified(editor, "h1")).toBe(false);
+    expect(saveKnowledge(editor, "h1", null, draft({ when: "x" }), null, D)).toEqual({ ok: false, reason: "notEligible" });
+    expect(markKnowledgeVerified(editor, "h1", D)).toBe(false);
     expect(removeKnowledge(editor, "h1")).toBe(false);
   });
 
@@ -192,7 +238,7 @@ describe("saveKnowledge", () => {
     const base = infoOf(ea, "h1")!;
     removeKnowledge(eb, "h1");
     await tick();
-    const result = saveKnowledge(ea, "h1", base, draft({ when: base.when, conclusion: base.conclusion, evidence: "docs" }), null);
+    const result = saveKnowledge(ea, "h1", base, draft({ when: base.when, conclusion: base.conclusion, evidence: "docs" }), null, D);
     await tick();
     expect(result.ok).toBe(true);
     expect(attrsOf(a, "h1")).toMatchObject({ knowledgeWhen: "alice reads", knowledgeConclusion: "bob concludes", knowledgeEvidence: "docs" });
@@ -205,7 +251,7 @@ describe("saveKnowledge", () => {
     removeKnowledge(eb, "h1");
     eb.updateBlock("h2", { props: { knowledgeId: "k_00000001", knowledgeWhen: "taken" } } as never);
     await tick();
-    const result = saveKnowledge(ea, "h1", base, draft({ when: base.when }), null);
+    const result = saveKnowledge(ea, "h1", base, draft({ when: base.when }), null, D);
     await tick();
     expect(result.ok).toBe(true);
     const id = attrsOf(a, "h1").knowledgeId as string;
@@ -213,27 +259,101 @@ describe("saveKnowledge", () => {
     expect(id).not.toBe("k_00000001");
   });
 
-  it("rejects an outdated draft without a replacement and a replacement that points at itself", () => {
+  it("saves an outdated draft without a replacement and rejects a replacement that points at itself", () => {
     const editor = open(seeded([H("h1", "A", K1)]));
     const base = infoOf(editor, "h1")!;
-    expect(saveKnowledge(editor, "h1", base, draft({ when: "x", status: "outdated" }), null)).toEqual({ ok: false, reason: "supersededRequired" });
-    expect(saveKnowledge(editor, "h1", base, draft({ when: "x", status: "outdated", supersededBy: "k_00000001" }), null)).toEqual({ ok: false, reason: "supersededSelf" });
+    expect(saveKnowledge(editor, "h1", base, draft({ when: "x", state: "obsolete", supersededBy: "k_00000001" }), null, D)).toEqual({ ok: false, reason: "supersededSelf" });
+    expect(saveKnowledge(editor, "h1", base, draft({ when: "x", state: "obsolete" }), null, D)).toEqual({ ok: true, knowledgeId: "k_00000001" });
+    expect(infoOf(editor, "h1")).toMatchObject({ when: "x", status: "outdated", supersededBy: "" });
+  });
+
+  it("saving never writes a turned-off field", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeEvidence: "docs", knowledgeVerified: "2026-01-02", knowledgeStatus: "verified" })]));
+    const base = infoOf(editor, "h1")!;
+    const fields = fieldView({ off: ["conclusion", "evidence", "verified"] });
+    const spy = vi.spyOn(editor, "updateBlock");
+    const edited = draft({ when: "new when", conclusion: "", evidence: "tested", verified: "", state: "verified" });
+    expect(saveKnowledge(editor, "h1", base, edited, null, fields, new Set(["when", "conclusion", "evidence", "verified"]))).toEqual({ ok: true, knowledgeId: "k_00000001" });
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeWhen: "new when" } });
+    expect(infoOf(editor, "h1")).toMatchObject({ when: "new when", conclusion: "bob concludes", evidence: "docs", verified: "2026-01-02" });
+  });
+
+  it("restoring knowledge a collaborator removed writes only the fields that are on", async () => {
+    const { a, ea, eb } = pair([H("h1", "Title", { ...K1, knowledgeEvidence: "docs" })]);
+    const base = infoOf(ea, "h1")!;
+    removeKnowledge(eb, "h1");
+    await tick();
+    saveKnowledge(ea, "h1", base, draftOf(base), null, fieldView({ off: ["conclusion", "evidence"] }));
+    await tick();
+    expect(attrsOf(a, "h1")).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "alice reads" });
+    expect(attrsOf(a, "h1").knowledgeConclusion ?? "").toBe("");
+    expect(attrsOf(a, "h1").knowledgeEvidence ?? "").toBe("");
+  });
+
+  it("a stored value of a turned-off field that would fail the checks does not block saving", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "outdated", knowledgeSupersededBy: "not a ref", knowledgeConclusion: "c".repeat(400) })]));
+    const base = infoOf(editor, "h1")!;
+    const result = saveKnowledge(editor, "h1", base, { ...draftOf(base), when: "edited" }, null, fieldView({ off: ["conclusion", "superseded_by"] }));
+    expect(result).toEqual({ ok: true, knowledgeId: "k_00000001" });
+    expect(infoOf(editor, "h1")).toMatchObject({ when: "edited", supersededBy: "not a ref", conclusion: "c".repeat(400) });
+  });
+
+  it("emptying every shown field of existing knowledge while it needs review is refused as clearedAll and writes nothing", () => {
+    const editor = open(seeded([H("h1", "Title", { ...K1, knowledgeStatus: "unverified" })]));
+    const base = infoOf(editor, "h1")!;
+    const spy = vi.spyOn(editor, "updateBlock");
+    expect(saveKnowledge(editor, "h1", base, draft({}), null, D)).toEqual({ ok: false, reason: "clearedAll" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("isClearedAll", () => {
+  const filled: KnowledgeInfo = { id: "k_00000001", when: "w", conclusion: "c", evidence: "", verified: "", status: "unverified", supersededBy: "" };
+  const statusOnly: KnowledgeInfo = { ...filled, when: "", conclusion: "" };
+  it.each([
+    ["existing knowledge emptied with needs verify", filled, draft({}), true],
+    ["existing knowledge emptied but marked verified", filled, draft({ state: "verified" }), false],
+    ["new knowledge with nothing filled", null, draft({}), false],
+    ["existing knowledge that had only a status", statusOnly, draft({}), false],
+  ] as const)("isClearedAll: %s → %s", (_name, base, edited, expected) => {
+    expect(isClearedAll(base, edited, D)).toBe(expected);
+  });
+
+  it("looks only at the fields that are on", () => {
+    const fields = fieldView({ off: ["when", "conclusion"] });
+    expect(isClearedAll(filled, draft({}), fields)).toBe(false);
+    expect(isClearedAll({ ...filled, evidence: "docs" }, draft({ when: "w", conclusion: "c" }), fields)).toBe(true);
+  });
+
+  it("whitespace counts as empty", () => {
+    expect(isClearedAll(filled, draft({ when: "  ", verified: " " }), D)).toBe(true);
   });
 });
 
 describe("markKnowledgeVerified", () => {
-  it("sets today and turns needs review back to current, and refuses outdated knowledge", () => {
+  it("marking verified writes the verified status and today's date, and refuses outdated knowledge", () => {
     const editor = open(seeded([H("h1", "A", { ...K1, knowledgeStatus: "unverified" }), H("h2", "B", { knowledgeId: "k_00000002", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000001" }), P("p1", "x")]));
-    expect(markKnowledgeVerified(editor, "h1", new Date(2026, 0, 31, 23, 59))).toBe(true);
-    expect(infoOf(editor, "h1")).toMatchObject({ verified: "2026-01-31", status: "" });
-    expect(markKnowledgeVerified(editor, "h2")).toBe(false);
+    expect(markKnowledgeVerified(editor, "h1", D, new Date(2026, 0, 31, 23, 59))).toBe(true);
+    expect(infoOf(editor, "h1")).toMatchObject({ verified: "2026-01-31", status: "verified" });
+    expect(markKnowledgeVerified(editor, "h2", D)).toBe(false);
     expect(infoOf(editor, "h2")!.verified).toBe("");
-    expect(markKnowledgeVerified(editor, "p1")).toBe(false);
+    expect(markKnowledgeVerified(editor, "p1", D)).toBe(false);
   });
 
   it("refuses a heading that is not knowledge", () => {
     const editor = open(seeded([H("h1", "A")]));
-    expect(markKnowledgeVerified(editor, "h1")).toBe(false);
+    expect(markKnowledgeVerified(editor, "h1", D)).toBe(false);
+  });
+
+  it("marking verified sets only the status when the date field is off", () => {
+    const editor = open(seeded([H("h1", "A", { ...K1, knowledgeStatus: "unverified", knowledgeVerified: "2025-05-05" })]));
+    const spy = vi.spyOn(editor, "updateBlock");
+    const now = new Date(2026, 10, 24, 9, 0);
+    expect(markKnowledgeVerified(editor, "h1", fieldView({ off: ["verified"] }), now)).toBe(true);
+    expect(spy.mock.calls[0]![1]).toEqual({ props: { knowledgeStatus: "verified" } });
+    expect(infoOf(editor, "h1")).toMatchObject({ status: "verified", verified: "2025-05-05" });
+    expect(markKnowledgeVerified(editor, "h1", D, now)).toBe(true);
+    expect(spy.mock.calls[1]![1]).toEqual({ props: { knowledgeStatus: "verified", knowledgeVerified: "2026-11-24" } });
   });
 });
 

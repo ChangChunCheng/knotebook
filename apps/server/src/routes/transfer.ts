@@ -14,6 +14,7 @@ import { TRANSFER_WRITE_BODY_LIMIT } from "../http/body-limits.js";
 import { sendError, sendNoteTooLarge } from "../http/errors.js";
 import { NOTE_WRITE_TOO_COMPLEX_MESSAGE, parseErrorMessage, sendDocReadError, sendParserBusy } from "../http/parse-errors.js";
 import { retryAfterSeconds, type FixedWindowLimiter } from "../http/rate-limit.js";
+import { loadKnowledgeFieldView } from "../knowledge/fields/queries.js";
 import type { EditingRuntime } from "../notes/editing/runtime.js";
 import { resolveNoteAccess } from "../notes/service.js";
 import type { ErrorCode, KnowledgeProblem } from "@knotebook/shared";
@@ -209,7 +210,7 @@ export function transferRoutes(deps: TransferRouteDeps) {
       }
       let nf: Awaited<ReturnType<typeof buildNoteFile>>;
       try {
-        nf = await buildNoteFile(fileDeps, userId, row, { forceUnmergeable: deps.testHooks?.forceUnmergeable?.(row.id) === true });
+        nf = await buildNoteFile(fileDeps, userId, row, await loadKnowledgeFieldView(deps.db, { groupId: row.groupId }), { forceUnmergeable: deps.testHooks?.forceUnmergeable?.(row.id) === true });
       } catch (err) {
         const sent = sendDocReadError(reply, err);
         if (sent) return sent;

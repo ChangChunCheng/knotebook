@@ -1,4 +1,4 @@
-// A file sent back goes through the same knowledge checks as every other write: a bad value is a 400 and nothing is written, and an id left out is never stored as a placeholder.
+// A file sent back goes through the same knowledge checks as every other write: a malformed id is a 400 and nothing is written, a bad value is not stored, and an id left out is never stored as a placeholder.
 import { describe, expect, it } from "vitest";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { knowledgeInfoById } from "../src/notes/editing/knowledge-write.js";
@@ -21,7 +21,7 @@ async function setup(opts: Parameters<typeof buildCollabTestApp>[0] = {}) {
   return { ctx, bulk, note, infos };
 }
 
-describe("a new-note file with a bad knowledge value", () => {
+describe("a new-note file with a malformed knowledge id", () => {
   it("is refused before any note row is created: the step right before the insert is never reached", async () => {
     let reached = 0;
     const s = await setup({ editingTestHooks: { beforeCreateFromFile: async () => { reached += 1; } } });
@@ -30,7 +30,7 @@ knotebook: 1
 title: "Fresh"
 ---
 ## D1
-${comment(["when: w", "status: outdated"])}
+${comment(["id: K_bad", "when: w"])}
 
 x
 `);
@@ -50,19 +50,57 @@ x
     expect(reached).toBe(1);
     await s.ctx.destroy();
   });
+
+  it("a bad value does not stop the note from being created; that value is not stored", async () => {
+    const s = await setup();
+    const r = await bulkPut(s.ctx.app, s.bulk.token, `---
+knotebook: 1
+title: "Loose"
+---
+## D1
+${comment(["when: w", "evidence: bogus"])}
+
+x
+`);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(r.json().knowledge.ignored).toEqual([{ heading: "D1", key: "evidence", value: "bogus", reason: "not_an_option" }]);
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, r.json().id as string)).doc;
+    expect([...knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)).values()]).toMatchObject([{ when: "w", evidence: "" }]);
+    await s.ctx.destroy();
+  });
 });
 
 describe("file write-back and knowledge comments", () => {
-  it("a comment that says outdated without superseded_by is 400 invalid_knowledge naming the heading, and nothing is written", async () => {
+  it("a comment whose superseded_by isn't a reference is written with no replacement", async () => {
     const s = await setup();
     const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
-    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated"])}\n\nx\n`));
+    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n`));
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json().knowledge.ignored).toEqual([{ heading: "Old way", key: "superseded_by", value: "nope", reason: "bad_ref" }]);
+    expect([...(await s.infos()).values()]).toMatchObject([{ when: "w", status: "outdated", supersededBy: "" }]);
+    await s.ctx.destroy();
+  });
+
+  it("a comment with a malformed id is 400 invalid_knowledge naming the heading, and nothing is written", async () => {
+    const s = await setup();
+    const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["id: K_bad", "when: w"])}\n\nx\n`));
     expect(put.statusCode, put.body).toBe(400);
     expect(put.json().error).toEqual({
       code: "invalid_knowledge",
-      message: 'The knowledge comment under the heading "Old way" says outdated without a `superseded_by`. Nothing was written.',
+      message: "The knowledge comment under the heading \"Old way\" has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge). Nothing was written.",
     });
     expect((await s.infos()).size).toBe(0);
+    await s.ctx.destroy();
+  });
+
+  it("a comment that says outdated without superseded_by is written with no replacement", async () => {
+    const s = await setup();
+    const dl = await downloadNote(s.ctx.app, s.bulk.token, s.note.id);
+    const put = await bulkPut(s.ctx.app, s.bulk.token, editBody(dl.text, b => `${b}\n\n## Old way\n${comment(["when: w", "status: outdated"])}\n\nx\n`));
+    expect(put.statusCode, put.body).toBe(200);
+    const [info] = [...(await s.infos()).values()];
+    expect(info).toMatchObject({ when: "w", status: "outdated", supersededBy: "" });
     await s.ctx.destroy();
   });
 

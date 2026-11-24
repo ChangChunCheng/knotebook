@@ -2,10 +2,11 @@
 import { eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as Y from "yjs";
-import { MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
+import { MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type KnowledgeFieldView, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
 import type { CollabServer } from "../../collab/server.js";
 import type { Db } from "../../db/index.js";
 import { noteStates, notes, users } from "../../db/schema.js";
+import { knowledgeFieldViewForNote } from "../../knowledge/fields/queries.js";
 import { visibleTitlesByIds } from "./candidates.js";
 import { outlineOf } from "./fingerprint.js";
 import { DOC_TOO_COMPLEX, type AskFn, type TitlePairs } from "./doc-jobs.js";
@@ -70,18 +71,18 @@ export async function linkTitlesFor(db: Db, viewerId: string, doc: Y.Doc): Promi
 }
 
 /** Single place that builds markdown for MCP reads and file export, so they are byte-identical. Wikilinks export as links using label, else the current title from `titles` (keys lowercase), else snapshotTitle. Pure and DB-free (the caller holds the lease). */
-export function toNoteMarkdown(editor: EditorSession["editor"], blocks: EditorSession["editor"]["document"], titles: ReadonlyMap<string, string>): string {
-  return blocksToNoteMarkdown(editor, wikilinksToLinks(blocks, id => titles.get(id.toLowerCase())), { knowledge: true });
+export function toNoteMarkdown(editor: EditorSession["editor"], blocks: EditorSession["editor"]["document"], titles: ReadonlyMap<string, string>, fields: KnowledgeFieldView): string {
+  return blocksToNoteMarkdown(editor, wikilinksToLinks(blocks, id => titles.get(id.toLowerCase())), { knowledge: { fields } });
 }
 
-async function exportMarkdown(runtime: EditingRuntime, doc: Y.Doc, ids: Set<string> | undefined, titles: ReadonlyMap<string, string>, onShown?: (shown: ShownLinks) => void): Promise<string> {
+async function exportMarkdown(runtime: EditingRuntime, doc: Y.Doc, ids: Set<string> | undefined, titles: ReadonlyMap<string, string>, fields: KnowledgeFieldView, onShown?: (shown: ShownLinks) => void): Promise<string> {
   const s = await EditorSession.open(runtime, doc);
   let shown: ShownLinks | undefined;
   let markdown: string;
   try {
     const blocks = ids ? s.editor.document.filter(b => ids.has(b.id)) : s.editor.document;
     if (onShown) shown = shownLinkTextsOf(blocks, titles);
-    markdown = toNoteMarkdown(s.editor, blocks, titles);
+    markdown = toNoteMarkdown(s.editor, blocks, titles, fields);
   } finally {
     s.close();
   }
@@ -93,16 +94,17 @@ async function exportMarkdown(runtime: EditingRuntime, doc: Y.Doc, ids: Set<stri
 export async function readNoteContentFromDoc(
   runtime: EditingRuntime,
   doc: Y.Doc,
-  section?: string,
-  titles: ReadonlyMap<string, string> = new Map(),
-  onShown?: (shown: ShownLinks) => void
+  section: string | undefined,
+  titles: ReadonlyMap<string, string>,
+  onShown: ((shown: ShownLinks) => void) | undefined,
+  fields: KnowledgeFieldView,
 ): Promise<Omit<NoteContentDto, "lastEdited"> | Omit<NoteSectionDto, "lastEdited"> | "section_not_found"> {
   const { outline, whole } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
   const target = section === undefined ? undefined : outline.find(o => o.sectionId === section);
   if (section !== undefined && !target) return "section_not_found";
   // A truly empty doc exports "" without mounting (mount would add an empty paragraph → "\n") and keeps the common cold read off jsdom. The same holds for a zero-block `_top` section.
   const blockIds = target ? target.blockIds : outline.flatMap(o => o.blockIds);
-  const markdown = blockIds.length === 0 ? "" : await exportMarkdown(runtime, doc, target && new Set(blockIds), titles, onShown);
+  const markdown = blockIds.length === 0 ? "" : await exportMarkdown(runtime, doc, target && new Set(blockIds), titles, fields, onShown);
   if (target) {
     const { blockIds: _ignored, sectionId, ...entry } = target;
     return { section: { id: sectionId, ...entry, markdown } };
@@ -111,9 +113,10 @@ export async function readNoteContentFromDoc(
 }
 
 export async function readNoteContent(deps: ReadDeps, runtime: EditingRuntime, noteId: string, viewerId: string, section?: string) {
+  const fields = await knowledgeFieldViewForNote(deps.db, noteId);
   const { state } = await loadNoteState(deps, noteId);
   const memo = deps.shownLinks;
-  const r = await runtime.runDoc(viewerId, { kind: "read", state, ...(section !== undefined ? { section } : {}), wantShown: memo !== undefined }, { ask: titlesAsk(deps.db, viewerId) });
+  const r = await runtime.runDoc(viewerId, { kind: "read", state, ...(section !== undefined ? { section } : {}), wantShown: memo !== undefined, fields }, { ask: titlesAsk(deps.db, viewerId) });
   if (r === DOC_TOO_COMPLEX) throw new NoteReadTooComplexError();
   if (memo && r.shown) memo.record(viewerId, r.shown);
   return r.result;

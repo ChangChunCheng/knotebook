@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
 import i18n from "@/i18n";
 import "@/i18n/knowledge-strings";
 import { KnowledgeCard, type KnowledgeCardProps } from "./KnowledgeCard";
-import { knowledgeEntries, type KnowledgeFixture } from "./test-support";
+import type { KnowledgeFieldsValue } from "./fields-context";
+import { fieldView, knowledgeEntries, withFields, type KnowledgeFixture } from "./test-support";
 
-function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }) {
+function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }, fields?: Partial<KnowledgeFieldsValue>) {
   const props: KnowledgeCardProps = {
     parent: null,
     outdatedAncestor: null,
@@ -18,7 +19,7 @@ function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }
     onJump: vi.fn(),
     ...overrides,
   };
-  return { props, ...render(<KnowledgeCard {...props} />) };
+  return { props, ...render(withFields(<KnowledgeCard {...props} />, fields)) };
 }
 
 const one = (props: Record<string, string> = {}, extra: Partial<KnowledgeFixture> = {}) =>
@@ -29,18 +30,74 @@ beforeEach(async () => {
 });
 
 describe("KnowledgeCard", () => {
-  it("shows when to read and conclusion, then basis, then last verified, with Unconfirmed and Not verified for empty values", () => {
+  it("shows when to read and conclusion, then basis, then last verified, with Not filled for empty values", () => {
     const { container } = card({ entry: one() });
     const labels = [...container.querySelectorAll("dt")].map((n) => n.textContent);
     expect(labels).toEqual(["When to read", "Conclusion", "Basis", "Last verified"]);
     const values = [...container.querySelectorAll("dd")].map((n) => n.textContent);
-    expect(values).toEqual(["when alice", "conclusion bob", "Unconfirmed", "Not verified"]);
+    expect(values).toEqual(["when alice", "conclusion bob", "Not filled", "Not filled"]);
   });
 
-  it("shows the basis and the date when they are set, and a dash for an empty when or conclusion", () => {
+  it("shows the basis and the date when they are set, and Not filled for an empty when or conclusion", () => {
     const { container } = card({ entry: one({ knowledgeEvidence: "tested", knowledgeVerified: "2026-10-30", knowledgeWhen: "", knowledgeConclusion: "" }) });
     const values = [...container.querySelectorAll("dd")].map((n) => n.textContent);
-    expect(values).toEqual(["—", "—", "Tested", "2026-10-30"]);
+    expect(values).toEqual(["Not filled", "Not filled", "Tested", "2026-10-30"]);
+  });
+
+  it("empty fields read Not filled and turned-off fields are not shown", () => {
+    const { container } = card({ entry: one({ knowledgeConclusion: "", knowledgeVerified: "2026-10-30" }) }, { view: fieldView({ off: ["when", "verified"] }) });
+    expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["Conclusion", "Basis"]);
+    expect([...container.querySelectorAll("dd")].map((n) => n.textContent)).toEqual(["Not filled", "Not filled"]);
+    expect(container.textContent).not.toContain("2026-10-30");
+  });
+
+  it("the hover card puts a divider only between groups that are shown", () => {
+    const dividers = (root: HTMLElement) => root.querySelectorAll("dl > [role='presentation']").length;
+    const all = card({ entry: one() });
+    expect(dividers(all.container)).toBe(2);
+    all.unmount();
+    const some = card({ entry: one() }, { view: fieldView({ off: ["evidence", "verified"] }) });
+    expect(dividers(some.container)).toBe(0);
+    some.unmount();
+    const none = card({ entry: one() }, { view: fieldView({ off: ["when", "conclusion", "evidence", "verified"] }) });
+    expect(none.container.querySelector("dl")).toBeNull();
+  });
+
+  it("the basis shows a renamed option's name and a hidden one as turned off", () => {
+    const view = card({ entry: one({ knowledgeEvidence: "docs" }) }, { view: fieldView({ options: [{ key: "docs", name: "Spec" }] }) });
+    expect([...view.container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("Spec");
+    view.unmount();
+    const hidden = card({ entry: one({ knowledgeEvidence: "inferred" }) }, { view: fieldView({ options: [{ key: "inferred", enabled: false }] }) });
+    expect([...hidden.container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("Inferred (turned off)");
+  });
+
+  it("while the fields load only the status banner shows", () => {
+    const entry = one({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002", knowledgeVerified: "2026-10-30" });
+    const { container } = card({ entry, replacement: { state: "found", title: "Beta", open: vi.fn() } }, { status: "loading" });
+    expect(container.querySelector("dl")).toBeNull();
+    expect(container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
+  });
+
+  it("without a provider the card shows only the status", () => {
+    const { container } = render(
+      <KnowledgeCard entry={one({ knowledgeStatus: "unverified", knowledgeVerified: "2026-10-30" })} parent={null} outdatedAncestor={null} summary={null} replacement={null} variant="hover" canEdit={false} onEdit={vi.fn()} onJump={vi.fn()} />,
+    );
+    expect(container.querySelector("dl")).toBeNull();
+    expect(container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+  });
+
+  it("when the fields fail to load every builtin field shows", () => {
+    const { container } = card({ entry: one() }, { status: "error", view: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["When to read", "Conclusion", "Basis", "Last verified"]);
+  });
+
+  it("the banners leave out the date and the replacement when those fields are off", () => {
+    const review = card({ entry: one({ knowledgeStatus: "unverified", knowledgeVerified: "2026-10-30" }) }, { view: fieldView({ off: ["verified"] }) });
+    expect(review.container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+    review.unmount();
+    const entry = one({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" });
+    const outdated = card({ entry, replacement: { state: "found", title: "Beta", open: vi.fn() } }, { view: fieldView({ off: ["superseded_by"] }) });
+    expect(outdated.container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
   });
 
   it("needs review shows the amber banner with the last verified date, or the no-date wording", () => {
@@ -50,6 +107,22 @@ describe("KnowledgeCard", () => {
     view.unmount();
     card({ entry: one({ knowledgeStatus: "unverified" }) });
     expect(screen.getByText("Needs review · worth checking again")).toBeInTheDocument();
+  });
+
+  it("a legacy heading without a date shows the needs review banner and outdated without a replacement says only Outdated", () => {
+    const legacy = card({ entry: one() });
+    expect(legacy.container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+    legacy.unmount();
+    const dated = card({ entry: one({ knowledgeVerified: "2026-10-30" }) });
+    expect(dated.container.querySelector("[data-kb-knowledge-banner]")).toBeNull();
+    dated.unmount();
+    const outdated = card({ entry: one({ knowledgeStatus: "outdated" }) });
+    expect(outdated.container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
+  });
+
+  it("a basis that is not a defined option shows its key as turned off", () => {
+    const { container } = card({ entry: one({ knowledgeEvidence: "vendor-doc" }) });
+    expect([...container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("vendor-doc (turned off)");
   });
 
   it("an outdated knowledge shows the red banner whose title link jumps to the replacement; another note's replacement shows the fallback text unlinked", () => {
@@ -130,7 +203,7 @@ describe("KnowledgeCard", () => {
     ]);
     const view = card({ entry: entries[0]!, summary: summarizeKnowledgeDescendants(entries, "p") });
     const summary = view.container.querySelector("p")!;
-    expect(summary.textContent).toBe("3 below: 1 verified, 1 not verified, 1 need review");
+    expect(summary.textContent).toBe("3 below: 1 verified, 2 need review");
     expect(view.container.querySelector("[data-kb-knowledge-card]")!.lastElementChild).toBe(summary);
     view.unmount();
 
@@ -139,7 +212,7 @@ describe("KnowledgeCard", () => {
       { id: "k_00000002", blockId: "a", level: 2, props: { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000009" } },
     ]);
     const second = card({ entry: withOutdated[0]!, summary: summarizeKnowledgeDescendants(withOutdated, "p") });
-    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 not verified, 0 need review, 1 outdated");
+    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 need review, 1 outdated");
   });
 
   it("Edit with a pencil icon sits at the top right only when canEdit", () => {

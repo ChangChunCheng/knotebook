@@ -19,12 +19,11 @@ import {
   parseKnowledgeRef,
   summarizeAllKnowledgeDescendants,
   type KnowledgeEntry,
-  type KnowledgeEvidence,
   type KnowledgeIconKind,
   type KnowledgeStatus,
 } from "@knotebook/shared";
 
-export const KNOWLEDGE_EXTRACTOR_VERSION = 1;
+export const KNOWLEDGE_EXTRACTOR_VERSION = 2;
 
 export interface KnowledgeIndexRow {
   knowledgeId: string;
@@ -34,7 +33,7 @@ export interface KnowledgeIndexRow {
   heading: string;
   when: string;
   conclusion: string;
-  evidence: KnowledgeEvidence;
+  evidence: string;
   verified: string | null;
   status: KnowledgeStatus;
   icon: KnowledgeIconKind;
@@ -43,6 +42,7 @@ export interface KnowledgeIndexRow {
   supersededKnowledgeId: string | null;
   descTotal: number;
   descVerified: number;
+  /** Always 0: no-date knowledge counts as needs review. Older rows still hold a count, which readers add to needs review. */
   descNoDate: number;
   descNeedsReview: number;
   descOutdated: number;
@@ -157,7 +157,7 @@ function extractEntries(entries: readonly KnowledgeEntry[]): KnowledgeIndexExtra
       supersededKnowledgeId: ref?.knowledgeId ?? null,
       descTotal: s?.total ?? 0,
       descVerified: s?.verified ?? 0,
-      descNoDate: s?.noVerifiedDate ?? 0,
+      descNoDate: 0,
       descNeedsReview: s?.needsReview ?? 0,
       descOutdated: s?.outdated ?? 0,
     });

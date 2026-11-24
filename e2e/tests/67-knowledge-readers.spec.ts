@@ -197,7 +197,7 @@ test("67-4 the version preview shows the icon of that version and a card without
     const note = await apiCreateNote(a.page, title, "## Versioned rule\n\nBody text.");
     await openNote(a.page, note, title);
     await makeKnowledge(a.page, "Versioned rule", { when });
-    await expect(iconOf(a.page, "Not verified")).toBeVisible();
+    await expect(iconOf(a.page, "Needs review")).toBeVisible();
 
     await clickEndOfParagraph(a.page, editorLocator(a.page).getByText("Body text.", { exact: true }));
     await a.page.keyboard.press("Control+s");
@@ -208,7 +208,7 @@ test("67-4 the version preview shows the icon of that version and a card without
     await expect(saveDialog).not.toBeVisible();
 
     // The current note drops the knowledge info, so only the saved version still has an icon.
-    await iconOf(a.page, "Not verified").click();
+    await iconOf(a.page, "Needs review").click();
     await formOf(a.page).getByRole("button", { name: "Remove knowledge info" }).click();
     await expect(iconsIn(a.page)).toHaveCount(0);
     await expect(headingLine(a.page, "Versioned rule")).toBeVisible();
@@ -222,7 +222,7 @@ test("67-4 the version preview shows the icon of that version and a card without
     const split = a.page.getByTestId("diff-split");
     await expect(split).toBeVisible();
 
-    const icon = iconOf(split, "Not verified");
+    const icon = iconOf(split, "Needs review");
     await expect(icon).toHaveCount(1);
     await expect(iconsIn(split)).toHaveCount(1);
     await icon.click();

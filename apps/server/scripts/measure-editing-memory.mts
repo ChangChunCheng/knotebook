@@ -4,6 +4,7 @@
 // 跑法：`cd apps/server && node --expose-gc --import tsx scripts/measure-editing-memory.mts`
 // （本 task 只確認它過 `typecheck:test`；tsconfig.test.json 的 include 已含 scripts。）
 import * as Y from "yjs";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { EditingRuntime } from "../src/notes/editing/runtime.js";
 import { readNoteContentFromDoc } from "../src/notes/editing/read.js";
 import { EditorSession, forkFrom } from "../src/notes/editing/session.js";
@@ -21,7 +22,7 @@ globalThis.gc?.();
 const before = process.memoryUsage().heapUsed;
 for (let i = 0; i < 100; i += 1) {
   if (i % 10 < 7) {
-    await readNoteContentFromDoc(rt, forkFrom(base).fork);
+    await readNoteContentFromDoc(rt, forkFrom(base).fork, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   } else {
     const { fork, sv } = forkFrom(base);
     const s = await EditorSession.open(rt, fork);

@@ -1,10 +1,11 @@
 {
   "knowledge": {
+    "notFilled": "Not filled",
+    "turnedOff": "{{name}} (turned off)",
     "iconLabel": "Knowledge info: {{status}}",
     "state": {
       "outdated": "Outdated",
       "needsReview": "Needs review",
-      "noVerifiedDate": "Not verified",
       "verified": "Verified"
     },
     "field": {
@@ -18,17 +19,14 @@
     "evidence": {
       "tested": "Tested",
       "docs": "Documentation",
-      "inferred": "Inferred",
-      "unconfirmed": "Unconfirmed"
+      "inferred": "Inferred"
     },
     "status": {
-      "current": "Current",
-      "unverified": "Needs review",
-      "outdated": "Outdated"
+      "verified": "Verified",
+      "needs-verify": "Needs review",
+      "obsolete": "Outdated"
     },
     "card": {
-      "notVerified": "Not verified",
-      "empty": "—",
       "quotedTitle": "{{title}}",
       "belongsTo": "Part of: {{title}}",
       "bannerNeedsReview": "Needs review · last verified {{date}}, worth checking again",
@@ -37,7 +35,7 @@
       "bannerInheritedOutdated": "Outdated: <ref/> above is outdated",
       "refOtherNote": "knowledge in another note",
       "refMissing": "knowledge that no longer exists",
-      "summary": "{{total}} below: {{verified}} verified, {{noDate}} not verified, {{review}} need review",
+      "summary": "{{total}} below: {{verified}} verified, {{review}} need review",
       "summaryOutdated": ", {{outdated}} outdated",
       "edit": "Edit",
       "untitled": "Untitled heading",
@@ -45,17 +43,17 @@
     },
     "form": {
       "title": "Knowledge info",
-      "markToday": "Mark verified today",
+      "today": "Today",
       "remove": "Remove knowledge info",
       "save": "Save",
       "cancel": "Cancel",
       "escHint": "Esc to cancel",
+      "optional": "Optional",
       "error": {
         "empty": "Fill in at least one field.",
         "tooLong": "At most {{max}} characters (now {{n}}).",
         "verifiedInvalid": "Enter a valid date.",
         "verifiedIncomplete": "Enter a complete date.",
-        "supersededRequired": "Choose the knowledge that replaces this one.",
         "supersededInvalid": "Choose one of the listed knowledge.",
         "supersededSelf": "A piece of knowledge can't replace itself.",
         "notEligible": "This heading no longer exists or can't hold knowledge info."
@@ -68,6 +66,24 @@
       "otherNotes": "Other notes",
       "searchFailed": "Couldn't search other notes.",
       "searchBusy": "Too many searches. Try again in a minute."
+    },
+    "aiIgnored": {
+      "title": "These knowledge info values weren't applied",
+      "line": "{{heading}} · {{field}}: {{value}} — {{reason}}",
+      "more": "and {{count}} more",
+      "reason": {
+        "unknown_field": "no such field",
+        "field_disabled": "this field is turned off",
+        "not_an_option": "not one of the options",
+        "bad_status": "not a valid status",
+        "bad_date": "not a valid date",
+        "bad_link": "not a valid link",
+        "unresolved_member": "no matching member",
+        "bad_ref": "not a valid knowledge reference",
+        "superseded_self": "can't be replaced by itself",
+        "too_long": "too long",
+        "line_break": "can't contain line breaks"
+      }
     }
   }
 }

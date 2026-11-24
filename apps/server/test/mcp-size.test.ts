@@ -29,7 +29,7 @@ import { buildCollabTestApp, type CollabTestCtx } from "./helpers.js";
 import { getContent, seedContent, seedTokenForUser } from "./editing-helpers.js";
 import { mcpPost, rpc } from "./mcp-helpers.js";
 import { seedUpload } from "./copy-helpers.js";
-import { cookieOf, seedGroup } from "./group-helpers.js";
+import { cookieOf, seedGroup, seedUser } from "./group-helpers.js";
 import { seedFolder, seedFolderChain, seedManyNotesInFolder, setNoteFolder } from "./folder-helpers.js";
 import { wireCost } from "../src/mcp/wire-budget.js";
 import { knowledgeForModel } from "../src/mcp/knowledge-output.js";
@@ -384,17 +384,55 @@ describe("#108 single response size", () => {
       markdown: `# 0250-edited${"h".repeat(986)}`,
       if_match: target.fingerprint,
     });
-    // The same full outline page next to the worst `knowledge`: all four lists cut by their budget, every id and heading made of `"` (the most expensive character once mirrored).
+    // The same full outline page next to the worst `knowledge`: all five lists cut by their budget, every id, heading, key and value made of `"` (the most expensive character once mirrored).
     // Ids come from collab state, so their length has no limit of its own.
     const worst = (n: number) => Array.from({ length: MCP_PAGE_MAX }, (_, i) => ({ id: `k_${String(i).padStart(8, "0")}${'"'.repeat(n)}`, heading: '"'.repeat(200) }));
+    const worstIgnored = Array.from({ length: MCP_PAGE_MAX }, () => ({ heading: '"'.repeat(200), key: '"'.repeat(80), value: '"'.repeat(200), reason: "unresolved_member" as const }));
     for (const idLength of [0, 300, 3000]) {
-      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignoredComments: 1 });
+      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignored: worstIgnored, ignoredComments: 1 });
       expect(knowledge.truncated).toBe(true);
       const total = editWire + wireCost(knowledge);
       console.log(`[knowledge] idLength=${idLength} knowledge wire=${wireCost(knowledge)} total=${total}`);
       expect(total).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
     }
     client.disconnect();
+  });
+
+  // The largest field definitions a site can have here: 30 basis options (the most a field takes), every name 60 `"` (the most expensive character once mirrored) and every added key 64 characters.
+  it("the first outline page with thirty long-named basis options stays under the wire sentinel", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    await seedLongestBasisOptions(ctx);
+    const note = await ctx.createNote(o.id, "long headings");
+    const md = Array.from({ length: 120 }, (_, i) => `# ${String(i).padStart(4, "0")}${'"'.repeat(996)}`).join("\n\n");
+    const session = await ctx.loginAs(o.email, PASSWORD);
+    const client = await seedContent(ctx, session, note.id, md);
+    const { sc } = await callWireResult<{ sections: unknown[]; knowledgeFields: { fields: Array<{ key: string; options?: unknown[]; optionsTruncated?: true }> } }>(ctx.app, o.token, "read_note_outline 第一頁＋30 個依據選項", "read_note_outline", { note_id: note.id });
+    expect(sc.sections).toHaveLength(MCP_PAGE_MAX);
+    const evidence = sc.knowledgeFields.fields.find(f => f.key === "evidence")!;
+    expect(evidence.options).toHaveLength(30);
+    expect(evidence.optionsTruncated).toBeUndefined();
+    client.disconnect();
+  });
+
+  it("a create_note reply with the largest field definitions and five full knowledge lists stays under the wire sentinel", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    const { token: rwToken } = await seedTokenForUser(ctx.db, o.id, "notes:read notes:write");
+    await seedLongestBasisOptions(ctx);
+    const { wire, sc } = await callWireResult<{ note: { titleTruncated?: true }; knowledgeFields: { fields: Array<{ key: string; options?: unknown[] }> } }>(ctx.app, rwToken, "create_note＋30 個依據選項", "create_note", { title: '"'.repeat(300) });
+    expect(sc.note.titleTruncated).toBe(true);
+    expect(sc.knowledgeFields.fields.find(f => f.key === "evidence")!.options).toHaveLength(30);
+    // The same worst `knowledge` as case (ii): five lists cut by their budget, every id, heading, key and value made of `"`.
+    const worst = (n: number) => Array.from({ length: MCP_PAGE_MAX }, (_, i) => ({ id: `k_${String(i).padStart(8, "0")}${'"'.repeat(n)}`, heading: '"'.repeat(200) }));
+    const worstIgnored = Array.from({ length: MCP_PAGE_MAX }, () => ({ heading: '"'.repeat(200), key: '"'.repeat(80), value: '"'.repeat(200), reason: "unresolved_member" as const }));
+    for (const idLength of [0, 300, 3000]) {
+      const knowledge = knowledgeForModel({ kept: worst(idLength), created: worst(idLength), removed: worst(idLength), renewed: worst(idLength).map(r => ({ ...r, from: `k_00000000${'"'.repeat(idLength)}` })), ignored: worstIgnored, ignoredComments: 1 });
+      // `"knowledge":` and a comma in both copies.
+      const total = wire + wireCost(knowledge) + 64;
+      console.log(`[knowledge fields] idLength=${idLength} create_note wire=${wire} with knowledge=${total}`);
+      expect(total).toBeLessThanOrEqual(MCP_MAX_WIRE);
+    }
   });
 
   /**
@@ -781,6 +819,20 @@ describe("#108 single response size", () => {
     );
   });
 });
+
+/** The site's basis field at its limits: 30 options, each named with 60 `"`, the 27 added ones with 64-character keys. */
+async function seedLongestBasisOptions(ctx: CollabTestCtx): Promise<void> {
+  const admin = await seedUser(ctx.db, { isAdmin: true });
+  const name = '"'.repeat(60);
+  const added = Array.from({ length: 27 }, (_, i) => `o${String(i).padStart(2, "0")}${"a".repeat(61)}`);
+  const fields = (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+    key,
+    enabled: true,
+    ...(key === "evidence" ? { options: ["tested", "docs", "inferred", ...added].map(k => ({ key: k, name, enabled: true })) } : {}),
+  }));
+  const res = await ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
+  expect(res.statusCode, res.body).toBe(200);
+}
 
 /**
  * A row of an "every cell compliant but full length" note; fills all four `lastEdited` fields (see the warning above). Personal notes pass `{ ownerId }`, group notes `{ groupId }` (XOR, #175); `editorId` is `last_edited_by`.

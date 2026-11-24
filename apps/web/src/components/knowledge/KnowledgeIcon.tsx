@@ -1,13 +1,12 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { KnowledgeEntry, KnowledgeIconKind } from "@knotebook/shared";
-import { CircleAlert, CircleCheck, CircleInfo, CircleSlash } from "@/components/ui/icons-extra";
+import { CircleAlert, CircleCheck, CircleSlash } from "@/components/ui/icons-extra";
 import { tourTarget } from "@/lib/tour-targets";
 import { cn } from "@/lib/utils";
 
 const COLOR: Record<KnowledgeIconKind, string> = {
   verified: "text-emerald-600 dark:text-emerald-400",
-  noVerifiedDate: "text-muted-foreground",
   needsReview: "text-amber-600 dark:text-amber-400",
   outdated: "text-destructive",
 };
@@ -20,7 +19,6 @@ const FILL: Partial<Record<KnowledgeIconKind, string>> = {
 
 const SYMBOL: Record<KnowledgeIconKind, typeof CircleCheck> = {
   verified: CircleCheck,
-  noVerifiedDate: CircleInfo,
   needsReview: CircleAlert,
   outdated: CircleSlash,
 };

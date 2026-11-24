@@ -18,12 +18,23 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { aiKnowledgeContext, anchorPlacement, applyAiResult, expandAnchorForColumns, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "@/ai/apply";
+import {
+  aiKnowledgeContext,
+  anchorPlacement,
+  applyAiResult,
+  expandAnchorForColumns,
+  hasNonTextBlock,
+  prepareAiResult,
+  replacesKnowledge,
+  revertAiResult,
+  type PreparedResult,
+} from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { estimateBlocksBytes } from "@/lib/note-size-guard";
 import { aiMarkdownOf } from "@/ai/note-markdown";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
 import { selectionFocus, selectionInsideAnchor, toolbarWouldShow } from "@/ai/selection";
+import { KnowledgeFieldsContext, knowledgeStatusOnlyView, type KnowledgeFieldsValue } from "@/components/knowledge/fields-context";
 import { toast } from "@/components/ui/toast";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; repo convention is any
@@ -167,6 +178,11 @@ export function AiSessionProvider(props: {
   tRef.current = t;
   const onAutoCloseRef = useRef(onAutoClose);
   onAutoCloseRef.current = onAutoClose;
+  const knowledgeFields = useContext(KnowledgeFieldsContext);
+  const knowledgeFieldsRef = useRef(knowledgeFields);
+  knowledgeFieldsRef.current = knowledgeFields;
+  // A result is checked against the settings its request was written with: a field missing from the request reads as cleared.
+  const requestFieldsRef = useRef(new WeakMap<AiRequest, KnowledgeFieldsValue>());
 
   // Doubles as the "is this continuation still current" token: close / a new run replaces it, so a stale continuation no-ops.
   const abortRef = useRef<AbortController | null>(null);
@@ -184,10 +200,16 @@ export function AiSessionProvider(props: {
   const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
     const ed = editorRef.current;
     const markdown = stripTextWrapper(raw);
+    // Every request is built by start(), which records its settings.
+    const fields = requestFieldsRef.current.get(request)!;
+    const fieldsReady = fields.status === "ready";
+    // Without the settings no field may take a value (one the site turned off must not be set); headings without a
+    // comment still keep every stored field.
+    const knowledge = aiKnowledgeContext(ed, noteIdRef.current, target.anchor.blockIds, fieldsReady ? fields.view : knowledgeStatusOnlyView());
     const prepared = prepareAiResult(ed, markdown, {
       notes: notesRef.current,
       placement: anchorPlacement(ed, target.anchor.blockIds),
-      knowledge: aiKnowledgeContext(ed, noteIdRef.current, target.anchor.blockIds),
+      knowledge,
     });
     if ("empty" in prepared) {
       setState({ phase: "error", target, request, code: "empty_result" });
@@ -201,7 +223,11 @@ export function AiSessionProvider(props: {
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));
     let applied: AiApplied | null = null;
     let notice: "ai.box.rebindNotice" | "ai.box.applyGuardFailed" | null = null;
+    // Ignored knowledge is listed in the preview, which has to be seen before anything is applied. Without the settings,
+    // a range holding knowledge was sent without its comments, so its result is shown before it replaces that knowledge.
     const autoApply =
+      (fieldsReady || !replacesKnowledge(knowledge.replaced)) &&
+      prepared.ignoredKnowledge.length === 0 &&
       request.kind === "quick" &&
       request.applyMode === "direct" &&
       !hasNonTextBlock(ed, target.anchor.blockIds) &&
@@ -295,14 +321,17 @@ export function AiSessionProvider(props: {
       const blocks = current.target.anchor.blockIds
         .map((id) => ed.getBlock(id))
         .filter((block): block is AnyBlock => block !== undefined);
+      const fields = knowledgeFieldsRef.current;
+      const withKnowledge = fields.status === "ready" && anchorPlacement(ed, current.target.anchor.blockIds) === "top";
       const request: AiRequest = {
         actionId: action.id,
         actionName: action.name,
         kind: action.kind,
         applyMode: action.applyMode,
-        text: aiMarkdownOf(blocks, titleOf, { knowledge: anchorPlacement(ed, current.target.anchor.blockIds) === "top" }),
+        text: aiMarkdownOf(blocks, titleOf, withKnowledge ? { knowledge: { fields: fields.view } } : {}),
         ...(trimmed !== undefined ? { instruction: trimmed } : {}),
       };
+      requestFieldsRef.current.set(request, fields);
       run(current.target, request);
       return true;
     },

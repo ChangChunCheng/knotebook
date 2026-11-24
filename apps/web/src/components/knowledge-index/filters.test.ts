@@ -10,8 +10,20 @@ describe("readIndexFilters", () => {
   it("defaults: folder grouping, no tags, no status, no evidence; unknown values fall back to defaults", () => {
     const defaults = { groupBy: "folder", tagIds: [], status: null, evidence: null };
     expect(read("")).toEqual(defaults);
-    expect(read("group=folder&status=bogus&evidence=nope&tags=")).toEqual(defaults);
-    expect(read("group=Tag&status=verified")).toEqual(defaults);
+    expect(read("group=folder&status=bogus&evidence=No%20pe&tags=")).toEqual(defaults);
+    expect(read("group=Tag&status=needs-verify")).toEqual(defaults);
+  });
+
+  it("the index status filter has three values and an old noVerifiedDate address reads as needs review", () => {
+    expect(read("status=verified").status).toBe("verified");
+    expect(read("status=needsReview").status).toBe("needsReview");
+    expect(read("status=outdated").status).toBe("outdated");
+    expect(read("status=noVerifiedDate").status).toBe("needsReview");
+  });
+
+  it("any option key is read as a basis filter", () => {
+    expect(read("evidence=vendor-doc").evidence).toBe("vendor-doc");
+    expect(read("evidence=unconfirmed").evidence).toBe("unconfirmed");
   });
 
   it("reads group=tag, a status and an evidence value", () => {

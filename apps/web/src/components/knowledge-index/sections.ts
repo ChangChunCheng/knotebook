@@ -33,12 +33,19 @@ export interface IndexSectionModel {
 const byIdOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 function replacementOf(entry: KnowledgeIndexEntryDto, dto: KnowledgeIndexDto): IndexReplacement | null {
-  if (entry.status !== "outdated" || entry.supersededBy === null) return null;
+  if (entry.state !== "obsolete" || entry.supersededBy === null) return null;
   const found = dto.replacements[entry.supersededBy];
   if (found) return { state: "found", target: found };
   const ref = parseKnowledgeRef(entry.supersededBy);
   if (ref === null) return { state: "missing" };
   return ref.noteId === null || ref.noteId === entry.noteId.toLowerCase() ? { state: "missing" } : { state: "otherNote" };
+}
+
+function leadingField(fields: KnowledgeIndexDto["fields"]): "when" | "conclusion" | null {
+  for (const key of ["when", "conclusion"] as const) {
+    if (fields.find((f) => f.key === key)?.enabled ?? false) return key;
+  }
+  return null;
 }
 
 function noteRows(note: KnowledgeIndexNoteDto, entries: readonly KnowledgeIndexEntryDto[], dto: KnowledgeIndexDto): IndexRowModel[] {
@@ -54,12 +61,13 @@ function noteRows(note: KnowledgeIndexNoteDto, entries: readonly KnowledgeIndexE
     }
     return false;
   };
+  const leading = leadingField(dto.fields);
   const top: IndexRowModel[] = [];
   for (const entry of entries) {
     const row = rows.get(entry.knowledgeId)!;
     const parent = entry.parentKnowledgeId === null ? undefined : rows.get(entry.parentKnowledgeId);
-    // A level with no "when to read" of its own only makes sense under its parent; one with its own stands alone.
-    if (entry.when === "" && parent !== undefined && !inCycle(entry)) parent.nested.push(row);
+    // A level with no leading text of its own only makes sense under its parent; one with its own stands alone.
+    if (leading !== null && entry[leading] === "" && parent !== undefined && !inCycle(entry)) parent.nested.push(row);
     else top.push(row);
   }
   return top;
