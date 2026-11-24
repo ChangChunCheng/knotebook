@@ -83,6 +83,7 @@ export async function replaceNoteKnowledgeIndexInTx(tx: Tx, input: KnowledgeInde
         descNoDate: r.descNoDate,
         descNeedsReview: r.descNeedsReview,
         descOutdated: r.descOutdated,
+        custom: r.custom,
       })),
     );
   }

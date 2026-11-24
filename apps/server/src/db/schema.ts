@@ -557,6 +557,7 @@ export const noteKnowledge = pgTable(
     descNoDate: integer("desc_no_date").notNull().default(0),
     descNeedsReview: integer("desc_needs_review").notNull().default(0),
     descOutdated: integer("desc_outdated").notNull().default(0),
+    custom: jsonb("custom").$type<Record<string, string>>(),
   },
   t => [
     primaryKey({ name: "note_knowledge_pk", columns: [t.noteId, t.knowledgeId] }),

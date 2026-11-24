@@ -104,6 +104,22 @@ describe("first build and versions", () => {
     expect(p).toMatchObject({ knowledgeId: kid(1), blockId: "p", ord: 0, level: 1, heading: "Parent", readWhen: "w", conclusion: "c", evidence: "tested", verified: "2026-01-02", status: "", icon: "verified", parentKnowledgeId: null, descTotal: 1, descOutdated: 1 });
     expect(c).toMatchObject({ parentKnowledgeId: kid(1), status: "outdated", icon: "outdated", supersededNoteId: other, supersededKnowledgeId: kid(9), verified: null });
   });
+
+  it("custom values are written, a heading without any reads back null, and a changed value is written rather than unchanged", async () => {
+    const { db } = await freshDb();
+    const u = await seedUser(db);
+    const n = await seedNote(db, { ownerId: u.id });
+    const withCustom = (raw: string): KBlk[] => {
+      const b = kh("a", kid(1), "A");
+      return [{ ...b, knowledge: { ...b.knowledge, knowledgeCustom: raw } }, kh("b", kid(2), "B")];
+    };
+    await seedNoteState(db, n.id, knowledgeDoc(withCustom('{"team":"alice"}')), 1);
+    expect(await writeKnowledgeIndex(db, n.id, 1, ex(withCustom('{"team":"alice"}')))).toBe("written");
+    expect((await knowledgeRows(db, n.id)).map((r) => r.custom)).toEqual([{ team: "alice" }, null]);
+    await setNoteState(db, n.id, knowledgeDoc(withCustom('{"team":"bob"}')), 2);
+    expect(await writeKnowledgeIndex(db, n.id, 2, ex(withCustom('{"team":"bob"}')))).toBe("written");
+    expect((await knowledgeRows(db, n.id)).map((r) => r.custom)).toEqual([{ team: "bob" }, null]);
+  });
 });
 
 describe("lock order against note deletion, trash and move", () => {
