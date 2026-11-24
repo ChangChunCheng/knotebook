@@ -84,7 +84,7 @@ describe("a note with knowledge info reads the same on every path", () => {
     const body = await exportNoteBody(testEditingRuntime, doc, new Map());
     const transfer = await exportNoteForTransfer(testEditingRuntime, doc, new Map());
     expect(transfer.body).toBe(body);
-    expect(body).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\n-->\n\nbody\n");
+    expect(body).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\nbody\n");
 
     const ctx = await buildCollabTestApp();
     const u = await seedUser(ctx.db);

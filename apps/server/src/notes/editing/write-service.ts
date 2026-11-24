@@ -5,7 +5,7 @@
  */
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
-import { knowledgeWriteProblem, resolveKnowledgeForWrite, type EditOp, type KnowledgeBlockShape, type KnowledgeProblem } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite, type EditOp, type KnowledgeBlockShape, type KnowledgeProblem } from "@knotebook/shared";
 import { currentAgentLabel } from "../../auth/agent-label.js";
 import type { CollabServer } from "../../collab/server.js";
 import type { VersionService } from "../../collab/versions.js";
@@ -674,7 +674,7 @@ export class NoteWriteService {
     return { ok: true, created: true, noteId: r.noteId, unboundWikilinks: r.unbound, ...(r.knowledge ? { knowledge: r.knowledge } : {}) };
   }
 
-  /** A new note has no knowledge yet, so the value checks run here with nothing to compare against: bad values are refused before a note row exists. */
+  /** A new note has no knowledge yet, so the knowledge checks run here with nothing to compare against: a malformed id is refused before a note row exists. Bad values are only ignored, by the write itself. */
   async prepareContent(log: FastifyBaseLogger, input: { userId: string; tokenId: string | null; content: string }): Promise<PreparedContent | PrepareContentFailure | ParserBusy> {
     const candidates = await visibleNoteTargets(this.deps.db, input.userId);
     const agentLabel = input.tokenId ? await currentAgentLabel(this.deps.db, input.tokenId) : null;
@@ -688,7 +688,12 @@ export class NoteWriteService {
     }
     if ("error" in prepared) return { ok: false, kind: "parse", code: prepared.error, ...(prepared.detail ? { detail: prepared.detail } : {}), ...(prepared.knowledge ? { knowledge: prepared.knowledge } : {}) };
     const shaped = prepared.blocks as unknown as readonly KnowledgeBlockShape[];
-    const problem = knowledgeWriteProblem(resolveKnowledgeForWrite({ before: [], after: shaped, keep: false, taken: new Set() }).blocks, new Map(), null);
+    const { problem } = sanitizeKnowledgeForWrite({
+      after: resolveKnowledgeForWrite({ before: [], after: shaped, keep: false, taken: new Set() }).blocks,
+      current: new Map(),
+      noteId: null,
+      fields: DEFAULT_KNOWLEDGE_FIELD_VIEW,
+    });
     if (problem !== null) return { ok: false, kind: "parse", code: "invalid_knowledge", knowledge: problem };
     return { ok: true, candidates, agentLabel, prepared };
   }

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
-import { blocksToNoteMarkdown, formatKnowledgeComment, parseKnowledgeComment, type KnowledgeInfo } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, blocksToNoteMarkdown, formatKnowledgeComment, parseKnowledgeComment, resolveKnowledgeFieldView, type KnowledgeInfo } from "@knotebook/shared";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
@@ -32,9 +32,10 @@ const K = { knowledgeId: "k_8f3a2c1d", knowledgeWhen: "alice reads this", knowle
 const H = (level: number, text: unknown, props: Record<string, unknown> = {}, children: AnyBlocks = []) => ({ type: "heading", props: { level, ...props }, content: text, children });
 const P = (text: string) => ({ type: "paragraph", content: text });
 
+const WITH_KNOWLEDGE = { knowledge: { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW } };
 const read = async (blocks: AnyBlocks, knowledge = true): Promise<string> => {
   const doc = await docWith(blocks);
-  return withSession(ed => blocksToNoteMarkdown(ed, ed.document, { knowledge }), doc);
+  return withSession(ed => blocksToNoteMarkdown(ed, ed.document, knowledge ? WITH_KNOWLEDGE : {}), doc);
 };
 const KNOWLEDGE_PROPS = ["knowledgeId", "knowledgeWhen", "knowledgeConclusion", "knowledgeEvidence", "knowledgeVerified", "knowledgeStatus", "knowledgeSupersededBy"];
 const withoutKnowledge = (blocks: AnyBlocks): AnyBlocks =>
@@ -55,25 +56,25 @@ afterEach(() => vi.restoreAllMocks());
 describe("knowledge comments on read", () => {
   it("a top-level knowledge heading is followed by its comment and a blank line", async () => {
     expect(await read([H(2, "D1", K), P("body")])).toBe(
-      "## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\n-->\n\nbody\n",
+      "## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\nbody\n",
     );
   });
 
   it("a knowledge heading at the end ends with --> and one newline", async () => {
-    expect(await read([P("body"), H(2, "D1", K)])).toBe("body\n\n## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\n-->\n");
+    expect(await read([P("body"), H(2, "D1", K)])).toBe("body\n\n## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n");
   });
 
   it("each knowledge heading gets its own comment, plain headings none", async () => {
     const md = await read([H(1, "A", K), H(2, "B"), H(2, "C", { knowledgeId: "k_00000002", knowledgeConclusion: "c" }), P("x")]);
     expect(md).toBe(
-      "# A\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\n-->\n\n## B\n\n## C\n<!-- knotebook:knowledge\nid: k_00000002\nconclusion: c\n-->\n\nx\n",
+      "# A\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\n## B\n\n## C\n<!-- knotebook:knowledge\nid: k_00000002\nconclusion: c\nstatus: needs-verify\n-->\n\nx\n",
     );
   });
 
   it("a note without knowledge info reads byte-for-byte as before", async () => {
     for (const c of goldens.cases.filter(g => !g.id.startsWith("G1-cols-5"))) {
       const doc = await docWith(c.blocks);
-      const [plain, withOption] = await withSession(ed => [blocksToNoteMarkdown(ed, ed.document), blocksToNoteMarkdown(ed, ed.document, { knowledge: true })], doc);
+      const [plain, withOption] = await withSession(ed => [blocksToNoteMarkdown(ed, ed.document), blocksToNoteMarkdown(ed, ed.document, WITH_KNOWLEDGE)], doc);
       expect(withOption, c.id).toBe(plain);
       expect(withOption, c.id).toBe(c.markdown);
     }
@@ -103,7 +104,7 @@ describe("knowledge comments on read", () => {
 
   it("a colored knowledge heading reads as HTML without any data-knowledge attribute, followed by its comment", async () => {
     const md = await read([H(2, "Colored", { backgroundColor: "yellow", ...K }), P("after")]);
-    expect(md).toBe('<h2 data-background-color="yellow">Colored</h2>\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\n-->\n\nafter\n');
+    expect(md).toBe('<h2 data-background-color="yellow">Colored</h2>\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: alice reads this\nevidence: tested\nstatus: needs-verify\n-->\n\nafter\n');
   });
 
   it("a toggleable knowledge heading has its comment right after the heading line, before its children", async () => {
@@ -122,17 +123,24 @@ describe("knowledge comments on read", () => {
     expect(md).not.toContain("knotebook:knowledge");
   });
 
+  it("a turned-off field is left out of the comment", async () => {
+    const fields = resolveKnowledgeFieldView({ defs: [], site: [{ fieldRef: "when", optionKey: "", enabled: false, name: null, position: null }] });
+    const doc = await docWith([H(2, "D1", K)]);
+    const md = await withSession(ed => blocksToNoteMarkdown(ed, ed.document, { knowledge: { fields } }), doc);
+    expect(md).toBe("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nevidence: tested\nstatus: needs-verify\n-->\n");
+  });
+
   it("an id-less heading with other knowledge props reads without a comment", async () => {
     const md = await read([H(2, "D1", { knowledgeWhen: "w" })]);
     expect(md).toBe("## D1\n");
   });
 
-  it("knowledge: false emits no comment and still drops data-knowledge attributes", async () => {
+  it("without the knowledge option no comment is written and data-knowledge attributes are still dropped", async () => {
     const doc = await docWith([H(2, "D1", K), P("body")]);
     const md = await withSession(ed => {
       const html = ed.blocksToHTMLLossy(ed.document).replace("<h2", '<h2 data-knowledge-id="k_8f3a2c1d"');
       expect(html).toContain("data-knowledge-id");
-      return blocksToNoteMarkdown({ blocksToHTMLLossy: () => html, document: ed.document } as unknown as Ed, ed.document, { knowledge: false });
+      return blocksToNoteMarkdown({ blocksToHTMLLossy: () => html, document: ed.document } as unknown as Ed, ed.document, {});
     }, doc);
     expect(md).toBe("## D1\n\nbody\n");
   });
@@ -146,7 +154,7 @@ describe("knowledge comments on read", () => {
         blocksToHTMLLossy: (blocks: AnyBlocks) =>
           ed.blocksToHTMLLossy(blocks).replace(/<h2/g, '<h2 data-knowledge-id="k_zz" DATA-KNOWLEDGE-STATUS="outdated"'),
       } as unknown as Ed;
-      return blocksToNoteMarkdown(leaky, ed.document, { knowledge: true });
+      return blocksToNoteMarkdown(leaky, ed.document, WITH_KNOWLEDGE);
     }, doc);
     expect(md).not.toMatch(/data-knowledge/i);
     expect(md).toContain("id: k_8f3a2c1d");
@@ -183,7 +191,7 @@ describe("knowledge comments on read", () => {
     for (const v of values) {
       const info: KnowledgeInfo = { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-10-20", status: "unverified", supersededBy: "" };
       const md = await read([H(2, "D1", { knowledgeId: info.id, knowledgeWhen: v, knowledgeConclusion: v, knowledgeEvidence: "docs", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified" })]);
-      expect(md).toContain(formatKnowledgeComment(info));
+      expect(md).toContain(formatKnowledgeComment(info, DEFAULT_KNOWLEDGE_FIELD_VIEW));
       expect(md.match(/-->/g)).toHaveLength(1);
     }
   });

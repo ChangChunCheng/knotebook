@@ -171,18 +171,31 @@ describe("prepareAiResult with knowledge", () => {
     expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005", knowledgeWhen: "w" });
   });
 
-  it("an invalid comment makes prepareAiResult return invalid_knowledge", () => {
+  it("a malformed comment or id makes prepareAiResult return invalid_knowledge", () => {
     const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
     const cases = [
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nevidence: bogus\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\nwhen: again\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n-->\nbody without a blank line",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nsuperseded_by: nope\n-->\n\nbody",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: current\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n\nbody that never closes the comment",
       "## T\n<!-- knotebook:knowledge\nid: not-an-id\nwhen: w\n-->\n\nbody",
     ];
     for (const md of cases) expect(prepare(editor, md, sendIds(editor)), md).toEqual({ invalid: "invalid_knowledge" });
+  });
+
+  it("a value that is not allowed is written as empty on new knowledge and as stored on existing knowledge; the rest is written", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const fresh = [
+      ["evidence: bogus\nwhen: w", { knowledgeWhen: "w", knowledgeEvidence: "" }],
+      ["status: outdated\nsuperseded_by: nope", { knowledgeStatus: "outdated", knowledgeSupersededBy: "" }],
+      ["status: current\nwhen: w", { knowledgeWhen: "w", knowledgeStatus: "" }],
+      ["Owner: bob\nwhen: w", { knowledgeWhen: "w" }],
+    ] as const;
+    for (const [lines, expected] of fresh) {
+      const prepared = ok(prepare(editor, `## T\n<!-- knotebook:knowledge\nid: k_00000005\n${lines}\n-->\n\nbody`, sendIds(editor)));
+      expect(headingProps(prepared.blocks, 0), lines).toMatchObject({ knowledgeId: "k_00000005", ...expected });
+    }
+    const stored = ok(prepare(editor, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: changed\nconclusion: conclusion 1\nevidence: bogus\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(stored.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "changed", knowledgeEvidence: "docs" });
   });
 
   it("a comment with only an id, and outdated without superseded_by, are written with no replacement", () => {

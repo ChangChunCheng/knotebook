@@ -3,14 +3,15 @@
 import type { Block, PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
 import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   MAX_LINK_TARGETS,
   YDOC_FRAGMENT,
   extractLinkTargets,
   keptIdRenames,
   knowledgeRefsIn,
-  knowledgeWriteProblem,
   normalizeKnowledgeRefs,
   resolveKnowledgeForWrite,
+  sanitizeKnowledgeForWrite,
   topLevelBlocks,
   type EditOp,
   type KnowledgeBlockShape,
@@ -237,11 +238,11 @@ export async function editOnFork(
       keep,
       taken: new Set(k.current.keys()),
     });
-    const problem = knowledgeWriteProblem(r.blocks, k.current, k.noteId);
-    if (problem !== null) throw new KnowledgeWriteError(problem);
+    const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
     ({ kept } = r);
     resolvedRenewed = r.renewed;
-    return r.blocks as unknown as AnyPartialBlock[];
+    return s.blocks as unknown as AnyPartialBlock[];
   };
   const w = await withForkEditor(runtime, fork, sv, (ed, edits) => {
     const top = ed.document;

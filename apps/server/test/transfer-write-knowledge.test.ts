@@ -65,7 +65,7 @@ describe("a file with knowledge comments", () => {
   it("taking a comment out removes the knowledge and lists it in knowledge.removed", async () => {
     const s = await setup(TWO);
     const d = await s.download();
-    const r = await s.put(editBody(d.text, b => b.replace(`\n${comment([`id: ${K1}`, "when: when A", "conclusion: use A"])}\n`, "\n")));
+    const r = await s.put(editBody(d.text, b => b.replace(`\n${comment([`id: ${K1}`, "when: when A", "conclusion: use A", "status: needs-verify"])}\n`, "\n")));
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().knowledge).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "First" }], renewed: [], ignoredComments: 0 });
     const after = await s.infos();

@@ -203,8 +203,7 @@ describe("KnowledgeWriteReport helpers", () => {
 });
 
 const ALL_PROBLEMS: KnowledgeCommentProblem[] = [
-  "not_multiline", "bad_line", "duplicate_key", "bad_value", "unstorable", "blank_line_missing", "two_comments", "unclosed",
-  "too_long", "line_break", "bad_id", "bad_evidence", "bad_status", "bad_date", "bad_ref", "superseded_self",
+  "not_multiline", "bad_line", "duplicate_key", "bad_value", "unstorable", "blank_line_missing", "two_comments", "unclosed", "bad_id",
 ];
 
 describe("knowledgeProblemMessage", () => {
@@ -218,15 +217,15 @@ describe("knowledgeProblemMessage", () => {
   });
 
   it("names an empty heading", () => {
-    expect(knowledgeProblemMessage({ problem: "superseded_self", heading: "" })).toBe(
-      "The knowledge comment under an empty heading names itself in `superseded_by`. Nothing was written.",
+    expect(knowledgeProblemMessage({ problem: "two_comments", heading: "" })).toBe(
+      "The knowledge comment under an empty heading is the second knowledge comment under that heading. Nothing was written.",
     );
   });
 
   it("every problem has its own reason, in English, and the message ends by saying nothing was written", () => {
     const messages = new Set<string>();
     for (const problem of ALL_PROBLEMS) {
-      const p: KnowledgeProblem = { problem, key: problem === "too_long" ? "conclusion" : "when", heading: "D1" };
+      const p: KnowledgeProblem = { problem, key: "when", heading: "D1" };
       const msg = knowledgeProblemMessage(p);
       expect(msg).toMatch(/^The knowledge comment under the heading "D1" [\x20-\x7e]+\. Nothing was written\.$/);
       messages.add(msg);
@@ -234,8 +233,7 @@ describe("knowledgeProblemMessage", () => {
     expect(messages.size).toBe(ALL_PROBLEMS.length);
   });
 
-  it("states the limit that was crossed", () => {
-    expect(knowledgeProblemMessage({ problem: "too_long", key: "when", heading: "D" })).toContain("`when` longer than 200 characters");
-    expect(knowledgeProblemMessage({ problem: "too_long", key: "conclusion", heading: "D" })).toContain("`conclusion` longer than 300 characters");
+  it("names a custom key the comment repeats", () => {
+    expect(knowledgeProblemMessage({ problem: "duplicate_key", key: "x-owner", heading: "D" })).toContain("has `x-owner` more than once");
   });
 });

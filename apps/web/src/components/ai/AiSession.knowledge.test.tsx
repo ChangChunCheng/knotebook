@@ -6,7 +6,7 @@ import { createTestEditor, renderAiHost, selectWholeBlocks, stubAiFetch, type Ai
 import { useAiSession, type AiSessionValue } from "./AiSession";
 
 const REWRITE: AiActionDto = { id: REWRITE_ACTION_ID, name: "Rewrite", applyMode: "direct", kind: "quick" };
-const KNOWLEDGE = { knowledgeId: "k_00000001", knowledgeWhen: "when it matters", knowledgeConclusion: "keep it" };
+const KNOWLEDGE = { knowledgeId: "k_00000001", knowledgeWhen: "when it matters", knowledgeConclusion: "keep it", knowledgeEvidence: "docs" };
 const DOC = [
   { id: "h1", type: "heading", props: { level: 2, ...KNOWLEDGE }, content: "Title" },
   { id: "p1", type: "paragraph", content: "body text" },
@@ -67,12 +67,20 @@ describe("AI box with knowledge", () => {
     expect(heading()).toMatchObject(KNOWLEDGE);
   });
 
-  it("a reply with an invalid knowledge comment ends in the error state and changes nothing", async () => {
+  it("a reply with a malformed knowledge comment ends in the error state and changes nothing", async () => {
     const call = await run();
-    await reply(call, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nevidence: bogus\n-->\n\nrewritten body");
+    await reply(call, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: a\nwhen: b\n-->\n\nrewritten body");
     expect(session.state).toMatchObject({ phase: "error", code: "invalid_knowledge" });
     expect(JSON.stringify(editor.document)).not.toContain("rewritten body");
     expect(heading()).toMatchObject(KNOWLEDGE);
+  });
+
+  it("a reply whose comment has a value that is not allowed is applied with that value left as stored", async () => {
+    const call = await run();
+    await reply(call, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: when it matters\nconclusion: keep it\nevidence: bogus\nOwner: bob\n-->\n\nrewritten body");
+    expect(session.state.phase).toBe("done");
+    expect(JSON.stringify(editor.document)).toContain("rewritten body");
+    expect(heading()).toMatchObject({ ...KNOWLEDGE, knowledgeEvidence: "docs" });
   });
 
   it("a reply with a raw data-knowledge attribute does not set knowledge", async () => {

@@ -45,6 +45,7 @@ describe("a note with knowledge comments downloads like one without, plus the co
         `when: when ${i}`,
         `conclusion: conclusion ${i}`,
         "evidence: tested",
+        "status: needs-verify",
         "-->",
       ]);
     }

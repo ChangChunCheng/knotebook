@@ -46,7 +46,7 @@ describe("reading and writing knowledge back", () => {
   it("reading a note with knowledge shows the comment, and writing the section back unchanged leaves ids, props and every fingerprint unchanged", async () => {
     const s = await setup([P("p0", "intro"), KH("hA", "A", K1, { knowledgeConclusion: "keep", knowledgeEvidence: "tested", knowledgeVerified: "2026-10-20" }), P("a1", "body"), H("hB", "B"), P("b1", "other")]);
     const before = await s.content();
-    expect(before.markdown).toContain(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep", "evidence: tested", "verified: 2026-10-20"])}\n\nbody`);
+    expect(before.markdown).toContain(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep", "evidence: tested", "verified: 2026-10-20", "status: verified"])}\n\nbody`);
     const infoBefore = await s.infos();
     const sec = await s.section("hA");
     const res = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: sec.section.markdown });
@@ -197,19 +197,31 @@ describe("rewrites", () => {
 });
 
 describe("what is rejected", () => {
-  it("outdated without superseded_by is accepted, both when it is what the note already stores and when it is new; a superseded_by that isn't a reference is 400", async () => {
+  it("outdated without superseded_by is accepted, both when it is what the note already stores and when it is new; a superseded_by that isn't a reference is written as no replacement", async () => {
     const s = await setup([KH("hA", "A", K1, { knowledgeStatus: "outdated" }), P("a1", "body"), H("hB", "B"), P("b1", "other")]);
     const sec = await s.section("hA");
     const same = await s.edit({ op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint, markdown: sec.section.markdown });
     expect(same.statusCode, same.body).toBe(201);
     const secB = await s.section("hB");
     const bad = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB.section.fingerprint, markdown: `## New\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
-    expect(bad.statusCode).toBe(400);
-    expect(errOf(bad).code).toBe("invalid_knowledge");
-    expect(errOf(bad).message).toBe("The knowledge comment under the heading \"New\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written.");
+    expect(bad.statusCode, bad.body).toBe(201);
+    const created = knowledgeOf(bad)!.created[0]!;
+    expect((await s.infos()).get(created.id)).toMatchObject({ when: "w", status: "outdated", supersededBy: "" });
     const secB2 = await s.section("hB");
-    const good = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB2.section.fingerprint, markdown: `## New\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
+    const good = await s.edit({ op: "insert_after", section_id: "hB", if_match: secB2.section.fingerprint, markdown: `## Newer\n${comment(["when: w", "status: outdated"])}\n\nx\n` });
     expect(good.statusCode, good.body).toBe(201);
+    await s.ctx.destroy();
+  });
+
+  it("a value that is not allowed keeps what the knowledge already stores, and the rest of the comment is written", async () => {
+    const s = await setup([KH("hA", "A", K1, { knowledgeEvidence: "docs", knowledgeStatus: "unverified" }), P("a1", "body")]);
+    const sec = await s.section("hA");
+    const res = await s.edit({
+      op: "replace_section", section_id: "hA", if_match: sec.section.fingerprint,
+      markdown: `## A\n${comment([`id: ${K1}`, "when: changed", "evidence: vendor-doc", "verified: soon", "status: current", "Owner: bob"])}\n\nbody\n`,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect((await s.infos()).get(K1)).toMatchObject({ when: "changed", evidence: "docs", verified: "", status: "unverified" });
     await s.ctx.destroy();
   });
 
@@ -224,15 +236,16 @@ describe("what is rejected", () => {
     await s.ctx.destroy();
   });
 
-  it("a value with a line break is 400 invalid_knowledge line_break; a stored one with a line break written back unchanged is accepted", async () => {
+  it("a new value with a line break is not stored; a stored one with a line break written back unchanged is accepted", async () => {
     const s = await setup([KH("hA", "A", K1, { knowledgeWhen: "first\nsecond" }), P("a1", "body")]);
     const before = await s.content();
     const same = await s.edit({ op: "replace_all", if_match: before.fingerprint, markdown: before.markdown });
     expect(same.statusCode, same.body).toBe(201);
     expect((await s.infos()).get(K1)!.when).toBe("first\nsecond");
-    const bad = await s.edit({ op: "append", markdown: `## Z\n${comment(['when: "a\\nb"'])}\n\nx\n` });
-    expect(bad.statusCode).toBe(400);
-    expect(errOf(bad).message).toBe('The knowledge comment under the heading "Z" has a line break in `when`: write it on one line. Nothing was written.');
+    const bad = await s.edit({ op: "append", markdown: `## Z\n${comment(['when: "a\\nb"', "conclusion: c"])}\n\nx\n` });
+    expect(bad.statusCode, bad.body).toBe(201);
+    const created = knowledgeOf(bad)!.created[0]!;
+    expect((await s.infos()).get(created.id)).toMatchObject({ when: "", conclusion: "c" });
     await s.ctx.destroy();
   });
 
@@ -387,7 +400,7 @@ y
     expect(k.renewed.map(r => r.heading)).toEqual(["C"]);
     const out = await s.content();
     expect(out.markdown).toContain(`## B
-${comment([`id: ${K1}`, "when: alice reads this", "conclusion: second"])}`);
+${comment([`id: ${K1}`, "when: alice reads this", "conclusion: second", "status: needs-verify"])}`);
     await s.ctx.destroy();
   });
 
@@ -400,16 +413,29 @@ ${comment([`id: ${K1}`, "when: alice reads this", "conclusion: second"])}`);
     await s.ctx.destroy();
   });
 
-  it("create with content whose comment has a superseded_by that isn't a reference is 400 invalid_knowledge naming the heading, and no note is created", async () => {
+  it("create with content whose comment has a superseded_by that isn't a reference creates the note with no replacement", async () => {
+    const s = await setup([P("p1", "body")]);
+    const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
+    const res = await s.ctx.app.inject({
+      method: "POST", url: "/api/notes", headers: { cookie, "content-type": "application/json", origin: "http://localhost:3000" },
+      payload: { title: "Fresh", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, (res.json() as { id: string }).id)).doc;
+    expect([...knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)).values()]).toMatchObject([{ when: "w", status: "outdated", supersededBy: "" }]);
+    await s.ctx.destroy();
+  });
+
+  it("create with content whose comment has a malformed id is 400 invalid_knowledge naming the heading, and no note is created", async () => {
     const s = await setup([P("p1", "body")]);
     const cookie = `${SESSION_COOKIE}=${await signTestSession({ userId: s.u.id, tv: 0 })}`;
     const rowsBefore = await noteRows(s);
     const res = await s.ctx.app.inject({
       method: "POST", url: "/api/notes", headers: { cookie, "content-type": "application/json", origin: "http://localhost:3000" },
-      payload: { title: "Fresh", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` },
+      payload: { title: "Fresh", content: `## D1\n${comment(["id: K_bad", "when: w"])}\n\nx\n` },
     });
     expect(res.statusCode, res.body).toBe(400);
-    expect(errOf(res)).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written." });
+    expect(errOf(res)).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge). Nothing was written." });
     expect(await noteRows(s)).toBe(rowsBefore);
     await s.ctx.destroy();
   });

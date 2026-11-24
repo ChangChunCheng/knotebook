@@ -82,7 +82,7 @@ describe("reading", () => {
   it("read_note_section returns the comment under a knowledge heading", async () => {
     const s = await setup([KH("hA", "A", K1, { knowledgeConclusion: "keep" }), P("a1", "body")]);
     const sec = await s.section("hA");
-    expect(sec.markdown).toBe(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep"])}\n\nbody\n`);
+    expect(sec.markdown).toBe(`## A\n${comment([`id: ${K1}`, "when: alice reads this", "conclusion: keep", "status: needs-verify"])}\n\nbody\n`);
     await s.ctx.destroy();
   });
 });
@@ -155,14 +155,23 @@ body
     await s.ctx.destroy();
   });
 
-  it("whose content has a superseded_by that isn't a reference is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
+  it("whose content has a malformed id is the invalid_knowledge tool error naming the heading, not internal, and no note is left", async () => {
     const s = await setup([P("p1", "x")]);
     const before = (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
-    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
+    const r = await s.call("create_note", { title: "Bad", content: `## D1\n${comment(["id: K_bad", "when: w"])}\n\nx\n` });
     expect(r.isError).toBe(true);
-    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>. Nothing was written." });
+    expect(r.structuredContent).toEqual({ code: "invalid_knowledge", message: "The knowledge comment under the heading \"D1\" has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge). Nothing was written." });
     expect((await s.ctx.db.select({ id: notes.id }).from(notes)).length).toBe(before);
     expect(await s.ctx.db.select().from(notes).where(eq(notes.title, "Bad"))).toHaveLength(0);
+    await s.ctx.destroy();
+  });
+
+  it("whose content has a superseded_by that isn't a reference creates the note with no replacement", async () => {
+    const s = await setup([P("p1", "x")]);
+    const r = await s.call("create_note", { title: "Loose", content: `## D1\n${comment(["when: w", "status: outdated", "superseded_by: nope"])}\n\nx\n` });
+    const id = (ok(r).note as { id: string }).id;
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, id)).doc;
+    expect([...knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)).values()]).toMatchObject([{ when: "w", status: "outdated", supersededBy: "" }]);
     await s.ctx.destroy();
   });
 
@@ -225,14 +234,18 @@ describe("each claim in the new describe text holds", () => {
     await s.ctx.destroy();
   });
 
-  it("status current is refused and only verified, unverified or outdated are accepted", async () => {
+  it("status current is not stored, and verified, needs-verify, obsolete and the old unverified and outdated are", async () => {
     const s = await setup([P("p1", "x")]);
-    const bad = await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: current"])}\n\nx\n` });
-    expect(bad.structuredContent.code).toBe("invalid_knowledge");
-    const good = knowledgeOf(await s.edit({ op: "append", markdown: `## S\n${comment(["when: w", "status: unverified"])}\n\nx\n` }))!;
-    expect((await s.infos()).get(good.created[0]!.id)).toMatchObject({ status: "unverified" });
-    const verified = knowledgeOf(await s.edit({ op: "append", markdown: `## V\n${comment(["when: w", "status: verified"])}\n\nx\n` }))!;
-    expect((await s.infos()).get(verified.created[0]!.id)).toMatchObject({ status: "verified" });
+    const status = async (heading: string, value: string) => {
+      const k = knowledgeOf(await s.edit({ op: "append", markdown: `## ${heading}\n${comment(["when: w", `status: ${value}`])}\n\nx\n` }))!;
+      return (await s.infos()).get(k.created[0]!.id)!.status;
+    };
+    expect(await status("C", "current")).toBe("");
+    expect(await status("U", "unverified")).toBe("unverified");
+    expect(await status("N", "needs-verify")).toBe("unverified");
+    expect(await status("V", "verified")).toBe("verified");
+    expect(await status("O", "obsolete")).toBe("outdated");
+    expect(await status("D", "outdated")).toBe("outdated");
     await s.ctx.destroy();
   });
 

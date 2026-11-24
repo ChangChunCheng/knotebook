@@ -1,7 +1,7 @@
 // The keep-knowledge pairing against blocks produced by the real read → parse path, not hand-written ones.
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { knowledgePairs, resolveKnowledgeForWrite } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, knowledgePairs, readKnowledgeInfo, resolveKnowledgeForWrite, sanitizeKnowledgeForWrite } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
@@ -58,5 +58,21 @@ describe("knowledge pairing across a real read and write", () => {
     const r = resolveKnowledgeForWrite({ before, after, keep: true, taken: new Set() });
     expect(r.kept).toEqual([{ id: "k_8f3a2c1d", heading: "Decision" }]);
     expect(r.blocks[0].props.knowledgeId).toBe("k_8f3a2c1d");
+  });
+
+  it("a read-back written unchanged, comments kept, stores exactly what was there and ignores nothing", async () => {
+    const legacy = { level: 2, knowledgeId: "k_00000001", knowledgeWhen: "w", knowledgeVerified: "2026-01-02", knowledgeEvidence: "docs" };
+    const unverified = { level: 2, knowledgeId: "k_00000002", knowledgeConclusion: "c", knowledgeStatus: "unverified" };
+    const outdated = { level: 2, knowledgeId: "k_00000003", knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000001" };
+    const blocks = [legacy, unverified, outdated].map((props, i) => ({ type: "heading", props, content: `H${i}` }));
+    const { before, after, markdown } = await readThenWrite(blocks, "x");
+    expect(markdown).toContain("status: verified");
+    const current = new Map(before.map((b: AnyBlock) => [b.props.knowledgeId as string, readKnowledgeInfo(b.props)!]));
+    const resolved = resolveKnowledgeForWrite({ before, after, keep: true, taken: new Set(current.keys()) });
+    const s = sanitizeKnowledgeForWrite({ after: resolved.blocks, current, noteId: TARGET, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    expect(s.problem).toBeNull();
+    expect(s.ignored).toEqual([]);
+    const knowledgeOf = (b: AnyBlock) => Object.fromEntries(Object.entries(b.props).filter(([k]) => k.startsWith("knowledge")));
+    expect(s.blocks.map(knowledgeOf)).toEqual(before.map(knowledgeOf));
   });
 });

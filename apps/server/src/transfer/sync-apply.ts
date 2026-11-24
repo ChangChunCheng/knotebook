@@ -10,12 +10,13 @@ import type { Block } from "@blocknote/core";
 import * as Y from "yjs";
 import type { noteAiEdits } from "../db/schema.js";
 import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   YDOC_FRAGMENT,
   keptIdRenames,
   knowledgeRefsIn,
-  knowledgeWriteProblem,
   normalizeKnowledgeRefs,
   resolveKnowledgeForWrite,
+  sanitizeKnowledgeForWrite,
   type KnowledgeBlockShape,
   type KnowledgeInfo,
 } from "@knotebook/shared";
@@ -122,10 +123,10 @@ export async function applySync(
         // A comment without an id takes the id of the heading it rewrites; headings written without a comment are never given knowledge.
         const old = d.kind === "rewrite" ? (pickBlocks(byId, d.survivors) as unknown as readonly KnowledgeBlockShape[]) : [];
         const r = resolveKnowledgeForWrite({ before: old, after: normalizeKnowledgeRefs(blocks as unknown as readonly KnowledgeBlockShape[], k.noteId), keep: false, taken });
-        const problem = knowledgeWriteProblem(r.blocks, k.current, k.noteId);
-        if (problem !== null) throw new KnowledgeWriteError(problem);
+        const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+        if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
         for (const ref of [...r.created, ...r.renewed]) taken.add(ref.id);
-        blocks = r.blocks as unknown as typeof blocks;
+        blocks = s.blocks as unknown as typeof blocks;
         reports.push({ kept: r.kept, created: r.created, removed: [], renewed: r.renewed });
       }
       const p = d.place;

@@ -2,7 +2,7 @@
 import { eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as Y from "yjs";
-import { MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
 import type { CollabServer } from "../../collab/server.js";
 import type { Db } from "../../db/index.js";
 import { noteStates, notes, users } from "../../db/schema.js";
@@ -71,7 +71,7 @@ export async function linkTitlesFor(db: Db, viewerId: string, doc: Y.Doc): Promi
 
 /** Single place that builds markdown for MCP reads and file export, so they are byte-identical. Wikilinks export as links using label, else the current title from `titles` (keys lowercase), else snapshotTitle. Pure and DB-free (the caller holds the lease). */
 export function toNoteMarkdown(editor: EditorSession["editor"], blocks: EditorSession["editor"]["document"], titles: ReadonlyMap<string, string>): string {
-  return blocksToNoteMarkdown(editor, wikilinksToLinks(blocks, id => titles.get(id.toLowerCase())), { knowledge: true });
+  return blocksToNoteMarkdown(editor, wikilinksToLinks(blocks, id => titles.get(id.toLowerCase())), { knowledge: { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW } });
 }
 
 async function exportMarkdown(runtime: EditingRuntime, doc: Y.Doc, ids: Set<string> | undefined, titles: ReadonlyMap<string, string>, onShown?: (shown: ShownLinks) => void): Promise<string> {

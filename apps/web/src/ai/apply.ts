@@ -17,11 +17,12 @@ import {
   targetFromList,
   applyKnowledgeComments,
   findStrayKnowledgeProps,
-  knowledgeWriteProblem,
   normalizeKnowledgeRefs,
   readKnowledgeInfo,
   resolveKnowledgeForWrite,
   restoreKnowledgeProps,
+  sanitizeKnowledgeForWrite,
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   KNOWLEDGE_ATTR_IN_TAG,
   PLAINTEXT_TAG,
   type KnowledgeBlockShape,
@@ -142,8 +143,14 @@ function resolveKnowledge(blocks: AnyBlock[], hasComments: boolean, context: AiK
     keep: context !== undefined,
     taken: new Set(context?.current.keys()),
   });
-  if (knowledgeWriteProblem(resolved.blocks, context?.current ?? new Map(), context?.noteId ?? null) !== null) return null;
-  return resolved.blocks as unknown as AnyBlock[];
+  const sanitized = sanitizeKnowledgeForWrite({
+    after: resolved.blocks,
+    current: context?.current ?? new Map(),
+    noteId: context?.noteId ?? null,
+    fields: DEFAULT_KNOWLEDGE_FIELD_VIEW,
+  });
+  if (sanitized.problem !== null) return null;
+  return sanitized.blocks as unknown as AnyBlock[];
 }
 
 export type ApplyOutcome =

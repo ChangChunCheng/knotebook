@@ -1,4 +1,4 @@
-import { KNOWLEDGE_CONCLUSION_MAX, KNOWLEDGE_WHEN_MAX, type KnowledgeCommentProblem, type KnowledgeProblem } from "@knotebook/shared";
+import type { KnowledgeCommentProblem, KnowledgeProblem } from "@knotebook/shared";
 
 const HEADING_CHARS = 80;
 
@@ -18,16 +18,9 @@ const REASONS: Record<KnowledgeCommentProblem, (p: KnowledgeProblem) => string> 
   bad_value: p => `has a quoted \`${key(p)}\` that isn't one JSON string`,
   unstorable: p => `has a \`${key(p)}\` with a NUL character or an unpaired surrogate`,
   unclosed: () => "has no closing -->",
-  too_long: p => `has a \`${key(p)}\` longer than ${p.key === "when" ? KNOWLEDGE_WHEN_MAX : KNOWLEDGE_CONCLUSION_MAX} characters`,
-  line_break: p => `has a line break in \`${key(p)}\`: write it on one line`,
   bad_id: () => "has an `id` that isn't k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge)",
-  bad_evidence: () => "has an `evidence` other than tested, docs, inferred or unconfirmed",
-  bad_status: () => "has a `status` other than verified, unverified or outdated (it can be left out)",
-  bad_date: () => "has a `verified` that isn't a date written YYYY-MM-DD",
-  bad_ref: () => "has a `superseded_by` that isn't a knowledge id or <note id>#<knowledge id>",
   blank_line_missing: () => "needs a blank line after its -->",
   two_comments: () => "is the second knowledge comment under that heading",
-  superseded_self: () => "names itself in `superseded_by`",
 };
 
 /** English only: HTTP and MCP messages are. The heading is the one piece of note text allowed into an error message. */
