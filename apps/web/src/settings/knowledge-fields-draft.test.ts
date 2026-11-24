@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type AdminKnowledgeFieldsDto } from "@knotebook/shared";
-import { addOption, draftFromAdmin, inputFromDraft, moveOption, setOptionKey, setOptionName } from "./knowledge-fields-draft";
+import { addCustomField, addOption, draftFromAdmin, enabledCustomCount, inputFromDraft, moveField, moveOption, setCustomKey, setCustomName, setOptionKey, setOptionName } from "./knowledge-fields-draft";
 
 const DTO: AdminKnowledgeFieldsDto = {
   fields: DEFAULT_KNOWLEDGE_FIELD_VIEW.fields.map((f) => ({ ...f })),
@@ -55,5 +55,51 @@ describe("knowledge fields draft", () => {
     expect(first).toMatch(/^k[0-9a-z]{5}$/);
     draft = setOptionName(draft, "evidence", 3, "廠商文件");
     expect(draft.fields[2]!.options[3]!.key).toBe(first);
+  });
+
+  describe("custom fields", () => {
+    const owner = { key: "x-owner" as const, enabled: true, name: "Owner", type: "member" as const, builtin: false, options: [] };
+    const scope = { key: "x-scope" as const, enabled: false, name: "Scope", type: "select" as const, builtin: false, options: [{ key: "site", name: "Site", enabled: true, builtin: false }] };
+    const withCustom: AdminKnowledgeFieldsDto = { ...DTO, fields: [...DTO.fields, owner, scope] };
+
+    it("inputFromDraft sends custom fields in list order with their type only when new", () => {
+      let draft = draftFromAdmin(withCustom);
+      draft = addCustomField(draft, { name: "Due", type: "date", key: "due" });
+      const fields = inputFromDraft(draft).fields;
+      expect(fields.slice(5)).toEqual([
+        { key: "x-owner", name: "Owner", enabled: true },
+        { key: "x-scope", name: "Scope", enabled: false, options: [{ key: "site", name: "Site", enabled: true }] },
+        { key: "x-due", name: "Due", type: "date", enabled: true },
+      ]);
+      const reordered = inputFromDraft(moveField(draft, "x-due", -1)).fields.map((f) => f.key);
+      expect(reordered.slice(5)).toEqual(["x-owner", "x-due", "x-scope"]);
+    });
+
+    it("addCustomField starts the new field off once 20 are on, and counts only enabled ones", () => {
+      const many: AdminKnowledgeFieldsDto = {
+        ...DTO,
+        fields: [...DTO.fields, ...Array.from({ length: 20 }, (_, i) => ({ ...owner, key: `x-f${i}` as const, name: `F${i}` }))],
+      };
+      const draft = addCustomField(draftFromAdmin(many), { name: "Extra", type: "text", key: "extra" });
+      expect(enabledCustomCount(draft)).toBe(20);
+      expect(draft.fields.at(-1)).toMatchObject({ key: "x-extra", enabled: false, isNew: true });
+      expect(addCustomField(draftFromAdmin(withCustom), { name: "Extra", type: "text", key: "extra" }).fields.at(-1)!.enabled).toBe(true);
+    });
+
+    it("only a field added in this session can have its key edited", () => {
+      let draft = addCustomField(draftFromAdmin(withCustom), { name: "Mine", type: "text", key: "mine" });
+      const index = draft.fields.length - 1;
+      draft = setCustomKey(draft, index, "other");
+      draft = setCustomName(draft, index, "Anything");
+      expect(draft.fields[index]).toMatchObject({ key: "x-other", name: "Anything" });
+      expect(setCustomKey(draft, 5, "changed").fields[5]!.key).toBe("x-owner");
+    });
+
+    it("moveField swaps only among custom fields and ignores moves past either end", () => {
+      const draft = draftFromAdmin(withCustom);
+      expect(moveField(draft, "x-owner", -1)).toBe(draft);
+      expect(moveField(draft, "x-scope", 1)).toBe(draft);
+      expect(moveField(draft, "x-owner", 1).fields.map((f) => f.key).slice(5)).toEqual(["x-scope", "x-owner"]);
+    });
   });
 });

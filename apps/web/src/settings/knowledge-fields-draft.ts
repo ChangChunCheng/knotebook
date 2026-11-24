@@ -1,7 +1,9 @@
 import {
+  KNOWLEDGE_CUSTOM_ENABLED_MAX,
   KNOWLEDGE_RESERVED_EVIDENCE_KEYS,
   knowledgeKeyFromName,
   type AdminKnowledgeFieldsDto,
+  type KnowledgeCustomFieldType,
   type KnowledgeFieldInput,
   type KnowledgeFieldKey,
   type KnowledgeFieldType,
@@ -16,7 +18,13 @@ export interface KnowledgeFieldsDraftField {
   type: KnowledgeFieldType;
   builtin: boolean;
   options: KnowledgeFieldsDraftOption[];
+  /** A custom field added in this session; its key and type are still editable and its type is sent once. */
+  isNew?: boolean;
+  /** React identity of a new row, whose key changes while it is typed. */
+  uid?: number;
 }
+/** Addresses a field by key, or by position when a new row's key is not unique yet. */
+export type FieldRef = KnowledgeFieldKey | number;
 export interface KnowledgeFieldsDraft { fields: KnowledgeFieldsDraftField[] }
 
 export function draftFromAdmin(dto: AdminKnowledgeFieldsDto): KnowledgeFieldsDraft {
@@ -37,22 +45,25 @@ export function inputFromDraft(draft: KnowledgeFieldsDraft): SiteKnowledgeFields
   return {
     fields: draft.fields.map((f): KnowledgeFieldInput => {
       const out: KnowledgeFieldInput = { key: f.key, enabled: f.enabled };
-      if (!f.builtin) out.name = f.name.trim() === "" ? null : f.name.trim();
+      if (!f.builtin) {
+        out.name = f.name.trim() === "" ? null : f.name.trim();
+        if (f.isNew) out.type = f.type as KnowledgeCustomFieldType;
+      }
       if (f.type === "select") out.options = f.options.map((o) => ({ key: o.key, name: o.name.trim() === "" ? null : o.name.trim(), enabled: o.enabled }));
       return out;
     }),
   };
 }
 
-function mapField(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, fn: (f: KnowledgeFieldsDraftField) => KnowledgeFieldsDraftField): KnowledgeFieldsDraft {
-  return { fields: draft.fields.map((f) => (f.key === field ? fn(f) : f)) };
+function mapField(draft: KnowledgeFieldsDraft, field: FieldRef, fn: (f: KnowledgeFieldsDraftField) => KnowledgeFieldsDraftField): KnowledgeFieldsDraft {
+  return { fields: draft.fields.map((f, i) => ((typeof field === "number" ? i === field : f.key === field) ? fn(f) : f)) };
 }
 
-export function setFieldEnabled(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, enabled: boolean): KnowledgeFieldsDraft {
+export function setFieldEnabled(draft: KnowledgeFieldsDraft, field: FieldRef, enabled: boolean): KnowledgeFieldsDraft {
   return mapField(draft, field, (f) => ({ ...f, enabled }));
 }
 
-export function moveOption(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, from: number, by: -1 | 1): KnowledgeFieldsDraft {
+export function moveOption(draft: KnowledgeFieldsDraft, field: FieldRef, from: number, by: -1 | 1): KnowledgeFieldsDraft {
   return mapField(draft, field, (f) => {
     const to = from + by;
     if (from < 0 || to < 0 || to >= f.options.length) return f;
@@ -72,14 +83,14 @@ function takenKeys(field: KnowledgeFieldsDraftField, except: number): Set<string
 
 let nextUid = 0;
 
-export function addOption(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey): KnowledgeFieldsDraft {
+export function addOption(draft: KnowledgeFieldsDraft, field: FieldRef): KnowledgeFieldsDraft {
   nextUid += 1;
   const uid = nextUid;
   return mapField(draft, field, (f) => ({ ...f, options: [...f.options, { key: "", name: "", enabled: true, isNew: true, uid }] }));
 }
 
 /** `index` addresses the row; a new row's key changes while it is edited, so it can't be the identity. */
-export function setOptionName(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, index: number, name: string): KnowledgeFieldsDraft {
+export function setOptionName(draft: KnowledgeFieldsDraft, field: FieldRef, index: number, name: string): KnowledgeFieldsDraft {
   return mapField(draft, field, (f) => ({
     ...f,
     options: f.options.map((o, i) => {
@@ -93,10 +104,81 @@ export function setOptionName(draft: KnowledgeFieldsDraft, field: KnowledgeField
   }));
 }
 
-export function setOptionKey(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, index: number, key: string): KnowledgeFieldsDraft {
+export function setOptionKey(draft: KnowledgeFieldsDraft, field: FieldRef, index: number, key: string): KnowledgeFieldsDraft {
   return mapField(draft, field, (f) => ({ ...f, options: f.options.map((o, i) => (i === index && o.isNew ? { ...o, key, keyEdited: true } : o)) }));
 }
 
-export function setOptionEnabled(draft: KnowledgeFieldsDraft, field: KnowledgeFieldKey, index: number, enabled: boolean): KnowledgeFieldsDraft {
+export function setOptionEnabled(draft: KnowledgeFieldsDraft, field: FieldRef, index: number, enabled: boolean): KnowledgeFieldsDraft {
   return mapField(draft, field, (f) => ({ ...f, options: f.options.map((o, i) => (i === index ? { ...o, enabled } : o)) }));
+}
+
+export function customFields(draft: KnowledgeFieldsDraft): KnowledgeFieldsDraftField[] {
+  return draft.fields.filter((f) => !f.builtin);
+}
+
+export function enabledCustomCount(draft: KnowledgeFieldsDraft): number {
+  return customFields(draft).filter((f) => f.enabled).length;
+}
+
+/** The part of a custom field's key after `x-`, which is what the admin types. */
+export const fieldSlug = (key: string): string => (key.startsWith("x-") ? key.slice(2) : key);
+
+/** Slugs in use by any custom field, turned-off ones included, because a key is never reused. */
+export function takenFieldSlugs(draft: KnowledgeFieldsDraft, except?: number): Set<string> {
+  const taken = new Set<string>();
+  draft.fields.forEach((f, i) => {
+    if (!f.builtin && i !== except) taken.add(fieldSlug(f.key));
+  });
+  return taken;
+}
+
+/** A name with no ASCII letters or digits has no readable slug; keep the key rather than re-rolling a random one per keystroke. */
+export function slugFromName(name: string, taken: ReadonlySet<string>, current: string): string {
+  const hasSlug = /[a-z0-9]/i.test(name.normalize("NFKD"));
+  return hasSlug || current === "" ? knowledgeKeyFromName(name, taken) : current;
+}
+
+export interface CustomFieldInput {
+  name: string;
+  type: KnowledgeCustomFieldType;
+  /** Without the `x-` prefix. */
+  key: string;
+  options?: Array<{ key: string; name: string }>;
+}
+
+/** The new field starts off when the enabled limit is already reached. */
+export function addCustomField(draft: KnowledgeFieldsDraft, input: CustomFieldInput): KnowledgeFieldsDraft {
+  nextUid += 1;
+  const uid = nextUid;
+  const field: KnowledgeFieldsDraftField = {
+    key: `x-${input.key}`,
+    enabled: enabledCustomCount(draft) < KNOWLEDGE_CUSTOM_ENABLED_MAX,
+    name: input.name,
+    type: input.type,
+    builtin: false,
+    isNew: true,
+    uid,
+    options: input.type === "select" ? (input.options ?? []).map((o, i) => ({ key: o.key, name: o.name, enabled: true, isNew: true, uid: uid * 1000 + i })) : [],
+  };
+  return { fields: [...draft.fields, field] };
+}
+
+export function setCustomName(draft: KnowledgeFieldsDraft, index: number, name: string): KnowledgeFieldsDraft {
+  return mapField(draft, index, (f) => ({ ...f, name }));
+}
+
+export function setCustomKey(draft: KnowledgeFieldsDraft, index: number, slug: string): KnowledgeFieldsDraft {
+  return mapField(draft, index, (f) => (f.isNew ? { ...f, key: `x-${slug}` } : f));
+}
+
+/** Swaps with the neighbouring custom field; built-in fields keep their fixed order. */
+export function moveField(draft: KnowledgeFieldsDraft, field: FieldRef, by: -1 | 1): KnowledgeFieldsDraft {
+  const customIdx = draft.fields.flatMap((f, i) => (f.builtin ? [] : [i]));
+  const from = typeof field === "number" ? field : draft.fields.findIndex((f) => f.key === field);
+  const pos = customIdx.indexOf(from);
+  const to = customIdx[pos + by];
+  if (pos < 0 || to === undefined) return draft;
+  const fields = [...draft.fields];
+  [fields[from], fields[to]] = [fields[to]!, fields[from]!];
+  return { fields };
 }
