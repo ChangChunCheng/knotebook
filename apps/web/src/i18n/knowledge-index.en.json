@@ -35,7 +35,7 @@
       "evidence": "Basis",
       "all": "All",
       "notFilled": "Not filled",
-      "disabledOption": "{{name}} (disabled)",
+      "disabledOption": "{{name}} (turned off)",
       "labelled": "{{name}}: {{value}}",
       "clear": "Clear filters"
     }

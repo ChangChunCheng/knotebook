@@ -190,7 +190,7 @@
       "newOptionNamePlaceholder": "Option name",
       "settingsChanged": "Someone else changed these settings. The latest settings are loaded now; make your changes again.",
       "nameMissing": "Enter a name for this option.",
-      "optionsHint": "A built-in option with a blank name uses its default name. A key can't be changed after saving. A hidden option's saved values still show as \"name (disabled)\".",
+      "optionsHint": "A built-in option with a blank name uses its default name. A key can't be changed after saving. A hidden option's saved values still show as \"name (turned off)\".",
       "addOption": "Add option",
       "optionCount": "{{count}} / {{max}}",
       "optionsFull": "At most {{max}} options.",

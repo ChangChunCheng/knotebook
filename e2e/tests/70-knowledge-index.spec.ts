@@ -126,7 +126,7 @@ test("70-2 the folder index lists when and conclusion with note and heading, nes
     const top = indexRow(page, "Before touching the sync code");
     await expect(top).toContainText("Run the full suite");
     await expect(top).toContainText(`${title} › Sync rule`);
-    await expect(top).toContainText("1 below: 0 verified, 1 not verified, 0 need review");
+    await expect(top).toContainText("1 below: 0 verified, 1 need review");
 
     // A child without a "when to read" sits under its parent instead of in the flat list.
     const childRow = indexRow(page, "Retry twice");
@@ -154,9 +154,9 @@ test("70-3 needs review is flagged, outdated sits last and faded; the status and
   try {
     const folderName = `Filtered ${RUN}`;
     const folder = await apiCreateFolder(page, folderName, { space: { kind: "personal" } });
-    // Two notes in one section: the first note's outdated row has to land after the second note's current rows.
+    // Two notes in one section: the first note's outdated row has to land after the second note's rows.
     await seedNote(page, `E2E index filters A ${RUN}`, "## Old rule\n\n## Fresh rule\n\nBody text.", { folderId: folder }, [
-      { heading: "Fresh rule", fields: { when: "When it is fresh" } },
+      { heading: "Fresh rule", fields: { when: "When it is fresh", status: "Verified" } },
       { heading: "Old rule", fields: { when: "While it was current", status: "Outdated", replacedBy: "Fresh rule" } },
     ]);
     const second = await seedNote(page, `E2E index filters B ${RUN}`, "## Review rule\n\nBody text.", { folderId: folder }, [
@@ -169,7 +169,7 @@ test("70-3 needs review is flagged, outdated sits last and faded; the status and
     await expect(indexRows(page)).toHaveCount(3);
 
     // Document order is Old, Fresh (first note), Review (second note); the outdated one moves to the end of the section and is faded.
-    await expect(indexRows(page).first()).toHaveAttribute("data-kind", "noVerifiedDate");
+    await expect(indexRows(page).first()).toHaveAttribute("data-kind", "verified");
     await expect(indexRows(page).nth(1)).toHaveAttribute("data-kind", "needsReview");
     await expect(indexRows(page).nth(1)).toContainText("Needs review");
     const last = indexRows(page).last();
@@ -188,6 +188,13 @@ test("70-3 needs review is flagged, outdated sits last and faded; the status and
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await expect(indexRows(page)).toHaveCount(3);
     await expect(page).not.toHaveURL(/status=/);
+
+    await chooseSelectOption(page, page.getByLabel("Status", { exact: true }), "Status: Verified");
+    await expect(page).toHaveURL(/[?&]status=verified\b/);
+    await expect(indexRows(page)).toHaveCount(1);
+    await expect(indexRows(page).first()).toContainText("When it is fresh");
+    await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+    await expect(indexRows(page)).toHaveCount(3);
 
     await chooseSelectOption(page, page.getByLabel("Basis", { exact: true }), "Basis: Tested");
     await expect(page).toHaveURL(/[?&]evidence=tested\b/);

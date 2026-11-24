@@ -145,8 +145,8 @@ describe("IndexFilterBar basis filter follows the field settings", () => {
     const fields = fieldsWith({ enabled: true, options: [{ key: "tested", name: null, enabled: false }, { key: "docs", name: "Spec", enabled: false }] });
     const onChange = vi.fn();
     const { rerender } = render(<IndexFilterBar filters={{ ...NONE, evidence: "tested" }} tagOptions={[]} fields={fields} onChange={onChange} />);
-    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Tested (disabled)");
+    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Tested (turned off)");
     rerender(<IndexFilterBar filters={{ ...NONE, evidence: "docs" }} tagOptions={[]} fields={fields} onChange={onChange} />);
-    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Spec (disabled)");
+    expect(displayedLabel(screen.getByRole("combobox", { name: "Basis" }))).toBe("Basis: Spec (turned off)");
   });
 });

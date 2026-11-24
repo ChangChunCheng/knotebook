@@ -19,8 +19,7 @@
     "evidence": {
       "tested": "實測",
       "docs": "文件",
-      "inferred": "推論",
-      "unconfirmed": "未確認"
+      "inferred": "推論"
     },
     "status": {
       "verified": "已驗證",

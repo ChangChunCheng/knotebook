@@ -19,8 +19,7 @@
     "evidence": {
       "tested": "Tested",
       "docs": "Documentation",
-      "inferred": "Inferred",
-      "unconfirmed": "Unconfirmed"
+      "inferred": "Inferred"
     },
     "status": {
       "verified": "Verified",
