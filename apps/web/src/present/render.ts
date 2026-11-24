@@ -5,7 +5,7 @@ import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { presentationSchema } from "./schema";
 import { isBlankBlock, noteToSlides, type SlideKind } from "./slides";
 import { sanitizeSlideFragment } from "./sanitize";
-import { postprocessSlide, type MermaidJob, type PostprocessContext } from "./postprocess";
+import { postprocessSlide, type CodeHighlightJob, type MermaidJob, type PostprocessContext } from "./postprocess";
 
 /**
  * Timing: `createExportEditor` / `renderDeck` may be called only inside a `setTimeout` / `queueMicrotask` callback, never in
@@ -25,7 +25,7 @@ export interface RenderedSlide {
   titleOnly: boolean;
   key: string;
   /** null: key unchanged since the previous render; keep the existing DOM. */
-  content: { fragment: DocumentFragment; mermaid: MermaidJob[] } | null;
+  content: { fragment: DocumentFragment; mermaid: MermaidJob[]; code: CodeHighlightJob[] } | null;
 }
 
 export interface RenderedSection {
@@ -56,7 +56,7 @@ export function renderDeck(input: RenderDeckInput): RenderedSection[] {
       // One blocksToHTMLLossy call per slide, so its list items merge into one list.
       template.innerHTML = slide.blocks.length > 0 ? input.editor.blocksToHTMLLossy(slide.blocks) : "";
       const fragment = sanitizeSlideFragment(template.content);
-      const mermaid = postprocessSlide(fragment, input.ctx);
+      const { mermaid, code } = postprocessSlide(fragment, input.ctx);
       if (slide.kind === "cover") {
         const h1 = document.createElement("h1");
         const untitled = input.title.trim() === "";
@@ -64,7 +64,7 @@ export function renderDeck(input: RenderDeckInput): RenderedSection[] {
         if (untitled) h1.className = "kn-present-untitled";
         fragment.prepend(h1);
       }
-      return { id: slide.id, kind: slide.kind, titleOnly, key, content: { fragment, mermaid } };
+      return { id: slide.id, kind: slide.kind, titleOnly, key, content: { fragment, mermaid, code } };
     }),
   }));
 }

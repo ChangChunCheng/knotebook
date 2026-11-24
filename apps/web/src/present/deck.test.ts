@@ -17,7 +17,7 @@ function rendered(spec: string, version: Record<string, number> = {}, reuse: str
         const p = document.createElement("p");
         p.textContent = `${id}@${v}`;
         fragment.append(p);
-        return { id, kind: "heading" as const, titleOnly: id.endsWith("!"), key: `${id}@${v}`, content: reuse.includes(id) ? null : { fragment, mermaid: [] } };
+        return { id, kind: "heading" as const, titleOnly: id.endsWith("!"), key: `${id}@${v}`, content: reuse.includes(id) ? null : { fragment, mermaid: [], code: [] } };
       }),
     };
   });

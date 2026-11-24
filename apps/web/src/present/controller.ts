@@ -12,7 +12,10 @@ import { restackSlideBody } from "./columns";
 import { createDebouncer } from "./debounce";
 import { applyRenderedDeck, createDeckDom, playingMedia, SLIDE_ID_ATTR, watchSwipeGuards, withoutTransition, type SwipeGuards } from "./deck";
 import type { HashWriter } from "./hash-writer";
-import { mermaidJobsIn, runMermaidJob, type MermaidJob, type PostprocessContext } from "./postprocess";
+import {
+  codeHighlightJobsIn, mermaidJobsIn, runCodeHighlightJob, runMermaidJob,
+  type CodeHighlightJob, type MermaidJob, type PostprocessContext,
+} from "./postprocess";
 import { PRESENT_SEARCH, slideIdFromHash } from "./present-url";
 import { createExportEditor, renderDeck, type ExportEditor } from "./render";
 import { locateSlide, repositionAfterUpdate } from "./reposition";
@@ -92,6 +95,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
   let currentId = COVER_ID;
   const dom = createDeckDom();
   const mermaidGeneration = new WeakMap<Element, number>();
+  const codeHighlightGeneration = new WeakMap<Element, number>();
 
   const live = () => resolved && !destroyed && !disposed && reveal !== null && editor !== null;
 
@@ -123,6 +127,19 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
         theme,
         () => !destroyed && !disposed && job.el.isConnected && mermaidGeneration.get(job.el) === generation,
         t("present.mermaidError"),
+      ).then((applied) => {
+        if (applied) swipe?.refresh(job.el);
+      });
+    }
+  };
+
+  const runCodeHighlight = (jobs: readonly CodeHighlightJob[]) => {
+    for (const job of jobs) {
+      const generation = (codeHighlightGeneration.get(job.el) ?? 0) + 1;
+      codeHighlightGeneration.set(job.el, generation);
+      void runCodeHighlightJob(
+        job,
+        () => !destroyed && !disposed && job.el.isConnected && codeHighlightGeneration.get(job.el) === generation,
       ).then((applied) => {
         if (applied) swipe?.refresh(job.el);
       });
@@ -167,6 +184,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
       const els = dom.els.get(id)!;
       swipe?.observe(els);
       runMermaid(mermaidJobsIn(els.body));
+      runCodeHighlight(codeHighlightJobsIn(els.body));
     }
     swipe?.refreshAll();
   };
@@ -288,6 +306,7 @@ export function startDeck(host: HTMLElement, env: () => DeckEnv, hashWriter: Has
         // only those can be measured here, the rest are measured by onSlideChanged when they become current.
         for (const els of dom.els.values()) restackSlideBody(els.body);
         runMermaid(mermaidJobsIn(dom.slidesEl));
+        runCodeHighlight(codeHighlightJobsIn(dom.slidesEl));
         unsubscribeSource = subscribeSource();
         requestAnimationFrame(() => {
           if (!destroyed && !disposed && htmlHasPrintClasses()) env().shell.onFatal("present.configRefused");

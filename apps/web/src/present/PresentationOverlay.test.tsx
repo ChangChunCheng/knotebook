@@ -12,6 +12,7 @@ import { FakeReveal } from "@/test/fake-reveal";
 import { installFakeFullscreen, type FakeFullscreen } from "@/test/fake-fullscreen";
 import { PresentationShell } from "./PresentationShell";
 import PresentationOverlay, { type PresentationOverlayProps } from "./PresentationOverlay";
+import { resetCodeHighlightForTests } from "./code-highlight";
 import { createExportEditor, renderDeck } from "./render";
 import { UPDATE_DEBOUNCE_MS } from "./debounce";
 import { OWNER_PERMS } from "@/test/fixtures";
@@ -19,6 +20,23 @@ import { OWNER_PERMS } from "@/test/fixtures";
 vi.mock("reveal.js", async () => ({ default: (await import("@/test/fake-reveal")).FakeReveal }));
 const mermaid = vi.hoisted(() => ({ renderMermaid: vi.fn(async () => ({ ok: true as const, svg: "<svg data-m></svg>" })) }));
 vi.mock("@/lib/mermaid", () => mermaid);
+const shikiMock = vi.hoisted(() => {
+  const codeToTokens = vi.fn((code: string) => ({
+    tokens: code.split("\n").map((line) => [{ content: line, color: "var(--code-token-keyword)", fontStyle: 0 }]),
+  }));
+  const loadLanguage = vi.fn(async () => {});
+  const createHighlighter = vi.fn(async () => ({
+    getLoadedLanguages: () => ["typescript"],
+    loadLanguage,
+    getLoadedThemes: () => ["knotebook-code"],
+    codeToTokens,
+  }));
+  return { createHighlighter, loadLanguage, codeToTokens };
+});
+vi.mock("@/lib/code-highlight", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/code-highlight")>();
+  return { ...real, createHighlighter: shikiMock.createHighlighter };
+});
 vi.mock("./render", async (importOriginal) => {
   const mod = await importOriginal<typeof import("./render")>();
   return { ...mod, renderDeck: vi.fn(mod.renderDeck) };
@@ -127,6 +145,10 @@ describe("PresentationOverlay (fake reveal)", () => {
     FakeReveal.reset();
     nav.fn.mockClear();
     mermaid.renderMermaid.mockClear();
+    resetCodeHighlightForTests();
+    shikiMock.createHighlighter.mockClear();
+    shikiMock.loadLanguage.mockClear();
+    shikiMock.codeToTokens.mockClear();
     vi.mocked(renderDeck).mockClear();
   });
 
@@ -479,5 +501,92 @@ describe("PresentationOverlay (fake reveal)", () => {
     });
     expect(document.querySelector('.reveal svg[data-gen="1"]')).toBeNull();
     expect(document.querySelector('.reveal svg[data-gen="2"]')).not.toBeNull();
+  });
+
+  it("code highlighting: notes without supported code blocks never load shiki", async () => {
+    setup({
+      props: {
+        variant: "public",
+        doc: makeDoc([{ id: "c0", type: "codeBlock", props: { language: "text" }, content: "plain text" }]),
+        title: "T",
+        publicRef: { kind: "token", token: "t" },
+      },
+    });
+    await ready();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(shikiMock.createHighlighter).not.toHaveBeenCalled();
+    expect(slideEl("b").querySelector("pre > code")!.textContent).toBe("plain text");
+  });
+
+  it("code highlighting: colors code blocks with --code-* vars, skips re-tokenizing on theme switch, and reuses cache synchronously on live update", async () => {
+    const publicRef = { kind: "token" as const, token: "t" };
+    const doc1 = makeDoc([
+      { id: "c1", type: "codeBlock", props: { language: "ts" }, content: "const x = 1;" },
+      { id: "pb", type: "paragraph", content: "v1" },
+    ]);
+    const { rerenderWith } = setup({ props: { variant: "public", doc: doc1, title: "T", publicRef } });
+    await ready();
+
+    await waitFor(() => {
+      const span = slideEl("b").querySelector<HTMLSpanElement>("pre > code > span");
+      expect(span?.style.color).toBe("var(--code-token-keyword)");
+      expect(span?.textContent).toBe("const x = 1;");
+    });
+    expect(shikiMock.createHighlighter).toHaveBeenCalledTimes(1);
+    expect(shikiMock.codeToTokens).toHaveBeenCalledTimes(1);
+
+    // Theme switch: CSS variables flip automatically, so shiki is not called again.
+    fireEvent.click(screen.getByRole("button", { name: "switch-theme-dark" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(shikiMock.codeToTokens).toHaveBeenCalledTimes(1);
+
+    // Editing another block on the same slide rebuilds the slide, but the unchanged code block hits the cache synchronously.
+    const doc2 = makeDoc([
+      { id: "c1", type: "codeBlock", props: { language: "ts" }, content: "const x = 1;" },
+      { id: "pb", type: "paragraph", content: "v2" },
+    ]);
+    rerenderWith({ variant: "public", doc: doc2, title: "T", publicRef });
+    await waitFor(() => expect(slideEl("b").textContent).toContain("v2"));
+    const spanAfter = slideEl("b").querySelector<HTMLSpanElement>("pre > code > span");
+    expect(spanAfter?.style.color).toBe("var(--code-token-keyword)");
+    expect(spanAfter?.textContent).toBe("const x = 1;");
+    expect(shikiMock.codeToTokens).toHaveBeenCalledTimes(1);
+  });
+
+  it("code highlighting: stale async job is discarded when the slide is replaced before shiki resolves", async () => {
+    type FakeHl = Awaited<ReturnType<typeof shikiMock.createHighlighter>>;
+    let resolveFirst!: (hl: FakeHl) => void;
+    shikiMock.createHighlighter.mockImplementationOnce(
+      () => new Promise<FakeHl>((resolve) => { resolveFirst = resolve; }),
+    );
+    const publicRef = { kind: "token" as const, token: "t" };
+    const doc1 = makeDoc([{ id: "c1", type: "codeBlock", props: { language: "ts" }, content: "const a = 1;" }]);
+    const { rerenderWith } = setup({ props: { variant: "public", doc: doc1, title: "T", publicRef } });
+    await ready();
+    const firstCodeEl = slideEl("b").querySelector("pre > code")!;
+    expect(firstCodeEl.textContent).toBe("const a = 1;");
+
+    const doc2 = makeDoc([{ id: "c1", type: "codeBlock", props: { language: "ts" }, content: "const b = 2;" }]);
+    rerenderWith({ variant: "public", doc: doc2, title: "T", publicRef });
+    await waitFor(() => expect(slideEl("b").querySelector("pre > code")!.textContent).toBe("const b = 2;"));
+
+    await act(async () => {
+      resolveFirst({
+        getLoadedLanguages: () => ["typescript"],
+        loadLanguage: vi.fn(async () => {}),
+        getLoadedThemes: () => ["knotebook-code"],
+        codeToTokens: vi.fn((code: string) => ({
+          tokens: [[{ content: code, color: "var(--code-token-comment)", fontStyle: 0 }]],
+        })),
+      });
+      await Promise.resolve();
+    });
+    // The detached element from doc1 was never mutated; doc2's element gets highlighted from its own job.
+    expect(firstCodeEl.querySelector("span")).toBeNull();
+    await waitFor(() => {
+      const span = slideEl("b").querySelector<HTMLSpanElement>("pre > code > span");
+      expect(span?.style.color).toBe("var(--code-token-comment)");
+      expect(span?.textContent).toBe("const b = 2;");
+    });
   });
 });
