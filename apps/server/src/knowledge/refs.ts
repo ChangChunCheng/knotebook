@@ -31,7 +31,7 @@ const toDto = (r: RefRow, conclusionOn: boolean): KnowledgeRefCandidateDto => ({
 
 const SELECTED = sql`vn.id as note_id, vn.title, vn.slug, vn.owner_handle, vn.group_id, nk.knowledge_id, nk.block_id, nk.heading, nk.conclusion`;
 
-/** Plain substring match, case-insensitive, on the heading, when, conclusion or the note's title (`position`, not LIKE: `%` and `_` in the query stay literal). Headings that start with the query come first. */
+/** Plain substring match, case-insensitive, on the heading, the note's title, and when and conclusion only while the site has those fields on (`position`, not LIKE: `%` and `_` in the query stay literal). Headings that start with the query come first. */
 export async function searchKnowledgeRefs(db: Db, input: { userId: string; query: string; excludeNoteId: string | null }): Promise<KnowledgeRefCandidateDto[]> {
   const { owned, shared, grouped } = visibleNoteBranches(db, input.userId);
   const q = input.query.toLowerCase();

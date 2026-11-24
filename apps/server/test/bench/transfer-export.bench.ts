@@ -8,6 +8,7 @@
  * - noyield: `yieldFn` replaced by a no-op that only awaits a microtask (~ no yielding)
  * Measures: total `exportNoteForTransfer` time p50/p95; longest event-loop stall (max gap of a 1 ms timer) and `monitorEventLoopDelay` p99; RSS.
  */
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { monitorEventLoopDelay, performance as perf } from "node:perf_hooks";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -101,7 +102,7 @@ for (const n of [20, 200, 1000, 2000]) {
     for (let k = 0; k < RUNS; k++) {
       const doc = forkFrom(bytes).fork;
       const m = await withLoopMonitor(() =>
-        exportNoteForTransfer(rt, doc, new Map(), mode === "noyield" ? { yieldFn: async () => {} } : {}),
+        exportNoteForTransfer(rt, doc, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, ...(mode === "noyield" ? { yieldFn: async () => {} } : {}) }),
       );
       tot.push(m.ms);
       gaps.push(m.maxGap);

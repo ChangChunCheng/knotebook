@@ -2,6 +2,7 @@
  * #379: `\<` in Markdown is a literal `<`. The write side (parseMarkdownForNote) must parse it as plain text, not a real HTML tag;
  * input without escapes behaves unchanged.
  */
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -53,7 +54,7 @@ async function stored(doc: Y.Doc): Promise<Blk[]> {
   }
 }
 async function readMd(doc: Y.Doc): Promise<string> {
-  const r = await readNoteContentFromDoc(rt, doc);
+  const r = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 }

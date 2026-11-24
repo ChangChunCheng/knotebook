@@ -1,3 +1,4 @@
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
@@ -40,7 +41,7 @@ const docWith = async (blocks: unknown[]) => {
 };
 /** Read-path export (the same markdown as MCP read_note_section / the whole-note form of REST /content). */
 const readMd = async (doc: Y.Doc) => {
-  const r = await readNoteContentFromDoc(rt, doc);
+  const r = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 };

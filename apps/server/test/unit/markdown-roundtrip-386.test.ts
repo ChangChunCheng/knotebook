@@ -2,6 +2,7 @@
  * #386: the remaining holes of the read -> write-back round trip: text of collapsed lists/headings, edge whitespace of colored bold/italic,
  * block markers after a line break and at the start of a block, boundaries of the escaping rules, and table column widths. The write/read path is shared with `softbreak-386.test.ts`.
  */
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
@@ -45,7 +46,7 @@ async function stored(doc: Y.Doc): Promise<Blk[]> {
   }
 }
 async function readMd(doc: Y.Doc): Promise<string> {
-  const r = await readNoteContentFromDoc(rt, doc);
+  const r = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 }

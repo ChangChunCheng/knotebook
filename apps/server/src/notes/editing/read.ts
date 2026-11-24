@@ -2,7 +2,7 @@
 import { eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as Y from "yjs";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type KnowledgeFieldView, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
+import { MAX_LINK_TARGETS, YDOC_FRAGMENT, blocksToNoteMarkdown, extractLinkTargets, wikilinksToLinks, type KnowledgeFieldView, type LastEditedDto, type NoteContentDto, type NoteSectionDto } from "@knotebook/shared";
 import type { CollabServer } from "../../collab/server.js";
 import type { Db } from "../../db/index.js";
 import { noteStates, notes, users } from "../../db/schema.js";
@@ -94,10 +94,10 @@ async function exportMarkdown(runtime: EditingRuntime, doc: Y.Doc, ids: Set<stri
 export async function readNoteContentFromDoc(
   runtime: EditingRuntime,
   doc: Y.Doc,
-  section?: string,
-  titles: ReadonlyMap<string, string> = new Map(),
-  onShown?: (shown: ShownLinks) => void,
-  fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW,
+  section: string | undefined,
+  titles: ReadonlyMap<string, string>,
+  onShown: ((shown: ShownLinks) => void) | undefined,
+  fields: KnowledgeFieldView,
 ): Promise<Omit<NoteContentDto, "lastEdited"> | Omit<NoteSectionDto, "lastEdited"> | "section_not_found"> {
   const { outline, whole } = outlineOf(doc.getXmlFragment(YDOC_FRAGMENT));
   const target = section === undefined ? undefined : outline.find(o => o.sectionId === section);

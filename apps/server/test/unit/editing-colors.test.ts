@@ -4,7 +4,7 @@ import * as Y from "yjs";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
-import { COLUMNS_OPEN_TAG, PALETTE_COLORS, blocksToNoteMarkdown, columnOpenTag, normalizeNoteColors } from "@knotebook/shared";
+import { COLUMNS_OPEN_TAG, PALETTE_COLORS, blocksToNoteMarkdown, columnOpenTag, normalizeNoteColors, DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { readNoteContentFromDoc } from "../../src/notes/editing/read.js";
 
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" }); rt.installGlobals();
@@ -34,7 +34,7 @@ const docWith = async (blocks: AnyBlocks): Promise<Y.Doc> => {
 };
 /** Read-path export (the same markdown as MCP read_note_section / the whole-note form of REST /content). */
 const readMd = async (doc: Y.Doc): Promise<string> => {
-  const r = await readNoteContentFromDoc(rt, doc);
+  const r = await readNoteContentFromDoc(rt, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (r === "section_not_found" || !("markdown" in r)) throw new Error("unexpected shape");
   return r.markdown;
 };

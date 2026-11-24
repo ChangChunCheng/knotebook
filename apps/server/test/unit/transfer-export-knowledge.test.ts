@@ -30,8 +30,8 @@ const note = (n: number, withKnowledge: boolean): unknown[] =>
 describe("a note with knowledge comments downloads like one without, plus the comment lines", () => {
   it("the segment table has no more fallback grouping calls or cap hits than the same note without knowledge, and every heading's segment holds its comment lines", async () => {
     const n = 120;
-    const plain = await exportNoteForTransfer(rt, await docWith(note(n, false)), new Map());
-    const rich = await exportNoteForTransfer(rt, await docWith(note(n, true)), new Map());
+    const plain = await exportNoteForTransfer(rt, await docWith(note(n, false)), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    const rich = await exportNoteForTransfer(rt, await docWith(note(n, true)), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(plain.segments).not.toBeNull();
     expect(rich.segments).not.toBeNull();
     expect(rich.stats.groupCalls).toBe(plain.stats.groupCalls);
@@ -76,7 +76,7 @@ describe("a note with knowledge comments downloads like one without, plus the co
       { type: "heading", props: { level: 3, knowledgeId: "k_00000009" }, content: "Only an id" },
       { type: "paragraph", content: "tail" },
     ];
-    const ex = await exportNoteForTransfer(rt, await docWith(blocks), new Map());
+    const ex = await exportNoteForTransfer(rt, await docWith(blocks), new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     expect(ex.segments).not.toBeNull();
     expect(ex.segments!.map(s => s.ids.length).reduce((a, b) => a + b, 0)).toBe(ex.ids.length);
   });

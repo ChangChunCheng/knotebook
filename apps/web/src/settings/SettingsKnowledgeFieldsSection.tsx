@@ -207,7 +207,7 @@ function FieldsEditor({ initial, onStale }: { initial: AdminKnowledgeFieldsDto; 
   async function handleSave(): Promise<void> {
     setRowError(null);
     for (const field of draft.fields) {
-      const index = field.options.findIndex((o) => o.isNew && (o.key.trim() === "" || o.name.trim() === ""));
+      const index = field.options.findIndex((o) => (o.isNew || !BUILTIN_OPTION_KEYS.has(o.key)) && (o.key.trim() === "" || o.name.trim() === ""));
       if (index >= 0) {
         const nameMissing = field.options[index]!.name.trim() === "";
         setRowError({ field: field.key, index, on: nameMissing ? "name" : "key", message: t(nameMissing ? "admin.knowledgeFields.nameMissing" : "admin.knowledgeFields.keyMissing") });

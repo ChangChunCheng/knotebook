@@ -6,7 +6,7 @@
  * the same as MCP reads. Group exports run synchronously in the same mount (no yield, no new session).
  */
 import type * as Y from "yjs";
-import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
 import { topLevelFingerprints } from "../notes/editing/fingerprint.js";
 import { toNoteMarkdown } from "../notes/editing/read.js";
@@ -35,7 +35,7 @@ export interface ExportNoteOptions {
   yieldFn?: () => Promise<void>;
   forceUnmergeable?: boolean;
   linkHash?: (targetId: string, text: string) => string;
-  fields?: KnowledgeFieldView;
+  fields: KnowledgeFieldView;
 }
 
 /** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`), given the same `fields`; an empty doc returns "" without mounting, as there. */
@@ -57,12 +57,12 @@ export async function exportNoteForTransfer(
   runtime: EditingRuntime,
   doc: Y.Doc,
   titles: ReadonlyMap<string, string>,
-  opts: ExportNoteOptions = {},
+  opts: ExportNoteOptions,
 ): Promise<ExportedNote> {
   const yieldEvery = opts.yieldEveryBlocks ?? DEFAULT_YIELD_EVERY_BLOCKS;
   const yieldAfterMs = opts.yieldAfterMs ?? DEFAULT_YIELD_AFTER_MS;
   const yieldFn = opts.yieldFn ?? yieldToLoop;
-  const fields = opts.fields ?? DEFAULT_KNOWLEDGE_FIELD_VIEW;
+  const fields = opts.fields;
 
   const { ids, fps } = topLevelFingerprints(doc.getXmlFragment(YDOC_FRAGMENT));
   // Don't mount an empty doc: mounting normalizes it into one empty paragraph, which would mismatch the ids.

@@ -144,6 +144,21 @@ describe("SettingsKnowledgeFieldsSection", () => {
     expect(puts()).toHaveLength(0);
   });
 
+  it("blocks Save when a saved custom option has its name cleared", async () => {
+    const withCustom: AdminKnowledgeFieldsDto = {
+      ...DTO,
+      fields: DTO.fields.map((f) =>
+        f.key === "evidence" ? { ...f, options: [...f.options!, { key: "vendor-docs", name: "Vendor docs", enabled: true, builtin: false }] } : f,
+      ),
+    };
+    const { puts } = setup(undefined, withCustom);
+    await loaded();
+    fireEvent.change(screen.getAllByLabelText("Option name").at(-1)!, { target: { value: "" } });
+    fireEvent.click(save());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a name");
+    expect(puts()).toHaveLength(0);
+  });
+
   it("caps an option name at 60 characters", async () => {
     setup();
     await loaded();
