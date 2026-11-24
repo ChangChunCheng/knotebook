@@ -264,7 +264,7 @@ describe("SettingsKnowledgeFieldsSection", () => {
     setup(() => res(400, { error: { code: "knowledge_fields_limit", message: "x" } }));
     fireEvent.click(await loaded());
     fireEvent.click(save());
-    expect(await screen.findByText("A field can have at most 30 options.")).toBeInTheDocument();
+    expect(await screen.findByText("Too many options or custom fields.")).toBeInTheDocument();
   });
 
   it("blocks Save with a message when a new option has no key", async () => {

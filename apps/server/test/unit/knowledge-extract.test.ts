@@ -131,6 +131,18 @@ describe("extractKnowledgeIndex", () => {
       expect(JSON.stringify(custom).length).toBeLessThanOrEqual(65_536);
     });
 
+    it("keeps a payload of exactly 65,536 and drops an entry that would make it one over", () => {
+      const build = (last: number) => {
+        const values: Record<string, string> = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`k${String(i).padStart(2, "0")}`, "v".repeat(2048)]));
+        values.k31 = "v".repeat(last);
+        return customOf(JSON.stringify(values))!;
+      };
+      const exact = build(1759);
+      expect(JSON.stringify(exact)).toHaveLength(65_536);
+      expect(Object.keys(exact)).toHaveLength(32);
+      expect(Object.keys(build(1760))).toHaveLength(31);
+    });
+
     it("changing only a custom value changes the content hash", () => {
       const a = extract([withCustom('{"team":"a"}')]);
       const b = extract([withCustom('{"team":"b"}')]);

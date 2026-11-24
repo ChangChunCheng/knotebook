@@ -130,6 +130,14 @@ function CustomValue({ field, value, member }: { field: CustomField; value: stri
       // Collab content is never checked on the way in, so a link is followed only after this check.
       const href = value.length <= KNOWLEDGE_CUSTOM_LINK_MAX ? safeKnowledgeHref(value) : null;
       if (href === null) return value;
+      // /api/ is served by the server, so a router Link would land on the SPA's not-found page.
+      if (href.startsWith("/api/")) {
+        return (
+          <a href={href} className={cn(LINK_CLASS, "font-normal")}>
+            {value}
+          </a>
+        );
+      }
       return href.startsWith("/") ? (
         <Link to={href} className={cn(LINK_CLASS, "font-normal")}>
           {value}

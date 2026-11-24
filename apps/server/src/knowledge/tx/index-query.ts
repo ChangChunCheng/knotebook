@@ -1,6 +1,6 @@
 // Every statement runs in one REPEATABLE READ READ ONLY transaction, so the notes, their knowledge rows and the replacement targets all come from one snapshot (a note trashed or unshared midway is either wholly in or wholly out). The first statement is `tx.setTransaction(...)`: PG requires it before any query, and keeping it in the body lets callers pass no second argument.
 // Which notes the viewer may see comes only from `visibleNoteBranches` (via `scopedNoteBranch`); the scope was only resolved outside. Reads only: no row locks.
-import { and, asc, inArray, sql } from "drizzle-orm";
+import { and, asc, getTableColumns, inArray, sql } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import {
   KNOWLEDGE_INDEX_MAX,
@@ -26,6 +26,9 @@ import { visibleNoteBranches } from "../../notes/list-query.js";
 import { noteTagsJsonSql } from "../../tags/queries.js";
 import { backfillPendingSql, entryFilterWhere, knowledgeCappedSql, knowledgeFilterSql, knowledgeMatchCountSql, scopedNoteBranch, type KnowledgeIndexFilters } from "../index-sql.js";
 import type { KnowledgeScope } from "../scope.js";
+
+// The index page never shows custom values, and they can be up to 64 KB per row.
+const { custom: _custom, ...indexColumns } = getTableColumns(noteKnowledge);
 
 export interface KnowledgeIndexQueryInput {
   userId: string;
@@ -110,7 +113,7 @@ export async function runKnowledgeIndexQueryInTx(tx: Tx, input: KnowledgeIndexQu
     keptIds.length === 0
       ? []
       : await tx
-          .select()
+          .select(indexColumns)
           .from(noteKnowledge)
           .where(and(inArray(noteKnowledge.noteId, keptIds), entryFilterWhere(filters)))
           .orderBy(asc(noteKnowledge.noteId), asc(noteKnowledge.ord));

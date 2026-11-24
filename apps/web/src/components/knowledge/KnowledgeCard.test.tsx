@@ -321,6 +321,15 @@ describe("KnowledgeCard custom fields", () => {
     expect(unsafe.container.textContent).toContain("javascript:alert(1)");
   });
 
+  it("a link under /api/ is a plain same-tab anchor because the server, not the router, serves it", () => {
+    const { container } = customCard({ docs: "/api/uploads/abc" });
+    const a = within(container).getByRole("link", { name: "/api/uploads/abc" });
+    expect(a).toHaveAttribute("href", "/api/uploads/abc");
+    expect(a).not.toHaveAttribute("target");
+    fireEvent.click(a);
+    expect(screen.getByTestId("location")).not.toHaveTextContent("/api/uploads/abc");
+  });
+
   it("a member shows the name, and a member not found shows Unknown member", async () => {
     const found = customCard({ owner: ALICE });
     await waitFor(() => expect(rows(found.container)[8]).toEqual(["Owner", "Alice Liddell"]));

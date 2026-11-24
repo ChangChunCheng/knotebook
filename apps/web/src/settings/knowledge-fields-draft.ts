@@ -18,7 +18,7 @@ export interface KnowledgeFieldsDraftField {
   type: KnowledgeFieldType;
   builtin: boolean;
   options: KnowledgeFieldsDraftOption[];
-  /** A custom field added in this session; its key and type are still editable and its type is sent once. */
+  /** A custom field added in this session; its key is still editable and its type is sent once. */
   isNew?: boolean;
   /** React identity of a new row, whose key changes while it is typed. */
   uid?: number;
@@ -150,6 +150,8 @@ export interface CustomFieldInput {
 export function addCustomField(draft: KnowledgeFieldsDraft, input: CustomFieldInput): KnowledgeFieldsDraft {
   nextUid += 1;
   const uid = nextUid;
+  // Keys typed in the add form must survive a later rename of the option.
+  const options = input.type === "select" ? (input.options ?? []).map((o) => ({ key: o.key, name: o.name, enabled: true, isNew: true, keyEdited: true, uid: ++nextUid })) : [];
   const field: KnowledgeFieldsDraftField = {
     key: `x-${input.key}`,
     enabled: enabledCustomCount(draft) < KNOWLEDGE_CUSTOM_ENABLED_MAX,
@@ -158,7 +160,7 @@ export function addCustomField(draft: KnowledgeFieldsDraft, input: CustomFieldIn
     builtin: false,
     isNew: true,
     uid,
-    options: input.type === "select" ? (input.options ?? []).map((o, i) => ({ key: o.key, name: o.name, enabled: true, isNew: true, uid: uid * 1000 + i })) : [],
+    options,
   };
   return { fields: [...draft.fields, field] };
 }

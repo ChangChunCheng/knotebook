@@ -88,7 +88,7 @@ export function knowledgePairs(before: readonly KnowledgeBlockShape[], after: re
 }
 
 /**
- * keep=true (agent and AI rewrites): a paired heading without a comment gets the old seven props. Always: a pending id takes
+ * keep=true (agent and AI rewrites): a paired heading without a comment gets the old heading's props. Always: a pending id takes
  * the paired old id, else a new one. A comment that writes out an id in full is the author's decision and is never overwritten, but
  * it does not take the id from the heading that holds it: the holder is the heading that got the old id through pairing, else the one
  * paired with the old heading that had it, else the first. Every other heading that wrote it gets a new id, listed in `renewed`.

@@ -86,6 +86,15 @@ describe("knowledge fields draft", () => {
       expect(addCustomField(draftFromAdmin(withCustom), { name: "Extra", type: "text", key: "extra" }).fields.at(-1)!.enabled).toBe(true);
     });
 
+    it("options moved in from the add form keep their typed key when renamed", () => {
+      const draft = addCustomField(draftFromAdmin(withCustom), { name: "Mine", type: "select", key: "mine", options: [{ key: "alpha", name: "Alpha" }, { key: "beta", name: "Beta" }] });
+      const index = draft.fields.length - 1;
+      const renamed = setOptionName(draft, index, 0, "Something else");
+      expect(renamed.fields[index]!.options[0]).toMatchObject({ key: "alpha", name: "Something else" });
+      const uids = draft.fields[index]!.options.map((o) => o.uid);
+      expect(new Set([...uids, draft.fields[index]!.uid]).size).toBe(3);
+    });
+
     it("only a field added in this session can have its key edited", () => {
       let draft = addCustomField(draftFromAdmin(withCustom), { name: "Mine", type: "text", key: "mine" });
       const index = draft.fields.length - 1;

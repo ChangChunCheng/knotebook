@@ -9,6 +9,7 @@ import {
   BLOCK_ANCHOR_RE,
   KNOWLEDGE_CONCLUSION_MAX,
   KNOWLEDGE_CUSTOM_JSON_MAX,
+  KNOWLEDGE_CUSTOM_LINK_MAX,
   KNOWLEDGE_ICON_KINDS,
   KNOWLEDGE_ID_RE,
   KNOWLEDGE_INDEX_HEADING_MAX,
@@ -107,16 +108,15 @@ function cut(text: string, maxCodePoints: number): string {
 const UNSTORABLE = /\0|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 const clean = (text: string, max: number): string => cut(text, max).replace(UNSTORABLE, "�");
 
-const CUSTOM_VALUE_MAX = 2048;
-
 function cleanCustom(values: Readonly<Record<string, string>>): Record<string, string> | null {
   const out: Record<string, string> = {};
-  let size = 2;
+  // The braces count 2, and the first entry has no comma in front of it.
+  let size = 1;
   let any = false;
   for (const key of Object.keys(values).sort()) {
-    const value = clean(values[key]!, CUSTOM_VALUE_MAX);
+    const value = clean(values[key]!, KNOWLEDGE_CUSTOM_LINK_MAX);
     if (value === "") continue;
-    // Keys match the key format, so only the value needs escaping; +4 is the quotes, colon and comma.
+    // Keys match the key format, so only the value needs escaping; +4 is the quotes, colon and the comma between entries.
     size += key.length + JSON.stringify(value).length + 4;
     if (size > KNOWLEDGE_CUSTOM_JSON_MAX) break;
     out[key] = value;

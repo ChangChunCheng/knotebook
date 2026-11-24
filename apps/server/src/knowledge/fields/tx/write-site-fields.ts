@@ -77,7 +77,6 @@ function checkOptions(options: readonly KnowledgeOptionInput[], reservedWords: b
 
 type OverrideInsert = typeof knowledgeFieldOverrides.$inferInsert;
 
-/** Checks the options of one select field against its stored definitions and returns the override rows plus the definitions to create. */
 function planOptions(
   fieldRef: string,
   options: readonly KnowledgeOptionInput[],
