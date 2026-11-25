@@ -53,7 +53,18 @@ function ConfirmShell({
         onOpenChange(next);
       }}
     >
-      <DialogContent ref={contentRef} dismissOnOutside={false} onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent
+        ref={contentRef}
+        dismissOnOutside={false}
+        onCloseAutoFocus={onCloseAutoFocus}
+        // Body controls (e.g. the keep-versions box) would otherwise take the first-tabbable default; confirm dialogs start on the safe button.
+        onOpenAutoFocus={(event) => {
+          const target = event.currentTarget instanceof HTMLElement ? event.currentTarget.querySelector<HTMLElement>("[data-kb-autofocus]") : null;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -65,7 +76,7 @@ function ConfirmShell({
           </p>
         )}
         <DialogFooter>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={() => onOpenChange(false)}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant={submitVariant} disabled={busy} onClick={onConfirm}>

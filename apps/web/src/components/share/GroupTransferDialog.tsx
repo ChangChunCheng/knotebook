@@ -55,6 +55,13 @@ function DialogShell({ title, description, busy, onClose, returnFocusRef, childr
       <DialogContent
         dismissOnOutside={false}
         data-testid="group-transfer-dialog"
+        // Body controls (e.g. the keep-versions box) would otherwise take the first-tabbable default; confirm dialogs start on the safe button.
+        onOpenAutoFocus={(event) => {
+          const target = event.currentTarget instanceof HTMLElement ? event.currentTarget.querySelector<HTMLElement>("[data-kb-autofocus]") : null;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocusRef?.current?.focus();
@@ -127,7 +134,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
       returnFocusRef={returnFocusRef}
       footer={
         <>
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={onClose}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant="destructive" disabled={busy || !dataKnown} onClick={() => void submit()}>
@@ -236,7 +243,7 @@ function CopyDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
       returnFocusRef={returnFocusRef}
       footer={
         <>
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={onClose}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant="outline" disabled={busy} onClick={() => void submit()}>

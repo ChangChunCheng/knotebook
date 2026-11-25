@@ -365,6 +365,7 @@ describe("kebab menu: move/copy to group (#216)", () => {
     await pickFlyout("note-menu-move-to", "Workshop A");
     const dialog = await screen.findByRole("dialog");
     const box = within(dialog).getByRole("checkbox", { name: "Bring its version history along" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(box).not.toBeChecked();
     expect(dialog).toHaveTextContent("Its version history is cleared and doesn't come back.");
     fireEvent.click(box);

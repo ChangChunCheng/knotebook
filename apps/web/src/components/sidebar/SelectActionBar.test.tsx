@@ -511,7 +511,7 @@ describe("SelectActionBar", () => {
     await settleTimers();
     expect(spy).toHaveBeenCalledTimes(0);
     expect(confirm.contains(document.activeElement)).toBe(true);
-    expect(within(confirm).getByRole("checkbox", { name: "Bring their version history along" })).toHaveFocus();
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
   it("snapshot: after the first request returns the list has one note fewer, the description still says 2 notes while sending and the second request is still sent", async () => {
