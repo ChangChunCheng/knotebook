@@ -660,8 +660,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       config: deps.config,
       collab: deps.collab,
       editing,
-      // Only MCP's own limiters; upload and folder are the same instances as the REST routes'.
-      limiters: { contentRead: limiters.contentRead, edit: limiters.edit, tokenWrite: limiters.tokenWrite, search: limiters.search, upload: limiters.upload, folder: limiters.folder },
+      // Only MCP's own limiters; upload, folder and comment are the same instances as the REST routes'.
+      limiters: { contentRead: limiters.contentRead, edit: limiters.edit, tokenWrite: limiters.tokenWrite, search: limiters.search, upload: limiters.upload, folder: limiters.folder, comment: limiters.comment },
       presence,
       writes,
       testHooks: deps.mcpTestHooks,

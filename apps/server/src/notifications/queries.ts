@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { AvatarRef, NotificationDto, NotificationListDto } from "@knotebook/shared";
 import { readAvatarRefs } from "../avatars/read.js";
-import { encodeCursor, type CommentCursor } from "../comments/queries.js";
+import { agentLagSql, encodeCursor, type CommentCursor } from "../comments/queries.js";
 import type { DbOrTx } from "../db/tx.js";
 import { groupMembers, groupRoles, noteComments, noteShares, notes, notificationSeen, notifications, users } from "../db/schema.js";
 import { UUID_RE, noteAccessFromRow } from "../notes/service.js";
@@ -111,6 +111,74 @@ export async function listNotifications(db: DbOrTx, input: { userId: string; bef
       };
     }),
     nextCursor,
+  };
+}
+
+export interface AgentNotificationRow {
+  id: string;
+  kind: NotificationDto["kind"];
+  noteId: string;
+  commentId: string;
+  actorHandle: string;
+  actorAgentLabel: string | null;
+  createdAt: Date;
+  cursor: CommentCursor;
+  /** Null when the caller can't read the note any more. */
+  noteTitle: string | null;
+}
+
+/**
+ * Up to `max` of the rows addressed to exactly `agentLabel` (null: the person), oldest first, after `after` and at least the agent lag
+ * ago, whether or not the caller can still read their notes; `hasMore` when more such rows wait.
+ */
+export async function scanAgentNotifications(
+  db: DbOrTx,
+  input: { userId: string; agentLabel: string | null; after: CommentCursor | null; max: number },
+): Promise<{ rows: AgentNotificationRow[]; hasMore: boolean }> {
+  const { userId } = input;
+  const fetched = await db
+    .select({
+      id: notifications.id,
+      kind: notifications.kind,
+      noteId: notifications.noteId,
+      commentId: notifications.commentId,
+      actorAgentLabel: notifications.actorAgentLabel,
+      createdAt: notifications.createdAt,
+      cursorTs: cursorTsSql,
+      actorHandle: users.handle,
+    })
+    .from(notifications)
+    .innerJoin(users, eq(users.id, notifications.actorId))
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        input.agentLabel === null ? isNull(notifications.agentLabel) : eq(notifications.agentLabel, input.agentLabel),
+        input.after === null ? undefined : sql`(${notifications.createdAt}, ${notifications.id}) > (${input.after.ts}::timestamptz, ${input.after.id}::uuid)`,
+        agentLagSql(notifications.createdAt),
+      ),
+    )
+    .orderBy(asc(notifications.createdAt), asc(notifications.id))
+    .limit(input.max + 1);
+  const page = fetched.slice(0, input.max);
+  const titles = new Map<string, string>();
+  if (page.length > 0) {
+    for (const a of await accessRowsFor(db, userId, [...new Set(page.map(r => r.noteId))])) {
+      if (noteAccessFromRow(a, userId).permissions.read) titles.set(a.id, a.title);
+    }
+  }
+  return {
+    rows: page.map(r => ({
+      id: r.id,
+      kind: r.kind as NotificationDto["kind"],
+      noteId: r.noteId,
+      commentId: r.commentId,
+      actorHandle: r.actorHandle,
+      actorAgentLabel: r.actorAgentLabel,
+      createdAt: r.createdAt,
+      cursor: { ts: r.cursorTs, id: r.id },
+      noteTitle: titles.get(r.noteId) ?? null,
+    })),
+    hasMore: fetched.length > input.max,
   };
 }
 

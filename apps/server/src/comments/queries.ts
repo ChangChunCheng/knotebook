@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { AvatarRef, CommentDto, CommentListDto, CommentMentionDto } from "@knotebook/shared";
 import { readAvatarRefs } from "../avatars/read.js";
 import type { DbOrTx } from "../db/tx.js";
@@ -238,6 +238,42 @@ export async function listComments(
     olderCursor: olderCursor === null ? null : encodeCursor(olderCursor),
     newerCursor: newerCursor === null ? null : encodeCursor(newerCursor),
   };
+}
+
+/**
+ * How far an agent's `since` reads stay behind the clock: `created_at` is taken at insert, so a write that commits a moment later than a
+ * newer one would otherwise land behind a cursor that already passed it.
+ */
+export const AGENT_READ_LAG_SECONDS = 2;
+
+export const agentLagSql = (createdAt: AnyColumn): SQL => sql`${createdAt} <= now() - ${`${AGENT_READ_LAG_SECONDS} seconds`}::interval`;
+
+/** Comments created after `after` and at least the agent lag ago, oldest first. Access to the note is the caller's to have checked. */
+export async function listCommentsForAgent(
+  db: DbOrTx,
+  input: { noteId: string; after: CommentCursor | null; limit: number; viewer: CommentViewer },
+): Promise<{ comments: CommentDto[]; cursors: CommentCursor[]; hasMore: boolean }> {
+  const fetched = await fetchRows(db, input.noteId, and(input.after === null ? undefined : afterSql(input.after), agentLagSql(noteComments.createdAt)), "asc", input.limit + 1);
+  const rows = fetched.slice(0, input.limit);
+  return { comments: await toDtos(db, rows, input.viewer), cursors: rows.map(cursorOf), hasMore: fetched.length > input.limit };
+}
+
+export type MentionView = Pick<CommentMentionDto, "start" | "length" | "handle" | "agentLabel">;
+
+/** Body and mentions (current handles) of each comment that still exists. Access is the caller's to have checked. */
+export async function commentBodiesByIds(db: DbOrTx, ids: readonly string[]): Promise<Map<string, { body: string; mentions: MentionView[] }>> {
+  const out = new Map<string, { body: string; mentions: MentionView[] }>();
+  if (ids.length === 0) return out;
+  const bodies = await db.select({ id: noteComments.id, body: noteComments.body }).from(noteComments).where(inArray(noteComments.id, [...ids]));
+  for (const b of bodies) out.set(b.id, { body: b.body, mentions: [] });
+  const mentionRows = await db
+    .select({ commentId: noteCommentMentions.commentId, start: noteCommentMentions.start, length: noteCommentMentions.length, handle: users.handle, agentLabel: noteCommentMentions.agentLabel })
+    .from(noteCommentMentions)
+    .innerJoin(users, eq(users.id, noteCommentMentions.userId))
+    .where(inArray(noteCommentMentions.commentId, [...ids]))
+    .orderBy(asc(noteCommentMentions.start));
+  for (const m of mentionRows) out.get(m.commentId)?.mentions.push({ start: m.start, length: m.length, handle: m.handle, agentLabel: m.agentLabel });
+  return out;
 }
 
 /** The note a comment is on, or null; the route authorizes against that note before it shows anything. */

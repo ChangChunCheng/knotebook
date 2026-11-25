@@ -553,7 +553,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 
 ## AI assistants over MCP
 
-[AI assistants over MCP](./known-limitations/mcp.md): what an assistant can reach, prompt injection, transfer tokens and paging through live data.
+[AI assistants over MCP](./known-limitations/mcp.md): what an assistant can reach, prompt injection, transfer tokens, paging through live data and comments.
 
 - [An assistant tricked by a prompt injection can send your notes' images off-site.](./known-limitations/mcp.md)
 - [An assistant tricked by a prompt injection can move your personal notes into a group, or copy notes into one.](./known-limitations/mcp.md)
@@ -574,6 +574,10 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [`read_note_section` pages through live text, not a snapshot.](./known-limitations/mcp.md)
 - [`list_trash` and `list_folders` page through live data, not a snapshot.](./known-limitations/mcp.md)
 - [`delete_note` and `restore_note` can use up their budgets without changing anything.](./known-limitations/mcp.md)
+- [An assistant learns of a comment or a mention only by asking again.](./known-limitations/mcp.md)
+- [A comment or notification saved more than 2 seconds late can be skipped by a cursor.](./known-limitations/mcp.md)
+- [A comment an assistant posts about a section points at the section's heading.](./known-limitations/mcp.md)
+- [A mention of an agent whose name was changed later still names the old one.](./known-limitations/mcp.md)
 
 ## Sending notes back as files (MCP bulk transfer)
 
