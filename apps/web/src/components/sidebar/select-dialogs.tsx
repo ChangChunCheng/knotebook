@@ -2,6 +2,7 @@ import "@/i18n/select-strings";
 import type { ReactNode, Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { DestTarget } from "./destination-level";
 
@@ -52,7 +53,18 @@ function ConfirmShell({
         onOpenChange(next);
       }}
     >
-      <DialogContent ref={contentRef} dismissOnOutside={false} onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent
+        ref={contentRef}
+        dismissOnOutside={false}
+        onCloseAutoFocus={onCloseAutoFocus}
+        // Body controls (e.g. the keep-versions box) would otherwise take the first-tabbable default; confirm dialogs start on the safe button.
+        onOpenAutoFocus={(event) => {
+          const target = event.currentTarget instanceof HTMLElement ? event.currentTarget.querySelector<HTMLElement>("[data-kb-autofocus]") : null;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -64,7 +76,7 @@ function ConfirmShell({
           </p>
         )}
         <DialogFooter>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={() => onOpenChange(false)}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant={submitVariant} disabled={busy} onClick={onConfirm}>
@@ -76,7 +88,13 @@ function ConfirmShell({
   );
 }
 
-export function MoveConfirmDialog({ count, groupName, ...rest }: ConfirmProps & { groupName: string }) {
+export function MoveConfirmDialog({
+  count,
+  groupName,
+  keepHistory,
+  onKeepHistoryChange,
+  ...rest
+}: ConfirmProps & { groupName: string; keepHistory: boolean; onKeepHistoryChange: (keep: boolean) => void }) {
   const { t } = useTranslation();
   return (
     <ConfirmShell
@@ -91,8 +109,19 @@ export function MoveConfirmDialog({ count, groupName, ...rest }: ConfirmProps & 
         <li>{t("select.moveClosesPublicLinks")}</li>
         <li>{t("select.moveUrlChange")}</li>
         <li>{t("select.moveOwnership")}</li>
-        <li>{t("select.moveClearsVersions")}</li>
+        <li>{keepHistory ? t("select.moveKeepVersionsHint") : t("select.moveClearsVersions")}</li>
       </ul>
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="select-move-keep-versions"
+          checked={keepHistory}
+          disabled={rest.progress !== null}
+          onCheckedChange={(value) => onKeepHistoryChange(value === true)}
+        />
+        <label htmlFor="select-move-keep-versions" className="cursor-pointer text-sm">
+          {t("select.moveKeepVersions")}
+        </label>
+      </div>
     </ConfirmShell>
   );
 }

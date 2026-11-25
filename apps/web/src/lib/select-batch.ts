@@ -74,7 +74,7 @@ const notePath = (id: string): string => `/api/notes/${encodeURIComponent(id)}`;
 
 export async function moveNotesInOrder(
   notes: readonly NoteDto[],
-  body: { groupId: string; folderId?: string },
+  body: { groupId: string; folderId?: string; keepHistory: boolean },
   deps: { queryClient: QueryClient } & BatchHooks,
 ): Promise<BatchOutcome<NoteDto>> {
   const { queryClient } = deps;

@@ -8,6 +8,7 @@ import { useConfirmNoteStillPersonal, useCopyNote, useMoveNoteToGroup } from "@/
 import { usePublicLink } from "@/api/public-link";
 import { useShares } from "@/api/shares";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -54,6 +55,13 @@ function DialogShell({ title, description, busy, onClose, returnFocusRef, childr
       <DialogContent
         dismissOnOutside={false}
         data-testid="group-transfer-dialog"
+        // Body controls (e.g. the keep-versions box) would otherwise take the first-tabbable default; confirm dialogs start on the safe button.
+        onOpenAutoFocus={(event) => {
+          const target = event.currentTarget instanceof HTMLElement ? event.currentTarget.querySelector<HTMLElement>("[data-kb-autofocus]") : null;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocusRef?.current?.focus();
@@ -87,6 +95,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
   const move = useMoveNoteToGroup(note.id);
   const confirmStillPersonal = useConfirmNoteStillPersonal(note.id);
   const [submitting, setSubmitting] = useState(false);
+  const [keepHistory, setKeepHistory] = useState(false);
 
   const busy = submitting || move.isPending;
   const dataKnown = sharesQuery.isSuccess && linkQuery.isSuccess;
@@ -104,7 +113,9 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
         return;
       }
       if (group === null) return;
-      await move.mutateAsync(folder === undefined ? { groupId: group.id } : { groupId: group.id, folderId: folder.id });
+      await move.mutateAsync(
+        folder === undefined ? { groupId: group.id, keepHistory } : { groupId: group.id, folderId: folder.id, keepHistory },
+      );
       toast({ title: t("share.move.movedToGroup", { group: destination }) });
     } catch (err) {
       toast({ title: folderErrorMessage(t, err), variant: "destructive" });
@@ -123,7 +134,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
       returnFocusRef={returnFocusRef}
       footer={
         <>
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={onClose}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant="destructive" disabled={busy || !dataKnown} onClick={() => void submit()}>
@@ -137,8 +148,14 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
         {token && <li>{t("share.move.moveClosesPublicLink")}</li>}
         <li>{t("share.move.moveUrlChange")}</li>
         <li>{t("share.move.moveOwnership")}</li>
-        <li>{t("share.move.moveClearsVersions")}</li>
+        <li>{keepHistory ? t("share.move.keepVersionsHint") : t("share.move.moveClearsVersions")}</li>
       </ul>
+      <div className="flex items-center gap-2">
+        <Checkbox id="move-keep-versions" checked={keepHistory} disabled={busy} onCheckedChange={(value) => setKeepHistory(value === true)} />
+        <label htmlFor="move-keep-versions" className="cursor-pointer text-sm">
+          {t("share.move.keepVersions")}
+        </label>
+      </div>
     </DialogShell>
   );
 }
@@ -226,7 +243,7 @@ function CopyDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
       returnFocusRef={returnFocusRef}
       footer={
         <>
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button type="button" variant="outline" data-kb-autofocus="" disabled={busy} onClick={onClose}>
             {t("share.move.cancel")}
           </Button>
           <Button type="button" variant="outline" disabled={busy} onClick={() => void submit()}>

@@ -451,17 +451,49 @@ describe("SelectActionBar", () => {
       "You will no longer own them — what you can do with them then depends on your role in the group.",
       "Their version history is cleared and doesn't come back.",
     ]);
+    expect(within(confirm).getByRole("checkbox", { name: "Bring their version history along" })).not.toBeChecked();
     const submit = within(confirm).getByRole("button", { name: "Move into group" });
     expect(submit).toHaveClass("bg-destructive");
     fireEvent.click(submit);
     expect(await screen.findByText('Moved 2 notes into "A"', { exact: true })).toBeInTheDocument();
     expect(server.keys()).toEqual(["POST /api/notes/p1/move", "POST /api/notes/p2/move"]);
-    expect(server.bodies("POST /api/notes/p1/move")).toEqual([{ groupId: "ga" }]);
+    expect(server.bodies("POST /api/notes/p1/move")).toEqual([{ groupId: "ga", keepHistory: false }]);
     await waitFor(() => expect(selecting()).toBe(false));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(selectButton(1)).toHaveFocus();
     await settleTimers();
     expect(selectButton(1)).toHaveFocus();
+  });
+
+  it("move with the box checked: the versions bullet turns into the hint and every note's body carries keepHistory: true", async () => {
+    const server = stubServer();
+    renderShells();
+    await enterSelecting();
+    tick("p2", "p1");
+    fireEvent.click(barButton("Move to"));
+    const confirm = await pickDestination("A");
+    fireEvent.click(within(confirm).getByRole("checkbox", { name: "Bring their version history along" }));
+    expect(within(confirm).getAllByRole("listitem").map((li) => li.textContent).at(-1)).toBe("The group's editors will see their earlier versions and who edited them.");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Move into group" }));
+    expect(await screen.findByText('Moved 2 notes into "A"', { exact: true })).toBeInTheDocument();
+    expect(server.bodies("POST /api/notes/p1/move")).toEqual([{ groupId: "ga", keepHistory: true }]);
+    expect(server.bodies("POST /api/notes/p2/move")).toEqual([{ groupId: "ga", keepHistory: true }]);
+  });
+
+  it("move: check, cancel and pick a destination again - the box is unchecked again", async () => {
+    stubServer();
+    renderShells();
+    await enterSelecting();
+    tick("p1");
+    fireEvent.click(barButton("Move to"));
+    let confirm = await pickDestination("A");
+    fireEvent.click(within(confirm).getByRole("checkbox", { name: "Bring their version history along" }));
+    expect(within(confirm).getByRole("checkbox", { name: "Bring their version history along" })).toBeChecked();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(barButton("Move to"));
+    confirm = await pickDestination("A");
+    expect(within(confirm).getByRole("checkbox", { name: "Bring their version history along" })).not.toBeChecked();
   });
 
   it("after choosing the destination: the button that opened the picker gets no focus call and focus is inside the confirm dialog", async () => {
@@ -1440,7 +1472,7 @@ describe("SelectActionBar (folders)", () => {
     fireEvent.click(within(confirm).getByRole("button", { name: "Move into group" }));
     expect(await screen.findByText('Moved 1 note into "G › GF"', { exact: true })).toBeInTheDocument();
     expect(server.keys()).toEqual(["POST /api/notes/p3/move"]);
-    expect(server.bodies("POST /api/notes/p3/move")).toEqual([{ groupId: "G", folderId: "GF" }]);
+    expect(server.bodies("POST /api/notes/p3/move")).toEqual([{ groupId: "G", folderId: "GF", keepHistory: false }]);
   });
 
   it("a folder ticked as well: G in the lower half is disabled", async () => {

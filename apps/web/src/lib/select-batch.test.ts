@@ -178,7 +178,7 @@ describe("runSequential (execution)", () => {
     const qc = newClient();
     const empty = { done: [], skipped: 0, skippedDetail: [], stopped: null };
     expect(await deleteTargetsInOrder([], { queryClient: qc })).toEqual(empty);
-    expect(await moveNotesInOrder([], { groupId: "g1" }, { queryClient: qc })).toEqual(empty);
+    expect(await moveNotesInOrder([], { groupId: "g1", keepHistory: false }, { queryClient: qc })).toEqual(empty);
     expect(await copyNotesInOrder([], PERSONAL_ROOT, { queryClient: qc })).toEqual(empty);
     expect(await runSequential([], () => ({ kind: "note", id: "x" }), () => Promise.resolve(1))).toEqual(empty);
     expect(calls).toHaveLength(0);
@@ -211,8 +211,8 @@ describe("moveNotesInOrder", () => {
     const qc = newClient();
     qc.setQueryData<PublicLinkDto>(["public-link", "a"], { token: "tok", slug: "pub", width: "standard" } as PublicLinkDto);
     const keys = spyInvalidations(qc);
-    const out = await moveNotesInOrder([a, b, c], { groupId: "g1" }, { queryClient: qc });
-    expect(calls.map((x) => x.body)).toEqual([{ groupId: "g1" }, { groupId: "g1" }, { groupId: "g1" }]);
+    const out = await moveNotesInOrder([a, b, c], { groupId: "g1", keepHistory: false }, { queryClient: qc });
+    expect(calls.map((x) => x.body)).toEqual([{ groupId: "g1", keepHistory: false }, { groupId: "g1", keepHistory: false }, { groupId: "g1", keepHistory: false }]);
     expect(out.done).toEqual([movedA, movedB]);
     expect(out.skipped).toBe(1);
     expect(qc.getQueryData(["shares", "a"])).toEqual([]);
@@ -230,7 +230,7 @@ describe("moveNotesInOrder", () => {
     stubFetch({ [move("a")]: () => fail(429, "too_many_requests") });
     const qc2 = newClient();
     const keys2 = spyInvalidations(qc2);
-    const out2 = await moveNotesInOrder([a, b], { groupId: "g1" }, { queryClient: qc2 });
+    const out2 = await moveNotesInOrder([a, b], { groupId: "g1", keepHistory: false }, { queryClient: qc2 });
     expect(out2.stopped?.remaining).toEqual([{ kind: "note", id: "a" }, { kind: "note", id: "b" }]);
     expect(keys2).toContain(k("groups"));
     await waitFor(() => expect(keys2).toContain(k("note", "a")));
@@ -287,7 +287,7 @@ describe("hook throws (what finally is for)", () => {
 
     const qc2 = newClient();
     const keys2 = spyInvalidations(qc2);
-    await expect(moveNotesInOrder([a], { groupId: "g1" }, { queryClient: qc2, onProgress: boom })).rejects.toThrow("boom");
+    await expect(moveNotesInOrder([a], { groupId: "g1", keepHistory: false }, { queryClient: qc2, onProgress: boom })).rejects.toThrow("boom");
     expect(keys2).toContain(k("groups"));
 
     const qc3 = newClient();
@@ -487,11 +487,11 @@ describe("moveNotesInOrder (signature)", () => {
     const calls = stubFetch({ [move("a")]: () => ok({ ...a, groupId: "G" }) });
     const qc = newClient();
     const keys = spyInvalidations(qc);
-    await moveNotesInOrder([a], { groupId: "G", folderId: "GF" }, { queryClient: qc });
-    await moveNotesInOrder([a], { groupId: "G" }, { queryClient: qc });
+    await moveNotesInOrder([a], { groupId: "G", folderId: "GF", keepHistory: false }, { queryClient: qc });
+    await moveNotesInOrder([a], { groupId: "G", keepHistory: false }, { queryClient: qc });
     // A key present with value undefined (a common way callers write it) must not send a folderId key either.
-    await moveNotesInOrder([a], { groupId: "G", folderId: undefined }, { queryClient: qc });
-    expect(calls.map((x) => JSON.stringify(x.body))).toEqual(['{"groupId":"G","folderId":"GF"}', '{"groupId":"G"}', '{"groupId":"G"}']);
+    await moveNotesInOrder([a], { groupId: "G", folderId: undefined, keepHistory: false }, { queryClient: qc });
+    expect(calls.map((x) => JSON.stringify(x.body))).toEqual(['{"groupId":"G","folderId":"GF","keepHistory":false}', '{"groupId":"G","keepHistory":false}', '{"groupId":"G","keepHistory":false}']);
     expect(keys).toContain(k("folders"));
   });
 });

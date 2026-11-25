@@ -150,7 +150,7 @@ export function noteVersionsRoutes(deps: NoteVersionsRouteDeps) {
         .where(and(eq(noteVersions.noteId, id), eq(noteVersions.seq, seq)))
         .limit(1);
       if (!row) return sendError(reply, 404, "not_found", VERSION_NOT_FOUND);
-      // Moving clears versions, so one seq can mean different content; the web keys its cache by id.
+      // A move that doesn't keep history clears versions, so one seq can mean different content; the web keys its cache by id.
       reply.header("cache-control", "private, no-store");
       return reply.send({ id: row.id, seq: row.seq, ydoc: Buffer.from(row.ydoc).toString("base64") } satisfies VersionSnapshotDto);
     });

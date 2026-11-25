@@ -135,8 +135,8 @@ const REGISTRY: Record<string, Disposition> = {
   "notes/tx/shares.ts": { excludes: 1 },
   // trashOnly: rebuild-by-path write of folder_id (restore), restore UPDATE, expiry query; includes: lockNotes; write: move-to-trash UPDATE.
   "notes/tx/trash.ts": { trashOnly: 3, includes: 1, write: 1, why: "lock first, then decide (state is checked per note after locking)" },
-  // excludes: version-cut lock-read; includes: notBaseVersionSql, the two reset statements; write: the three UPDATEs inside cutVersionInTx.
-  "notes/tx/versions.ts": { excludes: 1, includes: 3, write: 3, why: "version pruning runs as usual; the transfer reset ignores state" },
+  // excludes: version-cut lock-read; includes: notBaseVersionSql, the two reset statements and the pending-only reset; write: the three UPDATEs inside cutVersionInTx.
+  "notes/tx/versions.ts": { excludes: 1, includes: 4, write: 3, why: "version pruning runs as usual; the transfer reset ignores state" },
   "notes/tx/write-links.ts": { includes: 4, why: "links are recorded even when the target is trashed; the CAS adds no condition" },
   "routes/admin-storage.ts": { includes: 2, why: "storage usage still counts trashed notes" },
   // excludes: GET public-link; write: the five public-link routes (token PUT/DELETE, width PUT, alias PUT/DELETE).

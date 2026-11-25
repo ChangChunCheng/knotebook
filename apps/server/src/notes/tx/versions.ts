@@ -158,7 +158,7 @@ export async function cutVersionInTx(tx: Tx, input: CutVersionInput): Promise<{ 
   return { row: row!, upgraded: false, fp };
 }
 
-/** Move (`{ noteId }`) or transfer (`{ groupId }`, call before `group_id` changes): clears versions, numbering, base and pending; creates none; the caller already holds the notes' `FOR UPDATE`. */
+/** Move (`{ noteId }`) or transfer (`{ groupId }`, call before `group_id` changes) when history isn't kept: clears versions, numbering, base and pending; creates none; the caller already holds the notes' `FOR UPDATE`. */
 export async function resetNoteVersionsInTx(tx: Tx, target: { noteId: string } | { groupId: string }): Promise<void> {
   const noteWhere = "noteId" in target ? eq(notes.id, target.noteId) : eq(notes.groupId, target.groupId);
   const versionWhere =
@@ -167,4 +167,9 @@ export async function resetNoteVersionsInTx(tx: Tx, target: { noteId: string } |
       : sql`note_versions.note_id in (select notes.id from notes where notes.group_id = ${target.groupId})`;
   await tx.delete(noteVersions).where(versionWhere);
   await tx.update(notes).set({ versionCounter: 0, versionBaseSeq: null, versionBaseFingerprint: null, versionBaseVersionId: null, ...PENDING_CLEARED }).where(noteWhere);
+}
+
+/** Move that keeps history: versions, numbering and base stay; only the pending state goes, so personal-period editors aren't listed on the group's first automatic version. */
+export async function clearPendingVersionStateInTx(tx: Tx, noteId: string): Promise<void> {
+  await tx.update(notes).set(PENDING_CLEARED).where(eq(notes.id, noteId));
 }

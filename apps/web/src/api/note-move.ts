@@ -30,13 +30,20 @@ export async function refetchAfterFailure(queryClient: QueryClient, noteId: stri
   void queryClient.invalidateQueries({ queryKey: ["groups"] });
 }
 
+/** `keepHistory` is required: the server treats an omitted flag as "clear", so the UI must always say which. */
+type MoveInput = { groupId: string; folderId?: string; keepHistory: boolean };
+
 export function useMoveNoteToGroup(noteId: string) {
   const queryClient = useQueryClient();
-  return useMutation<NoteDto, Error, { groupId: string; folderId?: string }>({
-    mutationFn: (input: { groupId: string; folderId?: string }) =>
+  return useMutation<NoteDto, Error, MoveInput>({
+    mutationFn: (input: MoveInput) =>
       api<NoteDto>(`/api/notes/${encodeURIComponent(noteId)}/move`, {
         method: "POST",
-        body: JSON.stringify(input.folderId === undefined ? { groupId: input.groupId } : { groupId: input.groupId, folderId: input.folderId }),
+        body: JSON.stringify(
+          input.folderId === undefined
+            ? { groupId: input.groupId, keepHistory: input.keepHistory }
+            : { groupId: input.groupId, folderId: input.folderId, keepHistory: input.keepHistory },
+        ),
       }),
     onSuccess: note => {
       applyMovedNote(queryClient, noteId, note);

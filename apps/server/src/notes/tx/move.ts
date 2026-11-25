@@ -20,7 +20,7 @@ import { assertSpaceRoomInTx } from "../../storage/tx/quota.js";
 import { moveNoteTagsInTx } from "../../tags/tx/space-change.js";
 import { userNotePath } from "../redirects.js";
 import { recordRedirectsInTx } from "./redirects.js";
-import { resetNoteVersionsInTx } from "./versions.js";
+import { clearPendingVersionStateInTx, resetNoteVersionsInTx } from "./versions.js";
 import { writeSlugInTx } from "./write-slug.js";
 
 export interface MoveNoteInput {
@@ -33,6 +33,8 @@ export interface MoveNoteInput {
   /** Caller checked visibility and group; null = group root. */
   folderId: string | null;
   lockTimeoutMs: number;
+  /** true = keep the note's versions; anything else clears them. */
+  keepHistory?: boolean;
 }
 
 export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: GroupTestHook): Promise<{ removedShareUserIds: string[] }> {
@@ -87,7 +89,8 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
   await moveNoteTagsInTx(tx, { noteId: input.noteId, source: { kind: "personal", ownerId: input.userId }, target: { kind: "group", groupId: input.groupId }, createdBy: input.userId });
 
   await recordRedirectsInTx(tx, [userNotePath(input.userHandle, row.slug)], input.noteId);
-  // Versions and editors from the personal period must not be exposed to group editors.
-  await resetNoteVersionsInTx(tx, { noteId: input.noteId });
+  // Unless the mover chose to keep them, versions and editors from the personal period must not be exposed to group editors.
+  if (input.keepHistory === true) await clearPendingVersionStateInTx(tx, input.noteId);
+  else await resetNoteVersionsInTx(tx, { noteId: input.noteId });
   return { removedShareUserIds: removed.map(r => r.userId) };
 }
