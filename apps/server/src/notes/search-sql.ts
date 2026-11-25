@@ -14,12 +14,17 @@
  * output aliases).
  * rank: title equals the query 0, title starts with it 1, title contains it 2, body only 3.
  *
+ * #399: a query with one keyword uses `buildNoteSearchQuery` / `buildSearchMatchesQuery` unchanged (the golden SQL pins
+ * them); two or more keywords use the `MultiTerm` builders below, which keep the same visibility, body-match forms and
+ * keyset shape and only change what counts as a match and how rows and sections are ranked.
+ *
  * The second (matches) statement takes only the ids on the first statement's page whose `body_hit` is true (a list the
  * server built itself) and passes them with `inArray`. **Do not** write `` sql`= ANY(${ids})` ``: drizzle expands a JS
  * array in an sql template into `($1, $2, …)`, and `ANY(($1,$2))` is an error.
  * Up to `SEARCH_MATCHES_PER_NOTE` matches per note, in `ord` order; the window is 40 code points before the hit, the hit
  * and 160 after (a PG character is a code point); the snippet is picked in JS (`notes/search-snippet.ts`).
  */
+import { SEARCH_TERMS_MAX, type SearchTermsMode } from "@knotebook/shared";
 import { and, asc, desc, inArray, or, sql, type SQL } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
@@ -141,7 +146,8 @@ export function buildNoteSearchQuery(db: DbOrTx, opts: NoteSearchQueryOpts) {
     .limit(opts.limit + 1);
 }
 
-export type NoteSearchRow = Awaited<ReturnType<typeof buildNoteSearchQuery>>[number];
+/** `termHits` is set only by the multi-keyword query: per keyword, in query order, whether the note contains it. */
+export type NoteSearchRow = Awaited<ReturnType<typeof buildNoteSearchQuery>>[number] & { termHits?: boolean[] };
 
 export type SearchMatchRow = {
   note_id: string;
@@ -152,6 +158,8 @@ export type SearchMatchRow = {
   win_start: number;
   win: string;
   body_len: number;
+  /** Multi-keyword query only: each keyword's 1-based position in the body (0 = absent), in query order. */
+  ps?: number[];
 } & Record<string, unknown>;
 
 export function buildSearchMatchesQuery(opts: { query: string; ids: string[] }): SQL {
@@ -171,4 +179,102 @@ export function buildSearchMatchesQuery(opts: { query: string; ids: string[] }):
          char_length(body) as body_len
   from ranked where rn <= ${SEARCH_MATCHES_PER_NOTE}
   order by note_id, ord`;
+}
+
+/**
+ * Multi-keyword rank: `(keywords missing) * 5 + tier`, so in `any` mode notes with more keywords come first and `all` mode
+ * (nothing missing) only uses 0–4. Tier: title equals the keywords joined by one space 0, title starts with them 1, title
+ * contains every keyword the note matched 2, title contains some of them 3, body only 4.
+ */
+
+/** The highest rank a query can produce: 3 for one keyword (the pre-#399 scale), else per the multi-keyword formula. */
+export function maxSearchRank(termCount: number, mode: SearchTermsMode): number {
+  if (termCount <= 1) return 3;
+  return (mode === "any" ? (termCount - 1) * 5 : 0) + 4;
+}
+
+export interface MultiTermSearchQueryOpts extends Omit<NoteSearchQueryOpts, "query"> {
+  /** Two to `SEARCH_TERMS_MAX` keywords from `parseSearchTerms`. */
+  terms: readonly string[];
+  mode: SearchTermsMode;
+}
+
+function bodyHasTerm(t: string): SQL {
+  const match = usesTrigramPath(t)
+    ? sql`lower(${noteSearchSections.body}) like lower(${"%" + escapeLike(t) + "%"})`
+    : sql`position(lower(${t}) in lower(${noteSearchSections.body})) > 0`;
+  return sql`exists (select 1 from ${noteSearchSections} where ${noteSearchSections.noteId} = ${notes.id} and ${noteSearchSections.sourceKind} = 'note' and ${match})`;
+}
+
+const countTrue = (conds: SQL[]): SQL => sql`(${sql.join(conds.map(c => sql`(case when ${c} then 1 else 0 end)`), sql` + `)})`;
+
+export function buildMultiTermNoteSearchQuery(db: DbOrTx, opts: MultiTermSearchQueryOpts) {
+  const terms = opts.terms;
+  if (terms.length < 2 || terms.length > SEARCH_TERMS_MAX) throw new Error("search: multi-term query needs 2 to SEARCH_TERMS_MAX terms");
+  const titleHits = terms.map(t => sql`position(lower(${t}) in lower(${notes.title})) > 0`);
+  const bodyHits = terms.map(bodyHasTerm);
+  const termHits = terms.map((_, i) => sql`(${titleHits[i]!} or ${bodyHits[i]!})`);
+  const anyTitle = sql`(${sql.join(titleHits, sql` or `)})`;
+  const anyBody = sql`(${sql.join(bodyHits, sql` or `)})`;
+  const matched = opts.mode === "any" ? sql`(${sql.join(termHits, sql` or `)})` : sql`(${sql.join(termHits, sql` and `)})`;
+  const phrase = terms.join(" ");
+  const matchedCount = countTrue(termHits);
+  const titleCount = countTrue(titleHits);
+  const rankExpr = sql<number>`((${terms.length} - ${matchedCount}) * 5 + case
+    when lower(${notes.title}) = lower(${phrase}) then 0
+    when position(lower(${phrase}) in lower(${notes.title})) = 1 then 1
+    when ${titleCount} = ${matchedCount} then 2
+    when ${titleCount} > 0 then 3
+    else 4 end)`;
+  const rank = sql<number>`${rankExpr}`.as("rank");
+  const titleHitCol = sql<boolean>`${anyTitle}`.as("title_hit");
+  const bodyHitCol = sql<boolean>`${anyBody}`.as("body_hit");
+  const termHitsCol = sql<boolean[]>`array[${sql.join(termHits, sql`, `)}]`.as("term_hits");
+  const page = opts.page;
+  const after = page?.after ?? null;
+  const keysetCond =
+    after === null
+      ? undefined
+      : or(
+          sql`${rankExpr} > ${after.rank}`,
+          and(sql`${rankExpr} = ${after.rank}`, sql`(${notes.updatedAt}, ${notes.id}) < (${after.updatedAtKey}::timestamptz, ${after.id}::uuid)`),
+        );
+  const updatedAtKey = sql<string>`to_char(${notes.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("updated_at_key");
+  const { owned, shared, grouped } = visibleNoteBranches(db, opts.userId, {
+    extraWhere: and(opts.bodyOnly === true ? and(matched, anyBody) : matched, keysetCond, notesHavingAllTagsSql(opts.tagIds ?? [])),
+    extra: { rank, titleHit: titleHitCol, bodyHit: bodyHitCol, termHits: termHitsCol, ...(page !== undefined ? { updatedAtKey } : {}) },
+  });
+  return unionAll(owned, shared, grouped)
+    .orderBy(asc(rank), desc(notes.updatedAt), desc(notes.id))
+    .limit(opts.limit + 1);
+}
+
+/**
+ * Multi-keyword sections: a section counts when it contains any keyword. Up to `SEARCH_MATCHES_PER_NOTE` per note, the
+ * ones with the most distinct keywords first, then document order. `p` is the earliest hit of any keyword (the snippet is
+ * centred on it), `ps` every keyword's position. The window is sized for the longest keyword.
+ */
+export function buildMultiTermSearchMatchesQuery(opts: { terms: readonly string[]; ids: string[] }): SQL {
+  const positions = opts.terms.map(t => sql`position(lower(${t}) in lower(${noteSearchSections.body}))`);
+  const cols = opts.terms.map((_, i) => sql.raw(`p${i}`));
+  const maxLen = Math.max(...opts.terms.map(t => Array.from(t).length));
+  return sql`with hits as (
+    select ${noteSearchSections.noteId} as note_id, ${noteSearchSections.sectionId} as section_id, ${noteSearchSections.ord} as ord,
+           ${noteSearchSections.heading} as heading, ${noteSearchSections.body} as body,
+           ${sql.join(positions.map((p, i) => sql`${p} as ${cols[i]!}`), sql`, `)}
+    from ${noteSearchSections}
+    where ${inArray(noteSearchSections.noteId, opts.ids)} and ${noteSearchSections.sourceKind} = 'note'
+  ), scored as (
+    select *, ${sql.join(cols.map(c => sql`(case when ${c} > 0 then 1 else 0 end)`), sql` + `)} as k,
+           least(${sql.join(cols.map(c => sql`nullif(${c}, 0)`), sql`, `)}) as p
+    from hits
+  ), ranked as (
+    select *, row_number() over (partition by note_id order by k desc, ord) as rn from scored where k > 0
+  )
+  select note_id, section_id, ord, heading, p, array[${sql.join(cols, sql`, `)}] as ps,
+         greatest(p - ${SNIPPET_LEAD_CP}, 1) as win_start,
+         substr(body, greatest(p - ${SNIPPET_LEAD_CP}, 1), ${SNIPPET_LEAD_CP + maxLen + SNIPPET_TAIL_CP}) as win,
+         char_length(body) as body_len
+  from ranked where rn <= ${SEARCH_MATCHES_PER_NOTE}
+  order by note_id, k desc, ord`;
 }

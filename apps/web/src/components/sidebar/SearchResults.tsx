@@ -1,13 +1,13 @@
 import { lazy, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { canonicalNotePath, type NoteDto } from "@knotebook/shared";
+import { canonicalNotePath, SEARCH_TERMS_MAX, type NoteDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { useFolders } from "@/api/folders";
 import { useGroups } from "@/api/groups";
 import { useNotes } from "@/api/notes";
 import { useActiveNote } from "@/lib/active-note";
-import { foldedIndexOf } from "@/lib/search-match";
+import { foldedHitRanges, lowerSearchTerms } from "@/lib/search-match";
 import { useDebounced } from "@/lib/useDebounced";
 import { cn } from "@/lib/utils";
 import { BODY_SEARCH_DEBOUNCE_MS, bodySearchGate } from "@/components/sidebar/body-search-gate";
@@ -22,18 +22,23 @@ const TagResultsExtras = lazy(() => import("@/components/sidebar/TagResultsExtra
 const BodySearchResults = lazy(() => import("@/components/sidebar/BodySearchLazy").then((m) => ({ default: m.BodySearchResults })));
 
 /** Lowercasing can change length (e.g. `İ` → `i̇`), so positions no longer map to the original title: then nothing is highlighted. */
-export function highlightTitle(title: string, lowerQuery: string): ReactNode {
-  if (lowerQuery === "") return title;
-  const index = foldedIndexOf(title, lowerQuery);
-  if (index < 0) return title;
-  const end = index + lowerQuery.length;
-  return [
-    title.slice(0, index),
-    <mark key="hit" className="rounded-sm bg-search-highlight text-inherit">
-      {title.slice(index, end)}
-    </mark>,
-    title.slice(end),
-  ];
+/** Marks the first hit of each keyword (#399); overlapping hits merge into one mark. */
+export function highlightTitle(title: string, lowerTerms: readonly string[]): ReactNode {
+  const ranges = foldedHitRanges(title, lowerTerms);
+  if (ranges.length === 0) return title;
+  const out: ReactNode[] = [];
+  let pos = 0;
+  ranges.forEach((r, i) => {
+    out.push(title.slice(pos, r.start));
+    out.push(
+      <mark key={`hit-${i}`} className="rounded-sm bg-search-highlight text-inherit">
+        {title.slice(r.start, r.end)}
+      </mark>,
+    );
+    pos = r.end;
+  });
+  out.push(title.slice(pos));
+  return out;
 }
 
 /**
@@ -52,13 +57,13 @@ export function searchTitleLineClass(active: boolean): string {
 export function SearchRow({
   note,
   label,
-  lowerQuery,
+  lowerTerms,
   active,
   onClick,
 }: {
   note: NoteDto;
   label: string;
-  lowerQuery: string;
+  lowerTerms: readonly string[];
   active: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
@@ -72,7 +77,7 @@ export function SearchRow({
         active && "bg-brand-soft text-brand-on-soft hover:bg-brand-soft-strong",
       )}
     >
-      <SearchTitleLine note={note} lowerQuery={lowerQuery} active={active} />
+      <SearchTitleLine note={note} lowerTerms={lowerTerms} active={active} />
       <div className={cn("mt-0.5", searchMetaLineClass(active))} title={label}>
         {label}
       </div>
@@ -81,8 +86,8 @@ export function SearchRow({
 }
 
 /** Without tags this is a single div; with tags the dots sit at the end of the line. */
-export function SearchTitleLine({ note, lowerQuery, active }: { note: NoteDto; lowerQuery: string; active: boolean }) {
-  const title = <div className={searchTitleLineClass(active)}>{highlightTitle(note.title, lowerQuery)}</div>;
+export function SearchTitleLine({ note, lowerTerms, active }: { note: NoteDto; lowerTerms: readonly string[]; active: boolean }) {
+  const title = <div className={searchTitleLineClass(active)}>{highlightTitle(note.title, lowerTerms)}</div>;
   if ((note.tags ?? []).length === 0) return title;
   return (
     <div className="flex min-w-0 items-center">
@@ -95,13 +100,13 @@ export function SearchTitleLine({ note, lowerQuery, active }: { note: NoteDto; l
 function TitleRows({
   notes,
   location,
-  lowerQuery,
+  lowerTerms,
   activeNoteId,
   onPick,
 }: {
   notes: NoteDto[];
   location: LocationContext;
-  lowerQuery: string;
+  lowerTerms: readonly string[];
   activeNoteId: string | null;
   onPick: (id: string) => void;
 }) {
@@ -114,7 +119,7 @@ function TitleRows({
           <SearchRow
             note={note}
             label={noteLocationLabel(note, location, t)}
-            lowerQuery={lowerQuery}
+            lowerTerms={lowerTerms}
             active={activeNoteId === note.id}
             onClick={(event) => {
               // Same rule as NoteRow: only a plain left-click sets optimistically.
@@ -176,10 +181,16 @@ export function SearchResults({
     );
   }
 
-  const lowerQuery = query.toLowerCase();
+  const lowerTerms = lowerSearchTerms(query);
   const groupIds = new Set((groupsQuery.data ?? []).map((group) => group.id));
   const pool = tagTokens.length === 0 ? notesQuery.data : notesMatchingTokens(notesQuery.data, tagTokens, groupIds);
-  const results = pool.filter((note) => note.title.toLowerCase().includes(lowerQuery));
+  // Same keyword rule as the server's `all` mode, applied to titles only (#399). An empty query (tag tokens only) keeps every
+  // note; whitespace alone has no keywords and matches nothing, as when it was compared literally.
+  const results = pool.filter((note) => {
+    if (query === "") return true;
+    const title = note.title.toLowerCase();
+    return lowerTerms.length > 0 && lowerTerms.every((term) => title.includes(term));
+  });
   // Not waiting on ["folders"]: until it arrives the path row just lacks the folder segment.
   const location = { groupIds, folders: folderIndex };
 
@@ -193,7 +204,7 @@ export function SearchResults({
     </p>
   );
   const titleRows = (
-    <TitleRows notes={results} location={location} lowerQuery={lowerQuery} activeNoteId={activeNoteId} onPick={setActiveNoteId} />
+    <TitleRows notes={results} location={location} lowerTerms={lowerTerms} activeNoteId={activeNoteId} onPick={setActiveNoteId} />
   );
 
   return (
@@ -221,6 +232,7 @@ export function SearchResults({
         {gate !== "search" && results.length === 0 && <p className="px-2 py-2 text-sm text-muted-foreground">{t("sidebar.noMatch")}</p>}
         {gate === "tooShort" && <p className="px-2 py-2 text-[11px] text-muted-foreground">{t("sidebar.bodySearchTooShort")}</p>}
         {gate === "tooLong" && <p className="px-2 py-2 text-[11px] text-muted-foreground">{t("sidebar.bodySearchTooLong")}</p>}
+        {gate === "tooManyTerms" && <p className="px-2 py-2 text-[11px] text-muted-foreground">{t("sidebar.bodySearchTooManyTerms", { max: SEARCH_TERMS_MAX })}</p>}
         {gate === "search" && (
           <SidebarLazyBoundary
             chunk="bodySearch"
@@ -235,7 +247,7 @@ export function SearchResults({
               query={trimmed}
               debounced={debounced}
               titleNotes={results}
-              titleLowerQuery={lowerQuery}
+              titleLowerTerms={lowerTerms}
               notes={pool}
               location={location}
               onStatus={setBodyStatus}

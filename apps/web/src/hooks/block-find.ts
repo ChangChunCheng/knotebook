@@ -1,9 +1,10 @@
 import { TOP_SECTION_ID } from "@knotebook/shared";
-import { foldedIndexOf } from "@/lib/search-match";
+import { firstFoldedHit, lowerSearchTerms } from "@/lib/search-match";
 
 // Sections must match sectionize in note-sections.ts: only top-level units (blocks and columnList rows) count, and
 // nested or in-column headings don't start sections. Blocks are matched on their own text, so the innermost matching
-// block wins. The query is a single substring, as on the server. Matching uses foldedIndexOf, like the snippet highlight.
+// block wins. The query is split into keywords as on the server (#399) and the first block containing any of them wins.
+// Matching uses foldedIndexOf, like the snippet highlight.
 const GROUP = ".bn-editor > .bn-block-group";
 const OUTER_SELF = ":scope > .bn-block > .bn-block-content";
 
@@ -69,8 +70,8 @@ function visibleTarget(root: HTMLElement, outer: HTMLElement): HTMLElement {
 }
 
 export function findMatchBlock(root: HTMLElement, sectionId: string, findText: string): HTMLElement | null {
-  const lowerQuery = findText.toLowerCase();
-  if (lowerQuery === "") return null;
+  const lowerTerms = lowerSearchTerms(findText);
+  if (lowerTerms.length === 0) return null;
   const units = sectionUnits(root, sectionId);
   if (units === null) return null;
   for (const unit of units) {
@@ -79,7 +80,7 @@ export function findMatchBlock(root: HTMLElement, sectionId: string, findText: s
       ...Array.from(unit.querySelectorAll<HTMLElement>(".bn-block-outer[data-id]")),
     ];
     for (const outer of outers) {
-      if (foldedIndexOf(ownText(outer), lowerQuery) >= 0) return visibleTarget(root, outer);
+      if (firstFoldedHit(ownText(outer), lowerTerms) !== null) return visibleTarget(root, outer);
     }
   }
   return null;

@@ -303,3 +303,47 @@ describe("cursor tampering and no leaks", () => {
     expect(hit.note.ownerId).toBe(b.id);
   });
 });
+
+describe("#399 several keywords", () => {
+  it("terms=all (default) / any, matchedTerms on hits and matches, quoted phrase, terms=other -> 400, 9 keywords -> 400", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const auth = await asUser(u.id);
+    const both = await seedIndexedNote(db, { ownerId: u.id }, "rest multi", body("zulu and yankee"));
+    const one = await seedIndexedNote(db, { ownerId: u.id }, "rest single", body("only yankee"));
+    const all = await ok(app, auth, `?q=${enc("zulu yankee")}`);
+    expect(idsOf(all)).toEqual([both.id]);
+    expect(all.hits[0]).toMatchObject({ matchedOn: "body", matchedTerms: ["zulu", "yankee"] });
+    expect(all.hits[0]!.matches[0]!.matchedTerms).toEqual(["zulu", "yankee"]);
+    const any = await ok(app, auth, `?q=${enc("zulu yankee")}&terms=any`);
+    expect(idsOf(any)).toEqual([both.id, one.id]);
+    expect(any.hits[1]!.matchedTerms).toEqual(["yankee"]);
+    expect(idsOf(await ok(app, auth, `?q=${enc('"and yankee"')}`))).toEqual([both.id]);
+    const single = await ok(app, auth, "?q=yankee");
+    expect(single.hits[0]).not.toHaveProperty("matchedTerms");
+    for (const qs of ["?q=ab&terms=some", `?q=${enc("a b c d e f g h i")}`]) {
+      const res = await get(app, auth, qs);
+      expect(res.statusCode, qs).toBe(400);
+      expect(res.json().error.code, qs).toBe("invalid_body");
+    }
+  });
+
+  it("cursor: pages an any-mode query; bound to the mode; a rank the query can't produce is 400", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const auth = await asUser(u.id);
+    for (let i = 0; i < 3; i += 1) await seedIndexedNote(db, { ownerId: u.id }, `xray ${i}`, body(i === 0 ? "whiskey xray" : "whiskey"));
+    const q = enc("xray whiskey");
+    const first = await ok(app, auth, `?q=${q}&terms=any&limit=2`);
+    expect(first.hits).toHaveLength(2);
+    const second = await ok(app, auth, `?q=${q}&terms=any&limit=2&cursor=${first.nextCursor}`);
+    expect(new Set([...idsOf(first), ...idsOf(second)]).size).toBe(3);
+    expect((await get(app, auth, `?q=${q}&limit=2&cursor=${first.nextCursor}`)).statusCode).toBe(400); // terms=all fingerprint differs
+    // Two keywords in any mode go up to rank 9; 10 is impossible.
+    const c = first.nextCursor!;
+    for (const [rank, status] of [["9", 200], ["10", 400]] as const) {
+      const res = await get(app, auth, `?q=${q}&terms=any&limit=2&cursor=${enc(tamper(c, p => [p[0]!, p[1]!, rank, p[3]!, p[4]!]))}`);
+      expect(res.statusCode, rank).toBe(status);
+    }
+  });
+});

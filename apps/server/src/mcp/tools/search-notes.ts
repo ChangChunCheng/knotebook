@@ -12,8 +12,9 @@
  */
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { parseSearchTerms, SEARCH_TERMS_MAX, SEARCH_TERMS_MODES } from "@knotebook/shared";
 import { noNul } from "../../notes/schemas.js";
-import { groupMatchesByNote, searchNotesForUser } from "../../notes/search-query.js";
+import { groupMatchesByNote, matchedTermsOf, searchNotesForUser, snippetWindowOf } from "../../notes/search-query.js";
 import { SEARCH_MATCHES_PER_NOTE, type NoteSearchRow, type SearchMatchRow } from "../../notes/search-sql.js";
 import { buildSnippet } from "../../notes/search-snippet.js";
 import { noteSummariesForModel, noteSummarySchema, type NoteSummaryForModel } from "../dto.js";
@@ -31,17 +32,22 @@ const MATCHES_TRUNCATED_RESERVE = 64;
 // Model-facing: only say things true on every deployment shape (pinned in test/mcp-search.test.ts).
 const DESC_HEAD =
   "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. " +
-  "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body. ";
+  "Separate keywords with spaces (there is no word segmentation, so CJK keywords need spaces too) and put a phrase in double quotes; " +
+  `up to ${SEARCH_TERMS_MAX} keywords. By default a note must contain every keyword, each in its title or body; set \`terms\` to \`any\` to match any of them. ` +
+  "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body; " +
+  "with several keywords, notes containing more of them come first. ";
 export const SEARCH_NOTES_DESCRIPTION_READ =
   DESC_HEAD +
-  "A body match lists up to 3 sections in document order, each with an excerpt near the first hit; pass a `sectionId` to read_note_section. " +
+  "A body match lists up to 3 sections, those containing the most keywords first and then in document order, each with an excerpt near the first hit; pass a `sectionId` to read_note_section. " +
   "`matches` can be empty for a body match; read the note's outline then. " +
   "Saved changes are usually searchable within seconds, but right after an upgrade older notes may match by title only for a while. " +
   "Attachments are not searched.";
 export const SEARCH_NOTES_DESCRIPTION_NO_READ =
   DESC_HEAD +
-  "A body match lists up to 3 sections in document order, each with an excerpt near the first hit; `matches` can be empty for a body match. " +
+  "A body match lists up to 3 sections, those containing the most keywords first and then in document order, each with an excerpt near the first hit; `matches` can be empty for a body match. " +
   "Attachments are not searched.";
+
+export const SEARCH_TERMS_INVALID_MESSAGE = `Give 1 to ${SEARCH_TERMS_MAX} keywords: separate them with spaces, or put a phrase in double quotes.`;
 
 export function searchNotesDescription(canRead: boolean): string {
   return canRead ? SEARCH_NOTES_DESCRIPTION_READ : SEARCH_NOTES_DESCRIPTION_NO_READ;
@@ -56,7 +62,11 @@ export const searchNotesInput = {
     .min(1)
     .max(MAX_QUERY)
     .refine(noNul)
-    .describe("Text to look for in note titles and body text. Matched literally — `%` and `_` are not wildcards."),
+    .describe("Keywords to look for in note titles and body text, separated by spaces; a phrase in double quotes is one keyword. Matched literally — `%` and `_` are not wildcards."),
+  terms: z
+    .enum(SEARCH_TERMS_MODES)
+    .optional()
+    .describe("`all` (default): a note must contain every keyword. `any`: at least one, notes with more keywords first."),
   limit: z
     .number()
     .int()
@@ -72,13 +82,15 @@ export function searchNotesOutputFor(canRead: boolean) {
     heading: z.string().max(MCP_TEXT_MAX).describe("The section's heading, cut at 200 characters as written in JSON. Empty for `_top`."),
     headingTruncated: z.literal(true).optional().describe("Present only when `heading` was cut."),
     snippet: z.string().max(MCP_SNIPPET_MAX).describe("An excerpt of the section's text near the first hit, cut at 160 characters as written in JSON."),
+    matchedTerms: z.array(z.string()).optional().describe("Only with several keywords: the ones this section contains."),
   });
   const hit = noteSummarySchema.extend({
     matchedOn: z.enum(["title", "body", "both"]).describe("Whether your text was found in the title, the body, or both."),
     matches: z
       .array(match)
       .max(SEARCH_MATCHES_PER_NOTE)
-      .describe("Up to 3 sections that contain your text, in document order. Empty when `matchedOn` is `title`, and can be empty for a body match."),
+      .describe("Up to 3 sections that contain your text, those with the most keywords first, then in document order. Empty when `matchedOn` is `title`, and can be empty for a body match."),
+    matchedTerms: z.array(z.string()).optional().describe("Only with several keywords: the ones this note contains, in its title or body."),
   });
   return {
     notes: z.array(hit).describe("The matching notes, best match first."),
@@ -97,10 +109,11 @@ export interface SearchMatchForModel {
   heading: string;
   headingTruncated?: true;
   snippet: string;
+  matchedTerms?: string[];
 }
 
 type MatchedOn = "title" | "body" | "both";
-type SearchHitForModel = NoteSummaryForModel & { matchedOn: MatchedOn; matches: SearchMatchForModel[] };
+type SearchHitForModel = NoteSummaryForModel & { matchedOn: MatchedOn; matches: SearchMatchForModel[]; matchedTerms?: string[] };
 
 export function assembleSearchPayload(
   notes: SearchHitForModel[],
@@ -129,27 +142,36 @@ function matchedOnOf(row: NoteSearchRow): MatchedOn {
   return row.titleHit ? "title" : "body";
 }
 
-function toMatch(m: SearchMatchRow, qlen: number): SearchMatchForModel {
+function toMatch(m: SearchMatchRow, terms: readonly string[]): SearchMatchForModel {
   const heading = truncateText(m.heading);
-  const snippet = buildSnippet({ win: m.win, lead: m.p - m.win_start, qlen, winStart: m.win_start, bodyLen: m.body_len }, MCP_SNIPPET_MAX, escapedLength);
-  return { sectionId: m.section_id, heading: heading.text, ...(heading.truncated ? { headingTruncated: true as const } : {}), snippet };
+  const snippet = buildSnippet(snippetWindowOf(m, terms), MCP_SNIPPET_MAX, escapedLength);
+  const matchedTerms = matchedTermsOf(m.ps, terms);
+  return {
+    sectionId: m.section_id, heading: heading.text, ...(heading.truncated ? { headingTruncated: true as const } : {}), snippet,
+    ...(matchedTerms !== undefined ? { matchedTerms } : {}),
+  };
 }
 
 export interface SearchNotesArgs {
   query: string;
+  terms?: "all" | "any";
   limit?: number;
 }
 
 export async function searchNotes(args: SearchNotesArgs, ctx: McpToolCtx): Promise<CallToolResult> {
+  const terms = parseSearchTerms(args.query);
+  if (terms === null || terms.length === 0) return toolError("invalid_body", SEARCH_TERMS_INVALID_MESSAGE);
   if (!ctx.limiters.search.consume(ctx.userId)) return toolError("too_many_requests", SEARCH_RATE_LIMITED_MESSAGE);
   const limit = args.limit ?? DEFAULT_LIMIT;
-  const { rows, matches } = await searchNotesForUser(ctx.db, { userId: ctx.userId, query: args.query, limit });
+  const { rows, matches } = await searchNotesForUser(ctx.db, { userId: ctx.userId, terms, mode: args.terms ?? "all", limit });
   const truncated = rows.length > limit;
   const page = truncated ? rows.slice(0, limit) : rows;
   const byNote = groupMatchesByNote(matches);
-  const qlen = Array.from(args.query).length;
   const summaries = await noteSummariesForModel(ctx.db, page);
-  const notes: SearchHitForModel[] = page.map((row, i) => ({ ...summaries[i]!, matchedOn: matchedOnOf(row), matches: [] }));
-  const candidates = page.map(row => (row.bodyHit ? (byNote.get(row.id) ?? []).map(m => toMatch(m, qlen)) : []));
+  const notes: SearchHitForModel[] = page.map((row, i) => {
+    const matchedTerms = matchedTermsOf(row.termHits, terms);
+    return { ...summaries[i]!, matchedOn: matchedOnOf(row), matches: [], ...(matchedTerms !== undefined ? { matchedTerms } : {}) };
+  });
+  const candidates = page.map(row => (row.bodyHit ? (byNote.get(row.id) ?? []).map(m => toMatch(m, terms)) : []));
   return toolResult(assembleSearchPayload(notes, candidates, truncated));
 }
