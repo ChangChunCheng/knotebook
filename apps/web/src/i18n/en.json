@@ -436,6 +436,7 @@
       "storage": "Storage plans",
       "ai": "AI agents",
       "auth": "Sign-in",
+      "knowledgeFields": "Knowledge fields",
       "limits": "Site limits"
     }
   },
@@ -1106,6 +1107,10 @@
     "invalid_tags": "That tag is no longer available.",
     "merge_same_tag": "Pick a different tag to merge into.",
     "invalid_knowledge": "A knowledge comment in that text is not valid, so nothing was changed.",
+    "knowledge_key_invalid": "That option key is not valid. Use lowercase letters, digits and hyphens, and avoid reserved words.",
+    "knowledge_key_taken": "Two options have the same key.",
+    "knowledge_fields_limit": "Too many options or custom fields.",
+    "knowledge_fields_incomplete": "The settings changed since you opened this page. Reload and try again.",
     "fallback": "An unexpected error occurred."
   }
 }

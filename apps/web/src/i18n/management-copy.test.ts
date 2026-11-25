@@ -15,7 +15,7 @@ import managementZhTWRaw from "./management.zh-TW.json?raw";
  * The main file is always read as `?raw`: i18next's store references init's `resources` directly, so after registration the main JSON module object has been deep-merged with the whole admin / settings bundle.
  */
 
-/** The 16 keys the first bundle (AdminModal, SettingsModal, UserMenu) needs and that must stay in the main file; changing this list changes the first bundle size, so update the comment in management-strings.ts too. */
+/** The 17 keys the first bundle (AdminModal, SettingsModal, UserMenu) needs and that must stay in the main file; changing this list changes the first bundle size, so update the comment in management-strings.ts too. */
 const KEPT_IN_MAIN = [
   "admin.nav.label",
   "admin.nav.users",
@@ -23,6 +23,7 @@ const KEPT_IN_MAIN = [
   "admin.nav.storage",
   "admin.nav.ai",
   "admin.nav.auth",
+  "admin.nav.knowledgeFields",
   "admin.nav.limits",
   "settings.entry",
   "settings.title",
@@ -97,7 +98,7 @@ describe("no overlap with the main file", () => {
   });
 });
 
-describe("main file's admin / settings keep only the 16 first-bundle keys", () => {
+describe("main file's admin / settings keep only the 17 first-bundle keys", () => {
   it.each([
     ["en", mainEnKeys],
     ["zh-TW", mainZhTWKeys],
@@ -163,7 +164,7 @@ describe("files using moved keys import @/i18n/management-strings themselves", (
     expect(users).toContain("src/settings/ScopeChecksField.tsx");
   });
 
-  it("every non-test file containing a non-first-bundle admin. / settings. key literal imports it; the 16 first-bundle keys do not need it", () => {
+  it("every non-test file containing a non-first-bundle admin. / settings. key literal imports it; the 17 first-bundle keys do not need it", () => {
     const offenders: string[] = [];
     for (const path of listNonTestSources()) {
       if (path === "src/i18n/management-strings.ts") continue;

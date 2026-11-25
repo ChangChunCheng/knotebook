@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, canonicalizeElements, topLevelBlocks } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, canonicalizeElements, topLevelBlocks } from "@knotebook/shared";
 import { fingerprintOf, topLevelFingerprints, topLevelSnapshot } from "../../src/notes/editing/fingerprint.js";
 import { parseMarkdownForNote } from "../../src/notes/editing/markdown.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
@@ -121,7 +121,7 @@ describe("a human already made the same edit -> sameCanonical equal, fingerprint
   ];
   it.each(cases)("%s", async (_n, make, toAgent, stripStart) => {
     const { doc, id } = await make();
-    const exported = await withEditor(doc, ed => toNoteMarkdown(ed, [ed.getBlock(id)!], SHAPE_TITLES));
+    const exported = await withEditor(doc, ed => toNoteMarkdown(ed, [ed.getBlock(id)!], SHAPE_TITLES, DEFAULT_KNOWLEDGE_FIELD_VIEW));
     const sc = await scratchOf(toAgent(exported), stripStart);
     expect(sameCanonicalSeq(sc.frag, sc.ids)).toEqual(sameCanonicalSeq(frag(doc), [id]));
     // premise: compared with `fingerprintOf` the same group is not equal (proves sameCanonical is load-bearing)

@@ -1,4 +1,5 @@
-import { isKnowledgeCommentData, parseKnowledgeComment, type KnowledgeCommentFields, type KnowledgeProblem } from "./knowledge-markdown.js";
+import { formatKnowledgeCustom } from "./knowledge-custom.js";
+import { isKnowledgeCommentData, parseKnowledgeComment, type KnowledgeCommentFields, type KnowledgeIgnoredItem, type KnowledgeProblem } from "./knowledge-markdown.js";
 import { EMPTY_KNOWLEDGE_PROPS, KNOWLEDGE_PROP_NAMES, type KnowledgePropName } from "./knowledge-schema.js";
 import type { MarkdownPlacement } from "./note-markdown-write.js";
 
@@ -61,7 +62,7 @@ function isClosedInSource(data: string, html: string): boolean {
   return html.includes(`${open}-->`) || html.includes(`${open}--!>`);
 }
 
-const FIELD_PROPS: ReadonlyArray<readonly [Exclude<keyof KnowledgeCommentFields, "id">, KnowledgePropName]> = [
+const FIELD_PROPS: ReadonlyArray<readonly [Exclude<keyof KnowledgeCommentFields, "id" | "unknown" | "custom">, KnowledgePropName]> = [
   ["when", "knowledgeWhen"],
   ["conclusion", "knowledgeConclusion"],
   ["evidence", "knowledgeEvidence"],
@@ -80,10 +81,13 @@ export function applyKnowledgeComments(
   root: Element,
   placement: MarkdownPlacement,
   html?: string,
-): { changed: boolean; ignored: number; assigned: ReadonlySet<string>; props: readonly KnowledgeProps[] } | { error: KnowledgeProblem } {
+):
+  | { changed: boolean; ignored: number; assigned: ReadonlySet<string>; props: readonly KnowledgeProps[]; unknownKeys: KnowledgeIgnoredItem[] }
+  | { error: KnowledgeProblem } {
   const assigned = new Set<string>();
   const props: KnowledgeProps[] = [];
-  if (html !== undefined && !QUICK_CHECK.test(html)) return { changed: false, ignored: 0, assigned, props };
+  const unknownKeys: KnowledgeIgnoredItem[] = [];
+  if (html !== undefined && !QUICK_CHECK.test(html)) return { changed: false, ignored: 0, assigned, props, unknownKeys };
   let changed = stripKnowledgeDataAttrs(root);
   const walker = root.ownerDocument.createTreeWalker(root, SHOW_COMMENT);
   const mine: Array<{ comment: Comment; heading: Element; fields: KnowledgeCommentFields }> = [];
@@ -112,15 +116,17 @@ export function applyKnowledgeComments(
     mine.push({ comment, heading, fields: parsed.fields });
   }
   mine.forEach(({ heading, fields }, i) => {
+    for (const { key, raw } of fields.unknown) unknownKeys.push({ heading: heading.textContent ?? "", key, value: raw, reason: "unknown_field" });
     const id = fields.id ?? `${KNOWLEDGE_PENDING_ID_PREFIX}${i}`;
     const written = { ...EMPTY_KNOWLEDGE_PROPS, knowledgeId: id } as KnowledgeProps;
     for (const [field, prop] of FIELD_PROPS) written[prop] = fields[field];
+    written.knowledgeCustom = formatKnowledgeCustom(fields.custom);
     for (const prop of KNOWLEDGE_PROP_NAMES) if (written[prop] !== "") heading.setAttribute(dataAttrOf(prop), written[prop]);
     assigned.add(id);
     props.push(written);
     changed = true;
   });
-  return { changed, ignored, assigned, props };
+  return { changed, ignored, assigned, props, unknownKeys };
 }
 
 /**

@@ -6,7 +6,7 @@
  * the same as MCP reads. Group exports run synchronously in the same mount (no yield, no new session).
  */
 import type * as Y from "yjs";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
 import { topLevelFingerprints } from "../notes/editing/fingerprint.js";
 import { toNoteMarkdown } from "../notes/editing/read.js";
@@ -35,15 +35,23 @@ export interface ExportNoteOptions {
   yieldFn?: () => Promise<void>;
   forceUnmergeable?: boolean;
   linkHash?: (targetId: string, text: string) => string;
+  fields: KnowledgeFieldView;
+  handleOf?: ReadonlyMap<string, string>;
 }
 
-/** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`); an empty doc returns "" without mounting, as there. */
-export async function exportNoteBody(runtime: EditingRuntime, doc: Y.Doc, titles: ReadonlyMap<string, string>): Promise<string> {
+/** Must build `body` exactly like `exportNoteForTransfer` (pinned byte-for-byte in `transfer-write-reread.test.ts`), given the same `fields` and `handleOf`; an empty doc returns "" without mounting, as there. */
+export async function exportNoteBody(
+  runtime: EditingRuntime,
+  doc: Y.Doc,
+  titles: ReadonlyMap<string, string>,
+  fields: KnowledgeFieldView,
+  handleOf: ReadonlyMap<string, string> = new Map(),
+): Promise<string> {
   // Mounting would normalize an empty doc into one empty paragraph; return "" without mounting, as `exportNoteForTransfer` does.
   if (topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT)).length === 0) return "";
   const s = await EditorSession.open(runtime, doc);
   try {
-    return toNoteMarkdown(s.editor, s.editor.document, titles);
+    return toNoteMarkdown(s.editor, s.editor.document, titles, fields, handleOf);
   } finally {
     s.close();
   }
@@ -56,11 +64,13 @@ export async function exportNoteForTransfer(
   runtime: EditingRuntime,
   doc: Y.Doc,
   titles: ReadonlyMap<string, string>,
-  opts: ExportNoteOptions = {},
+  opts: ExportNoteOptions,
 ): Promise<ExportedNote> {
   const yieldEvery = opts.yieldEveryBlocks ?? DEFAULT_YIELD_EVERY_BLOCKS;
   const yieldAfterMs = opts.yieldAfterMs ?? DEFAULT_YIELD_AFTER_MS;
   const yieldFn = opts.yieldFn ?? yieldToLoop;
+  const fields = opts.fields;
+  const handleOf = opts.handleOf ?? new Map<string, string>();
 
   const { ids, fps } = topLevelFingerprints(doc.getXmlFragment(YDOC_FRAGMENT));
   // Don't mount an empty doc: mounting normalizes it into one empty paragraph, which would mismatch the ids.
@@ -75,7 +85,7 @@ export async function exportNoteForTransfer(
     await yieldFn();
     yields++;
     const top = s.editor.document;
-    const body = toNoteMarkdown(s.editor, top, titles);
+    const body = toNoteMarkdown(s.editor, top, titles, fields, handleOf);
     await yieldFn();
     yields++;
     const lines = bodyLines(normalizeBody(body));
@@ -88,7 +98,7 @@ export async function exportNoteForTransfer(
     const per: string[][] = [];
     let last = performance.now();
     for (let i = 0; i < top.length; i++) {
-      per.push(bodyLines(normalizeBody(toNoteMarkdown(s.editor, [top[i]!], titles))));
+      per.push(bodyLines(normalizeBody(toNoteMarkdown(s.editor, [top[i]!], titles, fields, handleOf))));
       if ((i + 1) % yieldEvery === 0 || performance.now() - last >= yieldAfterMs) {
         await yieldFn();
         yields++;
@@ -96,7 +106,7 @@ export async function exportNoteForTransfer(
       }
     }
 
-    const { segs, stats } = alignSegments(lines, per, types, (i, j) => bodyLines(normalizeBody(toNoteMarkdown(s.editor, top.slice(i, j + 1), titles))));
+    const { segs, stats } = alignSegments(lines, per, types, (i, j) => bodyLines(normalizeBody(toNoteMarkdown(s.editor, top.slice(i, j + 1), titles, fields, handleOf))));
     const aligned = opts.forceUnmergeable ? null : segs;
     const linkHash = opts.linkHash;
     const segments: TransferSegment[] | null = aligned === null ? null : aligned.map(sg => {

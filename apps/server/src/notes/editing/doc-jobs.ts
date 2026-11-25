@@ -7,15 +7,20 @@ import {
   YDOC_FRAGMENT,
   extractLinkTargets,
   keptIdRenames,
+  knowledgeMemberIdsIn,
+  knowledgeMemberTokensIn,
   knowledgeRefsIn,
-  knowledgeWriteProblem,
   normalizeKnowledgeRefs,
   resolveKnowledgeForWrite,
+  sanitizeKnowledgeForWrite,
   topLevelBlocks,
   type EditOp,
   type KnowledgeBlockShape,
+  type KnowledgeFieldView,
   type KnowledgeHeadingRef,
+  type KnowledgeIgnoredItem,
   type KnowledgeInfo,
+  type KnowledgeMemberMaps,
   type KnowledgeProblem,
   type NoteContentDto,
   type NoteOutlineEntry,
@@ -59,9 +64,13 @@ export const DOC_TIMEOUT_FACTOR = 3;
 export const DOC_TOO_COMPLEX = "too_complex" as const;
 export type DocTooComplex = typeof DOC_TOO_COMPLEX;
 
-export type DocAsk = { kind: "titles"; ids: string[] } | { kind: "charge" };
+export type DocAsk = { kind: "titles"; ids: string[] } | { kind: "charge" } | { kind: "members"; tokens: string[]; ids: string[] };
 export type AskFn = (q: DocAsk) => Promise<unknown>;
 export type TitlePairs = Array<[string, string]>;
+export interface MemberPairs {
+  idOf: Array<[string, string]>;
+  handleOf: Array<[string, string]>;
+}
 
 export interface DocPost {
   baseSnapshot: Uint8Array;
@@ -80,9 +89,9 @@ export interface DocPost {
   guard: MergeGuard;
 }
 
-export type ReadDocOp = { kind: "read"; state: Uint8Array; section?: string; wantShown: boolean };
+export type ReadDocOp = { kind: "read"; state: Uint8Array; section?: string; wantShown: boolean; fields: KnowledgeFieldView };
 export type OutlineDocOp = { kind: "outline"; state: Uint8Array };
-export type ExportFileDocOp = { kind: "exportFile"; state: Uint8Array; key: Uint8Array; salt: Uint8Array; forceUnmergeable?: boolean };
+export type ExportFileDocOp = { kind: "exportFile"; state: Uint8Array; key: Uint8Array; salt: Uint8Array; forceUnmergeable?: boolean; fields: KnowledgeFieldView };
 export type EditDocOp = {
   kind: "edit";
   state: Uint8Array;
@@ -92,6 +101,7 @@ export type EditDocOp = {
   blocks?: AnyPartialBlock[];
   parseError?: { error: ParseError; detail?: ParseDetail; knowledge?: KnowledgeProblem };
   noteId: string;
+  fields: KnowledgeFieldView;
 };
 export type RevertDocOp = { kind: "revert"; state: Uint8Array; row: RevertRow; othersShareAnchor: boolean };
 /** Plan and apply are separate jobs because parsing a dense section can use hundreds of MiB; stacked with mount + apply it would exhaust the worker's memory, and split the pool can recycle the worker in between. Both jobs use the same doc state. */
@@ -108,8 +118,9 @@ export type SyncPlanDocOp = {
   salt: Uint8Array;
   baseBodySha: Uint8Array;
   budgetMs: number;
+  fields: KnowledgeFieldView;
 };
-export type SyncApplyDocOp = { kind: "syncApply"; state: Uint8Array; plan: SyncPlan; normalizedId: string | null; noteId: string };
+export type SyncApplyDocOp = { kind: "syncApply"; state: Uint8Array; plan: SyncPlan; normalizedId: string | null; noteId: string; fields: KnowledgeFieldView };
 export type SizeTrialDocOp = { kind: "sizeTrial"; state: Uint8Array; update: Uint8Array };
 export type DocOp = ReadDocOp | OutlineDocOp | ExportFileDocOp | EditDocOp | RevertDocOp | SyncPlanDocOp | SyncApplyDocOp | SizeTrialDocOp;
 
@@ -216,16 +227,28 @@ async function titlesFor(doc: Y.Doc, ask: AskFn): Promise<Map<string, string>> {
   return new Map((await ask({ kind: "titles", ids })) as TitlePairs);
 }
 
+/** `tokens`: written member values, resolved within the writer's reach. `ids`: stored members, named for export and for comparing with what is written. */
+async function membersFor(ask: AskFn, tokens: string[], ids: string[]): Promise<KnowledgeMemberMaps> {
+  if (tokens.length === 0 && ids.length === 0) return { idOf: new Map(), handleOf: new Map() };
+  const a = (await ask({ kind: "members", tokens, ids })) as MemberPairs;
+  return { idOf: new Map(a.idOf), handleOf: new Map(a.handleOf) };
+}
+
+async function storedMemberHandles(ask: AskFn, current: ReadonlyMap<string, KnowledgeInfo>, fields: KnowledgeFieldView): Promise<ReadonlyMap<string, string>> {
+  return (await membersFor(ask, [], knowledgeMemberIdsIn(current.values(), fields))).handleOf;
+}
+
 export async function editOnFork(
   runtime: EditingRuntime,
   fork: Y.Doc,
   sv: Uint8Array,
-  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined; keepIds?: boolean; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string } },
+  plan: { op: EditOp; isEmptyDoc: boolean; section: OutlineEntry | undefined; keepIds?: boolean; knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; noteId: string; fields: KnowledgeFieldView; members: KnowledgeMemberMaps } },
   blocks: AnyPartialBlock[],
 ): Promise<{ diff: Uint8Array; beforeBlocks: AnyBlock[]; afterIds: string[]; anchor: Anchor | null; knowledge: KnowledgeEditReport }> {
   const { op, isEmptyDoc, section } = plan;
   let kept: KnowledgeHeadingRef[] = [];
   let resolvedRenewed: KnowledgeRenewal[] = [];
+  let ignored: KnowledgeIgnoredItem[] = [];
   // Without `plan.knowledge` (version apply) the blocks come from a stored version and are written as they are.
   const withKnowledge = (before: readonly AnyBlock[]): AnyPartialBlock[] => {
     const k = plan.knowledge;
@@ -237,11 +260,12 @@ export async function editOnFork(
       keep,
       taken: new Set(k.current.keys()),
     });
-    const problem = knowledgeWriteProblem(r.blocks, k.current, k.noteId);
-    if (problem !== null) throw new KnowledgeWriteError(problem);
+    const s = sanitizeKnowledgeForWrite({ after: r.blocks, current: k.current, noteId: k.noteId, fields: k.fields, members: k.members });
+    if (s.problem !== null) throw new KnowledgeWriteError(s.problem);
     ({ kept } = r);
+    ({ ignored } = s);
     resolvedRenewed = r.renewed;
-    return r.blocks as unknown as AnyPartialBlock[];
+    return s.blocks as unknown as AnyPartialBlock[];
   };
   const w = await withForkEditor(runtime, fork, sv, (ed, edits) => {
     const top = ed.document;
@@ -306,19 +330,20 @@ export async function editOnFork(
     beforeBlocks,
     afterIds: w.value.afterIds.map(id => w.renamed.get(id) ?? id),
     anchor: w.value.anchor,
-    knowledge: { kept, created, removed, renewed },
+    knowledge: { kept, created, removed, renewed, ignored },
   };
 }
 
 async function readOp(runtime: EditingRuntime, op: ReadDocOp, ask: AskFn): Promise<ReadDocResult> {
   const doc = decodeState(op.state);
   const titles = await titlesFor(doc, ask);
+  const handleOf = await storedMemberHandles(ask, knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)), op.fields);
   let shown: ShownLinks | undefined;
-  const result = await readNoteContentFromDoc(runtime, doc, op.section, titles, op.wantShown ? s => (shown = s) : undefined);
+  const result = await readNoteContentFromDoc(runtime, doc, op.section, titles, op.wantShown ? s => (shown = s) : undefined, op.fields, handleOf);
   return shown ? { result, shown } : { result };
 }
 
-async function editOp(runtime: EditingRuntime, op: EditDocOp): Promise<EditDocResult> {
+async function editOp(runtime: EditingRuntime, op: EditDocOp, ask: AskFn): Promise<EditDocResult> {
   const fork = decodeState(op.state);
   const base = baseOf(fork, op.state);
   const fragment = fork.getXmlFragment(YDOC_FRAGMENT);
@@ -335,9 +360,11 @@ async function editOp(runtime: EditingRuntime, op: EditDocOp): Promise<EditDocRe
   const editKind: EditOp = isEmptyDoc ? "replace_all" : op.op;
   const blocks = op.blocks ?? [];
   const guard: MergeGuard = expect === null ? { kind: "none" } : targetIds === null || isEmptyDoc ? { kind: "any" } : { kind: "blocks", items: containerItems(fragment, targetIds), anchors: [] };
+  const current = knowledgeInfoById(fragment);
+  const members = await membersFor(ask, knowledgeMemberTokensIn(blocks as unknown as readonly KnowledgeBlockShape[], op.fields), knowledgeMemberIdsIn(current.values(), op.fields));
   let r: Awaited<ReturnType<typeof editOnFork>>;
   try {
-    r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section, keepIds: true, knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId } }, blocks);
+    r = await editOnFork(runtime, fork, base.sv, { op: editKind, isEmptyDoc, section, keepIds: true, knowledge: { current, noteId: op.noteId, fields: op.fields, members } }, blocks);
   } catch (err) {
     if (err instanceof KnowledgeWriteError) return { ok: false, code: "invalid_knowledge", knowledge: err.problem };
     throw err;
@@ -374,6 +401,8 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
   const cur = topLevelSnapshot(curFragment);
   const key = Buffer.from(op.key);
   const salt = Buffer.from(op.salt);
+  const current = knowledgeInfoById(curFragment);
+  const storedIds = knowledgeMemberIdsIn(current.values(), op.fields);
   let loneEmpty = false;
   if (op.segments !== null) {
     loneEmpty = op.segments.length === 0 && isLoneEmptyParagraph(curFragment);
@@ -381,8 +410,9 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
   } else {
     // No block fingerprints for a title-only change: compare a full export, made on a copy of the fork (mount doesn't touch the fork).
     const titles = await titlesFor(fork, ask);
+    const handleOf = (await membersFor(ask, [], storedIds)).handleOf;
     const copy = decodeState(Y.encodeStateAsUpdate(fork));
-    const nowBody = normalizeBody(await exportNoteBody(runtime, copy, titles));
+    const nowBody = normalizeBody(await exportNoteBody(runtime, copy, titles, op.fields, handleOf));
     if (!hmacOf(key, salt, nowBody).equals(Buffer.from(op.baseBodySha))) return { kind: "note_changed", budgetLeft: left() };
   }
   if (op.body === null || op.segments === null) return { kind: "body_checked", budgetLeft: left() };
@@ -400,6 +430,7 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
     candidates: op.candidates,
     siteOrigin: op.siteOrigin,
     exportedLinkText: exportedLinkTextOf(op.segments, key, salt),
+    knowledge: { current, fields: op.fields, members: tokens => membersFor(ask, tokens, storedIds) },
   });
   if (!planned.ok) return { kind: "parse", code: planned.code, ...(planned.detail ? { detail: planned.detail } : {}), ...(planned.fence ? { fence: planned.fence } : {}), ...(planned.knowledge ? { knowledge: planned.knowledge } : {}), budgetLeft: left() };
   const p = planned.plan;
@@ -407,16 +438,19 @@ async function syncPlanOp(runtime: EditingRuntime, op: SyncPlanDocOp, ask: AskFn
   return { kind: "planned", plan: p, normalizedId: loneEmpty ? cur.ids[0]! : null, budgetLeft: left() };
 }
 
-async function syncApplyOp(runtime: EditingRuntime, op: SyncApplyDocOp): Promise<SyncApplyDocResult | SyncApplyDocFailure> {
+async function syncApplyOp(runtime: EditingRuntime, op: SyncApplyDocOp, ask: AskFn): Promise<SyncApplyDocResult | SyncApplyDocFailure> {
   const fork = decodeState(op.state);
   const base = baseOf(fork, op.state);
   const fragment = fork.getXmlFragment(YDOC_FRAGMENT);
   const cur = topLevelSnapshot(fragment);
+  const current = knowledgeInfoById(fragment);
+  const written = op.plan.parsed.filter((_, ri) => op.plan.decisions[ri]!.mark !== "same").flat();
+  const members = await membersFor(ask, knowledgeMemberTokensIn(written as unknown as readonly KnowledgeBlockShape[], op.fields), knowledgeMemberIdsIn(current.values(), op.fields));
   let a: Awaited<ReturnType<typeof applySync>>;
   try {
     a = await applySync(runtime, fork, base.sv, op.plan, cur, {
       ...(op.normalizedId !== null ? { normalizedId: op.normalizedId } : {}),
-      knowledge: { current: knowledgeInfoById(fragment), noteId: op.noteId },
+      knowledge: { current, noteId: op.noteId, fields: op.fields, members },
     });
   } catch (err) {
     if (err instanceof KnowledgeWriteError) return { kind: "invalid_knowledge", knowledge: err.problem };
@@ -424,7 +458,7 @@ async function syncApplyOp(runtime: EditingRuntime, op: SyncApplyDocOp): Promise
   }
   // Write-back requires the whole note unchanged since download.
   const post = postOf(fork, base, a.diff, [], { kind: "any" }, a.perRegion.map(pr => pr.afterIds));
-  return { decisions: op.plan.decisions, unbound: op.plan.unbound, perRegion: a.perRegion, post, knowledge: { ...a.knowledge, ignoredComments: op.plan.ignoredKnowledgeComments } };
+  return { decisions: op.plan.decisions, unbound: op.plan.unbound, perRegion: a.perRegion, post, knowledge: { ...a.knowledge, ignored: [...op.plan.ignoredKnowledge, ...a.knowledge.ignored], ignoredComments: op.plan.ignoredKnowledgeComments } };
 }
 
 /** `RangeError` (stack/array/string limits) means too large or complex → `DOC_TOO_COMPLEX`; other errors are bugs and rethrown. */
@@ -446,18 +480,19 @@ async function run(runtime: EditingRuntime, op: DocOp, ask: AskFn): Promise<DocR
     case "exportFile": {
       const doc = decodeState(op.state);
       const titles = await titlesFor(doc, ask);
+      const handleOf = await storedMemberHandles(ask, knowledgeInfoById(doc.getXmlFragment(YDOC_FRAGMENT)), op.fields);
       const key = Buffer.from(op.key);
       const salt = Buffer.from(op.salt);
-      return exportNoteForTransfer(runtime, doc, titles, { ...(op.forceUnmergeable ? { forceUnmergeable: true } : {}), linkHash: (id, text) => linkTextHash(key, salt, id, text) });
+      return exportNoteForTransfer(runtime, doc, titles, { ...(op.forceUnmergeable ? { forceUnmergeable: true } : {}), linkHash: (id, text) => linkTextHash(key, salt, id, text), fields: op.fields, handleOf });
     }
     case "edit":
-      return editOp(runtime, op);
+      return editOp(runtime, op, ask);
     case "revert":
       return revertOp(runtime, op);
     case "syncPlan":
       return syncPlanOp(runtime, op, ask);
     case "syncApply":
-      return syncApplyOp(runtime, op);
+      return syncApplyOp(runtime, op, ask);
     case "sizeTrial":
       return measureTrial(op.state, op.update);
   }

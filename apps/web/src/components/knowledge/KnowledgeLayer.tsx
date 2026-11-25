@@ -1,7 +1,7 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { useTranslation } from "react-i18next";
-import type { KnowledgeEntry } from "@knotebook/shared";
+import { knowledgeStateOf, type KnowledgeEntry } from "@knotebook/shared";
 import "@/i18n/knowledge-strings";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useIsPhone, useNoHover } from "@/lib/layout-tiers";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { createRemoteKnowledgeRefSource } from "@/api/knowledge-ref-source";
 import { markKnowledgeVerified } from "./commands";
 import { isReturningFocus, type KnowledgeController } from "./controller";
+import { KnowledgeFieldsContext, knowledgeStatusOnlyView } from "./fields-context";
 import { KnowledgeForm } from "./KnowledgeForm";
 import { KnowledgeIconButton } from "./KnowledgeIcon";
 import type { KnowledgeReplacementView } from "./KnowledgeCard";
@@ -26,6 +27,8 @@ export interface KnowledgeLayerProps {
   entries: readonly KnowledgeEntry[];
   editable: boolean;
   noteId: string | null;
+  /** Names the members in custom fields; defaults to `noteId`. A version preview sets it while keeping `noteId` null. */
+  memberNoteId?: string | null;
   controller: KnowledgeController;
   accept?: (outer: HTMLElement) => boolean;
   replacementOf?: (entry: KnowledgeEntry) => KnowledgeReplacementView | null;
@@ -228,7 +231,7 @@ const IconItem = memo(
     a.hoverable === b.hoverable && a.phone === b.phone && a.editable === b.editable && a.surfaceOpen === b.surfaceOpen && a.ctxRef === b.ctxRef,
 );
 
-export function KnowledgeLayer({ container, entries, editable, noteId, controller, accept, replacementOf, editSurface, sheetFooter, editor }: KnowledgeLayerProps): ReactNode {
+export function KnowledgeLayer({ container, entries, editable, noteId, memberNoteId, controller, accept, replacementOf, editSurface, sheetFooter, editor }: KnowledgeLayerProps): ReactNode {
   const { t } = useTranslation();
   const places = useIconPlaces(container, entries, accept);
   const noHover = useNoHover();
@@ -237,18 +240,21 @@ export function KnowledgeLayer({ container, entries, editable, noteId, controlle
   const refSource = useMemo(() => (noteId ? createRemoteKnowledgeRefSource(noteId) : null), [noteId]);
   const ctxRef = useRef<KnowledgeContext>(null as never);
   const getEntries = useCallback(() => ctxRef.current.entries, []);
+  const fields = useContext(KnowledgeFieldsContext);
+  // Unlike the form, this writes without showing the date: with unknown settings it must not fill a field that may be turned off.
+  const verifyFields = fields.status === "ready" ? fields.view : knowledgeStatusOnlyView();
   const formFor = editor && editable
     ? (blockId: string, close: () => void) => <KnowledgeForm key={blockId} editor={editor} blockId={blockId} getEntries={getEntries} noteId={noteId} phone={phone} close={close} />
     : undefined;
   const verifyFor = editor && editable
     ? (entry: KnowledgeEntry) =>
-        entry.info.status === "outdated" ? null : (
-          <Button type="button" variant="outline" className="h-11 flex-1 text-[15px]" onClick={() => void markKnowledgeVerified(editor, entry.blockId)}>
+        knowledgeStateOf(entry.info) === "obsolete" ? null : (
+          <Button type="button" variant="outline" className="h-11 flex-1 text-[15px]" onClick={() => void markKnowledgeVerified(editor, entry.blockId, verifyFields)}>
             {t("knowledge.card.markVerified")}
           </Button>
         )
     : undefined;
-  const ctx: KnowledgeContext = { container, entries, editable, noteId, controller, replacementOf, editSurface: editSurface ?? formFor, sheetFooter: sheetFooter ?? verifyFor };
+  const ctx: KnowledgeContext = { container, entries, editable, noteId, memberNoteId: memberNoteId ?? noteId, controller, replacementOf, editSurface: editSurface ?? formFor, sheetFooter: sheetFooter ?? verifyFor };
   ctxRef.current = ctx;
   if (entries.length === 0 && controller.state === null) return null;
   const seen = new Set<string>();

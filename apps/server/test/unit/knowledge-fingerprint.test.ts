@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { KNOWLEDGE_PROP_NAMES, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, KNOWLEDGE_PROP_NAMES, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession, forkFrom } from "../../src/notes/editing/session.js";
 import { fingerprintOf, outlineOf, topLevelFingerprints } from "../../src/notes/editing/fingerprint.js";
@@ -100,7 +100,7 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     const old = buildPreUpgradeDoc(preUpgradeBlocks());
     const base = measure(old);
     const state = Y.encodeStateAsUpdate(old);
-    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state: new Uint8Array(state), op: "append", blocks: [{ type: "paragraph", content: "tail" }] as never });
+    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state: new Uint8Array(state), op: "append", blocks: [{ type: "paragraph", content: "tail" }] as never });
     if (r === "too_complex" || !("ok" in r) || !r.ok) throw new Error(`edit ${JSON.stringify(r)}`);
     const now = measure(mergeDiff(state, r.post.diff));
     const newIds = Object.keys(now.perBlock).filter((id) => !(id in base.perBlock));
@@ -121,19 +121,19 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     const secA = o0.outline.find((x) => x.sectionId === "hA")!;
     const secB = o0.outline.find((x) => x.sectionId === "hB")!;
     const r1 = await rt.runDoc("u", {
-      kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state: new Uint8Array(state0), op: "replace_section", sectionId: "hA", ifMatch: secA.fingerprint,
+      kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state: new Uint8Array(state0), op: "replace_section", sectionId: "hA", ifMatch: secA.fingerprint,
       blocks: [heading("hA", 1, "A"), paragraph("a1", "one"), paragraph("a2", "two edited")] as never,
     });
     if (r1 === "too_complex" || !("ok" in r1) || !r1.ok) throw new Error(`edit1 ${JSON.stringify(r1)}`);
     const state1 = Y.encodeStateAsUpdate(mergeDiff(state0, r1.post.diff));
     const r2 = await rt.runDoc("u", {
-      kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state: new Uint8Array(state1), op: "replace_section", sectionId: "hB", ifMatch: secB.fingerprint,
+      kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state: new Uint8Array(state1), op: "replace_section", sectionId: "hB", ifMatch: secB.fingerprint,
       blocks: [heading("hB", 1, "B"), paragraph("b1", "three edited")] as never,
     });
     expect(r2 !== "too_complex" && "ok" in r2 && r2.ok === true, JSON.stringify(r2)).toBe(true);
   });
 
-  it("a heading created under the new schema stores the seven knowledge attributes as empty strings", async () => {
+  it("a heading created under the new schema stores every knowledge attribute as an empty string", async () => {
     const doc = new Y.Doc();
     const s = await EditorSession.open(rt, doc);
     try {
@@ -144,7 +144,7 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     const [h] = headingElements(doc);
     const attrs = h!.getAttributes();
     for (const name of KNOWLEDGE_PROP_NAMES) expect(attrs[name], name).toBe("");
-    expect(KNOWLEDGE_PROP_NAMES).toHaveLength(7);
+    expect(KNOWLEDGE_PROP_NAMES).toHaveLength(8);
   });
 
   it("replace_all with markdown that parses to the same content keeps every block id and every block fingerprint", async () => {
@@ -166,7 +166,7 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     }
     const o = await rt.runDoc("u", { kind: "outline", state: new Uint8Array(state) });
     if (o === "too_complex") throw new Error("outline");
-    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state: new Uint8Array(state), op: "replace_all", ifMatch: o.whole, blocks: parsed as never });
+    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state: new Uint8Array(state), op: "replace_all", ifMatch: o.whole, blocks: parsed as never });
     if (r === "too_complex" || !("ok" in r) || !r.ok) throw new Error(`edit ${JSON.stringify(r)}`);
     const now = measure(mergeDiff(state, r.post.diff));
     const idsKept = Object.keys(base.perBlock).filter((id) => id in now.perBlock);
@@ -185,6 +185,31 @@ describe("knowledge props do not change fingerprints of headings nobody touched"
     });
     const now = measure(doc);
     expect(now.headingAttrs.hA).toEqual(expect.arrayContaining([...KNOWLEDGE_PROP_NAMES]));
+    const d = diffSnap(base, now);
+    expect(d.sectionsChanged).toEqual([]);
+    expect(d.perBlockChanged).toEqual([]);
+    expect(d.sameCanonChanged).toEqual([]);
+    expect(d.wholeChanged).toBe(false);
+    expect(d.versionChanged).toBe(false);
+  });
+
+  it("adding the knowledgeCustom prop leaves untouched headings' fingerprints unchanged", () => {
+    const filled = buildPreUpgradeDoc(preUpgradeBlocks());
+    filled.transact(() => {
+      for (const h of headingElements(filled)) {
+        h.setAttribute("knowledgeId", "k_0000000a");
+        h.setAttribute("knowledgeWhen", "alice reads this");
+        h.setAttribute("knowledgeStatus", "verified");
+      }
+    });
+    const base = measure(filled);
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(filled));
+    doc.transact(() => {
+      for (const h of headingElements(doc)) h.setAttribute("knowledgeCustom", "");
+    });
+    const now = measure(doc);
+    expect(now.headingAttrs.hA).toContain("knowledgeCustom");
     const d = diffSnap(base, now);
     expect(d.sectionsChanged).toEqual([]);
     expect(d.perBlockChanged).toEqual([]);

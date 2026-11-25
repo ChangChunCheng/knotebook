@@ -348,6 +348,7 @@ describe("attribute values equal to the schema default count as absent", () => {
       backgroundColor: "default", textColor: "default", textAlignment: "left", level: 1, isToggleable: false,
       ...EMPTY_KNOWLEDGE_PROPS,
     });
+    expect(DEFAULT_PROPS_BY_TYPE.heading!.knowledgeCustom).toBe("");
     expect(DEFAULT_PROPS_BY_TYPE.paragraph).toEqual(PARAGRAPH_DEFAULT_PROPS);
     expect(DEFAULT_PROPS_BY_TYPE.checkListItem!.checked).toBe(false);
     expect(DEFAULT_PROPS_BY_TYPE.codeBlock).toEqual({ language: "text" });

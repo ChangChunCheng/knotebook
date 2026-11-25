@@ -3,9 +3,9 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { KNOWLEDGE_INDEX_MAX, type KnowledgeIndexDto, type NoteDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, KNOWLEDGE_INDEX_MAX, type KnowledgeIndexDto, type NoteDto } from "@knotebook/shared";
 import type { Db } from "../src/db/index.js";
-import { noteTags, notes, tags } from "../src/db/schema.js";
+import { knowledgeFieldOverrides, noteTags, notes, tags } from "../src/db/schema.js";
 import { loadKnowledgeIndex } from "../src/knowledge/index-query.js";
 import { resolveKnowledgeScope } from "../src/knowledge/scope.js";
 import { buildTestApp } from "./helpers.js";
@@ -217,10 +217,10 @@ describe("what is listed", () => {
     const [parent, child] = dto.entries;
     expect(parent).toEqual({
       noteId: n.id, knowledgeId: kid(1), blockId: "p", ord: 0, level: 1, heading: "Parent", when: "Deploying", conclusion: "Use blue-green",
-      evidence: "tested", verified: "2026-01-02", status: "", icon: "verified", parentKnowledgeId: null, supersededBy: null,
-      summary: { total: 1, verified: 0, noVerifiedDate: 0, needsReview: 1, outdated: 0 },
+      evidence: "tested", verified: "2026-01-02", status: "", state: "verified", icon: "verified", parentKnowledgeId: null, supersededBy: null,
+      summary: { total: 1, verified: 0, needsReview: 1, outdated: 0 },
     });
-    expect(child).toMatchObject({ knowledgeId: kid(2), parentKnowledgeId: kid(1), status: "unverified", icon: "needsReview", verified: null, summary: null });
+    expect(child).toMatchObject({ knowledgeId: kid(2), parentKnowledgeId: kid(1), status: "unverified", state: "needs-verify", icon: "needsReview", verified: null, summary: null });
     expect(dto.tagOptions).toEqual([{ id: tag!.id, name: "ops", color: "blue" }]);
   });
 
@@ -268,12 +268,58 @@ describe("filters", () => {
     expect(none.tagOptions.map(t => t.name)).toEqual(["a", "B"]);
   });
 
-  it("status=needsReview, noVerifiedDate and outdated keep only that icon kind, inherited outdated included", async () => {
+  it("status=verified, needsReview and outdated keep only that icon kind, inherited outdated included; noVerifiedDate reads as needsReview", async () => {
     const { app, alice } = await setup();
     const q = async (status: string) => knowledgeIds(await okIndex(app, alice.id, "me", `?status=${status}`)).filter(id => id !== kid(9));
-    expect(await q("needsReview")).toEqual([kid(2)]);
-    expect(await q("noVerifiedDate")).toEqual([kid(3)]);
+    expect(await q("verified")).toEqual([kid(1)]);
+    expect(await q("needsReview")).toEqual([kid(2), kid(3)]);
+    expect(await q("noVerifiedDate")).toEqual([kid(2), kid(3)]);
     expect(await q("outdated")).toEqual([kid(4), kid(5)]);
+  });
+
+  it("rows written by the previous extractor read as three classes", async () => {
+    const { app, db, pool } = await ctx();
+    const alice = await seedUser(db);
+    const n = await seedNote(db, { ownerId: alice.id }, { title: "Legacy" });
+    await pool.query(
+      `insert into note_knowledge (note_id, knowledge_id, block_id, ord, level, heading, read_when, conclusion, evidence, status, icon, desc_total, desc_verified, desc_no_date, desc_needs_review, desc_outdated)
+        values ($1::uuid, $2, 'b1', 0, 1, 'Old', 'w', '', '', '', 'noVerifiedDate', 3, 0, 2, 1, 0)`,
+      [n.id, kid(1)],
+    );
+    const [entry] = (await okIndex(app, alice.id, "me")).entries;
+    expect(entry).toMatchObject({ icon: "needsReview", state: "needs-verify", status: "", summary: { total: 3, verified: 0, needsReview: 3, outdated: 0 } });
+  });
+
+  it("the needsReview filter matches legacy and current rows, and noVerifiedDate is an alias", async () => {
+    const { app, db, pool } = await ctx();
+    const alice = await seedUser(db);
+    const legacy = await seedNote(db, { ownerId: alice.id }, { title: "Legacy" });
+    await pool.query(
+      `insert into note_knowledge (note_id, knowledge_id, block_id, ord, level, heading, read_when, conclusion, evidence, status, icon)
+        values ($1::uuid, $2, 'b1', 0, 1, 'Old', 'w', '', '', '', 'noVerifiedDate')`,
+      [legacy.id, kid(1)],
+    );
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "Current", [
+      kh("a", kid(2), "Review", { level: 1, status: "unverified" }),
+      kh("b", kid(3), "Fine", { level: 1, status: "verified" }),
+    ]);
+    for (const status of ["needsReview", "noVerifiedDate"]) {
+      expect(knowledgeIds(await okIndex(app, alice.id, "me", `?status=${status}`)), status).toEqual([kid(1), kid(2)]);
+    }
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?status=verified"))).toEqual([kid(3)]);
+  });
+
+  it("a custom basis key is accepted as a filter value and unconfirmed means none", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "Keys", [
+      kh("a", kid(1), "Vendor", { level: 1, evidence: "vendor-doc" }),
+      kh("b", kid(2), "None", { level: 1 }),
+      kh("c", kid(3), "Tested", { level: 1, evidence: "tested" }),
+    ]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=vendor-doc"))).toEqual([kid(1)]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=unconfirmed"))).toEqual([kid(2)]);
+    expect((await okIndex(app, alice.id, "me")).entries.find(e => e.knowledgeId === kid(1))!.evidence).toBe("vendor-doc");
   });
 
   it("evidence=unconfirmed keeps entries with empty evidence; tested keeps tested", async () => {
@@ -289,7 +335,7 @@ describe("filters", () => {
     const { app, alice } = await setup();
     const tooMany = Array.from({ length: 21 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`).join(",");
     const twenty = Array.from({ length: 20 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`).join(",");
-    for (const qs of ["?status=verified", "?status=", "?evidence=guess", `?tags=${tooMany}`, "?tags=not-a-uuid", `?tags=${UNKNOWN},`, "?foo=1", "?status=outdated&status=outdated"]) {
+    for (const qs of ["?status=needs-verify", "?status=", "?evidence=Guess", "?evidence=", `?evidence=${"a".repeat(65)}`, `?tags=${tooMany}`, "?tags=not-a-uuid", `?tags=${UNKNOWN},`, "?foo=1", "?status=outdated&status=outdated"]) {
       const res = await getIndex(app, alice.id, "me", qs);
       expect(res.statusCode, qs).toBe(400);
       expect(res.json().error.code, qs).toBe("invalid_body");
@@ -572,7 +618,7 @@ describe("one snapshot", () => {
     const logged = drizzle(pool, { logger: { logQuery: (q: string) => queries.push(q.trim().toLowerCase()) } }) as unknown as Db;
     const scope = await resolveKnowledgeScope(logged, alice.id, { kind: "group", groupId: g.id });
     queries.length = 0;
-    const dto = await loadKnowledgeIndex(logged, { userId: alice.id, scope: scope!, filters: { tagIds: [], status: null, evidence: null } });
+    const dto = await loadKnowledgeIndex(logged, { userId: alice.id, scope: scope!, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, filters: { tagIds: [], status: null, evidence: null } });
     expect(Object.keys(dto.replacements)).toHaveLength(1);
     expect(queries[0]).toBe("begin");
     expect(queries[1]).toContain("repeatable read");
@@ -580,5 +626,40 @@ describe("one snapshot", () => {
     expect(queries.at(-1)).toBe("commit");
     expect(queries.filter(q => q === "begin")).toHaveLength(1);
     expect(queries.filter(q => /for (key share|update|share|no key update)/.test(q))).toEqual([]);
+  });
+});
+
+
+describe("field settings", () => {
+  async function disable(db: Db, ...fieldRefs: string[]) {
+    await db.insert(knowledgeFieldOverrides).values(fieldRefs.map(fieldRef => ({ groupId: null, fieldRef, optionKey: "", enabled: false })));
+  }
+
+  it("turned-off fields are empty in the index and their filter is ignored", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    const target = await seedKnowledgeNote(db, { ownerId: alice.id }, "T", [kh("t", kid(20), "T", { level: 1 })]);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "S", [
+      kh("b1", kid(1), "Old", { level: 1, status: "outdated", when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02", supersededBy: `${target.id}#${kid(20)}` }),
+      kh("b2", kid(2), "Other", { level: 1, evidence: "tested" }),
+    ]);
+    await disable(db, "when", "evidence", "superseded_by", "verified");
+    const dto = await okIndex(app, alice.id, "me", "?evidence=docs");
+    expect(dto.entries.map(e => e.knowledgeId).sort()).toEqual([kid(1), kid(2), kid(20)].sort());
+    const old = dto.entries.find(e => e.knowledgeId === kid(1))!;
+    expect(old).toMatchObject({ when: "", evidence: "", supersededBy: null, verified: null, conclusion: "c", status: "outdated" });
+    expect(dto.replacements).toEqual({});
+    expect(dto.fields.filter(f => !f.enabled).map(f => f.key).sort()).toEqual(["evidence", "superseded_by", "verified", "when"]);
+  });
+
+  it("with no settings the index DTO is what it was, plus the default fields", async () => {
+    const { app, db } = await ctx();
+    const alice = await seedUser(db);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "S", [kh("b1", kid(1), "H", { level: 1, when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02" })]);
+    const dto = await okIndex(app, alice.id, "me");
+    expect(dto.entries[0]).toMatchObject({ when: "w", conclusion: "c", evidence: "docs", verified: "2026-01-02" });
+    expect(dto.fields).toEqual(DEFAULT_KNOWLEDGE_FIELD_VIEW.fields);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=docs"))).toEqual([kid(1)]);
+    expect(knowledgeIds(await okIndex(app, alice.id, "me", "?evidence=tested"))).toEqual([]);
   });
 });

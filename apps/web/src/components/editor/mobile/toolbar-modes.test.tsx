@@ -15,7 +15,9 @@ import { ShowSelectionExtension } from "@blocknote/core/extensions";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { AiSessionProvider, SELECTION_AI_HIGHLIGHT_KEY } from "@/components/ai/AiSession";
+import { KnowledgeFieldsContext } from "@/components/knowledge/fields-context";
 import { NoteEditorView } from "@/components/NoteEditor";
 import { ThemeProvider } from "@/theme";
 import { MobileEditToolbar, MOBILE_COLOR_PANEL_HIGHLIGHT_KEY, MOBILE_COLOR_PANEL_OPEN_ATTR } from "./MobileEditToolbar";
@@ -646,10 +648,12 @@ describe("BlockNoteScope (toolbar outside BlockNoteView, same position as produc
       <MemoryRouter>
         <ThemeProvider>
           <QueryClientProvider client={new QueryClient()}>
-            <AiSessionProvider editor={editor} noteId="n" editable>
-              <NoteEditorView editor={editor} editable theme="light" noteId="n" getItems={() => Promise.resolve([])} getSlashItems={() => Promise.resolve([])} />
-              <MobileEditToolbar editor={editor} />
-            </AiSessionProvider>
+            <KnowledgeFieldsContext.Provider value={{ view: DEFAULT_KNOWLEDGE_FIELD_VIEW, status: "ready" }}>
+              <AiSessionProvider editor={editor} noteId="n" editable>
+                <NoteEditorView editor={editor} editable theme="light" noteId="n" getItems={() => Promise.resolve([])} getSlashItems={() => Promise.resolve([])} />
+                <MobileEditToolbar editor={editor} />
+              </AiSessionProvider>
+            </KnowledgeFieldsContext.Provider>
           </QueryClientProvider>
         </ThemeProvider>
       </MemoryRouter>,

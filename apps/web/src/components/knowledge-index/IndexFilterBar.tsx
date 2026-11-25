@@ -1,7 +1,9 @@
 import type { KeyboardEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   KNOWLEDGE_INDEX_EVIDENCE_FILTERS,
+  type KnowledgeFieldDef,
   KNOWLEDGE_INDEX_STATUS_FILTERS,
   type KnowledgeIndexEvidenceFilter,
   type KnowledgeIndexStatusFilter,
@@ -87,15 +89,30 @@ function ValueSelect<V extends string>({
 export function IndexFilterBar({
   filters,
   tagOptions,
+  fields = DEFAULT_KNOWLEDGE_FIELD_VIEW.fields,
   onChange,
 }: {
   filters: IndexFilters;
   tagOptions: readonly NoteTagDto[];
+  fields?: readonly KnowledgeFieldDef[];
   onChange: (next: IndexFilters) => void;
 }): ReactNode {
   const { t } = useTranslation();
   const hasTags = tagOptions.length > 0;
-  const active = filters.tagIds.length > 0 || filters.status !== null || filters.evidence !== null;
+  const evidenceField = fields.find((f) => f.key === "evidence");
+  const showEvidence = evidenceField?.enabled ?? false;
+  const active = filters.tagIds.length > 0 || filters.status !== null || (showEvidence && filters.evidence !== null);
+  const builtinEvidence = KNOWLEDGE_INDEX_EVIDENCE_FILTERS as readonly string[];
+  const evidenceNames = new Map<string, string>();
+  const evidenceKeys: string[] = ["unconfirmed"];
+  evidenceNames.set("unconfirmed", t("knowledgeIndex.filter.notFilled"));
+  for (const option of evidenceField?.options ?? []) {
+    const name = option.name ?? (builtinEvidence.includes(option.key) ? t(`knowledge.evidence.${option.key}`) : option.key);
+    if (option.enabled) evidenceKeys.push(option.key);
+    evidenceNames.set(option.key, option.enabled ? name : t("knowledgeIndex.filter.disabledOption", { name }));
+  }
+  // An address can name an option that is turned off or unknown; it stays visible as the chosen value.
+  const evidenceValues = filters.evidence === null || evidenceKeys.includes(filters.evidence) ? evidenceKeys : [...evidenceKeys, filters.evidence];
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
       {hasTags && <GroupBy value={filters.groupBy} onChange={(groupBy) => onChange({ ...filters, groupBy })} />}
@@ -108,13 +125,15 @@ export function IndexFilterBar({
           labelOf={(v) => t(`knowledge.state.${v}`)}
           onChange={(status) => onChange({ ...filters, status })}
         />
-        <ValueSelect<KnowledgeIndexEvidenceFilter>
-          name={t("knowledgeIndex.filter.evidence")}
-          value={filters.evidence}
-          values={KNOWLEDGE_INDEX_EVIDENCE_FILTERS}
-          labelOf={(v) => t(`knowledge.evidence.${v}`)}
-          onChange={(evidence) => onChange({ ...filters, evidence })}
-        />
+        {showEvidence && (
+          <ValueSelect<KnowledgeIndexEvidenceFilter>
+            name={t("knowledgeIndex.filter.evidence")}
+            value={filters.evidence}
+            values={evidenceValues}
+            labelOf={(v) => evidenceNames.get(v) ?? v}
+            onChange={(evidence) => onChange({ ...filters, evidence })}
+          />
+        )}
         {active && (
           <button
             type="button"

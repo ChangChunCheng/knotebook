@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import type { KnowledgeIndexDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, type KnowledgeIndexDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { SidebarDrawerContext } from "@/lib/sidebar-drawer";
 import { PhoneListContext } from "@/lib/phone-list";
@@ -191,6 +191,16 @@ describe("KnowledgeIndexPage filters", () => {
     await waitFor(() => expect(urls).toContain("/api/knowledge/index/me?status=outdated"));
     await chooseOption(screen.getByRole("combobox", { name: "Basis" }), "Basis: Tested");
     await waitFor(() => expect(loc()).toBe("/knowledge/me?status=outdated&evidence=tested"));
+  });
+
+  it("with basis turned off the page shows no basis filter and a stale basis in the address counts as no filter", async () => {
+    const fields = DEFAULT_KNOWLEDGE_FIELD_VIEW.fields.map((f) => (f.key === "evidence" ? { ...f, enabled: false } : f));
+    stubIndex(() => respond(200, withOne({ fields })));
+    renderAt("/knowledge/me?evidence=tested");
+    await screen.findByRole("link", { name: /Touching uploads/ });
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Basis" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
   it("the filters in the URL are restored: they are in the request and in the controls", async () => {

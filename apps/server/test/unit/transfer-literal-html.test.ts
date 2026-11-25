@@ -3,6 +3,7 @@
  * The agent changes only the one word EDITME: after write-back the whole-note export must equal the agent's file, the literal `<` stays as is, and untouched paragraphs keep their ids.
  * Two more cases: in a copy downloaded before the fix (`<` without a backslash), the untouched paragraph must not turn into real HTML on write-back; the paragraph that was changed is treated as HTML as written in the file.
  */
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { describe, expect, it } from "vitest";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { exportNoteForTransfer } from "../../src/transfer/export-note.js";
@@ -64,7 +65,7 @@ describe("#379 batch write-back: literal `<` gets a backslash on read, and write
           const live = forkOf(doc);
           await applyInMemory(rt, b, agent, live);
 
-          const final = (await exportNoteForTransfer(rt, live, new Map())).body;
+          const final = (await exportNoteForTransfer(rt, live, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })).body;
           expect(bodyLines(normalizeBody(final))).toEqual(bodyLines(normalizeBody(agent)));
 
           const texts = await fullTexts(live);
@@ -104,7 +105,7 @@ describe("#379 copy downloaded before the fix (`<` without a backslash)", () => 
     const texts = await fullTexts(live);
     expect(texts).toEqual(["<b>bold</b> keep", "other EDITED"]);
     // the first paragraph is still plain text, not bold: exporting the whole note and reading it again keeps the backslash form as before.
-    expect(linesTrim((await exportNoteForTransfer(rt, live, new Map())).body)).toBe("\\<b>bold\\</b> keep\n\nother EDITED");
+    expect(linesTrim((await exportNoteForTransfer(rt, live, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })).body)).toBe("\\<b>bold\\</b> keep\n\nother EDITED");
   });
 
   it("the changed paragraph `<b>bold</b> keep` -> `<b>bold</b> kept`: a `<b>` without a backslash is treated as HTML and becomes real bold", async () => {
@@ -123,6 +124,6 @@ describe("#379 copy downloaded before the fix (`<` without a backslash)", () => 
     expect(texts).toEqual(["bold kept", "other"]);
     const first = await withEditor(rt, live, ed => (ed.document[0] as unknown as { content: unknown }).content);
     expect(first).toEqual([T("bold", { bold: true }), T(" kept")]);
-    expect(linesTrim((await exportNoteForTransfer(rt, live, new Map())).body)).toBe("**bold** kept\n\nother");
+    expect(linesTrim((await exportNoteForTransfer(rt, live, new Map(), { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW })).body)).toBe("**bold** kept\n\nother");
   });
 });

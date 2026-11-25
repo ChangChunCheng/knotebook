@@ -6,12 +6,12 @@ import { MemoryRouter } from "react-router";
 import * as Y from "yjs";
 import { BlockNoteEditor } from "@blocknote/core";
 import { blocksToYXmlFragment } from "@blocknote/core/yjs";
-import { YDOC_FRAGMENT, type VersionDto, type VersionListDto } from "@knotebook/shared";
+import { YDOC_FRAGMENT, type KnowledgeFieldView, type VersionDto, type VersionListDto } from "@knotebook/shared";
 import i18n from "@/i18n";
 import { noteSchema } from "@/collab/schema";
 import { ThemeProvider } from "@/theme";
 import { VersionsProvider, useVersionsController } from "@/lib/versions-context";
-import { stubLayout, stubMedia } from "@/components/knowledge/test-support";
+import { customFieldView, stubLayout, stubMedia, withFields } from "@/components/knowledge/test-support";
 import { DiffEditor, VersionPreview } from "./VersionPreview";
 
 vi.mock("@/lib/use-container-width", () => ({ useContainerWidth: () => widthRef.current }));
@@ -75,14 +75,14 @@ function Host({ doc }: { doc: Y.Doc }) {
   );
 }
 
-function renderPreview() {
+/** `fields`: wrap the preview in ready field settings (these, or the built-in ones for `true`), as the editor's provider does around the wide-screen preview. */
+function renderPreview(fields: boolean | KnowledgeFieldView = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const host = <Host doc={new Y.Doc()} />;
   render(
     <MemoryRouter>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <Host doc={new Y.Doc()} />
-        </ThemeProvider>
+        <ThemeProvider>{fields === false ? host : withFields(host, fields === true ? {} : { view: fields })}</ThemeProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -166,12 +166,45 @@ describe("VersionPreview knowledge", () => {
   it("cards opened in the preview have no Edit", async () => {
     widthRef.current = 600;
     stub(routes());
-    renderPreview();
+    renderPreview(true);
     const single = await screen.findByTestId("diff-single");
     await waitFor(() => expect(iconIds(single)).toEqual(["H1", "diff-del-1"]));
     fireEvent.click(single.querySelector<HTMLElement>('[data-block-id="H1"]')!);
     const card = await screen.findByRole("dialog");
     expect(within(card).getByText("when alice")).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("a card in the preview names the member in a custom field", async () => {
+    widthRef.current = 600;
+    const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+    const withOwner = [heading("H1", "k_00000001", { knowledgeCustom: JSON.stringify({ owner: ALICE }) }), { id: "P", type: "paragraph", content: "text" }];
+    stub({
+      ...routes(),
+      [`/api/notes/${NOTE}/versions/1`]: { id: vid(1), seq: 1, ydoc: b64(withOwner) },
+      [`/api/notes/${NOTE}/versions/2`]: { id: vid(2), seq: 2, ydoc: b64(withOwner) },
+      "/api/knowledge/members": { byId: [{ id: ALICE, handle: "alice", displayName: "Alice Liddell" }], byToken: [] },
+    });
+    renderPreview(customFieldView([{ key: "owner", type: "member", name: "Owner" }]));
+    const single = await screen.findByTestId("diff-single");
+    await waitFor(() => expect(iconIds(single)).toEqual(["H1"]));
+    fireEvent.click(single.querySelector<HTMLElement>('[data-block-id="H1"]')!);
+    const card = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(card).getByText("Alice Liddell")).toBeInTheDocument());
+    const lookup = vi.mocked(fetch).mock.calls.find(([url]) => String(url) === "/api/knowledge/members")!;
+    expect(JSON.parse(String(lookup[1]?.body))).toEqual({ noteId: NOTE, ids: [ALICE] });
+  });
+
+  it("rendered on its own, without field settings, a card shows only the status", async () => {
+    widthRef.current = 600;
+    stub(routes());
+    renderPreview();
+    const single = await screen.findByTestId("diff-single");
+    await waitFor(() => expect(iconIds(single)).toEqual(["H1", "diff-del-1"]));
+    fireEvent.click(single.querySelector<HTMLElement>('[data-block-id="H1"]')!);
+    const card = await screen.findByRole("dialog");
+    expect(card.querySelector("[data-kb-knowledge-banner='red']")).not.toBeNull();
+    expect(within(card).queryByText("when alice")).toBeNull();
+    expect(card.querySelector("dl")).toBeNull();
   });
 });

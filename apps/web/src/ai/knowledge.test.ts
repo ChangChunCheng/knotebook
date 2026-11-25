@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { Block, BlockNoteEditor } from "@blocknote/core";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT, topLevelBlocks, type KnowledgeFieldView } from "@knotebook/shared";
 import type { EditorRef } from "@/components/wikilink/menu";
+import { customFieldView, fieldView } from "@/components/knowledge/test-support";
 import { createTestEditor } from "@/test/ai-host";
 import { captureAnchor } from "./anchor";
 import { aiMarkdownOf } from "./note-markdown";
-import { aiKnowledgeContext, applyAiResult, prepareAiResult, type PreparedResult } from "./apply";
+import { aiKnowledgeContext, aiResultMemberTokens, applyAiResult, finishAiResult, parseAiResult, prepareAiResult, type PreparedResult } from "./apply";
 
 vi.mock("@/components/ui/toast", () => ({ toast: vi.fn() }));
 const { buildNoteEditorOptions } = await import("@/components/NoteEditor");
@@ -71,8 +72,8 @@ function headingsOf(doc: Y.Doc): Array<{ blockId: string; text: string; attrs: R
   });
 }
 
-function prepare(editor: Ed, markdown: string, ids: string[], placement: "top" | "nested" = "top") {
-  return prepareAiResult(editor, markdown, { notes: [], placement, knowledge: aiKnowledgeContext(editor, NOTE, ids) });
+function prepare(editor: Ed, markdown: string, ids: string[], placement: "top" | "nested" = "top", fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW) {
+  return prepareAiResult(editor, markdown, { notes: [], placement, knowledge: aiKnowledgeContext(editor, NOTE, ids, fields) });
 }
 function ok(r: ReturnType<typeof prepareAiResult>): PreparedResult {
   if ("empty" in r || "invalid" in r) throw new Error(`expected a result, got ${JSON.stringify(r)}`);
@@ -80,7 +81,8 @@ function ok(r: ReturnType<typeof prepareAiResult>): PreparedResult {
 }
 const headingProps = (blocks: readonly AnyBlock[], i: number) => (blocks[i] as { props: Record<string, string> }).props;
 const sendIds = (editor: Ed) => editor.document.map((b) => b.id);
-const markdownOfAll = (editor: Ed, knowledge: boolean) => aiMarkdownOf(editor.document, titleOf, { knowledge });
+const markdownOfAll = (editor: Ed, knowledge: boolean, fields: KnowledgeFieldView = DEFAULT_KNOWLEDGE_FIELD_VIEW) =>
+  aiMarkdownOf(editor.document, titleOf, knowledge ? { knowledge: { fields } } : {});
 
 describe("aiMarkdownOf with knowledge", () => {
   it("writes the comment for a top-level knowledge heading when knowledge is true and none when false", () => {
@@ -96,6 +98,14 @@ describe("aiMarkdownOf with knowledge", () => {
     const editor = createTestEditor([H("h1", "Title"), P("p1", "body **bold**")]);
     expect(markdownOfAll(editor, true)).toBe(markdownOfAll(editor, false));
     expect(aiMarkdownOf(editor.document, titleOf)).toBe(markdownOfAll(editor, false));
+  });
+
+  it("the markdown given to the AI has no line for a turned-off field", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const md = markdownOfAll(editor, true, fieldView({ off: ["when"] }));
+    expect(md).toContain("<!-- knotebook:knowledge");
+    expect(md).toContain("conclusion: conclusion 1");
+    expect(md).not.toContain("when:");
   });
 });
 
@@ -171,18 +181,66 @@ describe("prepareAiResult with knowledge", () => {
     expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005", knowledgeWhen: "w" });
   });
 
-  it("an invalid comment makes prepareAiResult return invalid_knowledge", () => {
+  it("a malformed comment or id makes prepareAiResult return invalid_knowledge", () => {
     const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
     const cases = [
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nevidence: bogus\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\nwhen: again\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n-->\nbody without a blank line",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\n-->\n\nbody",
-      "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nwhen: w\n-->\n\nbody",
       "## T\n<!-- knotebook:knowledge\nid: k_00000005\nwhen: w\n\nbody that never closes the comment",
       "## T\n<!-- knotebook:knowledge\nid: not-an-id\nwhen: w\n-->\n\nbody",
     ];
     for (const md of cases) expect(prepare(editor, md, sendIds(editor)), md).toEqual({ invalid: "invalid_knowledge" });
+  });
+
+  it("a value that is not allowed is written as empty on new knowledge and as stored on existing knowledge; the rest is written", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const fresh = [
+      ["evidence: bogus\nwhen: w", { knowledgeWhen: "w", knowledgeEvidence: "" }],
+      ["status: outdated\nsuperseded_by: nope", { knowledgeStatus: "outdated", knowledgeSupersededBy: "" }],
+      ["status: current\nwhen: w", { knowledgeWhen: "w", knowledgeStatus: "" }],
+      ["Owner: bob\nwhen: w", { knowledgeWhen: "w" }],
+    ] as const;
+    for (const [lines, expected] of fresh) {
+      const prepared = ok(prepare(editor, `## T\n<!-- knotebook:knowledge\nid: k_00000005\n${lines}\n-->\n\nbody`, sendIds(editor)));
+      expect(headingProps(prepared.blocks, 0), lines).toMatchObject({ knowledgeId: "k_00000005", ...expected });
+    }
+    const stored = ok(prepare(editor, "## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: changed\nconclusion: conclusion 1\nevidence: bogus\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(stored.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "changed", knowledgeEvidence: "docs" });
+  });
+
+  it("a result with a bad basis value applies the rest and lists the ignored value", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeEvidence: "docs" })), P("p1", "body")]);
+    const md = markdownOfAll(editor, true).replace("evidence: docs", "evidence: vendor-doc").replace("conclusion: conclusion 1", "conclusion: brand new");
+    const prepared = ok(prepare(editor, md, sendIds(editor)));
+    expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeEvidence: "docs", knowledgeConclusion: "brand new" });
+    expect(prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "evidence", value: "vendor-doc", reason: "not_an_option" }]);
+  });
+
+  it("a turned-off field is kept when the AI result leaves it out", () => {
+    const fields = fieldView({ off: ["when"] });
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const md = markdownOfAll(editor, true, fields).replace("conclusion: conclusion 1", "conclusion: revised");
+    const prepared = ok(prepare(editor, md, sendIds(editor), "top", fields));
+    expect(headingProps(prepared.blocks, 0)).toMatchObject({ knowledgeId: "k_00000001", knowledgeWhen: "when 1", knowledgeConclusion: "revised" });
+    expect(prepared.ignoredKnowledge).toEqual([]);
+  });
+
+  it("an unknown key in a comment is listed together with the values the field checks ignored", () => {
+    const editor = createTestEditor([P("p1", "body")]);
+    const prepared = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\nOwner: bob\nevidence: bogus\n-->\n\nbody", sendIds(editor)));
+    expect(prepared.ignoredKnowledge).toEqual([
+      { heading: "T", key: "Owner", value: "bob", reason: "unknown_field" },
+      { heading: "T", key: "evidence", value: "bogus", reason: "not_an_option" },
+    ]);
+  });
+
+  it("a comment with only an id, and outdated without superseded_by, are written with no replacement", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const onlyId = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(onlyId.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005" });
+    const outdated = ok(prepare(editor, "## T\n<!-- knotebook:knowledge\nid: k_00000005\nstatus: outdated\nwhen: w\n-->\n\nbody", sendIds(editor)));
+    expect(headingProps(outdated.blocks, 0)).toMatchObject({ knowledgeId: "k_00000005", knowledgeStatus: "outdated" });
+    expect(headingProps(outdated.blocks, 0).knowledgeSupersededBy ?? "").toBe("");
   });
 
   it("a pending id written by the model is refused and never reaches the blocks", () => {
@@ -284,5 +342,47 @@ describe("applying a result with knowledge in the editor", () => {
     editor.removeBlocks(["hA"]);
     await tick();
     expect(applyAiResult(editor, anchor, prepared)).toEqual({ ok: false, reason: "missing" });
+  });
+});
+
+describe("custom member fields in AI results", () => {
+  const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+  const BOB = "aaaaaaaa-0000-4000-8000-000000000002";
+  const MEMBER = customFieldView([{ key: "owner", type: "member", name: "Owner" }]);
+  const members = (handles: Record<string, string>, tokens: Record<string, string>) => ({ handleOf: new Map(Object.entries(handles)), idOf: new Map(Object.entries(tokens)) });
+
+  it("the markdown for the AI writes a stored member by handle, or user:<id> without one", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    expect(aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER, handleOf: new Map([[BOB, "bob"]]) } })).toContain("x-owner: bob");
+    expect(aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER } })).toContain(`x-owner: user:${BOB}`);
+  });
+
+  it("an AI result naming a member by handle stores the user id", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1)), P("p1", "body")]);
+    const md = `## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: when 1\nconclusion: conclusion 1\nx-owner: Alice\n-->\n\nbody`;
+    const parsed = parseAiResult(editor, md, { notes: [], placement: "top" });
+    if ("empty" in parsed || "invalid" in parsed) throw new Error("expected a parse");
+    expect(aiResultMemberTokens(parsed, MEMBER)).toEqual(["alice"]);
+    const context = aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({}, { alice: ALICE }));
+    const prepared = finishAiResult(parsed, context);
+    if ("invalid" in prepared) throw new Error("expected a result");
+    expect(prepared.ignoredKnowledge).toEqual([]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: ALICE }));
+  });
+
+  it("a handle that can't be resolved is listed as ignored and the stored member stays", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    const md = `## Title\n<!-- knotebook:knowledge\nid: k_00000001\nwhen: when 1\nconclusion: conclusion 1\nx-owner: mallory\n-->\n\nbody`;
+    const prepared = ok(prepareAiResult(editor, md, { notes: [], placement: "top", knowledge: aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({ [BOB]: "bob" }, {})) }));
+    expect(prepared.ignoredKnowledge).toEqual([{ heading: "Title", key: "x-owner", value: "mallory", reason: "unresolved_member" }]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: BOB }));
+  });
+
+  it("the stored member written back by its handle is kept without a lookup", () => {
+    const editor = createTestEditor([H("h1", "Title", K(1, { knowledgeCustom: JSON.stringify({ owner: BOB }) })), P("p1", "body")]);
+    const md = aiMarkdownOf(editor.document, titleOf, { knowledge: { fields: MEMBER, handleOf: new Map([[BOB, "bob"]]) } }).replace("body", "rewritten");
+    const prepared = ok(prepareAiResult(editor, md, { notes: [], placement: "top", knowledge: aiKnowledgeContext(editor, NOTE, sendIds(editor), MEMBER, members({ [BOB]: "bob" }, {})) }));
+    expect(prepared.ignoredKnowledge).toEqual([]);
+    expect(headingProps(prepared.blocks, 0).knowledgeCustom).toBe(JSON.stringify({ owner: BOB }));
   });
 });

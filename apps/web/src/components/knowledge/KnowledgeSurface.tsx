@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { jumpToHeading } from "@/components/outline/outline-jump";
 import { returnFocusQuietly, type KnowledgeController } from "./controller";
+import { KnowledgeFieldsContext } from "./fields-context";
+import { isDraftFieldEnabled } from "./form-state";
 import { KnowledgeCard, type KnowledgeReplacementView } from "./KnowledgeCard";
 import { attrValue } from "./placement";
 import { useKnowledgeReplacement } from "./use-knowledge-replacement";
@@ -14,6 +16,7 @@ export interface KnowledgeContext {
   entries: readonly KnowledgeEntry[];
   editable: boolean;
   noteId: string | null;
+  memberNoteId: string | null;
   controller: KnowledgeController;
   replacementOf?: (entry: KnowledgeEntry) => KnowledgeReplacementView | null;
   editSurface?: (blockId: string, close: () => void) => ReactNode;
@@ -39,12 +42,16 @@ export function LiveCard({ ctx, blockId, variant, onEdit }: { ctx: KnowledgeCont
     }
     return { parent, outdatedAncestor, summary: summarizeKnowledgeDescendants(entries, entry.blockId) };
   }, [entries, entry]);
-  const resolved = useKnowledgeReplacement(entry ?? null, entries, ctx.noteId, jump);
+  const fields = useContext(KnowledgeFieldsContext);
+  // The card doesn't show the replacement then, so another note's reference isn't looked up.
+  const replacementShown = fields.status !== "loading" && isDraftFieldEnabled(fields.view, "supersededBy");
+  const resolved = useKnowledgeReplacement(replacementShown ? (entry ?? null) : null, entries, ctx.noteId, jump);
   if (!entry || !model) return null;
   const replacement = ctx.replacementOf && entry.info.status === "outdated" ? ctx.replacementOf(entry) : resolved;
   return (
     <KnowledgeCard
       entry={entry}
+      memberNoteId={ctx.memberNoteId}
       parent={model.parent}
       outdatedAncestor={model.outdatedAncestor}
       summary={model.summary}

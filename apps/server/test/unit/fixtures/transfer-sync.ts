@@ -11,7 +11,7 @@ import { exportedLinkTextOf, linkTextHash } from "../../../src/transfer/link-tex
 import { bodyLines, normalizeBody } from "../../../src/transfer/normalize.js";
 import { findRegions, makeBoundaryCheck, type CheckBoundary, type RegionsResult } from "../../../src/transfer/regions.js";
 import type { TransferSegment } from "../../../src/db/schema.js";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks, DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import { topLevelSnapshot } from "../../../src/notes/editing/fingerprint.js";
 import { applySync } from "../../../src/transfer/sync-apply.js";
 import { planSync } from "../../../src/transfer/sync-plan.js";
@@ -72,7 +72,7 @@ export async function makeBaseInMemory(
   /** Rewrites the export line by line before computing the base: simulates a file downloaded by an older exporter (e.g. before #386, ``` inside text wasn't escaped). */
   mapLine?: (line: string) => string,
 ): Promise<InMemoryBase> {
-  const raw = await exportNoteForTransfer(rt, doc, titles, { linkHash: (id, text) => linkTextHash(TEST_KEY, TEST_SALT, id, text) });
+  const raw = await exportNoteForTransfer(rt, doc, titles, { fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, linkHash: (id, text) => linkTextHash(TEST_KEY, TEST_SALT, id, text) });
   const ex = mapLine === undefined ? raw : { ...raw, lines: raw.lines.map(mapLine), body: raw.body.split("\n").map(mapLine).join("\n") };
   const h = baseHashes(TEST_KEY, TEST_SALT, { body: normalizeBody(ex.body), title, tags: [], lines: ex.lines, kinds: ex.lineKinds });
   return {

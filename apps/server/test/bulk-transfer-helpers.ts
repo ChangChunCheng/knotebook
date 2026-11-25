@@ -10,7 +10,7 @@ import { notes, transferBases } from "../src/db/schema.js";
 import { setNoteTagsByNamesInTx } from "../src/tags/tx/note-tags.js";
 import { EditorSession, directTarget, withDirectConnection } from "../src/notes/editing/session.js";
 import { loadNoteDoc, readNoteContentFromDoc } from "../src/notes/editing/read.js";
-import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { YDOC_FRAGMENT, topLevelBlocks, DEFAULT_KNOWLEDGE_FIELD_VIEW } from "@knotebook/shared";
 import type { CollabServer } from "../src/collab/server.js";
 import { seedDoc } from "./copy-helpers.js";
 import { testEditingRuntime } from "./helpers.js";
@@ -165,7 +165,7 @@ export async function liveBlocks(ctx: { db: Db; collab: CollabServer }, noteId: 
 /** Whole-note markdown as read over MCP (to compare write-back results; doesn't touch presence). */
 export async function liveMarkdown(ctx: { db: Db; collab: CollabServer }, noteId: string): Promise<string> {
   const { doc } = await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, noteId);
-  const r = await readNoteContentFromDoc(testEditingRuntime, doc);
+  const r = await readNoteContentFromDoc(testEditingRuntime, doc, undefined, new Map(), undefined, DEFAULT_KNOWLEDGE_FIELD_VIEW);
   if (typeof r === "string" || !("markdown" in r)) throw new Error("liveMarkdown: unexpected shape");
   return r.markdown;
 }

@@ -7,6 +7,7 @@ import {
   readKnowledgeInfo,
   topLevelBlocks,
   type KnowledgeHeadingRef,
+  type KnowledgeIgnoredItem,
   type KnowledgeInfo,
   type KnowledgeProblem,
 } from "@knotebook/shared";
@@ -20,10 +21,11 @@ export interface KnowledgeWriteReport {
   created: KnowledgeHeadingRef[];
   removed: KnowledgeHeadingRef[];
   renewed: KnowledgeRenewal[];
+  ignored: KnowledgeIgnoredItem[];
   ignoredComments: number;
 }
 
-/** What a write worked out itself; `ignoredComments` is counted when the markdown is parsed. */
+/** What a write worked out itself; `ignoredComments` is counted when the markdown is parsed, and the keys that parse did not know are put in front of `ignored`. */
 export type KnowledgeEditReport = Omit<KnowledgeWriteReport, "ignoredComments">;
 
 /** Thrown inside `withForkEditor`'s callback so that nothing is written. */
@@ -34,10 +36,10 @@ export class KnowledgeWriteError extends Error {
   }
 }
 
-export const emptyKnowledgeReport = (): KnowledgeWriteReport => ({ kept: [], created: [], removed: [], renewed: [], ignoredComments: 0 });
+export const emptyKnowledgeReport = (): KnowledgeWriteReport => ({ kept: [], created: [], removed: [], renewed: [], ignored: [], ignoredComments: 0 });
 
 export function isEmptyKnowledgeReport(r: KnowledgeWriteReport): boolean {
-  return r.kept.length === 0 && r.created.length === 0 && r.removed.length === 0 && r.renewed.length === 0 && r.ignoredComments === 0;
+  return r.kept.length === 0 && r.created.length === 0 && r.removed.length === 0 && r.renewed.length === 0 && r.ignored.length === 0 && r.ignoredComments === 0;
 }
 
 export function mergeKnowledgeReports(rs: readonly KnowledgeWriteReport[]): KnowledgeWriteReport {
@@ -47,6 +49,7 @@ export function mergeKnowledgeReports(rs: readonly KnowledgeWriteReport[]): Know
     out.created.push(...r.created);
     out.removed.push(...r.removed);
     out.renewed.push(...r.renewed);
+    out.ignored.push(...r.ignored);
     out.ignoredComments += r.ignoredComments;
   }
   return out;

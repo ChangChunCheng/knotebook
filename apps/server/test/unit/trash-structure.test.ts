@@ -103,6 +103,9 @@ const REGISTRY: Record<string, Disposition> = {
   "groups/queries.ts": { includes: 1, why: "all of the group's notes (disconnecting members, deleting the group)" },
   // Transfer lock, quota innerJoin, transfer UPDATE, delete-all lock.
   "groups/tx/delete-group.ts": { includes: 4, why: "transfer and delete-all include trashed notes" },
+  "knowledge/fields/queries.ts": { includes: 1, why: "a trashed note still belongs to its space, so it reads that space's settings" },
+  // "People you know" for suggestions and member fields: share targets of my live notes (with deleted_at IS NULL).
+  "knowledge/members.ts": { excludes: 1 },
   "knowledge/tx/index-write.ts": { includes: 1, why: "the index is written regardless" },
   "mcp/tools/read-note-outline.ts": { excludes: 1 },
   "notes/editing/candidates.ts": { excludes: 3 },
@@ -145,8 +148,6 @@ const REGISTRY: Record<string, Disposition> = {
   // excludes: ownershipChanged, selectNotesWhere; includes: the pre-read (after authorization, statement carries no condition; compare GET public-link in routes/note-sharing.ts).
   "routes/notes.ts": { excludes: 2, includes: 1, why: "the pre-read carries no condition; the CTE that follows blocks trashed notes" },
   "routes/public.ts": { excludes: 2 },
-  // "People you know" suggestions: share targets of my live notes (with deleted_at IS NULL).
-  "routes/users.ts": { excludes: 1 },
   "storage/tx/quota.ts": { includes: 1, why: "storage usage still counts trashed notes" },
   "storage/usage.ts": { includes: 4, why: "storage usage still counts trashed notes" },
   // excludes: listSpaceTags counts live notes only; includes: loadNoteTags reads the tags of one note the caller already resolved (a trashed note's tags come back on restore).

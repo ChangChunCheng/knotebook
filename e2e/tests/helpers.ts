@@ -252,13 +252,14 @@ export async function openSiteAdmin(page: Page): Promise<Locator> {
   return dialog;
 }
 
-export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" | "Storage plans" | "AI agents" | "Site limits"): Promise<void> {
+export async function adminNav(page: Page, item: "Users" | "Groups" | "Sign-in" | "Storage plans" | "AI agents" | "Knowledge fields" | "Site limits"): Promise<void> {
   const urls = {
     Users: /\/admin\/users$/,
     Groups: /\/admin\/groups$/,
     "Sign-in": /\/admin\/login$/,
     "Storage plans": /\/admin\/storage$/,
     "AI agents": /\/admin\/ai$/,
+    "Knowledge fields": /\/admin\/knowledge-fields$/,
     "Site limits": /\/admin\/limits$/,
   };
   await page.getByRole("navigation", { name: "Site admin" }).getByRole("link", { name: item, exact: true }).click();

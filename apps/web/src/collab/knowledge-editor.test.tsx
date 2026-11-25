@@ -605,6 +605,19 @@ describe("entries and decorations while editing", () => {
     expect(after.find((e) => e.blockId === "h2")!.info.when).toBe("changed");
   });
 
+  it("changing only a custom value updates the card", async () => {
+    const { editor } = open(seeded(blocks()));
+    await tick();
+    editor.updateBlock("h2", { props: { knowledgeCustom: '{"team":"a"}' } } as never);
+    await tick();
+    const before = knowledgeEntriesOf(editor._tiptapEditor.state);
+    editor.updateBlock("h2", { props: { knowledgeCustom: '{"team":"b"}' } } as never);
+    await tick();
+    const after = knowledgeEntriesOf(editor._tiptapEditor.state);
+    expect(after).not.toBe(before);
+    expect(after.find((e) => e.blockId === "h2")!.info.custom).toEqual({ team: "b" });
+  });
+
   it("a block added inside a range updates that range's entries", async () => {
     const { editor, el } = open(seeded(blocks()));
     await tick();

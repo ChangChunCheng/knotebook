@@ -8,7 +8,18 @@
  */
 import type { PartialBlock } from "@blocknote/core";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT, type KnowledgeProblem } from "@knotebook/shared";
+import {
+  KNOWLEDGE_PENDING_ID_PREFIX,
+  YDOC_FRAGMENT,
+  knowledgeMemberTokensIn,
+  sanitizeKnowledgeForWrite,
+  type KnowledgeBlockShape,
+  type KnowledgeFieldView,
+  type KnowledgeIgnoredItem,
+  type KnowledgeInfo,
+  type KnowledgeMemberMaps,
+  type KnowledgeProblem,
+} from "@knotebook/shared";
 import type { TransferSegment } from "../db/schema.js";
 import type { VisibleNoteTarget } from "../notes/editing/candidates.js";
 import type { ParseBudget } from "../notes/editing/parse-core.js";
@@ -31,6 +42,8 @@ export interface SyncPlan {
   parsed: AnyPartialBlock[][];
   unbound: number;
   ignoredKnowledgeComments: number;
+  /** Unknown keys in the comments of the regions that are not `same`. */
+  ignoredKnowledge: KnowledgeIgnoredItem[];
   boundaryChecks: number;
 }
 
@@ -49,6 +62,11 @@ export interface PlanSyncInput {
   exportedLinkText?: (targetId: string, text: string) => boolean;
   /** Shared across fingerprint-mismatch retries so the whole write-back has one worker-time budget; not given = a fresh budget for this run, and exhausting it fails the whole file (`unsupported_block`/`too_complex`). */
   fileBudget?: ParseBudget;
+  /**
+   * Given: a region's knowledge is compared as it would be stored, so a comment that reads the same as what is stored counts as
+   * `same`. `members` is called once, after every region is parsed, with the member tokens they write.
+   */
+  knowledge?: { current: ReadonlyMap<string, KnowledgeInfo>; fields: KnowledgeFieldView; members?: (tokens: string[]) => Promise<KnowledgeMemberMaps> };
   yieldFn?: () => Promise<void>;
   now?: () => number;
 }
@@ -57,6 +75,9 @@ export type PlanSyncError = ParseError | "unclosed_fence";
 export type PlanSyncFailure = { ok: false; code: PlanSyncError; detail?: ParseDetail; fence?: string; knowledge?: KnowledgeProblem };
 
 class TooComplexAbort extends Error {}
+
+const hasPendingKnowledgeId = (blocks: readonly AnyPartialBlock[]): boolean =>
+  blocks.some(b => b.type === "heading" && String((b.props as Record<string, unknown> | undefined)?.knowledgeId ?? "").startsWith(KNOWLEDGE_PENDING_ID_PREFIX));
 
 export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): Promise<{ ok: true; plan: SyncPlan } | PlanSyncFailure> {
   const yieldFn = input.yieldFn ?? yieldToLoop;
@@ -72,6 +93,10 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
   let regions: Region[];
   let boundaryChecks: number;
   const parsed: AnyPartialBlock[][] = [];
+  const compared: AnyPartialBlock[][] = [];
+  const toCompare: Array<{ ri: number; unknownKeys: number }> = [];
+  const neverSame = new Set<number>();
+  const ignoredByRegion: KnowledgeIgnoredItem[][] = [];
   const firstTypes: Array<string | undefined> = [];
   const prevTypes: Array<string | null> = [];
   const insertedIds: string[][] = [];
@@ -84,6 +109,23 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
     return titles.get(id.toLowerCase());
   };
   const fileBudget = input.fileBudget ?? runtime.parser.fileBudget();
+  // Only for the comparison: what is written is `parsed`, which `applySync` checks again. A region with a comment that has no id
+  // (new knowledge), one this check would refuse, or one with a line it would ignore is never `same`: an ignored line would
+  // otherwise read as the stored value and go unreported.
+  const comparable = (ri: number, blocks: AnyPartialBlock[], unknownKeys: number, members: KnowledgeMemberMaps | undefined): AnyPartialBlock[] => {
+    const k = input.knowledge;
+    if (k === undefined) return blocks;
+    if (unknownKeys > 0 || hasPendingKnowledgeId(blocks)) {
+      neverSame.add(ri);
+      return blocks;
+    }
+    const s = sanitizeKnowledgeForWrite({ after: blocks as unknown as readonly KnowledgeBlockShape[], current: k.current, noteId: null, fields: k.fields, ...(members ? { members } : {}) });
+    if (s.problem !== null || s.ignored.length > 0) {
+      neverSame.add(ri);
+      return blocks;
+    }
+    return s.blocks as unknown as AnyPartialBlock[];
+  };
   const parseMd = (markdown: string) => runtime.parser.parse({ owner: input.writerId, markdown, candidates: input.candidates, siteOrigin: input.siteOrigin, budget: fileBudget });
   {
     await yieldFn();
@@ -117,6 +159,8 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
       const r = regions[ri]!;
       if (r.kind === "delete") {
         parsed.push([]);
+        compared.push([]);
+        ignoredByRegion.push([]);
         firstTypes.push(undefined);
         prevTypes.push(null);
         continue;
@@ -125,6 +169,7 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
       if ("error" in p) return { ok: false, code: p.error, ...(p.detail ? { detail: p.detail } : {}), ...(p.knowledge ? { knowledge: p.knowledge } : {}) };
       unbound += p.unbound;
       ignoredKnowledgeComments += p.ignoredKnowledgeComments;
+      ignoredByRegion.push(p.ignoredKnowledge);
       const blocks = exported === undefined ? p.blocks : keepLabelFree(p.blocks, exported, titleOf)[0];
       const firstType = blocks[0]?.type as string | undefined;
       firstTypes.push(firstType);
@@ -138,8 +183,13 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
         blocks[0] = { ...blocks[0]!, props: rest };
       }
       parsed.push(blocks);
+      compared.push(blocks);
+      toCompare.push({ ri, unknownKeys: p.ignoredKnowledge.length });
       await budget();
     }
+    const k = input.knowledge;
+    const members = k?.members === undefined ? undefined : await k.members(knowledgeMemberTokensIn(toCompare.flatMap(c => parsed[c.ri]!) as unknown as readonly KnowledgeBlockShape[], k.fields));
+    for (const c of toCompare) compared[c.ri] = comparable(c.ri, parsed[c.ri]!, c.unknownKeys, members);
   }
   const s = await EditorSession.open(runtime, scratch);
   try {
@@ -147,7 +197,7 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
     // The empty paragraph mount normalizes in; it takes no part in comparison.
     let tail = s.editor.document[0]!.id;
     for (let ri = 0; ri < regions.length; ri++) {
-      const blocks = parsed[ri]!;
+      const blocks = compared[ri]!;
       if (blocks.length === 0) {
         insertedIds.push([]);
         continue;
@@ -164,11 +214,13 @@ export async function planSync(runtime: EditingRuntime, input: PlanSyncInput): P
   const curIdxSame = indexTopLevel(input.curFragment);
   const pre = insertedIds.map(ids => sameCanonicalSeqIn(scratchIdx, ids) ?? []);
   const same = (ri: number, against: string[]): boolean => {
+    if (neverSame.has(ri)) return false;
     const p = pre[ri]!;
     if (against.length !== p.length) return false;
     const seq = sameCanonicalSeqIn(curIdxSame, against);
     return seq !== null && seq.every((x, i) => x === p[i]);
   };
   const decisions = decide(input.segments, regions, input.cur, same, { firstTypes, prevTypes });
-  return { ok: true, plan: { regions, decisions, parsed, unbound, ignoredKnowledgeComments, boundaryChecks } };
+  const ignoredKnowledge = ignoredByRegion.flatMap((items, ri) => (decisions[ri]!.mark === "same" ? [] : items));
+  return { ok: true, plan: { regions, decisions, parsed, unbound, ignoredKnowledgeComments, ignoredKnowledge, boundaryChecks } };
 }

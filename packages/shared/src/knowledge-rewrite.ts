@@ -6,15 +6,28 @@ import {
   formatKnowledgeRef,
   generateKnowledgeId,
   isKnowledgeDate,
+  knowledgeStateOf,
   knowledgeTextLength,
   parseKnowledgeRef,
+  parseKnowledgeStatusInput,
   readKnowledgeInfo,
-  validateKnowledgeDraft,
   type KnowledgeInfo,
+  type KnowledgeStatus,
 } from "./knowledge.js";
+import {
+  KNOWLEDGE_CUSTOM_JSON_MAX,
+  KNOWLEDGE_CUSTOM_LINK_MAX,
+  KNOWLEDGE_CUSTOM_TEXT_MAX,
+  formatKnowledgeCustom,
+  knowledgeMemberToken,
+  parseKnowledgeCustom,
+  safeKnowledgeHref,
+  type KnowledgeMemberMaps,
+} from "./knowledge-custom.js";
+import { isKnowledgeFieldEnabled, knowledgeOption, type KnowledgeBuiltinFieldKey, type KnowledgeFieldDef, type KnowledgeFieldView } from "./knowledge-fields.js";
 import { KNOWLEDGE_PENDING_ID_PREFIX } from "./knowledge-html.js";
 import { knowledgeHeadingText } from "./knowledge-list.js";
-import type { KnowledgeCommentKey, KnowledgeProblem } from "./knowledge-markdown.js";
+import type { KnowledgeIgnoreReason, KnowledgeIgnoredItem, KnowledgeProblem } from "./knowledge-markdown.js";
 import { KNOWLEDGE_PROP_NAMES, type KnowledgePropName } from "./knowledge-schema.js";
 
 export interface KnowledgeHeadingRef {
@@ -75,7 +88,7 @@ export function knowledgePairs(before: readonly KnowledgeBlockShape[], after: re
 }
 
 /**
- * keep=true (agent and AI rewrites): a paired heading without a comment gets the old seven props. Always: a pending id takes
+ * keep=true (agent and AI rewrites): a paired heading without a comment gets the old heading's props. Always: a pending id takes
  * the paired old id, else a new one. A comment that writes out an id in full is the author's decision and is never overwritten, but
  * it does not take the id from the heading that holds it: the holder is the heading that got the old id through pairing, else the one
  * paired with the old heading that had it, else the first. Every other heading that wrote it gets a new id, listed in `renewed`.
@@ -161,54 +174,220 @@ export function normalizeKnowledgeRefs<B extends KnowledgeBlockShape>(after: rea
   });
 }
 
-const EVIDENCE = new Set(["", "tested", "docs", "inferred"]);
-const STATUS = new Set(["", "unverified", "outdated"]);
 const LINE_BREAK = /[\r\n\u{85}\u{2028}\u{2029}]/u;
 
-type Fields = Pick<KnowledgeInfo, "when" | "conclusion" | "evidence" | "verified" | "status" | "supersededBy">;
-const sameFields = (a: Fields, b: Fields): boolean =>
-  a.when === b.when && a.conclusion === b.conclusion && a.evidence === b.evidence && a.verified === b.verified && a.status === b.status && a.supersededBy === b.supersededBy;
+type BuiltinValue = Exclude<keyof KnowledgeInfo, "id" | "status" | "custom">;
+const BUILTIN: ReadonlyArray<{ key: KnowledgeBuiltinFieldKey; prop: KnowledgePropName; info: BuiltinValue }> = [
+  { key: "when", prop: "knowledgeWhen", info: "when" },
+  { key: "conclusion", prop: "knowledgeConclusion", info: "conclusion" },
+  { key: "evidence", prop: "knowledgeEvidence", info: "evidence" },
+  { key: "verified", prop: "knowledgeVerified", info: "verified" },
+  { key: "superseded_by", prop: "knowledgeSupersededBy", info: "supersededBy" },
+];
+
+const asWritten = (key: KnowledgeBuiltinFieldKey, raw: string): string => (key === "evidence" && raw === "unconfirmed" ? "" : raw);
+
+function builtinValueProblem(key: KnowledgeBuiltinFieldKey, value: string, fields: KnowledgeFieldView, id: string, noteId: string | null): KnowledgeIgnoreReason | null {
+  switch (key) {
+    case "when":
+    case "conclusion":
+      if (LINE_BREAK.test(value)) return "line_break";
+      return knowledgeTextLength(value) > (key === "when" ? KNOWLEDGE_WHEN_MAX : KNOWLEDGE_CONCLUSION_MAX) ? "too_long" : null;
+    case "evidence":
+      return value === "" || knowledgeOption(fields, "evidence", value)?.enabled === true ? null : "not_an_option";
+    case "verified":
+      return value === "" || isKnowledgeDate(value) ? null : "bad_date";
+    case "superseded_by": {
+      if (value === "") return null;
+      const ref = parseKnowledgeRef(value);
+      if (ref === null) return "bad_ref";
+      const own = ref.noteId === null || (noteId !== null && ref.noteId === noteId.toLowerCase());
+      return own && ref.knowledgeId === id ? "superseded_self" : null;
+    }
+  }
+}
+
+const sameState = (a: KnowledgeStatus, b: KnowledgeStatus, verified: string): boolean => knowledgeStateOf({ status: a, verified }) === knowledgeStateOf({ status: b, verified });
+
+type CustomValues = Readonly<Record<string, string>>;
+const customValue = (values: CustomValues, key: string): string => (Object.hasOwn(values, key) ? values[key]! : "");
+const customFieldKey = (field: KnowledgeFieldDef): string => field.key.slice("x-".length);
+const customFields = (fields: KnowledgeFieldView): KnowledgeFieldDef[] => fields.fields.filter(f => !f.builtin);
+
+function sameCustomValues(a: CustomValues, b: CustomValues): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(k => customValue(b, k) === a[k]);
+}
+
+// A member is exported by handle (or user:<id>), so writing that token back is the stored member, not a new one to resolve.
+// user:<id> is accepted even when the handle is known: a file exported before the handle could be looked up carries that form.
+function sameCustomValue(field: KnowledgeFieldDef, written: string, stored: string, handleOf: ReadonlyMap<string, string>): boolean {
+  if (written === stored) return true;
+  if (field.type !== "member" || stored === "") return false;
+  const token = written.toLowerCase();
+  return token === knowledgeMemberToken(stored, handleOf).toLowerCase() || token === `user:${stored}`.toLowerCase();
+}
+
+function customValueCheck(field: KnowledgeFieldDef, value: string, members: KnowledgeMemberMaps | undefined): { value: string } | { reason: KnowledgeIgnoreReason } {
+  if (value === "") return { value };
+  switch (field.type) {
+    case "select":
+      return field.options?.find(o => o.key === value)?.enabled === true ? { value } : { reason: "not_an_option" };
+    case "date":
+      return isKnowledgeDate(value) ? { value } : { reason: "bad_date" };
+    case "link":
+      return value.length <= KNOWLEDGE_CUSTOM_LINK_MAX && safeKnowledgeHref(value) !== null ? { value } : { reason: "bad_link" };
+    case "member": {
+      const id = members?.idOf.get(value.toLowerCase());
+      return id === undefined ? { reason: "unresolved_member" } : { value: id };
+    }
+    default:
+      if (LINE_BREAK.test(value)) return { reason: "line_break" };
+      return knowledgeTextLength(value) > KNOWLEDGE_CUSTOM_TEXT_MAX ? { reason: "too_long" } : { value };
+  }
+}
 
 /**
- * Value checks and the semantic rules for every top-level knowledge heading, in document order. A heading whose id is in
- * `current` with all six fields equal is not checked: what is already stored must be writable back. Run after
- * `resolveKnowledgeForWrite`, so no pending ids are left.
+ * Turned-off and undefined fields keep their stored values, and so does every ignored value. `prop` undefined = leave the
+ * written string as it is: it reads as stored, so the bytes a heading kept without a comment carries are not rewritten.
  */
-export function knowledgeWriteProblem(
-  after: readonly KnowledgeBlockShape[],
-  current: ReadonlyMap<string, KnowledgeInfo>,
-  noteId: string | null,
-): KnowledgeProblem | null {
-  for (const b of after) {
+function sanitizeCustom(
+  written: unknown,
+  stored: CustomValues,
+  fields: KnowledgeFieldView,
+  members: KnowledgeMemberMaps | undefined,
+  heading: string,
+): { prop: string | undefined; ignored: KnowledgeIgnoredItem[] } {
+  const values = parseKnowledgeCustom(written);
+  const handleOf = members?.handleOf ?? new Map<string, string>();
+  const ignored: KnowledgeIgnoredItem[] = [];
+  const changes: Array<{ field: KnowledgeFieldDef; key: string; value: string; raw: string }> = [];
+  const defined = new Set<string>();
+  for (const field of customFields(fields)) {
+    const key = customFieldKey(field);
+    defined.add(key);
+    const raw = customValue(values, key);
+    const old = customValue(stored, key);
+    if (sameCustomValue(field, raw, old, handleOf)) continue;
+    if (!field.enabled) {
+      if (raw !== "") ignored.push({ heading, key: field.key, value: raw, reason: "field_disabled" });
+      continue;
+    }
+    const checked = customValueCheck(field, raw, members);
+    if ("reason" in checked) ignored.push({ heading, key: field.key, value: raw, reason: checked.reason });
+    else if (checked.value !== old) changes.push({ field, key, value: checked.value, raw });
+  }
+  for (const key of Object.keys(values).sort()) {
+    if (!defined.has(key) && values[key] !== customValue(stored, key)) ignored.push({ heading, key: `x-${key}`, value: values[key]!, reason: "unknown_field" });
+  }
+  const result: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, stored);
+  // Clearing first, so a value cleared later in field order still makes room for an earlier one.
+  for (const c of changes) if (c.value === "") delete result[c.key];
+  let size = formatKnowledgeCustom(result).length;
+  for (const c of changes) {
+    if (c.value === "") continue;
+    const next = { ...result, [c.key]: c.value };
+    const nextSize = formatKnowledgeCustom(next).length;
+    // A value that does not grow the JSON is taken even when hand-made stored values already exceed the limit.
+    if (nextSize > KNOWLEDGE_CUSTOM_JSON_MAX && nextSize > size) {
+      ignored.push({ heading, key: c.field.key, value: c.raw, reason: "too_long" });
+      continue;
+    }
+    result[c.key] = c.value;
+    size = nextSize;
+  }
+  const keepWritten = (written === undefined || typeof written === "string") && sameCustomValues(values, stored);
+  return { prop: keepWritten ? undefined : formatKnowledgeCustom(result), ignored };
+}
+
+function customReadsAsStored(written: unknown, stored: CustomValues, fields: KnowledgeFieldView, handleOf: ReadonlyMap<string, string>): boolean {
+  const values = parseKnowledgeCustom(written);
+  return customFields(fields).every(f => !f.enabled || sameCustomValue(f, customValue(values, customFieldKey(f)), customValue(stored, customFieldKey(f)), handleOf));
+}
+
+function readsAsStored(stored: KnowledgeInfo, fields: KnowledgeFieldView, rawOf: (prop: KnowledgePropName) => string, writtenCustom: unknown, handleOf: ReadonlyMap<string, string>): boolean {
+  if (!BUILTIN.every(f => !isKnowledgeFieldEnabled(fields, f.key) || asWritten(f.key, rawOf(f.prop)) === stored[f.info])) return false;
+  if (!customReadsAsStored(writtenCustom, stored.custom, fields, handleOf)) return false;
+  const written = rawOf("knowledgeStatus");
+  if (written === stored.status) return true;
+  const parsed = parseKnowledgeStatusInput(written);
+  // Every field matched, so the verified date in effect is the stored one.
+  return parsed !== null && sameState(parsed, stored.status, stored.verified);
+}
+
+function patched<B extends KnowledgeBlockShape>(b: B, values: Partial<Record<KnowledgePropName, string>>): B {
+  const changed = (Object.keys(values) as KnowledgePropName[]).some(name => b.props?.[name] !== values[name]);
+  return changed ? withProps(b, values) : b;
+}
+
+/**
+ * Run after resolveKnowledgeForWrite and normalizeKnowledgeRefs. Copy-on-write. A value that fails its check, or sits in a
+ * turned-off field, is not written: the stored one stays (empty for new knowledge) and the value is listed in `ignored`.
+ * A heading whose id is stored with every field reading the same is taken as stored without any check, so what is already
+ * stored can always be written back. Only a malformed id refuses the whole write. Member values are resolved through
+ * `members.idOf` (keyed by lowercased token); without `members`, any member other than the stored one is unresolved.
+ */
+export function sanitizeKnowledgeForWrite<B extends KnowledgeBlockShape>(input: {
+  after: readonly B[];
+  current: ReadonlyMap<string, KnowledgeInfo>;
+  noteId: string | null;
+  fields: KnowledgeFieldView;
+  members?: KnowledgeMemberMaps;
+}): { blocks: B[]; ignored: KnowledgeIgnoredItem[]; problem: KnowledgeProblem | null } {
+  const { current, noteId, fields, members } = input;
+  const handleOf = members?.handleOf ?? new Map<string, string>();
+  const blocks = [...input.after];
+  const ignored: KnowledgeIgnoredItem[] = [];
+  for (let i = 0; i < blocks.length; i += 1) {
+    const b = blocks[i]!;
     const id = knowledgeIdOf(b);
     if (id === "") continue;
     const heading = knowledgeHeadingText(b.content);
-    const fields: Fields = {
-      when: str(b.props?.knowledgeWhen),
-      conclusion: str(b.props?.knowledgeConclusion),
-      evidence: str(b.props?.knowledgeEvidence) as Fields["evidence"],
-      verified: str(b.props?.knowledgeVerified),
-      status: str(b.props?.knowledgeStatus) as Fields["status"],
-      supersededBy: str(b.props?.knowledgeSupersededBy),
-    };
+    const rawOf = (prop: KnowledgePropName): string => str(b.props?.[prop]);
+    const writtenCustom = b.props?.knowledgeCustom;
     const stored = current.get(id);
-    if (stored !== undefined && sameFields(stored, fields)) continue;
-    const fail = (problem: KnowledgeProblem["problem"], key?: KnowledgeCommentKey): KnowledgeProblem => ({ problem, ...(key ? { key } : {}), heading });
-    if (!KNOWLEDGE_ID_RE.test(id)) return fail("bad_id", "id");
-    if (knowledgeTextLength(fields.when) > KNOWLEDGE_WHEN_MAX) return fail("too_long", "when");
-    if (LINE_BREAK.test(fields.when)) return fail("line_break", "when");
-    if (knowledgeTextLength(fields.conclusion) > KNOWLEDGE_CONCLUSION_MAX) return fail("too_long", "conclusion");
-    if (LINE_BREAK.test(fields.conclusion)) return fail("line_break", "conclusion");
-    if (!EVIDENCE.has(fields.evidence)) return fail("bad_evidence", "evidence");
-    if (!STATUS.has(fields.status)) return fail("bad_status", "status");
-    if (fields.verified !== "" && !isKnowledgeDate(fields.verified)) return fail("bad_date", "verified");
-    if (fields.supersededBy !== "" && parseKnowledgeRef(fields.supersededBy) === null) return fail("bad_ref", "superseded_by");
-    const semantic = validateKnowledgeDraft(fields, { noteId: null, knowledgeId: id }, noteId);
-    if (semantic === "empty") return fail("empty");
-    if (semantic === "supersededRequired") return fail("superseded_required", "superseded_by");
-    if (semantic === "supersededSelf") return fail("superseded_self", "superseded_by");
+    const customPatch = (): Partial<Record<KnowledgePropName, string>> => {
+      const custom = sanitizeCustom(writtenCustom, stored?.custom ?? {}, fields, members, heading);
+      ignored.push(...custom.ignored);
+      return custom.prop === undefined ? {} : { knowledgeCustom: custom.prop };
+    };
+    if (stored !== undefined && readsAsStored(stored, fields, rawOf, writtenCustom, handleOf)) {
+      for (const f of BUILTIN) {
+        const raw = rawOf(f.prop);
+        if (raw !== "" && !isKnowledgeFieldEnabled(fields, f.key) && asWritten(f.key, raw) !== stored[f.info]) ignored.push({ heading, key: f.key, value: raw, reason: "field_disabled" });
+      }
+      blocks[i] = patched(b, { ...Object.fromEntries(BUILTIN.map(f => [f.prop, stored[f.info]])), knowledgeStatus: stored.status, ...customPatch() });
+      continue;
+    }
+    if (!KNOWLEDGE_ID_RE.test(id)) return { blocks, ignored, problem: { problem: "bad_id", key: "id", heading } };
+    const values: Partial<Record<KnowledgePropName, string>> = {};
+    for (const f of BUILTIN) {
+      const old = stored ? stored[f.info] : "";
+      const raw = rawOf(f.prop);
+      const value = asWritten(f.key, raw);
+      values[f.prop] = old;
+      if (value === old) continue;
+      if (!isKnowledgeFieldEnabled(fields, f.key)) {
+        if (raw !== "") ignored.push({ heading, key: f.key, value: raw, reason: "field_disabled" });
+        continue;
+      }
+      const reason = builtinValueProblem(f.key, value, fields, id, noteId);
+      if (reason === null) values[f.prop] = value;
+      else ignored.push({ heading, key: f.key, value: raw, reason });
+    }
+    const writtenStatus = rawOf("knowledgeStatus");
+    let status: KnowledgeStatus;
+    if (stored !== undefined && writtenStatus === stored.status) status = stored.status;
+    else {
+      const parsed = parseKnowledgeStatusInput(writtenStatus);
+      if (parsed === null) ignored.push({ heading, key: "status", value: writtenStatus, reason: "bad_status" });
+      status = parsed ?? stored?.status ?? "";
+      // The stored string is kept when it reads the same, so a legacy "" written back by its exported name changes nothing.
+      if (stored !== undefined && sameState(stored.status, status, values.knowledgeVerified!)) status = stored.status;
+    }
+    blocks[i] = patched(b, { ...values, knowledgeStatus: status, ...customPatch() });
   }
-  return null;
+  return { blocks, ignored, problem: null };
 }
 
 export function knowledgeRefsIn(blocks: readonly KnowledgeBlockShape[]): KnowledgeHeadingRef[] {

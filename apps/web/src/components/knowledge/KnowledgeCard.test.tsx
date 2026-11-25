@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, summarizeKnowledgeDescendants, type KnowledgeEntry } from "@knotebook/shared";
 import i18n from "@/i18n";
 import "@/i18n/knowledge-strings";
 import { KnowledgeCard, type KnowledgeCardProps } from "./KnowledgeCard";
-import { knowledgeEntries, type KnowledgeFixture } from "./test-support";
+import type { KnowledgeFieldsValue } from "./fields-context";
+import { customFieldView, fieldView, knowledgeEntries, withFields, type KnowledgeFixture } from "./test-support";
 
-function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }) {
+function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }, fields?: Partial<KnowledgeFieldsValue>) {
   const props: KnowledgeCardProps = {
     parent: null,
     outdatedAncestor: null,
@@ -18,7 +21,7 @@ function card(overrides: Partial<KnowledgeCardProps> & { entry: KnowledgeEntry }
     onJump: vi.fn(),
     ...overrides,
   };
-  return { props, ...render(<KnowledgeCard {...props} />) };
+  return { props, ...render(withFields(<KnowledgeCard {...props} />, fields)) };
 }
 
 const one = (props: Record<string, string> = {}, extra: Partial<KnowledgeFixture> = {}) =>
@@ -29,18 +32,74 @@ beforeEach(async () => {
 });
 
 describe("KnowledgeCard", () => {
-  it("shows when to read and conclusion, then basis, then last verified, with Unconfirmed and Not verified for empty values", () => {
+  it("shows when to read and conclusion, then basis, then last verified, with Not filled for empty values", () => {
     const { container } = card({ entry: one() });
     const labels = [...container.querySelectorAll("dt")].map((n) => n.textContent);
     expect(labels).toEqual(["When to read", "Conclusion", "Basis", "Last verified"]);
     const values = [...container.querySelectorAll("dd")].map((n) => n.textContent);
-    expect(values).toEqual(["when alice", "conclusion bob", "Unconfirmed", "Not verified"]);
+    expect(values).toEqual(["when alice", "conclusion bob", "Not filled", "Not filled"]);
   });
 
-  it("shows the basis and the date when they are set, and a dash for an empty when or conclusion", () => {
+  it("shows the basis and the date when they are set, and Not filled for an empty when or conclusion", () => {
     const { container } = card({ entry: one({ knowledgeEvidence: "tested", knowledgeVerified: "2026-10-30", knowledgeWhen: "", knowledgeConclusion: "" }) });
     const values = [...container.querySelectorAll("dd")].map((n) => n.textContent);
-    expect(values).toEqual(["—", "—", "Tested", "2026-10-30"]);
+    expect(values).toEqual(["Not filled", "Not filled", "Tested", "2026-10-30"]);
+  });
+
+  it("empty fields read Not filled and turned-off fields are not shown", () => {
+    const { container } = card({ entry: one({ knowledgeConclusion: "", knowledgeVerified: "2026-10-30" }) }, { view: fieldView({ off: ["when", "verified"] }) });
+    expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["Conclusion", "Basis"]);
+    expect([...container.querySelectorAll("dd")].map((n) => n.textContent)).toEqual(["Not filled", "Not filled"]);
+    expect(container.textContent).not.toContain("2026-10-30");
+  });
+
+  it("the hover card puts a divider only between groups that are shown", () => {
+    const dividers = (root: HTMLElement) => root.querySelectorAll("dl > [role='presentation']").length;
+    const all = card({ entry: one() });
+    expect(dividers(all.container)).toBe(2);
+    all.unmount();
+    const some = card({ entry: one() }, { view: fieldView({ off: ["evidence", "verified"] }) });
+    expect(dividers(some.container)).toBe(0);
+    some.unmount();
+    const none = card({ entry: one() }, { view: fieldView({ off: ["when", "conclusion", "evidence", "verified"] }) });
+    expect(none.container.querySelector("dl")).toBeNull();
+  });
+
+  it("the basis shows a renamed option's name and a hidden one as turned off", () => {
+    const view = card({ entry: one({ knowledgeEvidence: "docs" }) }, { view: fieldView({ options: [{ key: "docs", name: "Spec" }] }) });
+    expect([...view.container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("Spec");
+    view.unmount();
+    const hidden = card({ entry: one({ knowledgeEvidence: "inferred" }) }, { view: fieldView({ options: [{ key: "inferred", enabled: false }] }) });
+    expect([...hidden.container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("Inferred (turned off)");
+  });
+
+  it("while the fields load only the status banner shows", () => {
+    const entry = one({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002", knowledgeVerified: "2026-10-30" });
+    const { container } = card({ entry, replacement: { state: "found", title: "Beta", open: vi.fn() } }, { status: "loading" });
+    expect(container.querySelector("dl")).toBeNull();
+    expect(container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
+  });
+
+  it("without a provider the card shows only the status", () => {
+    const { container } = render(
+      <KnowledgeCard entry={one({ knowledgeStatus: "unverified", knowledgeVerified: "2026-10-30" })} parent={null} outdatedAncestor={null} summary={null} replacement={null} variant="hover" canEdit={false} onEdit={vi.fn()} onJump={vi.fn()} />,
+    );
+    expect(container.querySelector("dl")).toBeNull();
+    expect(container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+  });
+
+  it("when the fields fail to load every builtin field shows", () => {
+    const { container } = card({ entry: one() }, { status: "error", view: DEFAULT_KNOWLEDGE_FIELD_VIEW });
+    expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["When to read", "Conclusion", "Basis", "Last verified"]);
+  });
+
+  it("the banners leave out the date and the replacement when those fields are off", () => {
+    const review = card({ entry: one({ knowledgeStatus: "unverified", knowledgeVerified: "2026-10-30" }) }, { view: fieldView({ off: ["verified"] }) });
+    expect(review.container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+    review.unmount();
+    const entry = one({ knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000002" });
+    const outdated = card({ entry, replacement: { state: "found", title: "Beta", open: vi.fn() } }, { view: fieldView({ off: ["superseded_by"] }) });
+    expect(outdated.container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
   });
 
   it("needs review shows the amber banner with the last verified date, or the no-date wording", () => {
@@ -50,6 +109,22 @@ describe("KnowledgeCard", () => {
     view.unmount();
     card({ entry: one({ knowledgeStatus: "unverified" }) });
     expect(screen.getByText("Needs review · worth checking again")).toBeInTheDocument();
+  });
+
+  it("a legacy heading without a date shows the needs review banner and outdated without a replacement says only Outdated", () => {
+    const legacy = card({ entry: one() });
+    expect(legacy.container.querySelector("[data-kb-knowledge-banner='amber']")!.textContent).toBe("Needs review · worth checking again");
+    legacy.unmount();
+    const dated = card({ entry: one({ knowledgeVerified: "2026-10-30" }) });
+    expect(dated.container.querySelector("[data-kb-knowledge-banner]")).toBeNull();
+    dated.unmount();
+    const outdated = card({ entry: one({ knowledgeStatus: "outdated" }) });
+    expect(outdated.container.querySelector("[data-kb-knowledge-banner='red']")!.textContent).toBe("Outdated");
+  });
+
+  it("a basis that is not a defined option shows its key as turned off", () => {
+    const { container } = card({ entry: one({ knowledgeEvidence: "vendor-doc" }) });
+    expect([...container.querySelectorAll("dd")].map((n) => n.textContent)[2]).toBe("vendor-doc (turned off)");
   });
 
   it("an outdated knowledge shows the red banner whose title link jumps to the replacement; another note's replacement shows the fallback text unlinked", () => {
@@ -130,7 +205,7 @@ describe("KnowledgeCard", () => {
     ]);
     const view = card({ entry: entries[0]!, summary: summarizeKnowledgeDescendants(entries, "p") });
     const summary = view.container.querySelector("p")!;
-    expect(summary.textContent).toBe("3 below: 1 verified, 1 not verified, 1 need review");
+    expect(summary.textContent).toBe("3 below: 1 verified, 2 need review");
     expect(view.container.querySelector("[data-kb-knowledge-card]")!.lastElementChild).toBe(summary);
     view.unmount();
 
@@ -139,7 +214,7 @@ describe("KnowledgeCard", () => {
       { id: "k_00000002", blockId: "a", level: 2, props: { knowledgeStatus: "outdated", knowledgeSupersededBy: "k_00000009" } },
     ]);
     const second = card({ entry: withOutdated[0]!, summary: summarizeKnowledgeDescendants(withOutdated, "p") });
-    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 not verified, 0 need review, 1 outdated");
+    expect(second.container.querySelector("p")!.textContent).toBe("1 below: 0 verified, 0 need review, 1 outdated");
   });
 
   it("Edit with a pencil icon sits at the top right only when canEdit", () => {
@@ -166,5 +241,116 @@ describe("KnowledgeCard", () => {
     expect([...container.querySelectorAll("dt")].map((n) => n.textContent)).toEqual(["何時讀", "結論", "依據", "最後驗證日"]);
     expect(container.textContent).toContain("待驗證・建議重新確認");
     await i18n.changeLanguage("en");
+  });
+});
+
+describe("KnowledgeCard custom fields", () => {
+  const NOTE = "11111111-2222-3333-4444-555555555555";
+  const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
+  const GONE = "aaaaaaaa-0000-4000-8000-000000000009";
+  const CUSTOM = customFieldView([
+    { key: "team", type: "text", name: "Team" },
+    { key: "stage", type: "select", name: "Stage", options: [{ key: "draft", name: "Draft" }, { key: "old", name: "Old", enabled: false }] },
+    { key: "due", type: "date", name: "Due" },
+    { key: "docs", type: "link", name: "Docs" },
+    { key: "owner", type: "member", name: "Owner" },
+    { key: "hidden", type: "text", name: "Hidden", enabled: false },
+  ]);
+  const lookups: unknown[] = [];
+
+  beforeEach(() => {
+    lookups.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { ids?: string[] };
+        lookups.push(body);
+        const byId = (body.ids ?? []).filter((id) => id === ALICE).map((id) => ({ id, handle: "alice", displayName: "Alice Liddell" }));
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ byId, byToken: [] }) } as unknown as Response);
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function Location() {
+    return <output data-testid="location">{useLocation().pathname}</output>;
+  }
+
+  function customCard(custom: Record<string, string> | string, memberNoteId: string | null = NOTE) {
+    const knowledgeCustom = typeof custom === "string" ? custom : JSON.stringify(custom);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <MemoryRouter initialEntries={["/n/alice/start"]}>
+        <QueryClientProvider client={client}>
+          {withFields(<KnowledgeCard entry={one({ knowledgeCustom })} memberNoteId={memberNoteId} parent={null} outdatedAncestor={null} summary={null} replacement={null} variant="hover" canEdit={false} onEdit={vi.fn()} onJump={vi.fn()} />, { view: CUSTOM })}
+          <Location />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+  const rows = (root: HTMLElement) => [...root.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling!.textContent]);
+
+  it("enabled custom fields follow the built-in ones in settings order, empty ones read Not filled", () => {
+    const { container } = customCard({ hidden: "secret" });
+    expect(rows(container).slice(4)).toEqual([["Team", "Not filled"], ["Stage", "Not filled"], ["Due", "Not filled"], ["Docs", "Not filled"], ["Owner", "Not filled"]]);
+    expect(container.textContent).not.toContain("secret");
+  });
+
+  it("shows text, the option name, a turned-off option marked as such, and the date", () => {
+    const { container } = customCard({ team: "core", stage: "draft", due: "2026-03-04" });
+    expect(rows(container).slice(4, 7)).toEqual([["Team", "core"], ["Stage", "Draft"], ["Due", "2026-03-04"]]);
+    const hidden = customCard({ stage: "old" });
+    expect(rows(hidden.container)[5]).toEqual(["Stage", "Old (turned off)"]);
+  });
+
+  it("a safe link is a link, an outside one opens in a new tab, and a link with another scheme is shown as text", () => {
+    const outside = customCard({ docs: "https://example.com/a" });
+    const a = within(outside.container).getByRole("link", { name: "https://example.com/a" });
+    expect(a).toHaveAttribute("href", "https://example.com/a");
+    expect(a).toHaveAttribute("target", "_blank");
+    expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    outside.unmount();
+    const inside = customCard({ docs: "/n/alice/page" });
+    const own = within(inside.container).getByRole("link", { name: "/n/alice/page" });
+    expect(own).not.toHaveAttribute("target");
+    fireEvent.click(own);
+    expect(screen.getByTestId("location")).toHaveTextContent("/n/alice/page");
+    inside.unmount();
+    const unsafe = customCard({ docs: "javascript:alert(1)" });
+    expect(within(unsafe.container).queryByRole("link")).toBeNull();
+    expect(unsafe.container.textContent).toContain("javascript:alert(1)");
+  });
+
+  it("a link under /api/ is a plain same-tab anchor because the server, not the router, serves it", () => {
+    const { container } = customCard({ docs: "/api/uploads/abc" });
+    const a = within(container).getByRole("link", { name: "/api/uploads/abc" });
+    expect(a).toHaveAttribute("href", "/api/uploads/abc");
+    expect(a).not.toHaveAttribute("target");
+    fireEvent.click(a);
+    expect(screen.getByTestId("location")).not.toHaveTextContent("/api/uploads/abc");
+  });
+
+  it("a member shows the name, and a member not found shows Unknown member", async () => {
+    const found = customCard({ owner: ALICE });
+    await waitFor(() => expect(rows(found.container)[8]).toEqual(["Owner", "Alice Liddell"]));
+    expect(lookups).toEqual([{ noteId: NOTE, ids: [ALICE] }]);
+    found.unmount();
+    const missing = customCard({ owner: GONE });
+    await waitFor(() => expect(rows(missing.container)[8]).toEqual(["Owner", "Unknown member"]));
+  });
+
+  it("without a note to look members up through, a member is left blank rather than called unknown", async () => {
+    const { container } = customCard({ owner: ALICE }, null);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(rows(container)[8]).toEqual(["Owner", ""]);
+    expect(lookups).toEqual([]);
+  });
+
+  it("broken custom data in the document doesn't break the card", () => {
+    for (const raw of ["not json", "[1,2]", '{"team":5,"BAD":"x"}', JSON.stringify({ team: "x".repeat(200_000) })]) {
+      const { container, unmount } = customCard(raw);
+      expect(rows(container)[4]![0]).toBe("Team");
+      unmount();
+    }
   });
 });

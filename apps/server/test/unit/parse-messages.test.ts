@@ -23,8 +23,8 @@ describe("too_complex and parser-busy messages", () => {
 });
 
 describe("knowledge messages", () => {
-  const problem = { problem: "bad_date", key: "verified", heading: "D1" } as const;
-  const expected = 'The knowledge comment under the heading "D1" has a `verified` that isn\'t a date written YYYY-MM-DD. Nothing was written.';
+  const problem = { problem: "bad_id", key: "id", heading: "D1" } as const;
+  const expected = 'The knowledge comment under the heading "D1" has an `id` that isn\'t k_ followed by 8 lowercase hex digits (leave the id line out for new knowledge). Nothing was written.';
   it("invalid_knowledge names the heading and the reason on REST, in a file write-back and over MCP", () => {
     expect(parseErrorMessage("invalid_knowledge", "fb", undefined, problem)).toBe(expected);
     expect(transferParseMessage("invalid_knowledge", undefined, undefined, problem)).toBe(expected);

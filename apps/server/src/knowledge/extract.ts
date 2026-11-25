@@ -8,6 +8,8 @@ import * as Y from "yjs";
 import {
   BLOCK_ANCHOR_RE,
   KNOWLEDGE_CONCLUSION_MAX,
+  KNOWLEDGE_CUSTOM_JSON_MAX,
+  KNOWLEDGE_CUSTOM_LINK_MAX,
   KNOWLEDGE_ICON_KINDS,
   KNOWLEDGE_ID_RE,
   KNOWLEDGE_INDEX_HEADING_MAX,
@@ -19,12 +21,11 @@ import {
   parseKnowledgeRef,
   summarizeAllKnowledgeDescendants,
   type KnowledgeEntry,
-  type KnowledgeEvidence,
   type KnowledgeIconKind,
   type KnowledgeStatus,
 } from "@knotebook/shared";
 
-export const KNOWLEDGE_EXTRACTOR_VERSION = 1;
+export const KNOWLEDGE_EXTRACTOR_VERSION = 3;
 
 export interface KnowledgeIndexRow {
   knowledgeId: string;
@@ -34,7 +35,7 @@ export interface KnowledgeIndexRow {
   heading: string;
   when: string;
   conclusion: string;
-  evidence: KnowledgeEvidence;
+  evidence: string;
   verified: string | null;
   status: KnowledgeStatus;
   icon: KnowledgeIconKind;
@@ -43,9 +44,12 @@ export interface KnowledgeIndexRow {
   supersededKnowledgeId: string | null;
   descTotal: number;
   descVerified: number;
+  /** Always 0: no-date knowledge counts as needs review. Older rows still hold a count, which readers add to needs review. */
   descNoDate: number;
   descNeedsReview: number;
   descOutdated: number;
+  /** Format-checked values by field key, whatever the site settings say: settings are applied when the index is read. */
+  custom: Record<string, string> | null;
 }
 
 export interface KnowledgeIndexExtract {
@@ -64,7 +68,7 @@ export function knowledgeContentHash(version: number, rows: readonly KnowledgeIn
         capped,
         rows.map((r) => [
           r.knowledgeId, r.blockId, r.ord, r.level, r.heading, r.when, r.conclusion, r.evidence, r.verified, r.status, r.icon,
-          r.parentKnowledgeId, r.supersededNoteId, r.supersededKnowledgeId, r.descTotal, r.descVerified, r.descNoDate, r.descNeedsReview, r.descOutdated,
+          r.parentKnowledgeId, r.supersededNoteId, r.supersededKnowledgeId, r.descTotal, r.descVerified, r.descNoDate, r.descNeedsReview, r.descOutdated, r.custom,
         ]),
       ]),
     )
@@ -103,6 +107,23 @@ function cut(text: string, maxCodePoints: number): string {
 // NUL cannot be stored in text, and a lone surrogate cannot be encoded as UTF-8.
 const UNSTORABLE = /\0|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 const clean = (text: string, max: number): string => cut(text, max).replace(UNSTORABLE, "�");
+
+function cleanCustom(values: Readonly<Record<string, string>>): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  // The braces count 2, and the first entry has no comma in front of it.
+  let size = 1;
+  let any = false;
+  for (const key of Object.keys(values).sort()) {
+    const value = clean(values[key]!, KNOWLEDGE_CUSTOM_LINK_MAX);
+    if (value === "") continue;
+    // Keys match the key format, so only the value needs escaping; +4 is the quotes, colon and the comma between entries.
+    size += key.length + JSON.stringify(value).length + 4;
+    if (size > KNOWLEDGE_CUSTOM_JSON_MAX) break;
+    out[key] = value;
+    any = true;
+  }
+  return any ? out : null;
+}
 
 function extractEntries(entries: readonly KnowledgeEntry[]): KnowledgeIndexExtract {
   const kept: KnowledgeEntry[] = [];
@@ -157,9 +178,10 @@ function extractEntries(entries: readonly KnowledgeEntry[]): KnowledgeIndexExtra
       supersededKnowledgeId: ref?.knowledgeId ?? null,
       descTotal: s?.total ?? 0,
       descVerified: s?.verified ?? 0,
-      descNoDate: s?.noVerifiedDate ?? 0,
+      descNoDate: 0,
       descNeedsReview: s?.needsReview ?? 0,
       descOutdated: s?.outdated ?? 0,
+      custom: cleanCustom(e.info.custom),
     });
   }
   return finish(rows, capped);

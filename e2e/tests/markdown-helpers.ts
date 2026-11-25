@@ -149,12 +149,12 @@ export function headingWithText(page: Page, text: string): Locator {
   return editorLocator(page).getByRole("heading", { name: new RegExp(`${reEscape(text)}$`) });
 }
 
-/** Opens the hover card of the page's one "Not verified" icon afresh: a card that is still open from earlier keeps what it showed when it opened. */
+/** Opens the hover card of the page's one "Needs review" icon afresh: a card that is still open from earlier keeps what it showed when it opened. */
 export async function expectHoverCard(page: Page, text: string): Promise<void> {
   await expect(async () => {
     await page.mouse.move(0, 0);
     await expect(hoverCardOf(page)).toBeHidden({ timeout: 2_000 });
-    await iconOf(page, "Not verified").hover();
+    await iconOf(page, "Needs review").hover();
     await expect(hoverCardOf(page)).toContainText(text, { timeout: 2_000 });
   }).toPass({ timeout: 15_000 });
 }

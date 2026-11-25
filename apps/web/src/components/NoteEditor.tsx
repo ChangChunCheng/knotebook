@@ -80,6 +80,7 @@ import { KnotebookTableCellButton, KnotebookTableHandle } from "@/components/edi
 import { HeadingAnchorButtons } from "@/components/editor/HeadingAnchorButtons";
 import { KnowledgeLayerLazy } from "@/components/knowledge/KnowledgeLayerLazy";
 import { KnowledgeControllerContext, useKnowledgeController } from "@/components/knowledge/controller";
+import { KnowledgeFieldsProvider } from "@/components/knowledge/fields-context";
 import { useKnowledgeEntries } from "@/components/knowledge/use-knowledge-entries";
 import { MediaZoomProvider } from "@/components/media-zoom/MediaZoomProvider";
 import { ImageZoomLayer } from "@/components/media-zoom/ImageZoomLayer";
@@ -623,6 +624,8 @@ export function NoteEditor({
   // Column width and padding come only from `ui/article-column.ts` (do not duplicate here). `NoteEditorView` gets `flex-1` because the wrapper `min-h-full` cannot pass a percentage height to its grandchild. `data-testid="note-editor"` stays on `NoteEditorView`/`BlockNoteView` (e2e and NoteEditor.layout.test.tsx). The version panel is the same node at 640-1279 (absolute) and 1280+ (third column) so crossing 1280 does not remount or lose list scroll.
   return (
     <OutlineMenuContext.Provider value={outlineMenu}>
+    {/* Outside the AI session: it reads the settings itself, and inside it would only ever see the context default. */}
+    <KnowledgeFieldsProvider noteId={noteId}>
     <AiSessionProvider editor={editor} noteId={noteId} editable={editable} sizeGuard={sizeGuard}>
       <div ref={rowRef} onKeyDown={onRowKeyDown} className="relative flex h-full min-h-0 min-w-0 flex-1 gap-3" style={panelWidth.style}>
         <div className={cn(
@@ -757,6 +760,7 @@ export function NoteEditor({
         initialUrl={linkPrefill.url}
       />
     </AiSessionProvider>
+    </KnowledgeFieldsProvider>
     </OutlineMenuContext.Provider>
   );
 }

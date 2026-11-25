@@ -11,6 +11,7 @@ const KNOWLEDGE_PROPS = {
   knowledgeVerified: "2031-04-05",
   knowledgeStatus: "outdated",
   knowledgeSupersededBy: "k_6b6b6b6b",
+  knowledgeCustom: '{"team":"carol-team-4d1e"}',
 };
 const VALUES = Object.values(KNOWLEDGE_PROPS);
 

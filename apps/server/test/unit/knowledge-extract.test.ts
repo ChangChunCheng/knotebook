@@ -5,12 +5,13 @@ import {
   KNOWLEDGE_CONCLUSION_MAX,
   KNOWLEDGE_ICON_KINDS,
   KNOWLEDGE_ID_RE,
+  KNOWLEDGE_KEY_RE,
   KNOWLEDGE_WHEN_MAX,
   YDOC_FRAGMENT,
   listKnowledgeInFragment,
   summarizeKnowledgeDescendants,
 } from "@knotebook/shared";
-import { EMPTY_KNOWLEDGE_EXTRACT, extractKnowledgeForIndex, extractKnowledgeIndex, knowledgeContentHash } from "../../src/knowledge/extract.js";
+import { EMPTY_KNOWLEDGE_EXTRACT, KNOWLEDGE_EXTRACTOR_VERSION, extractKnowledgeForIndex, extractKnowledgeIndex, knowledgeContentHash } from "../../src/knowledge/extract.js";
 import { kh, kid, knowledgeDoc, type KBlk } from "../knowledge-helpers.js";
 
 const frag = (doc: Y.Doc) => doc.getXmlFragment(YDOC_FRAGMENT);
@@ -68,15 +69,86 @@ describe("extractKnowledgeIndex", () => {
     expect(row.conclusion).not.toContain(NUL);
   });
 
-  it("an invalid verified date is stored as null; evidence and status outside the allowed values read as empty", () => {
+  it("an invalid verified date is stored as null; a basis outside the key format reads as empty and an unknown status as unverified", () => {
     const r = extract([
-      kh("a", kid(1), "A", { verified: "2026-02-30", evidence: "guess", status: "stale" }),
+      kh("a", kid(1), "A", { verified: "2026-02-30", evidence: "Bad Key", status: "stale" }),
       kh("b", kid(2), "B", { verified: "2026-02-28", evidence: "tested", status: "unverified" }),
+      kh("c", kid(3), "C", { evidence: "vendor-doc", status: "verified" }),
     ]);
     expect(r.rows.map((x) => [x.verified, x.evidence, x.status])).toEqual([
-      [null, "", ""],
+      [null, "", "unverified"],
       ["2026-02-28", "tested", "unverified"],
+      [null, "vendor-doc", "verified"],
     ]);
+  });
+
+  it("stores the document's status string and derives three icons", () => {
+    const r = extract([
+      kh("a", kid(1), "A", { status: "bogus", verified: "2026-01-02" }),
+      kh("b", kid(2), "B"),
+      kh("c", kid(3), "C", { verified: "2026-01-02" }),
+      kh("d", kid(4), "D", { status: "verified" }),
+    ]);
+    expect(r.rows.map((x) => x.status)).toEqual(["unverified", "", "", "verified"]);
+    expect(r.rows.map((x) => x.icon)).toEqual(["needsReview", "needsReview", "verified", "verified"]);
+    expect(r.rows.every((x) => x.descNoDate === 0)).toBe(true);
+  });
+
+  it("the extractor version is 3", () => expect(KNOWLEDGE_EXTRACTOR_VERSION).toBe(3));
+
+  describe("custom values", () => {
+    const withCustom = (raw: unknown): KBlk => {
+      const b = kh("h", kid(1), "H");
+      return { ...b, knowledge: { ...b.knowledge, knowledgeCustom: raw } };
+    };
+    const customOf = (raw: unknown) => extract([withCustom(raw)]).rows[0]!.custom;
+
+    it("stores values whatever the settings say, cleaned and capped", () => {
+      const custom = customOf(JSON.stringify({ team: `a${NUL}b`, Bad: "x", big: "z".repeat(70_000), lone: "p\ud800q" }));
+      expect(Object.keys(custom!).sort()).toEqual(["big", "lone", "team"]);
+      expect(custom!.team).toBe("a�b");
+      expect(custom!.lone).toBe("p�q");
+      expect([...custom!.big!]).toHaveLength(2048);
+    });
+
+    it.each([["not json{"], ["[1]"], ['"s"'], ["null"], [""], [42], [["a"]], [{ a: "b" }], [undefined]])("%j gives custom null and the note is still indexed", (raw) => {
+      const r = extract([withCustom(raw)]);
+      expect(r.rows).toHaveLength(1);
+      expect(r.rows[0]!.custom).toBeNull();
+    });
+
+    it("skips non-string values and malformed keys but keeps the good ones", () => {
+      expect(customOf('{"a":1,"b":"ok","-c":"x","d":null,"e":""}')).toEqual({ b: "ok" });
+    });
+
+    it("truncates a payload over 65,536 in key order", () => {
+      const values = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`k${String(i).padStart(2, "0")}`, "v".repeat(2048)]));
+      const custom = customOf(JSON.stringify(values))!;
+      const keys = Object.keys(custom);
+      expect(keys).toEqual(Object.keys(values).slice(0, keys.length));
+      expect(keys.length).toBeGreaterThan(0);
+      expect(keys.length).toBeLessThan(60);
+      expect(JSON.stringify(custom).length).toBeLessThanOrEqual(65_536);
+    });
+
+    it("keeps a payload of exactly 65,536 and drops an entry that would make it one over", () => {
+      const build = (last: number) => {
+        const values: Record<string, string> = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`k${String(i).padStart(2, "0")}`, "v".repeat(2048)]));
+        values.k31 = "v".repeat(last);
+        return customOf(JSON.stringify(values))!;
+      };
+      const exact = build(1759);
+      expect(JSON.stringify(exact)).toHaveLength(65_536);
+      expect(Object.keys(exact)).toHaveLength(32);
+      expect(Object.keys(build(1760))).toHaveLength(31);
+    });
+
+    it("changing only a custom value changes the content hash", () => {
+      const a = extract([withCustom('{"team":"a"}')]);
+      const b = extract([withCustom('{"team":"b"}')]);
+      const none = extract([withCustom("")]);
+      expect(new Set([a.contentHash, b.contentHash, none.contentHash]).size).toBe(3);
+    });
   });
 
   it("stores the parsed replaced-by ref: a bare id has supersededNoteId null, an other-note ref keeps the lowercased note id; garbage is null", () => {
@@ -102,7 +174,7 @@ describe("extractKnowledgeIndex", () => {
       kh("c4", kid(5), "Child4", { level: 2, status: "outdated", supersededBy: kid(1) }),
     ]);
     const [p, ...kids] = r.rows;
-    expect([p!.descTotal, p!.descVerified, p!.descNoDate, p!.descNeedsReview, p!.descOutdated]).toEqual([4, 1, 1, 1, 1]);
+    expect([p!.descTotal, p!.descVerified, p!.descNoDate, p!.descNeedsReview, p!.descOutdated]).toEqual([4, 1, 0, 2, 1]);
     for (const k of kids) expect(k.descTotal).toBe(0);
   });
 
@@ -205,16 +277,18 @@ describe("extractKnowledgeIndex", () => {
       kh("a", kid(1), `${NUL}head\udc00`, { when: NUL, conclusion: "\ud800x", verified: "9999-99-99", evidence: "tested", status: "outdated", supersededBy: "not-a-ref" }),
       kh("b", kid(2), "B", { level: 9, supersededBy: `AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE#${kid(1)}`, status: "outdated" }),
       { id: "c", type: "heading", level: 1, text: "C", knowledge: { knowledgeId: kid(3), knowledgeEvidence: ["tested"], knowledgeStatus: 7 } },
+      kh("d", kid(4), "D", { evidence: "a".repeat(65), status: "Verified" }),
+      kh("e", kid(5), "E", { evidence: "ab\n", status: "verified\n" }),
     ];
     const r = extract(hostile);
-    expect(r.rows).toHaveLength(3);
+    expect(r.rows).toHaveLength(5);
     for (const row of r.rows) {
       expect(KNOWLEDGE_ID_RE.test(row.knowledgeId)).toBe(true);
       expect(BLOCK_ANCHOR_RE.test(row.blockId)).toBe(true);
       expect(row.level).toBeGreaterThanOrEqual(1);
       expect(row.level).toBeLessThanOrEqual(6);
-      expect(["", "tested", "docs", "inferred"]).toContain(row.evidence);
-      expect(["", "unverified", "outdated"]).toContain(row.status);
+      expect(row.evidence === "" || KNOWLEDGE_KEY_RE.test(row.evidence)).toBe(true);
+      expect(["", "verified", "unverified", "outdated"]).toContain(row.status);
       expect(KNOWLEDGE_ICON_KINDS as readonly string[]).toContain(row.icon);
       if (row.supersededNoteId !== null) expect(row.supersededKnowledgeId).not.toBeNull();
       for (const text of [row.heading, row.when, row.conclusion]) expect(text).not.toMatch(/\0|[\ud800-\udfff]/);
@@ -273,7 +347,7 @@ describe("hostile sizes", () => {
     for (const row of out.rows) {
       const s = summarizeKnowledgeDescendants(entries, row.blockId);
       expect([row.descTotal, row.descVerified, row.descNoDate, row.descNeedsReview, row.descOutdated]).toEqual(
-        s ? [s.total, s.verified, s.noVerifiedDate, s.needsReview, s.outdated] : [0, 0, 0, 0, 0],
+        s ? [s.total, s.verified, 0, s.needsReview, s.outdated] : [0, 0, 0, 0, 0],
       );
     }
   });

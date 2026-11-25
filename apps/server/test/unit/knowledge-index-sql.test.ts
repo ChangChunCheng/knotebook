@@ -68,9 +68,15 @@ describe("knowledge index SQL fragments", () => {
 
   it("status and evidence conditions map to the icon and evidence columns; unconfirmed means an empty evidence", () => {
     const outdated = render(scopedNoteBranch(db, U, personal, { extraWhere: knowledgeFilterSql({ tagIds: [], status: "outdated", evidence: "unconfirmed" }) }));
-    expect(outdated.sql).toContain("nk.icon = $");
+    expect(outdated.sql).toContain("nk.icon in ($");
     expect(outdated.sql).toContain("nk.evidence = $");
     expect(outdated.params).toContain("outdated");
+    expect(outdated.params).not.toContain("noVerifiedDate");
     expect(outdated.params).toContain("");
+  });
+
+  it("the needs review filter also matches the legacy no-date icon, and a custom basis key is passed through", () => {
+    const q = render(scopedNoteBranch(db, U, personal, { extraWhere: knowledgeFilterSql({ tagIds: [], status: "needsReview", evidence: "vendor-doc" }) }));
+    expect(q.params).toEqual(expect.arrayContaining(["needsReview", "noVerifiedDate", "vendor-doc"]));
   });
 });

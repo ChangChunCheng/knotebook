@@ -1,11 +1,14 @@
 // Knowledge info through the file path: what a download shows, what a file sends back, and what the reply says about it.
 import { describe, expect, it } from "vitest";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import * as Y from "yjs";
+import { KNOWLEDGE_PROP_NAMES, YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
+import { knowledgeFieldDefs } from "../src/db/schema.js";
 import { knowledgeInfoById } from "../src/notes/editing/knowledge-write.js";
 import { loadNoteDoc } from "../src/notes/editing/read.js";
+import { versionFingerprint } from "../src/notes/version-fingerprint.js";
 import { bearer, getContent, seedTokenForUser } from "./editing-helpers.js";
-import { seedNote, seedUser } from "./group-helpers.js";
-import { bulkPut, downloadNote, editBody, issueBulkDirect, seedBlocks, topIdsOf } from "./bulk-transfer-helpers.js";
+import { cookieOf, seedGroup, seedNote, seedUser } from "./group-helpers.js";
+import { bulkPut, downloadNote, editBody, issueBulkDirect, renameIn, seedBlocks, topIdsOf } from "./bulk-transfer-helpers.js";
 import { buildCollabTestApp } from "./helpers.js";
 
 const comment = (lines: string[]) => `<!-- knotebook:knowledge\n${lines.join("\n")}\n-->`;
@@ -65,9 +68,9 @@ describe("a file with knowledge comments", () => {
   it("taking a comment out removes the knowledge and lists it in knowledge.removed", async () => {
     const s = await setup(TWO);
     const d = await s.download();
-    const r = await s.put(editBody(d.text, b => b.replace(`\n${comment([`id: ${K1}`, "when: when A", "conclusion: use A"])}\n`, "\n")));
+    const r = await s.put(editBody(d.text, b => b.replace(`\n${comment([`id: ${K1}`, "when: when A", "conclusion: use A", "status: needs-verify"])}\n`, "\n")));
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.json().knowledge).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "First" }], renewed: [], ignoredComments: 0 });
+    expect(r.json().knowledge).toEqual({ kept: [], created: [], removed: [{ id: K1, heading: "First" }], renewed: [], ignored: [], ignoredComments: 0 });
     const after = await s.infos();
     expect([...after.keys()]).toEqual([K2]);
     await s.ctx.destroy();
@@ -210,6 +213,102 @@ describe("a file with knowledge comments", () => {
 
 const parseBody = (text: string): string => text.slice(text.indexOf("\n---\n", 4) + 5);
 
+async function turnOffWhen(s: Pick<Awaited<ReturnType<typeof setup>>, "ctx">) {
+  const admin = await seedUser(s.ctx.db, { isAdmin: true });
+  const fields = (["when", "conclusion", "evidence", "verified", "superseded_by"] as const).map(key => ({
+    key,
+    enabled: key !== "when",
+    ...(key === "evidence" ? { options: ["tested", "docs", "inferred"].map(o => ({ key: o, name: null, enabled: true })) } : {}),
+  }));
+  const res = await s.ctx.app.inject({ method: "PUT", url: "/api/admin/knowledge-fields", cookies: await cookieOf(admin.id), payload: { fields } });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+describe("comments written by an older version or under other field settings", () => {
+  const versionFp = async (s: Awaited<ReturnType<typeof setup>>) => versionFingerprint((await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, s.noteId)).doc.getXmlFragment(YDOC_FRAGMENT));
+
+  it("a 0.18-shaped file sent back unchanged changes nothing", async () => {
+    const s = await setup(`## First\n${comment([`id: ${K1}`, "when: when A", "verified: 2026-10-20"])}\n\nfirst body\n`);
+    expect((await s.infos()).get(K1)).toMatchObject({ status: "", evidence: "", verified: "2026-10-20" });
+    const d = await s.download();
+    expect(d.text).toContain("status: verified");
+    const fp = await versionFp(s);
+    const r = await s.put(editBody(d.text, b => b.replace("status: verified", "evidence: unconfirmed")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "unchanged", applied: 0 });
+    expect(r.json()).not.toHaveProperty("knowledge");
+    expect(await versionFp(s)).toBe(fp);
+    await s.ctx.destroy();
+  });
+
+  it("a region whose knowledge comment reads the same once converted counts as same", async () => {
+    const s = await setup(`## First\n${comment([`id: ${K1}`, "when: when A", "conclusion: use A", "status: needs-verify"])}\n\nfirst body\n\n## Third\n\nthird body\n`);
+    const before = await s.infos();
+    expect(before.get(K1)?.status).toBe("unverified");
+    await turnOffWhen(s);
+    const d = await s.download();
+    expect(d.text).not.toContain("when: when A");
+    const r = await s.put(editBody(d.text, b => b.replace("status: needs-verify\n", "status: unverified\n").replace("third body", "third body changed")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "applied", applied: 1, same: 1 });
+    expect(r.json().editIds).toHaveLength(1);
+    expect((await s.infos()).get(K1)).toEqual(before.get(K1));
+    await s.ctx.destroy();
+  });
+
+  // A note that can't be written back block by block is compared by its whole export, which has to be made with the same fields as the download.
+  it("with a field turned off, a title-only change to a note that isn't mergeable is renamed, not refused as note_changed", async () => {
+    const ctx = await buildCollabTestApp({ transferTestHooks: { forceUnmergeable: () => true } });
+    const u = await seedUser(ctx.db);
+    const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
+    const bulk = await issueBulkDirect(ctx.db, pat.tokenId, { access: "write" });
+    const note = await seedNote(ctx.db, { ownerId: u.id }, { title: "Title" });
+    await seedBlocks(ctx.db, note.id, [
+      { type: "heading", props: { level: 2, knowledgeId: K1, knowledgeWhen: "when A", knowledgeConclusion: "use A" }, content: "First" },
+      { type: "paragraph", content: "first body" },
+    ]);
+    await turnOffWhen({ ctx });
+    const d = await downloadNote(ctx.app, bulk.token, note.id);
+    expect(d.text).toContain("conclusion: use A");
+    expect(d.text).not.toContain("when: when A");
+    const r = await bulkPut(ctx.app, bulk.token, renameIn(d.text, "Renamed"));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "renamed", renamed: true });
+    await ctx.destroy();
+  });
+
+  it("a file that drops a heading's comment clears every knowledge prop, turned-off ones included", async () => {
+    const s = await setup(TWO);
+    await turnOffWhen(s);
+    const d = await s.download();
+    const r = await s.put(editBody(d.text, b => b.replace(/## First\n<!-- knotebook:knowledge\n[\s\S]*?-->\n/, "## First\n")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().knowledge.removed).toEqual([{ id: K1, heading: "First" }]);
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, s.noteId)).doc;
+    const first = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))
+      .map(c => c.get(0))
+      .find((h): h is Y.XmlElement => h instanceof Y.XmlElement && h.nodeName === "heading" && h.toString().includes("First"))!;
+    const attrs = first.getAttributes() as Record<string, unknown>;
+    for (const name of KNOWLEDGE_PROP_NAMES) expect(attrs[name] ?? "", name).toBe("");
+    await s.ctx.destroy();
+  });
+
+  it("a file write-back reply lists ignored items", async () => {
+    const s = await setup(TWO);
+    const d = await s.download();
+    const r = await s.put(editBody(d.text, b => b.replace("when: when A\n", "when: when A\nverified: 2026-13-01\n")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().knowledge.ignored).toEqual([{ heading: "First", key: "verified", value: "2026-13-01", reason: "bad_date" }]);
+    const d2 = await s.download();
+    const u = await s.put(editBody(d2.text, b => b.replace("when: when B\n", "when: when B\nOwner: bob\n")));
+    expect(u.statusCode, u.body).toBe(200);
+    expect(u.json()).toMatchObject({ result: "applied", applied: 1 });
+    expect(u.json().knowledge.ignored).toEqual([{ heading: "Second", key: "Owner", value: "bob", reason: "unknown_field" }]);
+    expect((await s.infos()).get(K1)?.verified).toBe("");
+    await s.ctx.destroy();
+  });
+});
+
 describe("values that need quoting round-trip through a download and a write-back", () => {
   const TRICKY: Array<[string, string]> = [
     ["an arrow", "a --> b"],
@@ -337,6 +436,80 @@ describe("ids a note already repeated", () => {
     expect(c.statusCode, c.body).toBe(200);
     expect(c.json()).not.toHaveProperty("knowledge");
     expect(await idsOf()).toEqual([K1, K1]);
+    await s.ctx.destroy();
+  });
+});
+
+describe("member fields in a file", () => {
+  /** The writer and bob share a group; carol knows neither. K1 stores bob as its owner. */
+  async function members(opts: { unmergeable?: boolean } = {}) {
+    const ctx = await buildCollabTestApp(opts.unmergeable ? { transferTestHooks: { forceUnmergeable: () => true } } : {});
+    const u = await seedUser(ctx.db);
+    const bob = await seedUser(ctx.db);
+    const carol = await seedUser(ctx.db);
+    await seedGroup(ctx.db, "Team", [{ userId: u.id, role: "admin" }, { userId: bob.id, role: "member" }]);
+    await ctx.db.insert(knowledgeFieldDefs).values({ kind: "field", fieldRef: "x-owner", key: "owner", type: "member", originKind: "site" });
+    const pat = await seedTokenForUser(ctx.db, u.id, "notes:read notes:write");
+    const bulk = await issueBulkDirect(ctx.db, pat.tokenId, { access: "write" });
+    const note = await seedNote(ctx.db, { ownerId: u.id }, { title: "Members" });
+    await seedBlocks(ctx.db, note.id, [
+      { type: "heading", props: { level: 2, knowledgeId: K1, knowledgeWhen: "when A", knowledgeCustom: JSON.stringify({ owner: bob.id }) }, content: "First" },
+      { type: "paragraph", content: "first body" },
+      { type: "heading", props: { level: 2, knowledgeId: K2, knowledgeWhen: "when B" }, content: "Second" },
+      { type: "paragraph", content: "second body" },
+      { type: "paragraph", content: "third body" },
+    ]);
+    const infos = async () => knowledgeInfoById((await loadNoteDoc({ db: ctx.db, collab: ctx.collab }, note.id)).doc.getXmlFragment(YDOC_FRAGMENT));
+    return { ctx, u, bob, carol, note, infos, download: () => downloadNote(ctx.app, bulk.token, note.id), put: (text: string) => bulkPut(ctx.app, bulk.token, text) };
+  }
+
+  it("a file region whose only member value is the stored handle counts as same", async () => {
+    const s = await members();
+    const d = await s.download();
+    expect(d.body).toContain(`x-owner: ${s.bob.handle}\n`);
+    const before = await s.infos();
+    const r = await s.put(editBody(d.text, b => b.replace(`x-owner: ${s.bob.handle}\n`, `x-owner: ${s.bob.handle.toUpperCase()}\n`).replace("third body", "third body changed")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "applied", applied: 1, same: 1 });
+    expect(r.json()).not.toHaveProperty("knowledge");
+    expect((await s.infos()).get(K1)).toEqual(before.get(K1));
+    await s.ctx.destroy();
+  });
+
+  it("a file writes a member within the writer's reach as a user id, and a stranger is an unresolved member", async () => {
+    const s = await members();
+    const d = await s.download();
+    const r = await s.put(editBody(d.text, b => b.replace(`x-owner: ${s.bob.handle}\n`, `x-owner: ${s.u.handle}\n`).replace("when: when B\n", `when: when B\nx-owner: ${s.carol.handle}\n`)));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().knowledge.ignored).toEqual([{ heading: "Second", key: "x-owner", value: s.carol.handle, reason: "unresolved_member" }]);
+    const after = await s.infos();
+    expect(after.get(K1)?.custom).toEqual({ owner: s.u.id });
+    expect(after.get(K2)?.custom).toEqual({});
+    await s.ctx.destroy();
+  });
+
+  it("a file that drops a heading's comment clears its custom values too", async () => {
+    const s = await members();
+    const d = await s.download();
+    const r = await s.put(editBody(d.text, b => b.replace(/## First\n<!-- knotebook:knowledge\n[\s\S]*?-->\n/, "## First\n")));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().knowledge.removed).toEqual([{ id: K1, heading: "First" }]);
+    const doc = (await loadNoteDoc({ db: s.ctx.db, collab: s.ctx.collab }, s.note.id)).doc;
+    const first = topLevelBlocks(doc.getXmlFragment(YDOC_FRAGMENT))
+      .map(c => c.get(0))
+      .find((h): h is Y.XmlElement => h instanceof Y.XmlElement && h.nodeName === "heading" && h.toString().includes("First"))!;
+    expect((first.getAttributes() as Record<string, unknown>).knowledgeCustom ?? "").toBe("");
+    await s.ctx.destroy();
+  });
+
+  // The whole export compared here has to name members the way the download did.
+  it("a title-only change to a note that isn't mergeable and has a member value is renamed, not refused as note_changed", async () => {
+    const s = await members({ unmergeable: true });
+    const d = await s.download();
+    expect(d.text).toContain(`x-owner: ${s.bob.handle}\n`);
+    const r = await s.put(renameIn(d.text, "Renamed"));
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ result: "renamed", renamed: true });
     await s.ctx.destroy();
   });
 });

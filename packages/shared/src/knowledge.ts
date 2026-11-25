@@ -1,22 +1,35 @@
+import { formatKnowledgeCustom, parseKnowledgeCustom } from "./knowledge-custom.js";
+import { KNOWLEDGE_KEY_RE } from "./knowledge-fields.js";
 import type { KnowledgePropName } from "./knowledge-schema.js";
 
-export const KNOWLEDGE_EVIDENCE = ["tested", "docs", "inferred"] as const;
-/** "" = unconfirmed */
-export type KnowledgeEvidence = "" | (typeof KNOWLEDGE_EVIDENCE)[number];
-export const KNOWLEDGE_STATUSES = ["unverified", "outdated"] as const;
-/** "" = current, "unverified" = needs review */
-export type KnowledgeStatus = "" | (typeof KNOWLEDGE_STATUSES)[number];
+export const KNOWLEDGE_BUILTIN_EVIDENCE = ["tested", "docs", "inferred"] as const;
+/** The strings stored in the document; "" is data written before statuses were stored and is read through the verified date. */
+export const KNOWLEDGE_STORED_STATUSES = ["verified", "unverified", "outdated"] as const;
+export type KnowledgeStatus = "" | (typeof KNOWLEDGE_STORED_STATUSES)[number];
+export const KNOWLEDGE_STATES = ["verified", "needs-verify", "obsolete"] as const;
+export type KnowledgeState = (typeof KNOWLEDGE_STATES)[number];
 
 export interface KnowledgeInfo {
   id: string;
   when: string;
   conclusion: string;
-  evidence: KnowledgeEvidence;
+  /** "" = none; otherwise an option key. */
+  evidence: string;
   verified: string;
   status: KnowledgeStatus;
   supersededBy: string;
+  /** Field key without its `x-` prefix to stored value; member values are user ids. */
+  custom: Readonly<Record<string, string>>;
 }
-export type KnowledgeDraft = Omit<KnowledgeInfo, "id">;
+export interface KnowledgeDraft {
+  when: string;
+  conclusion: string;
+  evidence: string;
+  verified: string;
+  state: KnowledgeState;
+  supersededBy: string;
+  custom: Record<string, string>;
+}
 
 export const KNOWLEDGE_WHEN_MAX = 200;
 export const KNOWLEDGE_CONCLUSION_MAX = 300;
@@ -39,11 +52,31 @@ export function readKnowledgeInfo(props: Readonly<Record<string, unknown>> | und
     id,
     when: str(props.knowledgeWhen),
     conclusion: str(props.knowledgeConclusion),
-    evidence: (KNOWLEDGE_EVIDENCE as readonly string[]).includes(evidence) ? (evidence as KnowledgeEvidence) : "",
+    // "unconfirmed" is how a basis left empty was written, never an option of its own.
+    evidence: evidence !== "unconfirmed" && KNOWLEDGE_KEY_RE.test(evidence) ? evidence : "",
     verified: str(props.knowledgeVerified),
-    status: (KNOWLEDGE_STATUSES as readonly string[]).includes(status) ? (status as KnowledgeStatus) : "",
+    status: status === "" || (KNOWLEDGE_STORED_STATUSES as readonly string[]).includes(status) ? (status as KnowledgeStatus) : "unverified",
     supersededBy: str(props.knowledgeSupersededBy),
+    custom: parseKnowledgeCustom(props.knowledgeCustom),
   };
+}
+
+export function knowledgeStateOf(info: Pick<KnowledgeInfo, "status" | "verified">): KnowledgeState {
+  if (info.status === "outdated") return "obsolete";
+  if (info.status === "verified") return "verified";
+  if (info.status === "") return isKnowledgeDate(info.verified) ? "verified" : "needs-verify";
+  return "needs-verify";
+}
+
+export function storedStatusOf(state: KnowledgeState): Exclude<KnowledgeStatus, ""> {
+  return state === "verified" ? "verified" : state === "obsolete" ? "outdated" : "unverified";
+}
+
+/** null = not a status value; "" = left out. */
+export function parseKnowledgeStatusInput(value: string): KnowledgeStatus | null {
+  if (value === "") return "";
+  if ((KNOWLEDGE_STORED_STATUSES as readonly string[]).includes(value)) return value as KnowledgeStatus;
+  return (KNOWLEDGE_STATES as readonly string[]).includes(value) ? storedStatusOf(value as KnowledgeState) : null;
 }
 
 export function knowledgeInfoToProps(info: KnowledgeInfo): Record<KnowledgePropName, string> {
@@ -55,6 +88,7 @@ export function knowledgeInfoToProps(info: KnowledgeInfo): Record<KnowledgePropN
     knowledgeVerified: info.verified,
     knowledgeStatus: info.status,
     knowledgeSupersededBy: info.supersededBy,
+    knowledgeCustom: formatKnowledgeCustom(info.custom),
   };
 }
 
@@ -116,7 +150,7 @@ export function formatKnowledgeRef(ref: KnowledgeRef, currentNoteId: string | nu
   return `${ref.noteId.toLowerCase()}#${ref.knowledgeId}`;
 }
 
-export type KnowledgeDraftError = "empty" | "whenTooLong" | "conclusionTooLong" | "verifiedInvalid" | "supersededRequired" | "supersededInvalid" | "supersededSelf";
+export type KnowledgeDraftError = "whenTooLong" | "conclusionTooLong" | "verifiedInvalid" | "supersededInvalid" | "supersededSelf";
 
 export function validateKnowledgeDraft(
   draft: KnowledgeDraft,
@@ -125,13 +159,9 @@ export function validateKnowledgeDraft(
   touched?: ReadonlySet<keyof KnowledgeDraft>,
 ): KnowledgeDraftError | null {
   const checks = (field: keyof KnowledgeDraft): boolean => !touched || touched.has(field);
-  if (
-    draft.when.trim() === "" && draft.conclusion.trim() === "" && draft.evidence === "" &&
-    draft.verified === "" && draft.status === "" && draft.supersededBy === ""
-  ) return "empty";
-  if (draft.status === "outdated" && draft.supersededBy.trim() === "") return "supersededRequired";
-  const target = draft.status === "outdated" ? parseKnowledgeRef(draft.supersededBy.trim()) : null;
-  if (draft.status === "outdated" && !target) return "supersededInvalid";
+  const replacement = draft.state === "obsolete" ? draft.supersededBy.trim() : "";
+  const target = replacement === "" ? null : parseKnowledgeRef(replacement);
+  if (replacement !== "" && !target) return "supersededInvalid";
   if (target && self) {
     const own = (n: string | null): string | null => (n === null ? currentNoteId : n.toLowerCase());
     if (target.knowledgeId === self.knowledgeId && own(target.noteId) === own(self.noteId)) return "supersededSelf";

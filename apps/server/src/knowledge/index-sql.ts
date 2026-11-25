@@ -1,5 +1,5 @@
 // Fragments only: nothing here is executed. Outer note columns are written as literals because a single-table select renders `${notes.id}` as a bare "id", which inside these subqueries would resolve to their own table.
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { KnowledgeIndexEvidenceFilter, KnowledgeIndexStatusFilter } from "@knotebook/shared";
 import type { DbOrTx } from "../db/tx.js";
 import { noteKnowledge, noteKnowledgeState, noteStates, notes } from "../db/schema.js";
@@ -22,9 +22,12 @@ export interface KnowledgeIndexFilters {
   evidence: KnowledgeIndexEvidenceFilter | null;
 }
 
+// Rows from the previous extractor can still hold "noVerifiedDate", which is part of needs review.
+const iconsOf = (status: KnowledgeIndexStatusFilter): string[] => (status === "needsReview" ? ["needsReview", "noVerifiedDate"] : [status]);
+
 function entryConditions(filters: Pick<KnowledgeIndexFilters, "status" | "evidence">): SQL[] {
   const out: SQL[] = [];
-  if (filters.status !== null) out.push(sql`nk.icon = ${filters.status}`);
+  if (filters.status !== null) out.push(sql`nk.icon in (${sql.join(iconsOf(filters.status).map((i) => sql`${i}`), sql`, `)})`);
   if (filters.evidence !== null) out.push(sql`nk.evidence = ${filters.evidence === "unconfirmed" ? "" : filters.evidence}`);
   return out;
 }
@@ -32,7 +35,7 @@ function entryConditions(filters: Pick<KnowledgeIndexFilters, "status" | "eviden
 /** The same icon/evidence conditions as `entryConditions`, for the `note_knowledge` select that loads the rows. */
 export function entryFilterWhere(filters: Pick<KnowledgeIndexFilters, "status" | "evidence">): SQL | undefined {
   return and(
-    filters.status === null ? undefined : eq(noteKnowledge.icon, filters.status),
+    filters.status === null ? undefined : inArray(noteKnowledge.icon, iconsOf(filters.status)),
     filters.evidence === null ? undefined : eq(noteKnowledge.evidence, filters.evidence === "unconfirmed" ? "" : filters.evidence),
   );
 }

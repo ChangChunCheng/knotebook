@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BlockNoteEditor } from "@blocknote/core";
-import { KNOWLEDGE_PROP_NAMES, createHeadlessNoteSchema } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, KNOWLEDGE_PROP_NAMES, createHeadlessNoteSchema } from "@knotebook/shared";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { toNoteMarkdown } from "../../src/notes/editing/read.js";
 import { preUpgradeSchema } from "../helpers/knowledge-docs.js";
@@ -8,7 +8,7 @@ import { preUpgradeSchema } from "../helpers/knowledge-docs.js";
 const rt = new EditingRuntime({ baseUrl: "http://localhost/" });
 rt.installGlobals();
 
-const VALUES = ["alice-when-7f3e", "bob-conclusion-91c2", "2031-04-05", "k_5a5a5a5a", "tested", "outdated", "k_6b6b6b6b"];
+const VALUES = ["alice-when-7f3e", "bob-conclusion-91c2", "2031-04-05", "k_5a5a5a5a", "tested", "outdated", "k_6b6b6b6b", "carol-team-4d1e"];
 const KNOWLEDGE_PROPS = {
   knowledgeId: "k_5a5a5a5a",
   knowledgeWhen: "alice-when-7f3e",
@@ -17,6 +17,7 @@ const KNOWLEDGE_PROPS = {
   knowledgeVerified: "2031-04-05",
   knowledgeStatus: "outdated",
   knowledgeSupersededBy: "k_6b6b6b6b",
+  knowledgeCustom: '{"team":"carol-team-4d1e"}',
 };
 
 const plainBlocks = () => [
@@ -34,7 +35,7 @@ function exportAll(editor: AnyEditor) {
     external: editor.blocksToHTMLLossy(doc),
     internal: editor.blocksToFullHTML(doc),
     lossyMarkdown: editor.blocksToMarkdownLossy(doc),
-    noteMarkdown: toNoteMarkdown(editor, doc, new Map()),
+    noteMarkdown: toNoteMarkdown(editor, doc, new Map(), DEFAULT_KNOWLEDGE_FIELD_VIEW),
   };
 }
 

@@ -17,15 +17,21 @@ import {
   targetFromList,
   applyKnowledgeComments,
   findStrayKnowledgeProps,
-  knowledgeWriteProblem,
+  knowledgeMemberIdsIn,
+  knowledgeMemberTokensIn,
   normalizeKnowledgeRefs,
   readKnowledgeInfo,
   resolveKnowledgeForWrite,
   restoreKnowledgeProps,
+  sanitizeKnowledgeForWrite,
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   KNOWLEDGE_ATTR_IN_TAG,
   PLAINTEXT_TAG,
   type KnowledgeBlockShape,
+  type KnowledgeFieldView,
+  type KnowledgeIgnoredItem,
   type KnowledgeInfo,
+  type KnowledgeMemberMaps,
   type KnowledgeProps,
   type MarkdownPlacement,
   type MarkdownSyntaxError,
@@ -49,27 +55,52 @@ export interface ApplyDeps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple, repo convention
 type AnyBlock = Block<any, any, any>;
 
-/** `replaced`: the top-level blocks the result will replace; `current`: the first knowledge heading of each id in the whole note. */
+/**
+ * `replaced`: the top-level blocks the result will replace; `current`: the first knowledge heading of each id in the whole note.
+ * `fields` must be the settings the request's markdown was written with: a field left out of it reads as cleared.
+ */
 export interface AiKnowledgeContext {
   noteId: string;
   replaced: readonly AnyBlock[];
   current: ReadonlyMap<string, KnowledgeInfo>;
+  fields: KnowledgeFieldView;
+  /** `handleOf` as the request was written with; `idOf` for the member tokens in the result. Without it only the stored member is kept. */
+  members?: KnowledgeMemberMaps;
 }
 
-export function aiKnowledgeContext(editor: Pick<AnyEditor, "document" | "getBlock">, noteId: string, anchorBlockIds: readonly string[]): AiKnowledgeContext {
+export function aiKnowledgeContext(
+  editor: Pick<AnyEditor, "document" | "getBlock">,
+  noteId: string,
+  anchorBlockIds: readonly string[],
+  fields: KnowledgeFieldView,
+  members?: KnowledgeMemberMaps,
+): AiKnowledgeContext {
   const current = new Map<string, KnowledgeInfo>();
   for (const b of editor.document) {
     const info = b.type === "heading" ? readKnowledgeInfo(b.props) : null;
     if (info !== null && !current.has(info.id)) current.set(info.id, info);
   }
   const replaced = anchorBlockIds.map((id) => editor.getBlock(id)).filter((b): b is AnyBlock => b !== undefined);
-  return { noteId, replaced, current };
+  return { noteId, replaced, current, fields, ...(members ? { members } : {}) };
+}
+
+export function aiRequestMemberIds(blocks: readonly AnyBlock[], fields: KnowledgeFieldView): string[] {
+  const infos = blocks.flatMap((b) => {
+    const info = b.type === "heading" ? readKnowledgeInfo(b.props) : null;
+    return info ? [info] : [];
+  });
+  return knowledgeMemberIdsIn(infos, fields);
+}
+
+export function replacesKnowledge(replaced: readonly AnyBlock[]): boolean {
+  return replaced.some((b) => b.type === "heading" && readKnowledgeInfo(b.props) !== null);
 }
 
 /** buildPreview and applyAiResult must use this same blocks array, so what is applied is exactly what was previewed. */
 export interface PreparedResult {
   blocks: AnyBlock[];
   unboundCount: number;
+  ignoredKnowledge: KnowledgeIgnoredItem[];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple
@@ -77,13 +108,40 @@ function hasColumnBlock(blocks: readonly { type?: string; children?: readonly an
   return blocks.some((b) => COLUMN_BLOCK_TYPES.has(b.type as string) || (b.children ? hasColumnBlock(b.children) : false));
 }
 
+/** A result parsed but not yet checked against the note's knowledge; see finishAiResult. */
+export interface ParsedAiResult {
+  blocks: AnyBlock[];
+  unboundCount: number;
+  placement: MarkdownPlacement;
+  hasComments: boolean;
+  unknownKeys: KnowledgeIgnoredItem[];
+}
+
+type AiResultInvalid = { invalid: MarkdownSyntaxError | "unsupported_color" | "invalid_knowledge" };
+
+export function prepareAiResult(editor: AnyEditor, markdown: string, deps: ApplyDeps): PreparedResult | { empty: true } | AiResultInvalid {
+  const parsed = parseAiResult(editor, markdown, deps);
+  if ("empty" in parsed || "invalid" in parsed) return parsed;
+  return finishAiResult(parsed, deps.knowledge);
+}
+
+/** Member tokens the result writes, lowercased; resolve them into `idOf` before finishAiResult. */
+export function aiResultMemberTokens(parsed: ParsedAiResult, fields: KnowledgeFieldView): string[] {
+  if (parsed.placement !== "top" || !parsed.hasComments) return [];
+  return knowledgeMemberTokensIn(parsed.blocks as unknown as readonly KnowledgeBlockShape[], fields);
+}
+
+export function finishAiResult(parsed: ParsedAiResult, knowledge: AiKnowledgeContext | undefined): PreparedResult | { invalid: "invalid_knowledge" } {
+  const { blocks, unboundCount } = parsed;
+  if (parsed.placement !== "top") return { blocks, unboundCount, ignoredKnowledge: [] };
+  const resolved = resolveKnowledge(blocks, parsed.hasComments, knowledge);
+  if (resolved === null) return { invalid: "invalid_knowledge" };
+  return { blocks: resolved.blocks, unboundCount, ignoredKnowledge: [...parsed.unknownKeys, ...resolved.ignored] };
+}
+
 // Same pipeline and order as the server's parseMarkdownForNote. Blank input returns `{ empty: true }`: it
 // parses to one empty paragraph, which would otherwise replace the original text.
-export function prepareAiResult(
-  editor: AnyEditor,
-  markdown: string,
-  deps: ApplyDeps,
-): PreparedResult | { empty: true } | { invalid: MarkdownSyntaxError | "unsupported_color" | "invalid_knowledge" } {
+export function parseAiResult(editor: AnyEditor, markdown: string, deps: Omit<ApplyDeps, "knowledge">): ParsedAiResult | { empty: true } | AiResultInvalid {
   const syntax = checkNoteMarkdownSyntax(markdown, deps.placement);
   if (!syntax.ok) return { invalid: syntax.error };
   // No block-count precheck: in-app AI has no block limit.
@@ -93,12 +151,13 @@ export function prepareAiResult(
   let html = syntax.html;
   let assigned: ReadonlySet<string> = new Set();
   let written: readonly KnowledgeProps[] = [];
+  let unknownKeys: KnowledgeIgnoredItem[] = [];
   if (PLAINTEXT_TAG.test(html)) {
     if (KNOWLEDGE_ATTR_IN_TAG.test(html)) return { invalid: "unsupported_block" };
   } else {
     const comments = applyKnowledgeComments(root, deps.placement, html);
     if ("error" in comments) return { invalid: "invalid_knowledge" };
-    ({ assigned, props: written } = comments);
+    ({ assigned, props: written, unknownKeys } = comments);
     // premergedHtml returns its input when nothing merges, so DOM edits have to be serialized first.
     if (comments.changed) html = root.innerHTML;
   }
@@ -126,15 +185,17 @@ export function prepareAiResult(
   );
   // Resolved only from the loaded notes cache, with no fallback lookup.
   const [linked] = convertSiteLinks(rebound, (_href, p) => targetFromList(p.path, deps.notes) ?? null, deps.siteOrigin ?? window.location.origin);
-  const blocks = deps.placement === "top" ? resolveKnowledge(linked, written.length > 0, deps.knowledge) : linked;
-  if (blocks === null) return { invalid: "invalid_knowledge" };
-  return { blocks, unboundCount };
+  return { blocks: linked, unboundCount, placement: deps.placement, hasComments: written.length > 0, unknownKeys };
 }
 
 // Same steps as the server's write path. Skipped when the result sets no knowledge and nothing in the replaced range had any, so such a selection is written exactly as before.
-function resolveKnowledge(blocks: AnyBlock[], hasComments: boolean, context: AiKnowledgeContext | undefined): AnyBlock[] | null {
+function resolveKnowledge(
+  blocks: AnyBlock[],
+  hasComments: boolean,
+  context: AiKnowledgeContext | undefined,
+): { blocks: AnyBlock[]; ignored: KnowledgeIgnoredItem[] } | null {
   const replaced = context?.replaced ?? [];
-  if (!hasComments && !replaced.some((b) => b.type === "heading" && readKnowledgeInfo(b.props) !== null)) return blocks;
+  if (!hasComments && !replacesKnowledge(replaced)) return { blocks, ignored: [] };
   const shaped = blocks as unknown as readonly KnowledgeBlockShape[];
   const resolved = resolveKnowledgeForWrite({
     before: replaced as unknown as readonly KnowledgeBlockShape[],
@@ -142,8 +203,15 @@ function resolveKnowledge(blocks: AnyBlock[], hasComments: boolean, context: AiK
     keep: context !== undefined,
     taken: new Set(context?.current.keys()),
   });
-  if (knowledgeWriteProblem(resolved.blocks, context?.current ?? new Map(), context?.noteId ?? null) !== null) return null;
-  return resolved.blocks as unknown as AnyBlock[];
+  const sanitized = sanitizeKnowledgeForWrite({
+    after: resolved.blocks,
+    current: context?.current ?? new Map(),
+    noteId: context?.noteId ?? null,
+    fields: context?.fields ?? DEFAULT_KNOWLEDGE_FIELD_VIEW,
+    ...(context?.members ? { members: context.members } : {}),
+  });
+  if (sanitized.problem !== null) return null;
+  return { blocks: sanitized.blocks as unknown as AnyBlock[], ignored: sanitized.ignored };
 }
 
 export type ApplyOutcome =

@@ -4,6 +4,7 @@ import type { AiPreview } from "@/ai/preview";
 import { Button } from "@/components/ui/button";
 import { VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
 import { useAiSession, type AiSessionState } from "./AiSession";
+import { SelectionAiIgnored } from "./SelectionAiIgnored";
 
 // Load only this way: a static import moves DiffEditor and the diff package into the NotePage chunk.
 const SelectionAiPreview = lazy(() =>
@@ -55,6 +56,7 @@ export function SelectionAiResult({ state, anchorOk, run }: { state: DoneState; 
           <SelectionAiPreview key={previewKey} preview={state.preview} onReady={setReadyFor} />
         </VersionsLazyBoundary>
       </div>
+      {state.prepared.ignoredKnowledge.length > 0 && <SelectionAiIgnored items={state.prepared.ignoredKnowledge} />}
       <div className="flex flex-wrap justify-end gap-2 border-t border-border px-3 py-2">
         {state.applied !== null ? (
           <>

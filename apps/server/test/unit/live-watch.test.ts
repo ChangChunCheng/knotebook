@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { YDOC_FRAGMENT } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, YDOC_FRAGMENT } from "@knotebook/shared";
 import { LiveWatch, containerItems, type MergeGuard } from "../../src/notes/editing/live-watch.js";
 import { EditingRuntime } from "../../src/notes/editing/runtime.js";
 import { EditorSession } from "../../src/notes/editing/session.js";
@@ -142,13 +142,13 @@ describe("content merged after the guard lets through", () => {
     const o = await rt.runDoc("u", { kind: "outline", state: st });
     if (o === "too_complex") throw new Error("outline");
     const b = o.outline.find(x => x.heading === "B")!;
-    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", state: new Uint8Array(st), op: "replace_section", sectionId: b.sectionId, ifMatch: b.fingerprint, blocks: blocks as never });
+    const r = await rt.runDoc("u", { kind: "edit", noteId: "00000000-0000-4000-8000-000000000000", fields: DEFAULT_KNOWLEDGE_FIELD_VIEW, state: new Uint8Array(st), op: "replace_section", sectionId: b.sectionId, ifMatch: b.fingerprint, blocks: blocks as never });
     if (r === "too_complex" || !r.ok) throw new Error("edit");
     await browser(live, user);
     const conflict = watch.conflicts(r.post.guard);
     watch.stop();
     if (!conflict) Y.applyUpdate(live, r.post.diff);
-    const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(live), wantShown: false });
+    const md = await rt.runDoc("u", { kind: "read", state: Y.encodeStateAsUpdate(live), wantShown: false, fields: DEFAULT_KNOWLEDGE_FIELD_VIEW });
     if (md === "too_complex" || typeof md.result === "string" || !("markdown" in md.result)) throw new Error("read");
     return { conflict, markdown: md.result.markdown, baseTop: topIds(doc), liveTop: topIds(live), liveIds: allBlockIds(live) };
   }

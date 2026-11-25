@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { markdownToHTML } from "@blocknote/core";
 import {
+  DEFAULT_KNOWLEDGE_FIELD_VIEW,
   KNOWLEDGE_PENDING_ID_PREFIX,
   applyKnowledgeComments,
   checkNoteMarkdownSyntax,
@@ -28,7 +29,7 @@ const ok = (md: string): ParsedMarkdown => {
   if (!("blocks" in r)) throw new Error(`parse failed: ${JSON.stringify(r)}`);
   return r;
 };
-const KNOWLEDGE_KEYS = ["knowledgeId", "knowledgeWhen", "knowledgeConclusion", "knowledgeEvidence", "knowledgeVerified", "knowledgeStatus", "knowledgeSupersededBy"];
+const KNOWLEDGE_KEYS = ["knowledgeId", "knowledgeWhen", "knowledgeConclusion", "knowledgeEvidence", "knowledgeVerified", "knowledgeStatus", "knowledgeSupersededBy", "knowledgeCustom"];
 const knowledgeOf = (b: AnyBlock): Record<string, string> => Object.fromEntries(KNOWLEDGE_KEYS.filter(k => (b.props?.[k] ?? "") !== "").map(k => [k, b.props[k] as string]));
 const anyKnowledge = (blocks: AnyBlock[]): boolean => blocks.some(b => Object.keys(knowledgeOf(b)).length > 0 || anyKnowledge(b.children ?? []));
 const COMMENT = (id = "k_8f3a2c1d", when = "alice reads this") => `<!-- knotebook:knowledge\nid: ${id}\nwhen: ${when}\n-->`;
@@ -138,6 +139,20 @@ describe("parseMarkdownForNote with knowledge comments", () => {
     expect(r).toMatchObject({ error: "invalid_knowledge", knowledge: { heading: long } });
   });
 
+  it("a key this version does not know does not fail the parse and is listed in ignoredKnowledge; x- lines become the custom prop", () => {
+    const r = ok("## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nOwner: x\nx-team: \"a --\\u003e b\"\nx-owner: bob\nx-Bad: y\nx-empty:\nwhen: w\n-->\n\nbody\n");
+    expect(knowledgeOf(r.blocks[0])).toEqual({ knowledgeId: "k_8f3a2c1d", knowledgeWhen: "w", knowledgeCustom: '{"owner":"bob","team":"a --> b"}' });
+    expect(r.ignoredKnowledge).toEqual([
+      { heading: "D1", key: "Owner", value: "x", reason: "unknown_field" },
+      { heading: "D1", key: "x-Bad", value: "y", reason: "unknown_field" },
+    ]);
+  });
+
+  it("markdown whose comments have only known keys, or no comments, ignores nothing", () => {
+    expect(ok(`## D1\n${COMMENT()}\n\nbody\n`).ignoredKnowledge).toEqual([]);
+    expect(ok("plain\n").ignoredKnowledge).toEqual([]);
+  });
+
   it("values are not checked at parse time: evidence guess and a 300-character when go into the props as written", () => {
     const when = "w".repeat(300);
     const r = ok(`## D1\n<!-- knotebook:knowledge\nid: k_8f3a2c1d\nwhen: ${when}\nevidence: guess\nstatus: current\nverified: 2026-02-30\n-->\n\nbody\n`);
@@ -167,10 +182,11 @@ describe("parseMarkdownForNote with knowledge comments", () => {
   it("every tricky value read out as a comment comes back as the same props", () => {
     const values = ["a --> b", "a --!> b", "x\ny", "x\r\ny", " lead", "trail ", '"quoted" start', "C:\\Users\\alice", "key: value: more", "中文 與 emoji 😀", "a\u2028b", "a\u0085b", "p | q", "<!-- inner", "<b>x</b> & &amp;", "a -> b"];
     for (const v of values) {
-      const info: KnowledgeInfo = { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-10-20", status: "unverified", supersededBy: "k_00000001" };
-      const r = ok(`## D1\n${formatKnowledgeComment(info)}\n\nbody\n`);
+      const info: KnowledgeInfo = { id: "k_8f3a2c1d", when: v, conclusion: v, evidence: "docs", verified: "2026-10-20", status: "unverified", supersededBy: "k_00000001", custom: {} };
+      const r = ok(`## D1\n${formatKnowledgeComment(info, DEFAULT_KNOWLEDGE_FIELD_VIEW)}\n\nbody\n`);
+      // The status comes back by its outside name; the write step maps it to the stored one.
       expect(knowledgeOf(r.blocks[0]), JSON.stringify(v)).toEqual({
-        knowledgeId: info.id, knowledgeWhen: v, knowledgeConclusion: v, knowledgeEvidence: "docs", knowledgeVerified: "2026-10-20", knowledgeStatus: "unverified", knowledgeSupersededBy: "k_00000001",
+        knowledgeId: info.id, knowledgeWhen: v, knowledgeConclusion: v, knowledgeEvidence: "docs", knowledgeVerified: "2026-10-20", knowledgeStatus: "needs-verify", knowledgeSupersededBy: "k_00000001",
       });
       expect(r.blocks.length).toBe(2);
     }
@@ -179,7 +195,7 @@ describe("parseMarkdownForNote with knowledge comments", () => {
   it("values at the length limits and made of CJK and emoji survive", () => {
     const when = `${"測".repeat(199)}😀`;
     const conclusion = "結".repeat(300);
-    const r = ok(`## D1\n${formatKnowledgeComment({ id: "k_8f3a2c1d", when, conclusion, evidence: "", verified: "", status: "", supersededBy: "" })}\n\nbody\n`);
+    const r = ok(`## D1\n${formatKnowledgeComment({ id: "k_8f3a2c1d", when, conclusion, evidence: "", verified: "", status: "", supersededBy: "", custom: {} }, DEFAULT_KNOWLEDGE_FIELD_VIEW)}\n\nbody\n`);
     expect(knowledgeOf(r.blocks[0])).toMatchObject({ knowledgeWhen: when, knowledgeConclusion: conclusion });
   });
 
@@ -236,7 +252,20 @@ describe("applyKnowledgeComments", () => {
   const rootOf = (html: string): Element => syntaxCheckRoot(html);
   it("returns unchanged without touching the DOM when neither a knowledge attribute nor a mark is in the html", () => {
     const html = "<h2>A</h2><!-- other --><p>b</p>";
-    expect(applyKnowledgeComments(rootOf(html), "top", html)).toEqual({ changed: false, ignored: 0, assigned: new Set(), props: [] });
+    expect(applyKnowledgeComments(rootOf(html), "top", html)).toEqual({ changed: false, ignored: 0, assigned: new Set(), props: [], unknownKeys: [] });
+  });
+  it("lists every key it does not know under the heading's plain text, and still sets the rest", () => {
+    const html = `<h2><b>A</b> b</h2><!-- knotebook:knowledge\nid: k_8f3a2c1d\nOwner: x\nx-owner: "bob"\nx-Owner: y\nwhen: w\n--><h2>C</h2><!-- knotebook:knowledge\nmood: happy\n-->`;
+    const r = applyKnowledgeComments(rootOf(html), "top", html);
+    expect(r).toMatchObject({
+      changed: true,
+      unknownKeys: [
+        { heading: "A b", key: "Owner", value: "x", reason: "unknown_field" },
+        { heading: "A b", key: "x-Owner", value: "y", reason: "unknown_field" },
+        { heading: "C", key: "mood", value: "happy", reason: "unknown_field" },
+      ],
+    });
+    expect((r as { props: readonly Record<string, string>[] }).props[0]).toMatchObject({ knowledgeId: "k_8f3a2c1d", knowledgeWhen: "w", knowledgeCustom: '{"owner":"bob"}' });
   });
   it("nested placement ignores every comment", () => {
     const html = `<h2>A</h2><!-- knotebook:knowledge\nid: k_8f3a2c1d\n-->`;

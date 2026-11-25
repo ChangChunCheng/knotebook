@@ -6,6 +6,7 @@ import { FixedWindowLimiter } from "../src/http/rate-limit.js";
 import { buildTestApp, freshLimiters } from "./helpers.js";
 import { cookieOf, seedGroup, seedShare, seedUser } from "./group-helpers.js";
 import { markTrashed } from "./trash-helpers.js";
+import { knowledgeFieldOverrides } from "../src/db/schema.js";
 import { kh, kid, seedKnowledgeNote } from "./knowledge-helpers.js";
 
 const UNKNOWN = "00000000-0000-4000-8000-00000000dead";
@@ -140,5 +141,22 @@ describe("resolve", () => {
     expect((await resolve(app, alice.id, shared.id, kid(2))).statusCode).toBe(200);
     expect((await resolve(app, outsider.id, inGroup.id, kid(1))).statusCode).toBe(404);
     expect((await resolve(app, outsider.id, shared.id, kid(2))).statusCode).toBe(404);
+  });
+});
+
+
+describe("field settings", () => {
+  it("a turned-off when to read or conclusion is not searched, and a turned-off conclusion is returned empty", async () => {
+    const { app, db } = await buildTestApp();
+    const alice = await seedUser(db);
+    await seedKnowledgeNote(db, { ownerId: alice.id }, "Plain", [heading(1, "alpha", { when: "needle when" }), heading(2, "beta", { conclusion: "needle conclusion" })]);
+    expect(headings(await found(app, alice.id, "?q=needle")).sort()).toEqual(["alpha", "beta"]);
+    await db.insert(knowledgeFieldOverrides).values({ groupId: null, fieldRef: "when", optionKey: "", enabled: false });
+    expect(headings(await found(app, alice.id, "?q=needle"))).toEqual(["beta"]);
+    await db.insert(knowledgeFieldOverrides).values({ groupId: null, fieldRef: "conclusion", optionKey: "", enabled: false });
+    expect(await found(app, alice.id, "?q=needle")).toEqual([]);
+    const note = await seedKnowledgeNote(db, { ownerId: alice.id }, "Other", [heading(3, "gamma", { conclusion: "hidden" })]);
+    const res = await resolve(app, alice.id, note.id, kid(3));
+    expect(res.json()).toMatchObject({ heading: "gamma", conclusion: "" });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { KNOWLEDGE_EVIDENCE } from "./knowledge.js";
+import { KNOWLEDGE_BUILTIN_EVIDENCE } from "./knowledge.js";
 import type { KnowledgeIconKind } from "./knowledge-list.js";
 import {
   INDEX_COLLATOR_LOCALE,
@@ -13,7 +13,7 @@ import {
   KNOWLEDGE_INDEX_TAG_FILTER_MAX,
   KNOWLEDGE_REFS_LIMIT,
   isKnowledgeIndexEvidenceFilter,
-  isKnowledgeIndexStatusFilter,
+  normalizeKnowledgeIndexStatusFilter,
   orderIndexNotes,
   type KnowledgeIndexFolderDto,
 } from "./knowledge-index.js";
@@ -24,21 +24,26 @@ const note = (id: string, title: string, folderId: string | null = null) => ({ i
 describe("knowledge index constants and guards", () => {
   it("KNOWLEDGE_ICON_KINDS lists every KnowledgeIconKind exactly once", () => {
     expectTypeOf<Exclude<KnowledgeIconKind, (typeof KNOWLEDGE_ICON_KINDS)[number]>>().toEqualTypeOf<never>();
-    expect(new Set(KNOWLEDGE_ICON_KINDS).size).toBe(4);
+    expect([...KNOWLEDGE_ICON_KINDS]).toEqual(["outdated", "needsReview", "verified"]);
   });
-  it("status filters are the three non-verified icon kinds", () => {
-    expect([...KNOWLEDGE_INDEX_STATUS_FILTERS]).toEqual(["noVerifiedDate", "needsReview", "outdated"]);
+  it("status filters are the three icon kinds", () => {
+    expect([...KNOWLEDGE_INDEX_STATUS_FILTERS]).toEqual(["verified", "needsReview", "outdated"]);
     expect(KNOWLEDGE_INDEX_STATUS_FILTERS.every((s) => (KNOWLEDGE_ICON_KINDS as readonly string[]).includes(s))).toBe(true);
   });
-  it("evidence filters are KNOWLEDGE_EVIDENCE plus unconfirmed", () => {
-    expect([...KNOWLEDGE_INDEX_EVIDENCE_FILTERS]).toEqual([...KNOWLEDGE_EVIDENCE, "unconfirmed"]);
+  it("evidence filters are KNOWLEDGE_BUILTIN_EVIDENCE plus unconfirmed", () => {
+    expect([...KNOWLEDGE_INDEX_EVIDENCE_FILTERS]).toEqual([...KNOWLEDGE_BUILTIN_EVIDENCE, "unconfirmed"]);
   });
-  it("the guards accept only listed values", () => {
-    expect(isKnowledgeIndexStatusFilter("needsReview")).toBe(true);
-    expect(isKnowledgeIndexStatusFilter("verified")).toBe(false);
+  it("the guards accept only listed values, and an old noVerifiedDate status reads as needs review", () => {
+    expect(normalizeKnowledgeIndexStatusFilter("needsReview")).toBe("needsReview");
+    expect(normalizeKnowledgeIndexStatusFilter("verified")).toBe("verified");
+    expect(normalizeKnowledgeIndexStatusFilter("noVerifiedDate")).toBe("needsReview");
+    expect(normalizeKnowledgeIndexStatusFilter("needs-verify")).toBeNull();
+    expect(normalizeKnowledgeIndexStatusFilter(undefined)).toBeNull();
     expect(isKnowledgeIndexEvidenceFilter("unconfirmed")).toBe(true);
+    expect(isKnowledgeIndexEvidenceFilter("vendor-doc")).toBe(true);
     expect(isKnowledgeIndexEvidenceFilter("")).toBe(false);
-    expect(isKnowledgeIndexStatusFilter(undefined)).toBe(false);
+    expect(isKnowledgeIndexEvidenceFilter("Docs")).toBe(false);
+    expect(isKnowledgeIndexEvidenceFilter(["docs"])).toBe(false);
   });
   it("limits", () => {
     expect([KNOWLEDGE_INDEX_MAX, KNOWLEDGE_INDEX_NOTE_MAX, KNOWLEDGE_INDEX_HEADING_MAX, KNOWLEDGE_INDEX_TAG_FILTER_MAX, KNOWLEDGE_REFS_LIMIT]).toEqual([

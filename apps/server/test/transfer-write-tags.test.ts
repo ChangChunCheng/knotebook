@@ -507,10 +507,10 @@ describe("a new-note file with tags", () => {
     await s.ctx.destroy();
   });
 
-  it("a file whose comment says outdated without superseded_by is 400 invalid_knowledge naming the heading and creates no note", async () => {
+  it("a file whose comment has a malformed id is 400 invalid_knowledge naming the heading and creates no note", async () => {
     const s = await scene();
     const before = (await s.ctx.db.select({ id: notes.id }).from(notes)).length;
-    const r = await s.put(NEW('tags: ["x"]', "## Old way\n<!-- knotebook:knowledge\nwhen: w\nstatus: outdated\n-->\n\nx"));
+    const r = await s.put(NEW('tags: ["x"]', "## Old way\n<!-- knotebook:knowledge\nid: K_bad\nwhen: w\n-->\n\nx"));
     expect(r.statusCode, r.body).toBe(400);
     expect(errOf(r).code).toBe("invalid_knowledge");
     expect(errOf(r).message).toContain('"Old way"');

@@ -1,11 +1,14 @@
-import type { KnowledgeIndexDto, KnowledgeIndexEntryDto, KnowledgeIndexNoteDto, NoteTagDto } from "@knotebook/shared";
+import { DEFAULT_KNOWLEDGE_FIELD_VIEW, knowledgeStateOf, type KnowledgeIndexDto, type KnowledgeIndexEntryDto, type KnowledgeIndexNoteDto, type NoteTagDto } from "@knotebook/shared";
 
 export function indexNote(over: Partial<KnowledgeIndexNoteDto> & { id: string }): KnowledgeIndexNoteDto {
   return { title: over.id, path: `/n/alice/${over.id}`, folderId: null, tags: [], capped: false, ...over };
 }
 
+/** `state` follows `status` and `verified` unless given. */
 export function indexEntry(over: Partial<KnowledgeIndexEntryDto> & { noteId: string; knowledgeId: string }): KnowledgeIndexEntryDto {
+  const verified = over.verified === undefined ? "2026-01-01" : over.verified;
   return {
+    state: knowledgeStateOf({ status: over.status ?? "", verified: verified ?? "" }),
     blockId: `b_${over.knowledgeId}`,
     ord: 0,
     level: 2,
@@ -33,6 +36,7 @@ export function indexDto(over: Partial<KnowledgeIndexDto> = {}): KnowledgeIndexD
     tagOptions: [],
     truncated: false,
     backfillPending: false,
+    fields: DEFAULT_KNOWLEDGE_FIELD_VIEW.fields,
     ...over,
   };
 }

@@ -16,6 +16,8 @@ export * from "./paths.js";
 export * from "./note-schema-config.js";
 export * from "./knowledge-schema.js";
 export * from "./knowledge.js";
+export * from "./knowledge-fields.js";
+export * from "./knowledge-custom.js";
 export * from "./knowledge-list.js";
 export * from "./columns.js";
 export * from "./note-sections.js";

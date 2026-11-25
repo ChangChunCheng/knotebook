@@ -187,9 +187,9 @@ export function notesRoutes(deps: NotesRouteDeps) {
         // Re-read: the insert's returning predates the disconnect that stamped lastEdited. If the row vanished meanwhile, fall back to the insert's returning rather than 500
         // (the content was written; a retry would create a second note), and don't assemble the stamp here (its update only warns, so the value could lie).
         const fresh = await loadNoteWithOwner(note.id, userId);
-        return reply
-          .code(201)
-          .send(toNoteDto(fresh ?? { ...note, ownerHandle: target.ownerHandle, editorHandle: null, groupName: target.groupName, viewerFolderId: note.folderId }, target.access));
+        const dto = toNoteDto(fresh ?? { ...note, ownerHandle: target.ownerHandle, editorHandle: null, groupName: target.groupName, viewerFolderId: note.folderId }, target.access);
+        const ignored = out.knowledge?.ignored ?? [];
+        return reply.code(201).send(ignored.length > 0 ? { ...dto, knowledgeIgnored: ignored } : dto);
       }
 
       // `title` absent is left out of values so the DB default and untitled-<uuid8> apply (single source: schema.ts).

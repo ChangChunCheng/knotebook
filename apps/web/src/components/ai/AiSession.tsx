@@ -18,12 +18,28 @@ import { fetchAiActions, streamAiAction } from "@/api/ai";
 import { ApiFail } from "@/api/client";
 import { useNotes } from "@/api/notes";
 import { sameNoteId } from "@/lib/note-id";
-import { aiKnowledgeContext, anchorPlacement, applyAiResult, expandAnchorForColumns, hasNonTextBlock, prepareAiResult, revertAiResult, type PreparedResult } from "@/ai/apply";
+import { fetchKnowledgeMemberHandles, fetchKnowledgeMemberIds } from "@/api/knowledge-members";
+import {
+  aiKnowledgeContext,
+  aiRequestMemberIds,
+  aiResultMemberTokens,
+  anchorPlacement,
+  applyAiResult,
+  expandAnchorForColumns,
+  finishAiResult,
+  hasNonTextBlock,
+  parseAiResult,
+  replacesKnowledge,
+  revertAiResult,
+  type ParsedAiResult,
+  type PreparedResult,
+} from "@/ai/apply";
 import { captureAnchor, verifyAnchor, type AiAnchor } from "@/ai/anchor";
 import { estimateBlocksBytes } from "@/lib/note-size-guard";
 import { aiMarkdownOf } from "@/ai/note-markdown";
 import { buildPreview, isNoChange, stripTextWrapper, type AiPreview } from "@/ai/preview";
 import { selectionFocus, selectionInsideAnchor, toolbarWouldShow } from "@/ai/selection";
+import { KnowledgeFieldsContext, knowledgeStatusOnlyView, type KnowledgeFieldsValue } from "@/components/knowledge/fields-context";
 import { toast } from "@/components/ui/toast";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote editor generic triple; repo convention is any
@@ -94,6 +110,7 @@ export function useAiSession(): AiSessionValue {
 }
 
 const IDLE_STATE: AiSessionState = { phase: "idle" };
+const MEMBER_LOOKUP_TIMEOUT_MS = 10_000;
 const EMPTY_ACTIONS: AiActionDto[] = [];
 
 type GuardedApply =
@@ -167,6 +184,13 @@ export function AiSessionProvider(props: {
   tRef.current = t;
   const onAutoCloseRef = useRef(onAutoClose);
   onAutoCloseRef.current = onAutoClose;
+  const knowledgeFields = useContext(KnowledgeFieldsContext);
+  const knowledgeFieldsRef = useRef(knowledgeFields);
+  knowledgeFieldsRef.current = knowledgeFields;
+  // A result is checked against the settings its request was written with: a field missing from the request reads as cleared.
+  const requestFieldsRef = useRef(new WeakMap<AiRequest, KnowledgeFieldsValue>());
+  // The handles a request wrote members with: the result writing one back means the stored member, not a name to resolve.
+  const requestHandlesRef = useRef(new WeakMap<AiRequest, ReadonlyMap<string, string>>());
 
   // Doubles as the "is this continuation still current" token: close / a new run replaces it, so a stale continuation no-ops.
   const abortRef = useRef<AbortController | null>(null);
@@ -181,27 +205,28 @@ export function AiSessionProvider(props: {
     setState(IDLE_STATE);
   }, []);
 
-  const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
+  const complete = useCallback((target: AiTarget, request: AiRequest, markdown: string, parsed: ParsedAiResult, idOf: ReadonlyMap<string, string>) => {
     const ed = editorRef.current;
-    const markdown = stripTextWrapper(raw);
-    const prepared = prepareAiResult(ed, markdown, {
-      notes: notesRef.current,
-      placement: anchorPlacement(ed, target.anchor.blockIds),
-      knowledge: aiKnowledgeContext(ed, noteIdRef.current, target.anchor.blockIds),
-    });
-    if ("empty" in prepared) {
-      setState({ phase: "error", target, request, code: "empty_result" });
-      return;
-    }
+    const fields = requestFieldsRef.current.get(request)!;
+    const fieldsReady = fields.status === "ready";
+    // Without the settings no field may take a value (one the site turned off must not be set); headings without a
+    // comment still keep every stored field.
+    const members = { handleOf: requestHandlesRef.current.get(request) ?? new Map<string, string>(), idOf };
+    const knowledge = aiKnowledgeContext(ed, noteIdRef.current, target.anchor.blockIds, fieldsReady ? fields.view : knowledgeStatusOnlyView(), members);
+    const prepared = finishAiResult(parsed, knowledge);
     if ("invalid" in prepared) {
-      setState({ phase: "error", target, request, code: prepared.invalid }); // columns: same validation as MCP
+      setState({ phase: "error", target, request, code: prepared.invalid });
       return;
     }
     // Preview before auto-apply: applying replaces the anchor blocks the preview reads.
     const preview = buildPreview(ed, target.anchor.blockIds, prepared.blocks, isNoChange(markdown, request.text));
     let applied: AiApplied | null = null;
     let notice: "ai.box.rebindNotice" | "ai.box.applyGuardFailed" | null = null;
+    // Ignored knowledge is listed in the preview, which has to be seen before anything is applied. Without the settings,
+    // a range holding knowledge was sent without its comments, so its result is shown before it replaces that knowledge.
     const autoApply =
+      (fieldsReady || !replacesKnowledge(knowledge.replaced)) &&
+      prepared.ignoredKnowledge.length === 0 &&
       request.kind === "quick" &&
       request.applyMode === "direct" &&
       !hasNonTextBlock(ed, target.anchor.blockIds) &&
@@ -223,6 +248,44 @@ export function AiSessionProvider(props: {
     setState({ phase: "done", target, request, prepared, preview, applied });
     if (notice !== null) toast({ title: tRef.current(notice) });
   }, []);
+
+  const finish = useCallback((target: AiTarget, request: AiRequest, raw: string) => {
+    const ed = editorRef.current;
+    const markdown = stripTextWrapper(raw);
+    const parsed = parseAiResult(ed, markdown, { notes: notesRef.current, placement: anchorPlacement(ed, target.anchor.blockIds) });
+    if ("empty" in parsed) {
+      setState({ phase: "error", target, request, code: "empty_result" });
+      return;
+    }
+    if ("invalid" in parsed) {
+      setState({ phase: "error", target, request, code: parsed.invalid }); // columns: same validation as MCP
+      return;
+    }
+    // Every request is built by start(), which records its settings.
+    const fields = requestFieldsRef.current.get(request)!;
+    // Every token is looked up, a stored member's too: the AI may have moved that member to another heading.
+    const tokens = aiResultMemberTokens(parsed, fields.status === "ready" ? fields.view : knowledgeStatusOnlyView());
+    if (tokens.length === 0) {
+      complete(target, request, markdown, parsed, new Map());
+      return;
+    }
+    // Still streaming as far as the box is concerned, so cancel and close reach this lookup through the controller.
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timer = setTimeout(() => controller.abort(), MEMBER_LOOKUP_TIMEOUT_MS);
+    const settle = (idOf: ReadonlyMap<string, string>) => {
+      clearTimeout(timer);
+      if (abortRef.current !== controller) return;
+      abortRef.current = null;
+      try {
+        complete(target, request, markdown, parsed, idOf);
+      } catch {
+        setState((prev) => (prev.phase === "streaming" ? { phase: "error", target, request, code: "internal" } : prev));
+      }
+    };
+    // A failed or timed-out lookup leaves every named member unresolved, which the preview then lists.
+    fetchKnowledgeMemberIds(target.anchor.noteId, tokens, controller.signal).then(settle, () => settle(new Map()));
+  }, [complete]);
 
   const run = useCallback(
     (target: AiTarget, request: AiRequest) => {
@@ -295,15 +358,41 @@ export function AiSessionProvider(props: {
       const blocks = current.target.anchor.blockIds
         .map((id) => ed.getBlock(id))
         .filter((block): block is AnyBlock => block !== undefined);
-      const request: AiRequest = {
-        actionId: action.id,
-        actionName: action.name,
-        kind: action.kind,
-        applyMode: action.applyMode,
-        text: aiMarkdownOf(blocks, titleOf, { knowledge: anchorPlacement(ed, current.target.anchor.blockIds) === "top" }),
-        ...(trimmed !== undefined ? { instruction: trimmed } : {}),
+      const fields = knowledgeFieldsRef.current;
+      const withKnowledge = fields.status === "ready" && anchorPlacement(ed, current.target.anchor.blockIds) === "top";
+      const target = current.target;
+      const memberIds = withKnowledge ? aiRequestMemberIds(blocks, fields.view) : [];
+      const requestOf = (text: string, handleOf: ReadonlyMap<string, string>): AiRequest => {
+        const request: AiRequest = {
+          actionId: action.id,
+          actionName: action.name,
+          kind: action.kind,
+          applyMode: action.applyMode,
+          text,
+          ...(trimmed !== undefined ? { instruction: trimmed } : {}),
+        };
+        requestFieldsRef.current.set(request, fields);
+        requestHandlesRef.current.set(request, handleOf);
+        return request;
       };
-      run(current.target, request);
+      const markdownWith = (handleOf: ReadonlyMap<string, string>) => aiMarkdownOf(blocks, titleOf, withKnowledge ? { knowledge: { fields: fields.view, handleOf } } : {});
+      if (memberIds.length === 0) {
+        run(target, requestOf(markdownWith(new Map()), new Map()));
+        return true;
+      }
+      // Members go to the AI by handle, so those are looked up before the request is written; a failed or timed-out lookup
+      // writes user:<id>. The box shows streaming meanwhile, and cancel or close abort the lookup through the controller.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const timer = setTimeout(() => controller.abort(), MEMBER_LOOKUP_TIMEOUT_MS);
+      setState({ phase: "streaming", target, request: requestOf("", new Map()), partial: "" });
+      const send = (handleOf: ReadonlyMap<string, string>) => {
+        clearTimeout(timer);
+        if (abortRef.current !== controller) return;
+        run(target, requestOf(markdownWith(handleOf), handleOf));
+      };
+      fetchKnowledgeMemberHandles(target.anchor.noteId, memberIds, controller.signal).then(send, () => send(new Map()));
       return true;
     },
     [run, titleOf],

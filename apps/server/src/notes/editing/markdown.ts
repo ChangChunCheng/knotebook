@@ -24,6 +24,7 @@ import {
   syntaxCheckRoot,
   targetFromList,
   topLevelBlockFloor,
+  type KnowledgeIgnoredItem,
   type KnowledgeProblem,
   type KnowledgeProps,
 } from "@knotebook/shared";
@@ -55,6 +56,8 @@ export interface ParsedMarkdown {
   unbound: number;
   /** Knowledge comments that sit where a heading's comment can't (not right under a top-level heading), left out of the blocks. */
   ignoredKnowledgeComments: number;
+  /** Lines of knowledge comments whose key is unknown; the rest of each comment was applied. */
+  ignoredKnowledge: KnowledgeIgnoredItem[];
 }
 
 export function siteOriginOf(baseUrl: string): string {
@@ -82,13 +85,14 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   let assigned: ReadonlySet<string> = new Set();
   let written: readonly KnowledgeProps[] = [];
   let ignoredKnowledgeComments = 0;
+  let ignoredKnowledge: KnowledgeIgnoredItem[] = [];
   if (PLAINTEXT_TAG.test(html)) {
     if (KNOWLEDGE_ATTR_IN_TAG.test(html)) return { error: "unsupported_block", detail: "knowledge_attr" };
     ignoredKnowledgeComments = html.match(/<!--\s*knotebook:knowledge(?=\s|$)/gi)?.length ?? 0;
   } else {
     const knowledge = applyKnowledgeComments(root, "top", html);
     if ("error" in knowledge) return { error: "invalid_knowledge", knowledge: knowledge.error };
-    ({ assigned, props: written, ignored: ignoredKnowledgeComments } = knowledge);
+    ({ assigned, props: written, ignored: ignoredKnowledgeComments, unknownKeys: ignoredKnowledge } = knowledge);
     // The premerge below returns its input when nothing merges, so DOM edits have to be serialized first.
     if (knowledge.changed) html = root.innerHTML;
   }
@@ -124,5 +128,5 @@ export function parseMarkdownForNote(editor: BlockNoteEditor<any, any, any>, mar
   if (count(parsed) > MAX_BLOCKS) return { error: "too_many_blocks" };
   const [rebound, unbound] = rebindWikilinks(parsed, [...candidates], type => editor.schema.blockSchema[type]?.content === "inline");
   const [blocks] = convertSiteLinks(rebound, (_href, p) => targetFromList(p.path, candidates) ?? null, siteOrigin);
-  return { blocks, unbound, ignoredKnowledgeComments };
+  return { blocks, unbound, ignoredKnowledgeComments, ignoredKnowledge };
 }
