@@ -26,8 +26,8 @@ const planDto = (id: string, name: string, quotaBytes: number | null): StoragePl
   id, name, quotaBytes, userCount: 0, groupCount: 1, overQuotaCount: 0, isDefaultForUsers: false, isDefaultForGroups: false, createdAt: T, updatedAt: T,
 });
 const PLANS = { plans: [planDto(BASIC_ID, "Basic", 2147483648), planDto(TIGHT_ID, "Tight", 2 * 1048576)], defaults: { userPlanId: BASIC_ID, groupPlanId: BASIC_ID } };
-const ALPHA: AdminGroupDto = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Alpha", createdAt: T, memberCount: 3, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 1048576, quotaBytes: 2147483648 } };
-const BETA: AdminGroupDto = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Beta", createdAt: T, memberCount: 1, storage: { planId: TIGHT_ID, planName: "Tight", usedBytes: 3 * 1048576, quotaBytes: 2 * 1048576 } };
+const ALPHA: AdminGroupDto = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Alpha", createdAt: T, memberCount: 3, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 1048576, quotaBytes: 2147483648, contentBytes: 0 } };
+const BETA: AdminGroupDto = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Beta", createdAt: T, memberCount: 1, storage: { planId: TIGHT_ID, planName: "Tight", usedBytes: 3 * 1048576, quotaBytes: 2 * 1048576, contentBytes: 4096 } };
 
 type Handler = (url: string, method: string, init?: RequestInit) => Response | Promise<Response> | null;
 function renderGroups(rows: AdminGroupDto[], extra: Handler = () => null) {
@@ -80,12 +80,22 @@ describe("/admin/groups", () => {
     renderGroups([ALPHA, BETA]);
     expect(await screen.findByRole("heading", { level: 1, name: "Groups" })).toBeInTheDocument();
     const beta = await rowByDropdown("Beta");
-    for (const text of ["Beta", "1", new Date(T).toLocaleDateString("en"), "3 MB of 2 MB"]) {
+    for (const text of ["Beta", "1", new Date(T).toLocaleDateString("en"), /^3 MB of 2 MB Notes and history: 4 KB$/]) {
       expect(within(beta).getByRole("cell", { name: text })).toBeInTheDocument();
     }
     expect(within(beta).getByText("3 MB of 2 MB")).toHaveClass("text-destructive");
     expect(selectedValue(within(beta).getByRole("combobox", { name: "Storage plan for Beta" }))).toBe(TIGHT_ID);
     expect(within(await rowByDropdown("Alpha")).getByText("1 MB of 2 GB")).not.toHaveClass("text-destructive");
+  });
+
+  it("second muted line with the notes-and-history size; not red even though Beta is over its limit", async () => {
+    renderGroups([ALPHA, BETA]);
+    const beta = await rowByDropdown("Beta");
+    const line = within(beta).getByTestId("content-bytes");
+    expect(line).toHaveTextContent("Notes and history: 4 KB");
+    expect(line).toHaveClass("text-muted-foreground");
+    expect(line.closest(".text-destructive")).toBeNull();
+    expect(within(await rowByDropdown("Alpha")).getByTestId("content-bytes")).toHaveTextContent("Notes and history: 0 B");
   });
 
   it("table name Groups, column names Name / Members / Created / Storage / Plan", async () => {
@@ -121,7 +131,7 @@ describe("/admin/groups", () => {
   });
 
   it("changing the plan: PATCH {planId}; on success the dropdown and usage cell switch to the new plan, the plan list (member counts) is refetched, personal usage /api/storage isn't touched", async () => {
-    const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648 } };
+    const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648, contentBytes: 0 } };
     const fetchMock = renderGroups([BETA], (url, method) => (url === patchUrl(BETA) && method === "PATCH" ? res(200, updated) : null));
     const select = await screen.findByRole("combobox", { name: "Storage plan for Beta" });
     await chooseOption(select, "Basic");
@@ -159,7 +169,7 @@ describe("/admin/groups", () => {
 
   it("a row's plan isn't in the list -> the dropdown still shows that plan (adds an option), not the first in the list", async () => {
     const NEWPLAN_ID = "99999999-9999-4999-8999-999999999999";
-    const row: AdminGroupDto = { ...ALPHA, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
+    const row: AdminGroupDto = { ...ALPHA, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576, contentBytes: 0 } };
     renderGroups([row]);
     const select = await screen.findByRole("combobox", { name: "Storage plan for Alpha" });
     await waitFor(() => expect(selectedValue(select)).toBe(NEWPLAN_ID));
@@ -206,7 +216,7 @@ describe("cache invalidation of useAssignGroupPlan", () => {
   const invalidated = (client: QueryClient, key: readonly unknown[]) => client.getQueryState(key)!.isInvalidated;
 
   it("success: replaces that row, invalidates the plan list and that group's usage key; doesn't invalidate personal usage, other groups or the group list", async () => {
-    const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648 } };
+    const updated: AdminGroupDto = { ...BETA, storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2147483648, contentBytes: 0 } };
     const { client, result } = setup(() => res(200, updated));
     await act(async () => { await result.current.mutateAsync({ groupId: BETA.id, planId: BASIC_ID }); });
     expect(client.getQueryData<AdminGroupDto[]>(ADMIN_GROUPS_QUERY_KEY)).toEqual([ALPHA, updated]);

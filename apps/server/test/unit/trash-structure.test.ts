@@ -149,7 +149,8 @@ const REGISTRY: Record<string, Disposition> = {
   "routes/notes.ts": { excludes: 2, includes: 1, why: "the pre-read carries no condition; the CTE that follows blocks trashed notes" },
   "routes/public.ts": { excludes: 2 },
   "storage/tx/quota.ts": { includes: 1, why: "storage usage still counts trashed notes" },
-  "storage/usage.ts": { includes: 4, why: "storage usage still counts trashed notes" },
+  // includes: four attachment reads plus six content-size joins (one per table, in the single-space and the all-spaces statement).
+  "storage/usage.ts": { includes: 10, why: "storage and content usage still count trashed notes" },
   // excludes: listSpaceTags counts live notes only; includes: loadNoteTags reads the tags of one note the caller already resolved (a trashed note's tags come back on restore).
   "tags/queries.ts": { excludes: 1, includes: 1, why: "loadNoteTags is keyed by a note id the caller already authorized" },
   // includes: the merge locks and copies tags on every note of the space, trashed ones too.

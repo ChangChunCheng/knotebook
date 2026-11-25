@@ -393,6 +393,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [Storage quotas count attachments and profile pictures only, per space.](./known-limitations/uploads.md)
 - [Removing an image from a note doesn't free its space.](./known-limitations/uploads.md)
 - [Storage usage is the recorded size, not disk usage.](./known-limitations/uploads.md)
+- [The notes and history sizes are display only.](./known-limitations/uploads.md)
 - [A group's By member can credit the wrong person for files from before v0.10.](./known-limitations/uploads.md)
 - [An image block copied from another note into yours doesn't count against your space.](./known-limitations/uploads.md)
 - [Adding attachments to the same space happens one at a time.](./known-limitations/uploads.md)

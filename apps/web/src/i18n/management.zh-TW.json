@@ -422,6 +422,7 @@
     "disable": "停用",
     "disableTitle": "停用此使用者？",
     "disableDescription": "{{email}} 將立即被踢下線，並失去存取權限，直到重新啟用為止。",
+    "storageContent": "筆記與歷史：{{size}}",
     "storage": {
       "title": "儲存方案",
       "description": "方案限制個人空間或群組的檔案總大小（個人空間另計頭貼）。新使用者與新群組套用下方的預設方案；改預設不會影響既有的使用者與群組。",
@@ -463,7 +464,7 @@
     "versions": {
       "title": "版本歷史",
       "autoTitle": "自動儲存版本",
-      "autoDescription": "關閉後所有空間都不會自動儲存版本，仍可手動儲存。版本歷史與筆記文字不佔用儲存空間；檔案與（個人空間的）頭貼才計入配額。",
+      "autoDescription": "關閉後所有空間都不會自動儲存版本，仍可手動儲存。版本歷史與筆記文字不計入容量上限；檔案與（個人空間的）頭貼才計入。",
       "retentionTitle": "自動版本的保留",
       "retentionDescription": "{{keepAll}} 天內的自動版本全部保留；{{dailyUntil}} 天內每天留一版；更早的每週留一版。日與週以 UTC 計算。手動版本不會被清除。",
       "keepAllLabel": "全部保留（天）",
@@ -550,6 +551,10 @@
     "storage": {
       "description": "你個人筆記裡的檔案，加上你的頭貼，佔用的空間。",
       "usageTitle": "用量",
+      "contentTitle": "筆記與歷史",
+      "contentDescription": "筆記內容與版本歷史佔用的空間，不計入容量上限。",
+      "contentNote": "筆記內容",
+      "contentHistory": "版本歷史與備份",
       "byKind": "依類型",
       "byKindDescription": "依類型分組的檔案；頭貼算在影像。",
       "kinds": {
@@ -560,7 +565,7 @@
         "other": "其他"
       },
       "versionsTitle": "版本歷史",
-      "versionsNote": "版本歷史與筆記文字不佔用儲存空間；檔案與（個人空間的）頭貼才計入配額。"
+      "versionsNote": "版本歷史與筆記文字不計入容量上限；檔案與（個人空間的）頭貼才計入。"
     },
     "groups": {
       "overview": "你所屬的群組，以及你在每個群組裡的角色。建立或管理群組都從側欄進行。",

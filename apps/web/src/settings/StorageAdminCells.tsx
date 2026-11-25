@@ -5,19 +5,28 @@ import { ApiFail } from "@/api/client";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { isQuotaReached } from "@/lib/storage-usage";
+import "@/i18n/management-strings";
 
 function errorMessage(t: (key: string, opts?: Record<string, unknown>) => string, err: unknown): string {
   if (err instanceof ApiFail) return t(`errors.${err.code}`, { defaultValue: t("errors.fallback") });
   return t("errors.fallback");
 }
 
-export function StorageCell({ storage }: { storage: { usedBytes: number; quotaBytes: number | null } }) {
+/** The second line is never red: only the first line reflects the limit. */
+export function StorageCell({ storage }: { storage: { usedBytes: number; quotaBytes: number | null; contentBytes: number } }) {
   const { t } = useTranslation();
   const text =
     storage.quotaBytes === null
       ? t("storage.cellUnlimited", { used: formatBytes(storage.usedBytes) })
       : t("storage.cell", { used: formatBytes(storage.usedBytes), quota: formatBytes(storage.quotaBytes) });
-  return <span className={isQuotaReached(storage) ? "text-destructive" : undefined}>{text}</span>;
+  return (
+    <div>
+      <span className={isQuotaReached(storage) ? "text-destructive" : undefined}>{text}</span>{" "}
+      <span data-testid="content-bytes" className="block text-xs text-muted-foreground">
+        {t("admin.storageContent", { size: formatBytes(storage.contentBytes) })}
+      </span>
+    </div>
+  );
 }
 
 /**
