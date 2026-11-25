@@ -6,6 +6,12 @@ export const STORAGE_QUOTA_MAX_BYTES = 1125899906842624;
 /** Initial quota of the built-in Basic plan in the migration: 2 GiB (the UI labels it GB, 1024-based). */
 export const BASIC_STORAGE_QUOTA_BYTES = 2147483648;
 
+/** Recorded sizes of stored Y.Doc state and of versions plus state backups; neither counts toward the limit. */
+export interface ContentUsageDto {
+  noteBytes: number;
+  historyBytes: number;
+}
+
 /** `quotaBytes` null: unlimited. */
 export interface StorageUsageDto {
   usedBytes: number;
@@ -13,6 +19,7 @@ export interface StorageUsageDto {
   planName: string;
   /** Separate query from `usedBytes`, so the UI uses the sum of kinds as the share denominator. */
   byKind: StorageByKind;
+  content: ContentUsageDto;
 }
 
 /** All five keys always present. Personal avatars count as `image`. */
@@ -71,6 +78,8 @@ export interface SpaceStorageDto {
   planName: string;
   usedBytes: number;
   quotaBytes: number | null;
+  /** noteBytes + historyBytes; not part of `usedBytes`. */
+  contentBytes: number;
 }
 
 export interface StoragePlanDto {

@@ -109,7 +109,7 @@ A note gets automatic versions only when both the site switch and the switch of 
 
 ## Storage
 
-Versions don't count toward a space's storage limit, and there is no site-wide limit on their total size; the retention settings above are what keeps automatic versions in check.
+Versions don't count toward a space's storage limit, and there is no site-wide limit on their total size; the retention settings above are what keeps automatic versions in check. Their size is shown, together with the size of note content, as **Notes and history** in **Settings → Storage** and on a group's **Storage** page; it is for information only.
 
 ## API
 

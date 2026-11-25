@@ -422,6 +422,7 @@
     "disable": "Disable",
     "disableTitle": "Disable this user?",
     "disableDescription": "{{email}} will be signed out immediately and lose access until re-enabled.",
+    "storageContent": "Notes and history: {{size}}",
     "storage": {
       "title": "Storage plans",
       "description": "A plan limits the total size of the files in a personal space or a group (profile pictures count toward a personal space). New users and new groups start on the defaults below; changing a default doesn't move anyone who already exists.",
@@ -463,7 +464,7 @@
     "versions": {
       "title": "Version history",
       "autoTitle": "Automatic versions",
-      "autoDescription": "When off, no space saves versions automatically; people can still save versions by hand. Versions and note text don't count toward storage. Files and, in a personal space, profile pictures do.",
+      "autoDescription": "When off, no space saves versions automatically; people can still save versions by hand. Versions and note text don't count toward the storage limit. Files and, in a personal space, profile pictures do.",
       "retentionTitle": "Keeping automatic versions",
       "retentionDescription": "All automatic versions from the last {{keepAll}} days are kept; up to {{dailyUntil}} days, one a day; older, one a week. Days and weeks are counted in UTC. Manual versions are never removed.",
       "keepAllLabel": "Keep all for (days)",
@@ -550,6 +551,10 @@
     "storage": {
       "description": "How much space your profile pictures and the files in your personal notes take.",
       "usageTitle": "Usage",
+      "contentTitle": "Notes and history",
+      "contentDescription": "Space taken by note content and version history. It doesn't count toward the storage limit.",
+      "contentNote": "Note content",
+      "contentHistory": "Version history and backups",
       "byKind": "By type",
       "byKindDescription": "Files grouped by type. Profile pictures count as images.",
       "kinds": {
@@ -560,7 +565,7 @@
         "other": "Other"
       },
       "versionsTitle": "Version history",
-      "versionsNote": "Versions and note text don't count toward storage. Files and, in a personal space, profile pictures do."
+      "versionsNote": "Versions and note text don't count toward the storage limit. Files and, in a personal space, profile pictures do."
     },
     "groups": {
       "overview": "Groups you belong to, and your role in each. Create or manage groups from the sidebar.",

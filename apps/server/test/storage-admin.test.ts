@@ -207,8 +207,9 @@ describe("site admin groups", () => {
     const res = await req(b, "GET", "/api/admin/groups");
     expect(res.json().map((g: { name: string }) => g.name)).toEqual(["Alpha", "beta"]);
     const row = res.json()[1];
-    expect(row).toMatchObject({ id: g1.id, name: "beta", memberCount: 2, storage: { planId: await basicPlanId(b.db), planName: "Basic", usedBytes: 321, quotaBytes: 2147483648 } });
+    expect(row).toMatchObject({ id: g1.id, name: "beta", memberCount: 2, storage: { planId: await basicPlanId(b.db), planName: "Basic", usedBytes: 321, quotaBytes: 2147483648, contentBytes: 0 } });
     expect(typeof row.storage.usedBytes).toBe("number");
+    expect(typeof row.storage.contentBytes).toBe("number");
   });
 
   it("PATCH /api/admin/groups/:id/storage-plan: 200 AdminGroupDto; group missing/non-UUID -> 404 group_not_found; plan missing/non-UUID -> 404 storage_plan_not_found; uppercase UUID works", async () => {
@@ -235,7 +236,7 @@ describe("usage view", () => {
     const n = await seedNote(b.db, { ownerId: u.id });
     await seedAttachment(b.db, b.uploadsDir, n.id, u.id, 12);
     const r = await b.app.inject({ method: "GET", url: "/api/storage", cookies: await cookieOf(u.id) });
-    expect(r.json()).toEqual({ usedBytes: 12, quotaBytes: 999, planName: "Mine", byKind: { ...ZERO, image: 12 } });
+    expect(r.json()).toEqual({ usedBytes: 12, quotaBytes: 999, planName: "Mine", byKind: { ...ZERO, image: 12 }, content: { noteBytes: 0, historyBytes: 0 } });
     expect((await b.app.inject({ method: "GET", url: "/api/storage" })).statusCode).toBe(401);
   });
 
@@ -248,7 +249,7 @@ describe("usage view", () => {
     const pid = await seedPlan(b.db, "GP", null);
     await setGroupPlan(b.db, g.id, pid);
     const get = async (userId: string, id = g.id) => b.app.inject({ method: "GET", url: `/api/groups/${id}/storage`, cookies: await cookieOf(userId) });
-    const expected = { usedBytes: 0, quotaBytes: null, planName: "GP", byKind: ZERO, byMember: [] };
+    const expected = { usedBytes: 0, quotaBytes: null, planName: "GP", byKind: ZERO, byMember: [], content: { noteBytes: 0, historyBytes: 0 } };
     expect((await get(gMember.id)).json()).toEqual(expected);
     expect((await get(plain.id)).json()).toEqual(expected);
     expect((await get(gAdmin.id)).json()).toEqual(expected);

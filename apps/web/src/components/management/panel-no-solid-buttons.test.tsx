@@ -43,13 +43,13 @@ const TOKEN: ApiTokenDto = {
 };
 const STORAGE: StorageUsageDto = {
   usedBytes: 1048576, quotaBytes: 2147483648, planName: "Basic",
-  byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 },
+  byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 }, content: { noteBytes: 0, historyBytes: 0 },
 };
 const GROUPS: GroupDto[] = [groupDto({ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Team Alpha" }, adminRole())];
 const GROUP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const T = "2026-01-01T00:00:00.000Z";
 const PLAN = { id: "11111111-1111-4111-8111-111111111111", name: "Basic", quotaBytes: 2147483648, userCount: 1, groupCount: 1, overQuotaCount: 0, isDefaultForUsers: true, isDefaultForGroups: true, createdAt: T, updatedAt: T };
-const PLAN_STORAGE = { planId: PLAN.id, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648 };
+const PLAN_STORAGE = { planId: PLAN.id, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648, contentBytes: 0 };
 const PROVIDER_ID = "22222222-2222-4222-8222-222222222222";
 /** Site limits: all 17 items present; two adjusted (each with an extra "restore default" / "back to auto" button), one locked by env, one change-log row. */
 const SITE_LIMITS_FIXTURE: SiteLimitsDto = siteLimitsDto(
@@ -81,7 +81,7 @@ const PANEL3_GETS: Record<string, unknown> = {
   [`/api/groups/${GROUP_ID}/tags`]: TAG_LIST,
   [`/api/groups/${GROUP_ID}/storage`]: {
     usedBytes: 1048576, quotaBytes: 2147483648, planName: "Basic",
-    byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 },
+    byKind: { image: 1048576, audio: 0, video: 0, document: 0, other: 0 }, content: { noteBytes: 0, historyBytes: 0 },
     byMember: [{ userId: "u-admin", handle: "admin", displayName: "Admin", bytes: 1048576 }],
   },
   "/api/admin/users": [

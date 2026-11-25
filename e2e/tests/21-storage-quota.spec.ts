@@ -102,3 +102,46 @@ test("21 storage quota: 1 MB plan assigned to a user -> pasting an image > 1 MB 
     await userContext.close();
   }
 });
+
+test("21 storage quota: a note with text -> Settings > Storage shows a non-zero \"Notes and history\" size that doesn't count toward the limit", async ({ browser }) => {
+  test.setTimeout(90_000);
+  const adminContext = await browser.newContext();
+  const userContext = await browser.newContext();
+  const adminPage = await adminContext.newPage();
+  const page = await userContext.newPage();
+  const userEmail = randomEmail();
+  const password = "e2e-content-user-pw";
+  try {
+    // A fresh account, so its noteBytes starts at 0 and the poll below proves this note was counted.
+    await loginAs(adminPage, ADMIN.email, ADMIN.password);
+    await expect(adminPage).toHaveURL(/\/$/);
+    await createUserViaInvite(adminPage, { email: userEmail, password, displayName: "E2E Content User" });
+
+    await loginAs(page, userEmail, password);
+    await expect(page).toHaveURL(/\/$/);
+    const noteBytes = async () => {
+      const res = await page.request.get("/api/storage");
+      if (!res.ok()) return -1;
+      const body = (await res.json()) as { content?: { noteBytes: number } };
+      return body.content?.noteBytes ?? -1;
+    };
+    expect(await noteBytes()).toBe(0);
+
+    await createNote(page, `E2E content usage ${Date.now()}`);
+    await expect(page.getByLabel("Note title")).toBeVisible();
+    await editorLocator(page).click();
+    await page.keyboard.type("Some note text that takes a little space.");
+
+    // The collaborative state is stored a moment after typing; poll the API instead of sleeping.
+    await expect.poll(noteBytes, { timeout: 30_000 }).toBeGreaterThan(0);
+
+    await page.goto("/settings/storage");
+    const noteSize = page.getByTestId("content-usage-note");
+    await expect(noteSize).toBeVisible({ timeout: 15_000 });
+    await expect(noteSize).not.toContainText(/(^|[^\d.])0 B/);
+    await expect(page.getByText("It doesn't count toward the storage limit.")).toBeVisible();
+  } finally {
+    await adminContext.close();
+    await userContext.close();
+  }
+});

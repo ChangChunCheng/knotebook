@@ -92,7 +92,7 @@ describe("site version settings (inside /admin/storage, #247)", () => {
     const versions = screen.getByRole("heading", { level: 2, name: "Version history" });
     expect(versions.compareDocumentPosition(screen.getByRole("heading", { level: 1, name: "Storage plans" })) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(screen.queryByText("How notes keep their versions on this site.")).not.toBeInTheDocument();
-    expect(screen.getByText(/Versions and note text don't count toward storage/)).toBeInTheDocument();
+    expect(screen.getByText(/Versions and note text don't count toward the storage limit/)).toBeInTheDocument();
   });
 
   it("load: master switch, wait and the two day counts follow the GET; the wait description carries the server value", async () => {

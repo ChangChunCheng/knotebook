@@ -7,6 +7,7 @@ import { useUpdateAutoVersions } from "@/api/versionSettings";
 import { toast } from "@/components/ui/toast";
 import { useSession } from "@/auth/useSession";
 import { AutoVersionsSwitch } from "./AutoVersionsSwitch";
+import { ContentUsageGroup } from "./ContentUsageGroup";
 import { SettingsGroup, SettingsPage } from "./SettingsLayout";
 import { StorageUsageGroup } from "./StorageUsageGroup";
 import "@/i18n/management-strings";
@@ -78,6 +79,7 @@ export function SettingsStorageUsageSection() {
   return (
     <SettingsPage title={t("settings.nav.storage")} description={t("settings.storage.description")}>
       <StorageUsageGroup title={t("settings.storage.usageTitle")} query={storage} />
+      <ContentUsageGroup content={storage.data?.content} pending={storage.isPending} />
       <StorageByKindGroup byKind={storage.data?.byKind} pending={storage.isPending} />
       <AutoVersionsGroup />
     </SettingsPage>

@@ -10,7 +10,7 @@ const USAGE = {
   usedBytes: 4 * 1048576,
   quotaBytes: 10 * 1048576,
   planName: "Team",
-  byKind: { image: 2 * 1048576, audio: 0, video: 1048576, document: 0, other: 0 },
+  byKind: { image: 2 * 1048576, audio: 0, video: 1048576, document: 0, other: 0 }, content: { noteBytes: 0, historyBytes: 0 },
   byMember: [
     { userId: "u-bob", handle: "bob", displayName: "Bob", bytes: 2 * 1048576 },
     { userId: null, handle: null, displayName: null, bytes: 1048576 },
@@ -56,6 +56,16 @@ describe("GroupStorageSection (/groups/:id/storage, #247)", () => {
     for (const [kind, label] of kinds) {
       expect(within(within(dialog).getByTestId(`by-kind-${kind}`)).getByText(label)).toBeInTheDocument();
     }
+  });
+
+  it("the notes-and-history group sits after the usage group and before by-type, with both numbers", async () => {
+    const { dialog } = await openStorage(GROUP_ADMIN, { ...USAGE, content: { noteBytes: 1048576, historyBytes: 3 * 1048576 } });
+    const note = await within(dialog).findByTestId("content-usage-note");
+    expect(within(note).getByText("1 MB")).toBeInTheDocument();
+    expect(within(within(dialog).getByTestId("content-usage-history")).getByText("3 MB")).toBeInTheDocument();
+    const usage = within(dialog).getByTestId("storage-usage");
+    expect(usage.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.compareDocumentPosition(within(dialog).getByTestId("by-kind-image")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("by member: only bytes>0 are listed; shows name plus grey @handle; deleted users are aggregated into one row; the share bar width uses the byKind sum as denominator", async () => {

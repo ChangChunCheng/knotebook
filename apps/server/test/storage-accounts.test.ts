@@ -35,7 +35,7 @@ describe("AdminUserDto.storage and assignment", () => {
     await seedAttachment(b.db, b.uploadsDir, n.id, u.id, 4321);
     const res = await b.app.inject({ method: "GET", url: "/api/admin/users", cookies: b.cookies });
     const row = res.json().find((r: { id: string }) => r.id === u.id);
-    expect(row.storage).toEqual({ planId: await basicPlanId(b.db), planName: "Basic", usedBytes: 4321, quotaBytes: 2147483648 });
+    expect(row.storage).toEqual({ planId: await basicPlanId(b.db), planName: "Basic", usedBytes: 4321, quotaBytes: 2147483648, contentBytes: 0 });
     expect(typeof row.storage.usedBytes).toBe("number");
     expect(row.disabledAt).not.toBeNull();
   });
@@ -48,7 +48,7 @@ describe("AdminUserDto.storage and assignment", () => {
     expect(res.statusCode).toBe(201);
     const list = await b.app.inject({ method: "GET", url: "/api/admin/users", cookies: b.cookies });
     const row = list.json().find((r: { id: string }) => r.id === res.json().id);
-    expect(row.storage).toEqual({ planId: p, planName: "NewDefault", usedBytes: 0, quotaBytes: 77 });
+    expect(row.storage).toEqual({ planId: p, planName: "NewDefault", usedBytes: 0, quotaBytes: 77, contentBytes: 0 });
   });
 
   it("PATCH /api/admin/users/:id/storage-plan: 200 AdminUserDto; suspended users can be changed; user missing/non-UUID -> 404 user_not_found; plan missing/non-UUID -> 404 storage_plan_not_found; uppercase UUID works; site admin only", async () => {
