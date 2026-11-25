@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import * as Y from "yjs";
 import { YDOC_FRAGMENT, topLevelBlocks } from "@knotebook/shared";
-import { groups, noteVersions, notes, users } from "../src/db/schema.js";
+import { groups, noteStates, noteVersions, notes, users } from "../src/db/schema.js";
 import type { GroupRacePoint } from "../src/groups/test-hook.js";
 import { seedDoc } from "./copy-helpers.js";
 import { docText, seedContent, waitFor } from "./editing-helpers.js";
-import { cookieOf, seedGroup, seedNote, seedUser, waitForBlockedOrSettled } from "./group-helpers.js";
+import { cookieOf, seedGroup, seedNote, seedRole, seedUser, setMemberRole, waitForBlockedOrSettled } from "./group-helpers.js";
 import { buildCollabTestApp, buildTestApp } from "./helpers.js";
 import { NO_PENDING, baseVersionIdOf, noteBase, paraDoc, pendingOf, versionsOf } from "./version-helpers.js";
 
@@ -44,6 +45,51 @@ describe("REST form (not loaded)", () => {
     expect(await noteBase(db, n.id)).toEqual({ counter: 0, baseSeq: null, baseFingerprint: null });
     const list = (await app.inject({ method: "GET", url: `/api/notes/${n.id}/versions`, cookies: await cookieOf(u.id) })).json();
     expect(list).toMatchObject({ versions: [], current: { baseSeq: null, nextSeq: 1 }, nextBefore: null });
+  });
+
+  it("move with keepVersions false clears like an omitted flag; a non-boolean is a 400", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
+    const n = await seedNote(db, { ownerId: u.id });
+    await seedDoc(db, n.id, paraDoc(["personal"]));
+    expect((await save(app, n.id, u.id)).statusCode).toBe(201);
+    const bad = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: "yes" } });
+    expect(bad.statusCode).toBe(400);
+    expect(await versionsOf(db, n.id)).toHaveLength(1);
+    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: false } });
+    expect(r.statusCode).toBe(200);
+    expect(await versionsOf(db, n.id)).toEqual([]);
+    expect(await noteBase(db, n.id)).toEqual({ counter: 0, baseSeq: null, baseFingerprint: null });
+  });
+
+  it("move with keepVersions true keeps versions, counter and base, clears pending; the list continues numbering; group viewers still get 403", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const viewer = await seedUser(db);
+    const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }, { userId: viewer.id, role: "member" }]);
+    await setMemberRole(db, g.id, viewer.id, await seedRole(db, g.id, "Reader", { canRead: true }));
+    const n = await seedNote(db, { ownerId: u.id });
+    await seedDoc(db, n.id, paraDoc(["personal"]));
+    expect((await save(app, n.id, u.id)).statusCode).toBe(201);
+    const before = await noteBase(db, n.id);
+    const baseId = await baseVersionIdOf(db, n.id);
+    const pending = { versionPendingAt: new Date("2026-10-14T00:00:00.000Z"), versionPendingEditors: [{ user_id: u.id, agent_label: null }], versionPendingRefFingerprint: "ref" };
+    await db.update(notes).set(pending).where(eq(notes.id, n.id));
+    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: true } });
+    expect(r.statusCode).toBe(200);
+    expect(await versionsOf(db, n.id)).toHaveLength(1);
+    expect(await noteBase(db, n.id)).toEqual(before);
+    expect(before).toMatchObject({ counter: 1, baseSeq: 1 });
+    expect(await baseVersionIdOf(db, n.id)).toBe(baseId);
+    expect(await pendingOf(db, n.id)).toEqual(NO_PENDING);
+    const list = (await app.inject({ method: "GET", url: `/api/notes/${n.id}/versions`, cookies: await cookieOf(u.id) })).json();
+    expect(list.versions).toHaveLength(1);
+    expect(list.current).toMatchObject({ baseSeq: 1, nextSeq: 2 });
+    expect((await app.inject({ method: "GET", url: `/api/notes/${n.id}/versions`, cookies: await cookieOf(viewer.id) })).statusCode).toBe(403);
+    await db.update(noteStates).set({ ydoc: Buffer.from(Y.encodeStateAsUpdate(paraDoc(["group period"]))) }).where(eq(noteStates.noteId, n.id));
+    expect((await save(app, n.id, u.id)).statusCode).toBe(201);
+    expect((await versionsOf(db, n.id)).map(v => v.seq)).toEqual([1, 2]);
   });
 
   it("delete a group with transfer: every note is cleared; delete-all (delete mode) goes through CASCADE", async () => {
@@ -165,6 +211,53 @@ describe("loaded notes (real collab)", () => {
     await s.unloaded();
     await s.ctx.collab.versions.scanDue();
     expect(await versionsOf(s.ctx.db, s.note.id)).toEqual([]); // loadFingerprint = the current content at rebuild and the move cleared pending, so the scan does not cut
+  });
+
+  it("keepVersions true on a loaded note: state is rebuilt on the group key, the next automatic version continues the numbering and its snapshot is served", async () => {
+    const s = await setup();
+    const client = await seedContent(s.ctx, s.session, s.note.id, "personal period");
+    const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
+    await s.ctx.collab.versions.cutIfDirty(s.note.id, live, { kind: "manual" });
+    const oldV1 = (await versionsOf(s.ctx.db, s.note.id))[0]!;
+    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepVersions: true }) });
+    expect(r.status).toBe(200);
+    await waitFor("state rebuilt", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.spaceKey === `g:${s.g.id}`);
+    const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as import("yjs").XmlElement;
+    client.doc.transact(() => (p.get(0) as import("yjs").XmlText).insert(0, "group period "));
+    await waitFor("server received", 5_000, () => docText(live).includes("group period"));
+    client.disconnect();
+    await s.unloaded();
+    await s.ctx.collab.versions.scanDue();
+    const rows = await versionsOf(s.ctx.db, s.note.id);
+    expect(rows.map(v => v.seq)).toEqual([1, 2]);
+    expect(rows[0]!.id).toBe(oldV1.id);
+    expect(rows[1]!.kind).toBe("auto");
+    expect((await noteBase(s.ctx.db, s.note.id)).counter).toBe(2);
+    const snap = await s.session.fetch(`/api/notes/${s.note.id}/versions/2`);
+    expect((await snap.json()).id).toBe(rows[1]!.id);
+  });
+
+  it("keepVersions true with group automatic versions on: personal-period pending editors are not listed on the group's first automatic version", async () => {
+    const s = await setup();
+    const sharee = await seedUser(s.ctx.db);
+    const client = await seedContent(s.ctx, s.session, s.note.id, "personal period");
+    const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
+    await s.ctx.collab.versions.cutIfDirty(s.note.id, live, { kind: "manual" });
+    await s.ctx.db.update(notes).set({ versionPendingAt: new Date(), versionPendingEditors: [{ user_id: sharee.id, agent_label: null }], versionPendingRefFingerprint: "ref" }).where(eq(notes.id, s.note.id));
+    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepVersions: true }) });
+    expect(r.status).toBe(200);
+    expect(await pendingOf(s.ctx.db, s.note.id)).toEqual(NO_PENDING);
+    await waitFor("state rebuilt", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.spaceKey === `g:${s.g.id}`);
+    expect(s.ctx.collab.versions.debugState(s.note.id)!.autoEnabled).toBe(true);
+    const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as import("yjs").XmlElement;
+    client.doc.transact(() => (p.get(0) as import("yjs").XmlText).insert(0, "group period "));
+    await waitFor("server received", 5_000, () => docText(live).includes("group period"));
+    client.disconnect();
+    await s.unloaded();
+    await s.ctx.collab.versions.scanDue();
+    const rows = await versionsOf(s.ctx.db, s.note.id);
+    expect(rows.map(v => v.seq)).toEqual([1, 2]);
+    expect(rows[1]!.editors).toEqual([{ user_id: s.u.id, agent_label: null }]);
   });
 
   it("moved into a group with auto-save off -> autoEnabled=false, zero versions after leaving and scanning", async () => {

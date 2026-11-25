@@ -353,9 +353,40 @@ describe("kebab menu: move/copy to group (#216)", () => {
     expect(dialog).toHaveTextContent("Its address changes to /g/…");
     expect(dialog).toHaveTextContent("You will no longer own it");
     expect(dialog).toHaveTextContent("Its version history is cleared and doesn't come back.");
+    expect(dialog).not.toHaveTextContent("The group's editors will see");
     const submit = within(dialog).getByRole("button", { name: "Move into group" });
     expect(submit).toHaveClass("bg-destructive");
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("move confirm: the keep-history checkbox is unchecked by default; checking swaps the versions bullet to the hint and back", async () => {
+    stub();
+    renderMenu();
+    await pickFlyout("note-menu-move-to", "Workshop A");
+    const dialog = await screen.findByRole("dialog");
+    const box = within(dialog).getByRole("checkbox", { name: "Bring its version history along" });
+    expect(box).not.toBeChecked();
+    expect(dialog).toHaveTextContent("Its version history is cleared and doesn't come back.");
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    expect(dialog).toHaveTextContent("The group's editors will see its earlier versions and who edited them.");
+    expect(dialog).not.toHaveTextContent("Its version history is cleared");
+    fireEvent.click(box);
+    expect(box).not.toBeChecked();
+    expect(dialog).toHaveTextContent("Its version history is cleared and doesn't come back.");
+  });
+
+  it("move success with the box checked: POST /move sends keepVersions: true", async () => {
+    const s = stub();
+    renderMenu();
+    await pickFlyout("note-menu-move-to", "Workshop C");
+    const dialog = await screen.findByRole("dialog");
+    const submit = within(dialog).getByRole("button", { name: "Move into group" });
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Bring its version history along" }));
+    fireEvent.click(submit);
+    await waitFor(() => expect(s.calls.some((c) => c.url === URLS.move)).toBe(true));
+    expect(s.calls.find((c) => c.url === URLS.move)?.body).toEqual({ groupId: GC, keepVersions: true });
   });
 
   it("move confirm: no per-person shares and no token: the removed people and the public link are not mentioned; cancel closes the dialog and sends no /move", async () => {
@@ -372,7 +403,7 @@ describe("kebab menu: move/copy to group (#216)", () => {
     expect(s.calls.filter((c) => c.url === URLS.move)).toEqual([]);
   });
 
-  it("move success: re-reads the note first, then POST /move with { groupId }; the cache converges to the group shape (write order is covered by api/note-move.test)", async () => {
+  it("move success: re-reads the note first, then POST /move with { groupId, keepVersions: false }; the cache converges to the group shape (write order is covered by api/note-move.test)", async () => {
     const s = stub({ shares: [BOB], token: TOKEN });
     const qc = renderMenu();
     await pickFlyout("note-menu-move-to", "Workshop C");
@@ -386,7 +417,7 @@ describe("kebab menu: move/copy to group (#216)", () => {
     const moveCall = s.calls.findIndex((c) => c.method === "POST" && c.url === URLS.move);
     expect(noteRead).toBeGreaterThanOrEqual(0);
     expect(moveCall).toBeGreaterThan(noteRead);
-    expect(s.calls[moveCall].body).toEqual({ groupId: GC });
+    expect(s.calls[moveCall].body).toEqual({ groupId: GC, keepVersions: false });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByText('Moved into "Workshop C"')).toBeInTheDocument();
     expect(qc.getQueryData(["shares", NOTE.id])).toEqual([]);
@@ -625,7 +656,7 @@ describe("kebab menu: move/copy to group (#216)", () => {
       expect(submit).toHaveClass("bg-destructive");
       await waitFor(() => expect(submit).not.toBeDisabled());
       fireEvent.click(submit);
-      await waitFor(() => expect(s.calls.find((c) => c.url === URLS.move)?.body).toEqual({ groupId: GA }));
+      await waitFor(() => expect(s.calls.find((c) => c.url === URLS.move)?.body).toEqual({ groupId: GA, keepVersions: false }));
     });
 
     it("copy: pick a group, confirm, POST /copy, toast with Open copy", async () => {
@@ -776,7 +807,7 @@ describe("GroupTransferDialog: folder destination", () => {
     expect(screen.getByRole("button", { name: "Open copy" })).toBeInTheDocument();
   });
 
-  it('MoveDialog with a folder: description Move this note into "G › GF"?, body {groupId, folderId}, toast Moved into "G › GF"; without a folder: body keys are [groupId]', async () => {
+  it('MoveDialog with a folder: description Move this note into "G › GF"?, body {groupId, folderId}, toast Moved into "G › GF"; without a folder: body keys are [groupId, keepVersions]', async () => {
     let s = stub();
     renderDialog(NOTE, { kind: "move", target: { type: "group", group: GROUP_G, folder: { id: "GF", path: "G › GF" } } });
     let dialog = await screen.findByRole("dialog");
@@ -784,7 +815,7 @@ describe("GroupTransferDialog: folder destination", () => {
     let submit = within(dialog).getByRole("button", { name: "Move into group" });
     await waitFor(() => expect(submit).not.toBeDisabled());
     fireEvent.click(submit);
-    await waitFor(() => expect(moveBodies(s)).toEqual([{ groupId: GG, folderId: "GF" }]));
+    await waitFor(() => expect(moveBodies(s)).toEqual([{ groupId: GG, folderId: "GF", keepVersions: false }]));
     expect(await screen.findByText('Moved into "G › GF"')).toBeInTheDocument();
     cleanup();
     vi.unstubAllGlobals();
@@ -798,7 +829,7 @@ describe("GroupTransferDialog: folder destination", () => {
     await waitFor(() => expect(submit).not.toBeDisabled());
     fireEvent.click(submit);
     await waitFor(() => expect(moveBodies(s)).toHaveLength(1));
-    expect(Object.keys(moveBodies(s)[0] as object)).toEqual(["groupId"]);
+    expect(Object.keys(moveBodies(s)[0] as object)).toEqual(["groupId", "keepVersions"]);
     expect(await screen.findByText('Moved into "G"')).toBeInTheDocument();
   });
 

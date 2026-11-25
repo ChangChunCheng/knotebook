@@ -117,7 +117,7 @@ async function undoBatchPlacement(done: readonly PlacedItem[], queryClient: Quer
 }
 
 type Confirm =
-  | { kind: "move"; target: PlaceTarget; groupId: string; pathLabel: string; notes: NoteDto[]; pre: Eligibility }
+  | { kind: "move"; target: PlaceTarget; groupId: string; pathLabel: string; notes: NoteDto[]; pre: Eligibility; keepVersions: boolean }
   | { kind: "copy"; target: DestTarget; pathLabel: string; notes: NoteDto[]; copySource: DestSpace | null }
   | { kind: "unfavorite"; noteIds: string[] }
   | { kind: "delete"; items: SelectionTarget[]; pre: Eligibility; folderCount: number; noteCount: number; alsoNotes: number; shared: boolean };
@@ -285,13 +285,13 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
   }
 
   function runMove(snapshot: Extract<Confirm, { kind: "move" }>): void {
-    const { target, groupId, pathLabel, notes: items, pre } = snapshot;
+    const { target, groupId, pathLabel, notes: items, pre, keepVersions } = snapshot;
     void runBatch({
       total: items.length,
       opener: openerRef.current,
       fromConfirm: true,
       execute: async (onProgress) => {
-        const body = target.folder === null ? { groupId } : { groupId, folderId: target.folder.id };
+        const body = target.folder === null ? { groupId, keepVersions } : { groupId, folderId: target.folder.id, keepVersions };
         const outcome = await moveNotesInOrder(items, body, { queryClient, onProgress });
         const { done, stopped } = outcome;
         const title = selectionResultTitle(
@@ -523,6 +523,7 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
         pathLabel: destinationPathLabel(target.space, target.folder, folderIndex, t),
         notes: notesOf(moveElig.eligible),
         pre: moveElig,
+        keepVersions: false,
       });
     } else {
       setConfirm({
@@ -702,6 +703,8 @@ export function SelectActionBar({ layout = "bar", safeBottom = false }: { layout
         <MoveConfirmDialog
           count={confirm.notes.length}
           groupName={confirm.pathLabel}
+          keepVersions={confirm.keepVersions}
+          onKeepVersionsChange={(keep) => setConfirm({ ...confirm, keepVersions: keep })}
           open={confirmOpen}
           progress={run?.progress ?? null}
           contentRef={confirmContentRef}

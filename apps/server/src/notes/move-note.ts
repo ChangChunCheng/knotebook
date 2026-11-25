@@ -28,7 +28,7 @@ export type MoveOutcome =
 
 export async function moveNoteToGroup(
   deps: MoveNoteDeps,
-  input: { noteId: string; userId: string; userHandle: string; groupId: string; folderId?: string },
+  input: { noteId: string; userId: string; userHandle: string; groupId: string; folderId?: string; keepVersions?: boolean },
 ): Promise<MoveOutcome> {
   const noteId = input.noteId.toLowerCase();
   const access = await resolveNoteAccess(deps.db, input.userId, noteId);
@@ -46,7 +46,7 @@ export async function moveNoteToGroup(
     folderId = folder.folder.id;
   }
   const txInput = {
-    noteId, userId: input.userId, userHandle: input.userHandle, groupId, folderId, lockTimeoutMs: deps.storageLockTimeoutMs,
+    noteId, userId: input.userId, userHandle: input.userHandle, groupId, folderId, keepVersions: input.keepVersions === true, lockTimeoutMs: deps.storageLockTimeoutMs,
   };
   let moved;
   try {

@@ -23,7 +23,7 @@ export const VERSIONS_PAGE_SIZE = 50;
 /** The server also accepts "auto"; the UI doesn't offer it. */
 export type VersionKindFilter = "all" | "manual";
 
-/** Under `['notes']` so any `['notes']` invalidation refetches the version lists (a move clears versions). */
+/** Under `['notes']` so any `['notes']` invalidation refetches the version lists (a move clears versions unless history is kept). */
 export function versionsKey(noteId: string) {
   return ["notes", noteId, "versions"] as const;
 }
@@ -36,16 +36,16 @@ export function versionCurrentKey(noteId: string) {
   return ["notes", noteId, "versions", "current"] as const;
 }
 
-/** Separate prefix keyed by id, not seq (a move renumbers seqs): an id's content never changes, so snapshots use
+/** Separate prefix keyed by id, not seq (a move that doesn't keep history renumbers seqs): an id's content never changes, so snapshots use
  * `staleTime: Infinity` and sit outside the `['notes']` prefix. */
 export function versionSnapshotKey(noteId: string, id: string) {
   return ["note-versions", noteId, id] as const;
 }
 
-/** `seq` fetches the snapshot; `id` detects a renumbered seq; `name` is the name at selection time (shown when the list lacks it). */
+/** `seq` fetches the snapshot; `id` detects a renumbered seq (a move that doesn't keep history); `name` is the name at selection time (shown when the list lacks it). */
 export type VersionTarget = { seq: number; id: string; name: string | null };
 
-/** The snapshot's id differs from the list row (versions were renumbered by a move): discard, don't cache. */
+/** The snapshot's id differs from the list row (versions were renumbered by a move that didn't keep history): discard, don't cache. */
 export class VersionSnapshotMismatch extends Error {
   constructor() {
     super("version snapshot id mismatch");

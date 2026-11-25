@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { Pool } from "pg";
-import { groups, noteAiEdits, noteRedirects } from "../src/db/schema.js";
+import { groups, noteAiEdits, noteRedirects, notes } from "../src/db/schema.js";
 import { EDIT_LIMIT, FixedWindowLimiter } from "../src/http/rate-limit.js";
 import type { GroupRacePoint } from "../src/groups/test-hook.js";
 import type { Db } from "../src/db/index.js";
@@ -13,7 +13,8 @@ import { seedContent, seedTokenForUser, waitFor } from "./editing-helpers.js";
 import { mcpPost, rpc } from "./mcp-helpers.js";
 import { cookieOf, noteState, seedGroup, seedNote, seedRole, seedShare, seedUser, setMemberRole, sharesOf, spyCollabHooks, waitForBlockedOrSettled } from "./group-helpers.js";
 import { seedAttachment, giveGroupQuota } from "./storage-helpers.js";
-import { noteBase, versionsOf } from "./version-helpers.js";
+import { seedDoc } from "./copy-helpers.js";
+import { NO_PENDING, noteBase, paraDoc, pendingOf, versionsOf } from "./version-helpers.js";
 
 /** #239: move_note_to_group registers only with notes:move, so every call to it in this file (success or failure) uses a read-write-move token; expected values unchanged. */
 const RWM = "notes:read notes:write notes:move" as const;
@@ -296,16 +297,19 @@ describe("#180 move_note_to_group", () => {
     const DESC =
       "Move one of your own personal notes into one of your groups, where the group's roles then decide who can read and change it. " +
       "A single note can't be taken out of a group again, here or in the web app — copy_note can copy it out instead. Moving removes the " +
-      "note's per-person shares, its public link and its version history, and gives it the group's URL (the old one forwards to it for a " +
-      "month); your own access becomes what your group role allows, which can be read-only — see the reply's `role`.";
+      "note's per-person shares and its public link, and gives it the group's URL (the old one forwards to it for a month); it also removes " +
+      "the note's version history unless you pass keep_versions: true, which brings the history along and lets the group's editors see the " +
+      "earlier versions and who edited them. Your own access becomes what your group role allows, which can be read-only — see the reply's `role`.";
     const GID = "The id of one of your groups where your role lets you create notes. A group's id is the `id` in the `owner` of its notes in list_notes or search_notes.";
     const OUT = "The note after the move, in the same shape list_notes returns.";
+    const KEEP = "Set true to bring the note's version history along. Leave it out or set false and the history is removed and can't be restored. Kept versions keep their names and still list who edited each one (handle, avatar, agent label); the group's editors can see that list, and it can name people who are not in the group.";
     expect(tool.description).toBe(DESC);
     expect(tool.inputSchema.properties.group_id!.description).toBe(GID);
     expect(tool.inputSchema.properties.note_id!.description).toBe("The note's id, as returned by list_notes or search_notes.");
     expect(tool.outputSchema.properties.note!.description).toBe(OUT);
-    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "note_id"]); // folders: one more key, folder_id
-    for (const s of [DESC, GID, OUT]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
+    expect(tool.inputSchema.properties.keep_versions!.description).toBe(KEEP);
+    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "keep_versions", "note_id"]);
+    for (const s of [DESC, GID, OUT, KEEP]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
   });
 
   it("version history: save one version first -> MCP moves the loaded note -> note_versions cleared, count 0, base NULL; spaceKey g:<id>, autoEnabled recomputed from the group's switch", async () => {
@@ -329,6 +333,36 @@ describe("#180 move_note_to_group", () => {
     await waitFor("狀態重建", 5_000, () => ctx.collab.versions.debugState(note.id)?.initialized === true && ctx.collab.versions.debugState(note.id)?.spaceKey === `g:${g.id}`);
     expect(ctx.collab.versions.debugState(note.id)!.autoEnabled).toBe(false);
     client.disconnect();
+  });
+
+  it("keep_versions: true keeps versions, counter and base; false and omitted clear; pending is cleared in each case", async () => {
+    const { app, db } = await buildTestApp();
+    const me = await seedUser(db);
+    const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);
+    const { token } = await seedTokenForUser(db, me.id, RWM);
+    const pending = { versionPendingAt: new Date("2026-10-14T00:00:00.000Z"), versionPendingEditors: [{ user_id: me.id, agent_label: null }], versionPendingRefFingerprint: "ref" };
+    const seeded = async () => {
+      const n = await seedNote(db, { ownerId: me.id });
+      await seedDoc(db, n.id, paraDoc(["personal"]));
+      const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/versions`, cookies: await cookieOf(me.id), payload: {} });
+      expect(r.statusCode).toBe(201);
+      await db.update(notes).set(pending).where(eq(notes.id, n.id));
+      return n.id;
+    };
+    const kept = await seeded();
+    const r1 = await call(app, { token }, "move_note_to_group", { note_id: kept, group_id: g.id, keep_versions: true });
+    expect(r1.isError, JSON.stringify(r1.structuredContent)).toBeUndefined();
+    expect(await versionsOf(db, kept)).toHaveLength(1);
+    expect(await noteBase(db, kept)).toMatchObject({ counter: 1, baseSeq: 1 });
+    expect(await pendingOf(db, kept)).toEqual(NO_PENDING);
+    for (const args of [{ keep_versions: false }, {}]) {
+      const id = await seeded();
+      const r = await call(app, { token }, "move_note_to_group", { note_id: id, group_id: g.id, ...args });
+      expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();
+      expect(await versionsOf(db, id)).toEqual([]);
+      expect(await noteBase(db, id)).toEqual({ counter: 0, baseSeq: null, baseFingerprint: null });
+      expect(await pendingOf(db, id)).toEqual(NO_PENDING);
+    }
   });
 
   it("{note_id, group_id, groupId} -> SDK validation error, note unchanged", async () => {

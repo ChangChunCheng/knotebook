@@ -16,7 +16,7 @@ A version is saved automatically only when the content has actually changed: ope
 
 **By hand**: press **Ctrl+S** (**Cmd+S** on a Mac), or use **Save current version** at the bottom of the version list. A dialog asks for an optional **Version name** (up to 120 characters). Ctrl+S is left to the browser while another dialog or a drop-down menu (such as a `⋮` menu) is open — the full-screen version history on a narrow window counts as a dialog, the sidebar on a narrow window doesn't — and during a presentation; on a note you can only view, it is always left to the browser. If the note's content is the same as the version it is based on, no new version is created: that version is turned into a manual one (and given the name, if you entered one), and the notice says so.
 
-**Nothing else creates a version**, apart from the one-time link conversion below. A note that existed before version history was added has no versions until its content changes, and the content it had before that first change is not kept as a version. A copied or moved note has no versions until its content changes (or a version is saved by hand) in its new place.
+**Nothing else creates a version**, apart from the one-time link conversion below. A note that existed before version history was added has no versions until its content changes, and the content it had before that first change is not kept as a version. Copied notes, and moved notes whose history wasn't kept, have no versions until their content changes (or a version is saved by hand) in their new place.
 
 **The one-time link conversion.** The first start of 0.11 turns ordinary links to notes on this site, in the notes that existed then, into links to those notes, in the background (see [Self-hosting](./self-hosting.md#upgrading-and-rolling-back)). Before changing a note, it saves the note's content as a manual version named `連結轉換前` — or, if that content is already the note's base version, turns that version into a manual one, keeping its name if it has one. The conversion doesn't save a version by itself; the converted content is saved by automatic versions like any other edit.
 
@@ -83,7 +83,8 @@ Anyone who can edit a note can see its history and save, preview, apply, rename 
 ## Moving, copying and transferring
 
 - **Copying** a note doesn't copy its versions; the copy starts with none.
-- **Moving** a personal note into a group, and **transferring** a group's notes to a person when the group is deleted, deletes the note's versions: the history of a note's earlier life isn't shown to its new owners.
+- **Moving** a personal note into a group asks whether to **Bring its version history along**; the box starts unchecked. When you check it, all of the note's versions, their names and their numbering stay, and the group's editors can see them, together with who edited them. That can include people the note was shared with before the move, who aren't in the group. When it stays unchecked, the note's versions are deleted and numbering starts again from 1: the history of a note's earlier life isn't shown to its new owners. Changes that were still waiting to be saved at the moment of the move go into the next version, and their editors aren't listed on it.
+- **Transferring** a group's notes to a person when the group is deleted always deletes the notes' versions.
 - **Moving a note to the trash** keeps its versions, and they are back when the note is restored. **Permanently deleting** it — from the trash, when its retention period runs out, or with its group (**Delete everything**) — deletes them.
 
 ## Retention

@@ -2,6 +2,7 @@ import "@/i18n/select-strings";
 import type { ReactNode, Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { DestTarget } from "./destination-level";
 
@@ -76,7 +77,13 @@ function ConfirmShell({
   );
 }
 
-export function MoveConfirmDialog({ count, groupName, ...rest }: ConfirmProps & { groupName: string }) {
+export function MoveConfirmDialog({
+  count,
+  groupName,
+  keepVersions,
+  onKeepVersionsChange,
+  ...rest
+}: ConfirmProps & { groupName: string; keepVersions: boolean; onKeepVersionsChange: (keep: boolean) => void }) {
   const { t } = useTranslation();
   return (
     <ConfirmShell
@@ -91,8 +98,19 @@ export function MoveConfirmDialog({ count, groupName, ...rest }: ConfirmProps & 
         <li>{t("select.moveClosesPublicLinks")}</li>
         <li>{t("select.moveUrlChange")}</li>
         <li>{t("select.moveOwnership")}</li>
-        <li>{t("select.moveClearsVersions")}</li>
+        <li>{keepVersions ? t("select.moveKeepVersionsHint") : t("select.moveClearsVersions")}</li>
       </ul>
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="select-move-keep-versions"
+          checked={keepVersions}
+          disabled={rest.progress !== null}
+          onCheckedChange={(value) => onKeepVersionsChange(value === true)}
+        />
+        <label htmlFor="select-move-keep-versions" className="cursor-pointer text-sm">
+          {t("select.moveKeepVersions")}
+        </label>
+      </div>
     </ConfirmShell>
   );
 }

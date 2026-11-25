@@ -8,6 +8,7 @@ import { useConfirmNoteStillPersonal, useCopyNote, useMoveNoteToGroup } from "@/
 import { usePublicLink } from "@/api/public-link";
 import { useShares } from "@/api/shares";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -87,6 +88,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
   const move = useMoveNoteToGroup(note.id);
   const confirmStillPersonal = useConfirmNoteStillPersonal(note.id);
   const [submitting, setSubmitting] = useState(false);
+  const [keepVersions, setKeepVersions] = useState(false);
 
   const busy = submitting || move.isPending;
   const dataKnown = sharesQuery.isSuccess && linkQuery.isSuccess;
@@ -104,7 +106,9 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
         return;
       }
       if (group === null) return;
-      await move.mutateAsync(folder === undefined ? { groupId: group.id } : { groupId: group.id, folderId: folder.id });
+      await move.mutateAsync(
+        folder === undefined ? { groupId: group.id, keepVersions } : { groupId: group.id, folderId: folder.id, keepVersions },
+      );
       toast({ title: t("share.move.movedToGroup", { group: destination }) });
     } catch (err) {
       toast({ title: folderErrorMessage(t, err), variant: "destructive" });
@@ -137,8 +141,14 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
         {token && <li>{t("share.move.moveClosesPublicLink")}</li>}
         <li>{t("share.move.moveUrlChange")}</li>
         <li>{t("share.move.moveOwnership")}</li>
-        <li>{t("share.move.moveClearsVersions")}</li>
+        <li>{keepVersions ? t("share.move.keepVersionsHint") : t("share.move.moveClearsVersions")}</li>
       </ul>
+      <div className="flex items-center gap-2">
+        <Checkbox id="move-keep-versions" checked={keepVersions} disabled={busy} onCheckedChange={(value) => setKeepVersions(value === true)} />
+        <label htmlFor="move-keep-versions" className="cursor-pointer text-sm">
+          {t("share.move.keepVersions")}
+        </label>
+      </div>
     </DialogShell>
   );
 }

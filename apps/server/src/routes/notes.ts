@@ -71,7 +71,7 @@ import { noteSharingRoutes } from "./note-sharing.js";
 
 
 // A non-UUID id is 404 from the route, byte-identical to a nonexistent one.
-const moveBodySchema = z.object({ groupId: z.string(), folderId: z.string().optional() }).strict();
+const moveBodySchema = z.object({ groupId: z.string(), folderId: z.string().optional(), keepVersions: z.boolean().optional() }).strict();
 const copyBodySchema = z.object({ groupId: z.string().optional(), folderId: z.string().optional() }).strict();
 
 // `.max(MAX_LINK_TARGETS * 2)` is only a coarse performance gate before uuid validation; the real limit is in normalizeLinkTargets (after dedup and self-link removal).
@@ -524,6 +524,7 @@ export function notesRoutes(deps: NotesRouteDeps) {
         {
           noteId: id, userId, userHandle: request.user!.handle, groupId: parsed.data.groupId,
           ...(parsed.data.folderId !== undefined ? { folderId: parsed.data.folderId.toLowerCase() } : {}),
+          keepVersions: parsed.data.keepVersions === true,
         },
       );
       switch (out.kind) {
