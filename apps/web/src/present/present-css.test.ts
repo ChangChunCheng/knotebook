@@ -50,8 +50,13 @@ describe("present.css", () => {
     expect(rule(".kn-present .reveal.kn-present-no-transition .slides section")).toContain("transition: none !important;");
   });
 
-  it("non-overflowing slides get touch-action:none (overflowing ones carry data-prevent-swipe to keep browser scrolling)", () => {
-    expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe])")).toContain("touch-action: none;");
+  it("the .reveal ancestor adds pinch-zoom to reveal's embedded pan-y / vertical-slide none, otherwise the intersection cancels the slides' pinch-zoom (#235)", () => {
+    expect(rule(".kn-present .reveal.embedded {")).toContain("touch-action: pan-y pinch-zoom;");
+    expect(rule(".kn-present .reveal.embedded.is-vertical-slide {")).toContain("touch-action: pinch-zoom;");
+  });
+
+  it("non-overflowing slides get touch-action:pinch-zoom (no pan, so swipes reach reveal; two-finger zoom stays on, #235; overflowing ones carry data-prevent-swipe to keep browser scrolling)", () => {
+    expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe])")).toContain("touch-action: pinch-zoom;");
   });
 
   it("columns: a stacked row is display:block !important with row gap 24px !important (overrides the canonical inline style)", () => {
@@ -59,7 +64,7 @@ describe("present.css", () => {
     expect(rule(".kn-present .kn-slide-body [data-kb-columns] {")).toContain("gap: 24px !important;");
   });
 
-  it("a <pre> that doesn't overflow horizontally inside a non-overflowing slide also gets touch-action:none (<pre> is a scroll container; otherwise a swipe starting on short code wouldn't change slides)", () => {
-    expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe])")).toContain("touch-action: none;");
+  it("a <pre> that doesn't overflow horizontally inside a non-overflowing slide also gets touch-action:pinch-zoom (<pre> is a scroll container; otherwise a swipe starting on short code wouldn't change slides)", () => {
+    expect(rule(".kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe])")).toContain("touch-action: pinch-zoom;");
   });
 });

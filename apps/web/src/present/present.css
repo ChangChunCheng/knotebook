@@ -30,15 +30,24 @@
   font-size: clamp(1rem, 0.6rem + 1.2vw, 1.75rem);
   line-height: 1.5;
 }
-/* touch-action:none on non-overflowing slides: a section is an overflow-y:auto scroll container, so Chromium sends pointercancel after the first pointermove and reveal 6.0.2's pointer swipe stalls (~27px < 40px threshold).
+/* touch-action intersects down the ancestor chain, so reveal's own `.reveal.embedded` (pan-y) and `.is-vertical-slide` (none) would cancel the
+   slides' pinch-zoom below. Each keeps reveal's pan behaviour and only adds pinch-zoom (#235). */
+.kn-present .reveal.embedded {
+  touch-action: pan-y pinch-zoom;
+}
+.kn-present .reveal.embedded.is-vertical-slide {
+  touch-action: pinch-zoom;
+}
+/* touch-action:pinch-zoom on non-overflowing slides: a section is an overflow-y:auto scroll container, so with any pan allowed Chromium sends pointercancel after the first pointermove and reveal 6.0.2's pointer swipe stalls (~27px < 40px threshold).
+   pinch-zoom still hands one-finger moves to the page (no pan), so swipes work and two-finger zoom stays on (#235).
    Not pan-y: it breaks up/down swipes between vertical slides. Overflowing slides, table wrappers and overflowing <pre> carry data-prevent-swipe and keep native scrolling.
    Chromium re-adds pan on any element that is itself a scroll container (an overflow-x:auto <pre> even when it fits), hence the next rule. */
 .kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) {
-  touch-action: none;
+  touch-action: pinch-zoom;
 }
-/* Anchored under a non-overflowing section: if an overflowing slide set <pre> to none, a gesture starting on code could not scroll the slide. */
+/* Anchored under a non-overflowing section: if an overflowing slide set <pre> to pinch-zoom, a gesture starting on code could not scroll the slide. */
 .kn-present .reveal .slides section[data-kn-slide-id]:not([data-prevent-swipe]) pre:not([data-prevent-swipe]) {
-  touch-action: none;
+  touch-action: pinch-zoom;
 }
 .kn-present .reveal .slides section.kn-present-stack {
   padding: 0;
