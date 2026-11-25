@@ -25,6 +25,7 @@ import { trashRoutes } from "./routes/trash.js";
 import { foldersRoutes } from "./routes/folders.js";
 import { favoritesRoutes } from "./routes/favorites.js";
 import { tagsRoutes } from "./routes/tags.js";
+import { commentsRoutes } from "./routes/comments.js";
 import { groupsRoutes } from "./routes/groups.js";
 import { searchRoutes } from "./routes/search.js";
 import { knowledgeRoutes } from "./routes/knowledge.js";
@@ -558,6 +559,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(foldersRoutes({ db: deps.db, collabHooks: deps.collabHooks, storageLockTimeoutMs, groupTestHook: deps.groupTestHook, limiters: { folder: limiters.folder } }));
   void app.register(favoritesRoutes({ db: deps.db, limiters: { favorite: limiters.favorite }, groupTestHook: deps.groupTestHook }));
   void app.register(tagsRoutes({ db: deps.db, limiters: { tag: limiters.tag }, groupTestHook: deps.groupTestHook }));
+  void app.register(commentsRoutes({ db: deps.db, collab: deps.collab, limiters: { comment: limiters.comment, commentRead: limiters.commentRead, userSuggest: limiters.userSuggest }, groupTestHook: deps.groupTestHook }));
   void app.register(groupsRoutes({ db: deps.db, collabHooks: deps.collabHooks, groupTestHook: deps.groupTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, versions }));
   void app.register(usersRoutes({ db: deps.db, limiters: { userSuggest: limiters.userSuggest } }));
   void app.register(searchRoutes({ db: deps.db, limiters: { search: limiters.search } }));

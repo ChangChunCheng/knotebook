@@ -125,6 +125,11 @@ export interface CommentListDto {
   newerCursor: string | null;
 }
 
+export interface CommentUnreadCountDto {
+  /** Other people's comments on the note created after the caller's read marker (all of them without one). */
+  count: number;
+}
+
 export interface NotificationDto {
   id: string;
   kind: "mention" | "reply";
