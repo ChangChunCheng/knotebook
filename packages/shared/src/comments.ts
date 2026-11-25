@@ -6,6 +6,7 @@ export const COMMENT_BODY_MAX = 4000;
 export const COMMENT_QUOTE_MAX = 200;
 /** Distinct mention targets per comment; the parser still returns every candidate, the cap applies at resolution. */
 export const COMMENT_MENTIONS_MAX = 20;
+export const MENTION_CANDIDATES_MAX = 8;
 
 export interface MentionSpan {
   /** Code-point offset of the `@` in the body. */
@@ -38,15 +39,15 @@ export function parseMentionSpans(body: string): MentionSpan[] {
     }
     let j = i + 1;
     while (j < cps.length && isHandleChar(cps[j]!)) j++;
-    // No handle is longer than 32, so a longer run names nobody (and must not mention whoever owns its prefix).
-    if (j - (i + 1) > 32) {
-      i = j;
-      continue;
-    }
     const runEnd = j;
     while (j > i + 1 && cps[j - 1] === 45) j--;
     if (j === i + 1) {
       i++;
+      continue;
+    }
+    // No handle is longer than 32, so a longer run names nobody (and must not mention whoever owns its prefix).
+    if (j - (i + 1) > 32) {
+      i = runEnd;
       continue;
     }
     const handle = String.fromCodePoint(...cps.slice(i + 1, j)).toLowerCase();
@@ -56,8 +57,11 @@ export function parseMentionSpans(body: string): MentionSpan[] {
     if (j === runEnd && cps[j] === 47) {
       let k = j + 1;
       while (k < cps.length && isLabelChar(cps[k]!)) k++;
-      // A label over 32 resolves to nothing: the mention falls back to the bare handle, as for an unknown label.
-      if (k > j + 1 && k - (j + 1) <= 32) {
+      let core = k;
+      while (core > j + 1 && cps[core - 1] === 46) core--;
+      // A label over 32 resolves to nothing: the mention falls back to the bare handle, as for an unknown label. Trailing dots
+      // don't count toward the 32, because the resolver retries without them (a label at the end of a sentence).
+      if (k > j + 1 && core - (j + 1) <= 32) {
         label = String.fromCodePoint(...cps.slice(j + 1, k));
         end = k;
       }
@@ -76,6 +80,15 @@ export interface CommentMentionDto {
   displayName: string;
   avatar: AvatarRef | null;
   agentLabel: string | null;
+}
+
+export interface MentionCandidateDto {
+  userId: string;
+  handle: string;
+  displayName: string;
+  avatar: AvatarRef | null;
+  /** Only labels set explicitly on a token usable now; labels derived from token names are never listed. */
+  agentLabels: string[];
 }
 
 export interface CommentAnchorDto {

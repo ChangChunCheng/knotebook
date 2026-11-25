@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COMMENT_BODY_MAX, COMMENT_MENTIONS_MAX, COMMENT_QUOTE_MAX, parseMentionSpans } from "./comments.js";
+import { COMMENT_BODY_MAX, COMMENT_MENTIONS_MAX, COMMENT_QUOTE_MAX, MENTION_CANDIDATES_MAX, parseMentionSpans } from "./comments.js";
 
 const handles = (body: string) => parseMentionSpans(body).map(s => s.handle);
 
@@ -55,6 +55,22 @@ describe("parseMentionSpans", () => {
     expect(parseMentionSpans(`@bob/${"l".repeat(33)}`)).toEqual([{ start: 0, length: 4, handle: "bob", label: null }]);
   });
 
+  it("checks the handle length after dropping a trailing dash", () => {
+    expect(parseMentionSpans(`@${"a".repeat(32)}-`)).toEqual([{ start: 0, length: 33, handle: "a".repeat(32), label: null }]);
+    expect(parseMentionSpans(`@${"a".repeat(32)}--`)).toEqual([{ start: 0, length: 33, handle: "a".repeat(32), label: null }]);
+    expect(parseMentionSpans(`@${"a".repeat(33)}-`)).toEqual([]);
+    expect(parseMentionSpans(`@${"a".repeat(33)}- @bob`)).toEqual([{ start: 36, length: 4, handle: "bob", label: null }]);
+  });
+
+  it("keeps trailing dots of a label literally and doesn't count them toward the 32", () => {
+    expect(parseMentionSpans("@alice/claude.")).toEqual([{ start: 0, length: 14, handle: "alice", label: "claude." }]);
+    const l32 = "l".repeat(32);
+    expect(parseMentionSpans(`@bob/${l32}.`)).toEqual([{ start: 0, length: 4 + 1 + 33, handle: "bob", label: `${l32}.` }]);
+    expect(parseMentionSpans(`@bob/${l32}...`)).toEqual([{ start: 0, length: 4 + 1 + 35, handle: "bob", label: `${l32}...` }]);
+    expect(parseMentionSpans(`@bob/${"l".repeat(33)}.`)).toEqual([{ start: 0, length: 4, handle: "bob", label: null }]);
+    expect(parseMentionSpans(`@bob/${l32}.x`)).toEqual([{ start: 0, length: 4, handle: "bob", label: null }]);
+  });
+
   it("returns every candidate, including repeats and more than the mention cap", () => {
     const body = Array.from({ length: COMMENT_MENTIONS_MAX + 1 }, (_, i) => `@u${i}`).join(" ");
     expect(parseMentionSpans(body)).toHaveLength(COMMENT_MENTIONS_MAX + 1);
@@ -83,5 +99,6 @@ describe("limits", () => {
     expect(COMMENT_BODY_MAX).toBe(4000);
     expect(COMMENT_QUOTE_MAX).toBe(200);
     expect(COMMENT_MENTIONS_MAX).toBe(20);
+    expect(MENTION_CANDIDATES_MAX).toBe(8);
   });
 });
