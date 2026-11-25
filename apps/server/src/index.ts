@@ -157,6 +157,7 @@ async function main(): Promise<void> {
       ai,
       startVersionJobs: true,
       startTrashPurge: true,
+      startNotificationPurge: true,
       ...(config.testHooks ? { versionAutoScanIntervalMs: 1000 } : {}),
     },
     { webDist }

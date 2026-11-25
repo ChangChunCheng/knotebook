@@ -47,7 +47,7 @@ export interface McpRouteDeps {
   config: AppConfig;
   collab?: CollabServer;
   editing?: EditingRuntime;
-  // Picked one by one so MCP sees only the six it uses; folder is the same instance as foldersRoutes (charged in folders/service.ts). tokenWrite is charged at the scope
+  // Picked one by one so MCP sees only the ones it uses; folder is the same instance as foldersRoutes (charged in folders/service.ts). tokenWrite is charged at the scope
   // check and edit after the role check, as in REST.
   limiters: {
     contentRead: FixedWindowLimiter;
@@ -56,6 +56,7 @@ export interface McpRouteDeps {
     search: FixedWindowLimiter;
     upload: FixedWindowLimiter;
     folder: FixedWindowLimiter;
+    comment: FixedWindowLimiter;
   };
   presence?: PresenceRegistry;
   /** Same write service instance as notesRoutes, so MCP and REST writes serialize per note. */

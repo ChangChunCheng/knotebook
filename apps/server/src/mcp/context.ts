@@ -32,6 +32,8 @@ export interface McpToolCtx {
     upload: FixedWindowLimiter;
     /** Same instance as `foldersRoutes`; separate from `edit` (see `FOLDER_LIMIT`). */
     folder: FixedWindowLimiter;
+    /** Same instance as `commentsRoutes`, so MCP and REST comments share one count. */
+    comment: FixedWindowLimiter;
   };
   log: FastifyBaseLogger;
   userId: string;

@@ -351,6 +351,13 @@
       "when": 1795541979835,
       "tag": "0049_knowledge-custom",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795621169975,
+      "tag": "0050_comments-notifications",
+      "breakpoints": true
     }
   ]
 }

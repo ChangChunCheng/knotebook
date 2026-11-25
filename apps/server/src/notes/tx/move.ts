@@ -6,11 +6,12 @@
  * Not the caller's personal note any more → 409 `conflict`. Only the current slug gets a redirect (`/n/<handle>/<old slug>`).
  * A delete-group racing this: the KEY SHARE waits for the delete to commit → 0 rows → 404. After the lock the group can't be deleted, so the UPDATE can't hit FK 23503; the `charged_to_id` → users FK only fires if the mover's account is hard-deleted mid-transaction (no such path in `src/`). The 23503 → 404 mapping in `notes/move-note.ts` is defence in depth.
  * Tag rows come last and only in the target group's space (after the groups lock), so they add no edge to this order. The tag upsert locks the target tags in `name_key` order, so two notes moving into one group with the same tag names can't wait on each other in opposite orders.
+ * The comment and read-marker deletes come last, after the note lock, and add no lock edge.
  * No cycle with `lockGroup` paths: none of them locks a personal note after taking the groups lock, and the UPDATE's FK check would take this KEY SHARE anyway (we take it earlier).
  */
 import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
-import { groupMembers, groupRoles, groups, noteShares, notes, uploads } from "../../db/schema.js";
+import { groupMembers, groupRoles, groups, noteCommentReads, noteComments, noteShares, notes, uploads } from "../../db/schema.js";
 import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../../folders/messages.js";
 import { lockFolderInTx } from "../../folders/tx/lock.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
@@ -33,7 +34,7 @@ export interface MoveNoteInput {
   /** Caller checked visibility and group; null = group root. */
   folderId: string | null;
   lockTimeoutMs: number;
-  /** true = keep the note's versions; anything else clears them. */
+  /** true = keep the note's versions and comments; anything else clears them. */
   keepHistory?: boolean;
 }
 
@@ -91,6 +92,11 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
   await recordRedirectsInTx(tx, [userNotePath(input.userHandle, row.slug)], input.noteId);
   // Unless the mover chose to keep them, versions and editors from the personal period must not be exposed to group editors.
   if (input.keepHistory === true) await clearPendingVersionStateInTx(tx, input.noteId);
-  else await resetNoteVersionsInTx(tx, { noteId: input.noteId });
+  else {
+    await resetNoteVersionsInTx(tx, { noteId: input.noteId });
+    // Comments follow the same choice (mentions, notified rows and notifications cascade). A post that raced the move committed before the note lock was granted, so it is deleted too.
+    await tx.delete(noteComments).where(eq(noteComments.noteId, input.noteId));
+    await tx.delete(noteCommentReads).where(eq(noteCommentReads.noteId, input.noteId));
+  }
   return { removedShareUserIds: removed.map(r => r.userId) };
 }

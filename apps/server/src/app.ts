@@ -25,6 +25,7 @@ import { trashRoutes } from "./routes/trash.js";
 import { foldersRoutes } from "./routes/folders.js";
 import { favoritesRoutes } from "./routes/favorites.js";
 import { tagsRoutes } from "./routes/tags.js";
+import { commentsRoutes } from "./routes/comments.js";
 import { groupsRoutes } from "./routes/groups.js";
 import { searchRoutes } from "./routes/search.js";
 import { knowledgeRoutes } from "./routes/knowledge.js";
@@ -43,6 +44,8 @@ import { adminAuthRoutes } from "./routes/admin-auth.js";
 import { adminVersionsRoutes } from "./routes/admin-versions.js";
 import { adminLimitsRoutes } from "./routes/admin-limits.js";
 import { adminTrashRoutes } from "./routes/admin-trash.js";
+import { adminNotificationsRoutes } from "./routes/admin-notifications.js";
+import { notificationsRoutes } from "./routes/notifications.js";
 import { testHookRoutes } from "./routes/test-hooks.js";
 import { accountRoutes } from "./routes/account.js";
 import { avatarsRoutes } from "./routes/avatars.js";
@@ -80,6 +83,7 @@ import { PresenceRegistry, type PresenceOptions } from "./notes/editing/presence
 import { NoteWriteService } from "./notes/editing/write-service.js";
 import type { ShownLinkTexts } from "./notes/editing/shown-link-texts.js";
 import { createLinkConversion, errorSummary, NOOP_LINK_CONVERSION, type LinkConversion } from "./notes/link-conversion.js";
+import { NOTIFICATION_PURGE_FIRST_DELAY_MS, NOTIFICATION_PURGE_INTERVAL_MS, createNotificationPurger } from "./notifications/retention.js";
 import { TRASH_PURGE_FIRST_DELAY_MS, TRASH_PURGE_INTERVAL_MS, createTrashPurger } from "./trash/purge.js";
 import type { NoteCreateHooks } from "./notes/create.js";
 import type { GroupTestHook } from "./groups/test-hook.js";
@@ -161,6 +165,9 @@ export interface AppDeps {
   startTrashPurge?: boolean;
   trashPurgeFirstDelayMs?: number;
   trashPurgeIntervalMs?: number;
+  startNotificationPurge?: boolean;
+  notificationPurgeFirstDelayMs?: number;
+  notificationPurgeIntervalMs?: number;
   /** Delay before re-verifying the older session's collab connections after the same account signs in again. */
   reloginReverifyDelayMs?: number;
   versionAutoScanIntervalMs?: number;
@@ -445,6 +452,22 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
+  if (deps.startNotificationPurge) {
+    const purger = createNotificationPurger({ db: deps.db, log: app.log });
+    const run = (): void => {
+      void purger.runOnce().catch(err => app.log.warn({ err: errorSummary(err) }, "Notification cleanup background job failed"));
+    };
+    const first = setTimeout(run, deps.notificationPurgeFirstDelayMs ?? NOTIFICATION_PURGE_FIRST_DELAY_MS);
+    first.unref();
+    const every = setInterval(run, deps.notificationPurgeIntervalMs ?? NOTIFICATION_PURGE_INTERVAL_MS);
+    every.unref();
+    app.addHook("onClose", async () => {
+      clearTimeout(first);
+      clearInterval(every);
+      await Promise.race([purger.stop(), new Promise<void>(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref())]);
+    });
+  }
+
   // Before any route registration: route plugins call app.authenticateTokenOrSession.
   app.decorate(
     "authenticateTokenOrSession",
@@ -558,6 +581,7 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(foldersRoutes({ db: deps.db, collabHooks: deps.collabHooks, storageLockTimeoutMs, groupTestHook: deps.groupTestHook, limiters: { folder: limiters.folder } }));
   void app.register(favoritesRoutes({ db: deps.db, limiters: { favorite: limiters.favorite }, groupTestHook: deps.groupTestHook }));
   void app.register(tagsRoutes({ db: deps.db, limiters: { tag: limiters.tag }, groupTestHook: deps.groupTestHook }));
+  void app.register(commentsRoutes({ db: deps.db, collab: deps.collab, limiters: { comment: limiters.comment, commentRead: limiters.commentRead, userSuggest: limiters.userSuggest }, groupTestHook: deps.groupTestHook }));
   void app.register(groupsRoutes({ db: deps.db, collabHooks: deps.collabHooks, groupTestHook: deps.groupTestHook, uploadsDir: deps.uploadsDir, storageLockTimeoutMs, versions }));
   void app.register(usersRoutes({ db: deps.db, limiters: { userSuggest: limiters.userSuggest } }));
   void app.register(searchRoutes({ db: deps.db, limiters: { search: limiters.search } }));
@@ -574,6 +598,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(adminAuthRoutes({ db: deps.db, config: deps.config, registry: oidcRegistry }));
   void app.register(adminVersionsRoutes({ db: deps.db }));
   void app.register(adminTrashRoutes({ db: deps.db }));
+  void app.register(adminNotificationsRoutes({ db: deps.db }));
+  void app.register(notificationsRoutes({ db: deps.db }));
   void app.register(adminLimitsRoutes({ db: deps.db, siteLimits: deps.siteLimits }));
   // Only with KNOTEBOOK_E2E_TEST_HOOKS=1 and a loopback PUBLIC_URL (config.ts).
   if (deps.config.testHooks) void app.register(testHookRoutes({ versions }));
@@ -634,8 +660,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
       config: deps.config,
       collab: deps.collab,
       editing,
-      // Only MCP's own limiters; upload and folder are the same instances as the REST routes'.
-      limiters: { contentRead: limiters.contentRead, edit: limiters.edit, tokenWrite: limiters.tokenWrite, search: limiters.search, upload: limiters.upload, folder: limiters.folder },
+      // Only MCP's own limiters; upload, folder and comment are the same instances as the REST routes'.
+      limiters: { contentRead: limiters.contentRead, edit: limiters.edit, tokenWrite: limiters.tokenWrite, search: limiters.search, upload: limiters.upload, folder: limiters.folder, comment: limiters.comment },
       presence,
       writes,
       testHooks: deps.mcpTestHooks,
