@@ -62,7 +62,9 @@ import { createUploadFile, type Translate } from "@/uploads/upload-file";
 import { createFilePanel } from "@/components/FilePanel";
 import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
-import { CornerStack } from "@/components/CornerStack";
+import { CornerStack, useCornerStackBubbles } from "@/components/CornerStack";
+import { CommentsLazyBoundary } from "@/components/comments/CommentsLazyBoundary";
+import { useComments } from "@/lib/comments-context";
 import { useVersions } from "@/lib/versions-context";
 import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
 import { tourTarget } from "@/lib/tour-targets";
@@ -70,7 +72,7 @@ import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/version
 import { useVersionsPanelWidth } from "@/components/versions/versions-panel-width";
 import { useFloatingPanelDismiss, useNoteHeaderHeight } from "@/components/versions/floating-panel";
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX, SelectionAiController } from "@/components/ai/SelectionAiController";
-import { CORNER_STACK_FOOTPRINT_PX } from "@/components/corner-stack-geometry";
+import { cornerStackFootprint } from "@/components/corner-stack-geometry";
 import { PHONE_FAB_FOOTPRINT_PX } from "@/components/sidebar/PhoneListFabs";
 import { MobileEditToolbar } from "@/components/editor/mobile/MobileEditToolbar";
 import { MobileToolbarSpacer } from "@/components/editor/mobile/MobileToolbarSpacer";
@@ -98,6 +100,7 @@ import { useOutlineHeadings } from "@/components/outline/use-outline-headings";
 const VersionsPanel = lazy(() =>
   import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
 );
+const CommentsPanel = lazy(() => import("@/components/comments/CommentsLazy").then((m) => ({ default: m.CommentsPanel })));
 
 export { collabUserColor };
 
@@ -403,7 +406,11 @@ export function NoteEditor({
   // While any drag runs, floating layers like ⋮⋮ must not take pointer events so the drop reaches the editor (`index.css`).
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
-  const { panelOpen, enabled: versionsEnabled } = useVersions();
+  const { panelOpen: versionsPanelOpen } = useVersions();
+  const commentsPanelOpen = useComments().panelOpen;
+  // Both panels share the right-hand slot, its width setting and its floating rules; at most one is open.
+  const panelOpen = versionsPanelOpen || commentsPanelOpen;
+  const cornerBubbles = useCornerStackBubbles().count;
   const panelWidth = useVersionsPanelWidth();
   // floating panel (640-1279: the versions panel floats over the note): top edge leaves room for the header (`floating-panel.ts`)
   const rowRef = useRef<HTMLDivElement>(null);
@@ -645,7 +652,8 @@ export function NoteEditor({
               headings={outlineHeadings}
               scrollEl={scrollEl}
               box={outlineBox}
-              bubbleShown={versionsEnabled && !panelOpen}
+              bubbleShown={cornerBubbles > 0}
+              bubbleCount={cornerBubbles}
               pinned={outlinePinned}
               pinAvailable={outlinePinAvailable}
               onPinnedChange={setOutlinePinPref}
@@ -660,8 +668,8 @@ export function NoteEditor({
               placement={phone ? "page" : "anchor"}
               inputRoot={columnEl}
               editToolbarHeight={phone && mobileToolbar ? PHONE_EDIT_TOOLBAR_CLEARANCE_PX : 0}
-              // Non-phone: same condition CornerStack uses to show the bubble (versions enabled, panel closed).
-              bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : versionsEnabled && !panelOpen ? CORNER_STACK_FOOTPRINT_PX : 0}
+              // Non-phone: the bubbles CornerStack shows.
+              bottomReserve={phone ? (fabClearance ? PHONE_FAB_FOOTPRINT_PX : 0) : cornerStackFootprint(cornerBubbles)}
               sheetOpen={outlineSheetOpen}
               onSheetOpenChange={setOutlineSheetOpen}
               onOpenSheet={openOutlineSheet}
@@ -740,12 +748,19 @@ export function NoteEditor({
           <CornerStack scrollRef={scrollRootRef} />
           {!footerInScroll && footerSlot}
         </div>
-        {panelOpen && (
+        {versionsPanelOpen && (
           // `display: contents` keeps the row container as positioning base; collapse and Esc checks recognise this node.
           <div data-versions-panel-slot="" className="contents">
             <VersionsLazyBoundary noteId={noteId} errorClassName={VERSIONS_ERROR_FRAME.panel}>
               <VersionsPanel doc={doc} width={panelWidth.width} onWidthChange={panelWidth.onChange} />
             </VersionsLazyBoundary>
+          </div>
+        )}
+        {commentsPanelOpen && (
+          <div data-comments-panel-slot="" className="contents">
+            <CommentsLazyBoundary noteId={noteId} errorClassName={VERSIONS_ERROR_FRAME.panel}>
+              <CommentsPanel doc={doc} width={panelWidth.width} onWidthChange={panelWidth.onChange} />
+            </CommentsLazyBoundary>
           </div>
         )}
         {mobileToolbar && <MobileEditToolbar editor={editor} onCreateLink={openLinkDialog} />}

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
 import { useIsOverlay } from "@/lib/layout-tiers";
+import { useComments } from "@/lib/comments-context";
 import { isOverlayOpen, useVersions } from "@/lib/versions-context";
 
 // `display: contents` node in NoteEditor wrapping the panel (including its load-failure error frame): the error frame has no panel testid, so this is recognised instead.
 export const PANEL_SLOT = "[data-versions-panel-slot]";
+// The comments panel's slot in the same place. Pressing outside doesn't close it: selecting a passage in the note is part of writing a comment.
+export const COMMENTS_PANEL_SLOT = "[data-comments-panel-slot]";
 // Panel (with its error frame), the menus and popper it opens (portalled outside the panel), the history bubble: pressing inside these doesn't count as "clicking the note area".
 // Dialogs are covered by the "a dialog in document yields" check below.
 const KEEP_OPEN = `${PANEL_SLOT}, [data-testid="versions-bubble"], [role="menu"], [data-radix-popper-content-wrapper]`;
@@ -37,15 +40,33 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
     document.querySelector<HTMLElement>('[data-testid="versions-bubble"]')?.focus({ preventScroll: true });
   }, [panelOpen]);
 
+  const comments = useComments();
+  const commentsOpen = comments.panelOpen;
+  const closeComments = comments.close;
+  const restoreCommentsFocusRef = useRef(false);
+  useEffect(() => {
+    if (commentsOpen || !restoreCommentsFocusRef.current) return;
+    restoreCommentsFocusRef.current = false;
+    document.querySelector<HTMLElement>('[data-testid="comments-bubble"]')?.focus({ preventScroll: true });
+  }, [commentsOpen]);
+
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {
-      if (!overlay || !panelOpen || event.key !== "Escape" || event.defaultPrevented) return;
-      if (!(event.target instanceof Element) || event.target.closest(PANEL_SLOT) === null || isOverlayOpen()) return;
+      if (!overlay || event.key !== "Escape" || event.defaultPrevented || !(event.target instanceof Element)) return;
+      if (commentsOpen && event.target.closest(COMMENTS_PANEL_SLOT) !== null && !isOverlayOpen()) {
+        // A draft being typed stays: Esc there would throw it away with the panel.
+        if (event.target instanceof HTMLTextAreaElement && event.target.value !== "") return;
+        event.preventDefault();
+        restoreCommentsFocusRef.current = true;
+        closeComments();
+        return;
+      }
+      if (!panelOpen || event.target.closest(PANEL_SLOT) === null || isOverlayOpen()) return;
       event.preventDefault(); // Only closes the panel: the page-level "Esc leaves preview" listener yields on defaultPrevented
       restoreFocusRef.current = true;
       close();
     },
-    [overlay, panelOpen, close],
+    [overlay, panelOpen, close, commentsOpen, closeComments],
   );
 
   return { onKeyDown };

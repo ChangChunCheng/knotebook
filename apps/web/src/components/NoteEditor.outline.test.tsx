@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import * as Y from "yjs";
@@ -18,7 +18,8 @@ import type { OutlineBox } from "@/components/outline/use-outline-box";
 import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
 import { ARTICLE_COLUMN_MAX, articleColumn, type ArticleColumnState } from "@/components/ui/article-column";
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
-import { CORNER_STACK_FOOTPRINT_PX } from "@/components/corner-stack-geometry";
+import { CORNER_STACK_FOOTPRINT_PX, cornerStackFootprint } from "@/components/corner-stack-geometry";
+import { CommentsProvider, NOOP_COMMENTS, type CommentsContextValue } from "@/lib/comments-context";
 import { PHONE_FAB_FOOTPRINT_PX } from "@/components/sidebar/PhoneListFabs";
 import { NoteEditor } from "./NoteEditor";
 
@@ -693,6 +694,78 @@ describe("NoteEditor: phone position bubble, bottom sheet and the header menu en
     act(() => tier.setLayoutTier("phone"));
     expect(screen.getByTestId("bubble-stub")).toBeInTheDocument();
     expect(lastSheet().open).toBe(false);
+    doc.destroy();
+  });
+});
+
+describe("NoteEditor: the outline and the comments panel share the right-hand slot rules", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    window.localStorage.clear();
+    outline.headings = HEADINGS;
+    outline.props = [];
+    outline.box = WIDE_BOX;
+    outline.measured = 0;
+    phoneStubs.bubble = [];
+    resetNoteWidthsForTest();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/ai/actions") return Promise.resolve(json({ actions: [] }));
+      if (url === "/api/folders") return Promise.resolve(json(FOLDER_LIST_EMPTY));
+      if (url === "/api/notes") return Promise.resolve(json([]));
+      if (url.endsWith("/comments/unread-count")) return Promise.resolve(json({ count: 0 }));
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function renderWithComments(tier: LayoutTier, comments: Partial<CommentsContextValue>, versionsEnabled = true) {
+    stubLayoutTier(tier);
+    const doc = new Y.Doc();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <VersionsProvider value={{ ...NOOP_VERSIONS, enabled: versionsEnabled, noteId: "note-1" }}>
+            <CommentsProvider value={{ ...NOOP_COMMENTS, enabled: true, noteId: "note-1", ...comments }}>
+              <NoteEditor doc={doc} provider={{ awareness: null } as never} editable user={{ id: "u1", name: "alice" }} noteId="note-1" />
+            </CommentsProvider>
+          </VersionsProvider>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId("note-editor");
+    await nextFrame();
+    return doc;
+  }
+
+  it("two bubbles: the outline stops above both; one bubble for a viewer", async () => {
+    const both = await renderWithComments("docked", {});
+    expect(lastProps().bubbleShown).toBe(true);
+    expect(lastProps().bubbleCount).toBe(2);
+    cleanup();
+    both.destroy();
+    outline.props = [];
+    const viewer = await renderWithComments("docked", {}, false);
+    expect(lastProps().bubbleCount).toBe(1);
+    viewer.destroy();
+  });
+
+  it("comments panel open: floating tier -> no outline; fixed tier -> outline without bubbles", async () => {
+    const overlay = await renderWithComments("overlay", { panelOpen: true, mode: "panel" });
+    expect(stub()).toBeNull();
+    cleanup();
+    overlay.destroy();
+    outline.props = [];
+    const docked = await renderWithComments("docked", { panelOpen: true, mode: "panel" });
+    expect(stub()).not.toBeNull();
+    expect(lastProps().bubbleShown).toBe(false);
+    docked.destroy();
+  });
+
+  it("640-767: the phone outline track stops above both bubbles", async () => {
+    const doc = await renderWithComments("compact", {});
+    expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.bottomReserve).toBe(cornerStackFootprint(2));
     doc.destroy();
   });
 });
