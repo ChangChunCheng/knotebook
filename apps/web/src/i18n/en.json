@@ -1113,6 +1113,9 @@
     "knowledge_key_taken": "Two options have the same key.",
     "knowledge_fields_limit": "Too many options or custom fields.",
     "knowledge_fields_incomplete": "The settings changed since you opened this page. Reload and try again.",
+    "comment_not_found": "That comment no longer exists.",
+    "invalid_comment": "That comment can't be saved. Check its text, the passage and the comment it answers.",
+    "notification_not_found": "That notification no longer exists.",
     "fallback": "An unexpected error occurred."
   }
 }
