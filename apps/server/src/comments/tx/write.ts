@@ -3,8 +3,8 @@
  * SHARE with `deleted_at is null`, then (edit and delete) the comment row FOR UPDATE; mention, notified and notification rows come
  * last. Access is first read without locks to learn which space was authorized; a space that differs once the note is locked is a 409
  * `conflict` (the client retries and takes the group lock in order), and access is read again under the locks.
- * Every path that changes a note's space takes the note FOR UPDATE first (move, group delete), so a racing write either commits before
- * it or re-checks against the new audience. Content saves take FOR NO KEY UPDATE, which doesn't wait for KEY SHARE.
+ * Move takes the note FOR UPDATE first; group delete takes the group row first, which a comment write on a group note also takes first.
+ * So a racing write either commits before them or re-checks against the new audience. Content saves take FOR NO KEY UPDATE, which doesn't wait for KEY SHARE.
  * Comment writes never touch `notes.updated_at` or the Yjs document.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
@@ -150,7 +150,7 @@ export async function postCommentInTx(
     mentionTargets: distinctTargets(mentions),
     replyTarget,
   });
-  return { comment: comment!, noteId, newNotificationUserIds };
+  return { comment: comment!, noteId: comment!.noteId, newNotificationUserIds };
 }
 
 interface LockedComment {

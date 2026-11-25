@@ -179,7 +179,7 @@ export const FAVORITE_LIMIT = { limit: 600, windowMs: 60_000 } as const;
 // Charged only after authorization; 400s and 404s before it don't count. Fixed, not site-adjustable.
 export const TAG_LIMIT = { limit: 600, windowMs: 60_000 } as const;
 
-// Posting or editing a comment (web and REST; MCP once `post_comment` charges it too). Not shared with `edit`: comments are not note content.
+// Posting or editing a comment (web, REST and MCP `post_comment`). Not shared with `edit`: comments are not note content.
 // Charged after authorization and schema validation, so 404s and schema 400s don't count, but a body refused inside the transaction (empty, over
 // the cap, NUL, bad replyToId or anchor) does. Fixed, not site-adjustable.
 export const COMMENT_LIMIT = { limit: 30, windowMs: 60_000 } as const;

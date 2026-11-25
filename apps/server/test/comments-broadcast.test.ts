@@ -82,6 +82,18 @@ describe("comment live signal", () => {
     expect(() => broadcastCommentChange(ctx.collab, "00000000-0000-4000-8000-000000000000", "deleted", "x")).not.toThrow();
   });
 
+  it("reaches the note's connections when the post names the note with an upper-case id", async () => {
+    const { note, aliceSession, bobSession, send } = await setup();
+    const watcher = recordMessages(await bobSession.connect(note.id));
+    await aliceSession.connect(note.id);
+
+    const res = await send("POST", `/api/notes/${note.id.toUpperCase()}/comments`, { body: "shouting" });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as { id: string };
+    await until(() => watcher.length === 1, "created");
+    expect(watcher[0]).toEqual({ type: "comment", op: "created", commentId: made.id });
+  });
+
   it("is sent after the commit, not while the transaction is open, and not at all when the write is refused", async () => {
     let parked: (() => void) | null = null;
     let gate = false;

@@ -34,7 +34,8 @@ export function createNotificationPurger(deps: NotificationPurgerDeps): Notifica
          select id from notifications
           where created_at < now() - (${retentionDays}::int * interval '1 day')
           order by created_at
-          limit ${batchSize})
+          limit ${batchSize}
+          for update skip locked)
     `);
     return res.rowCount ?? 0;
   }
