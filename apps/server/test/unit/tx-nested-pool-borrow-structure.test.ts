@@ -115,7 +115,7 @@ const ARG_BANNED: Array<[string, RegExp]> = [
   ["閉包 function", /\bfunction\b/],
   ...HELPERS,
 ];
-const ROUTE_FILES = ["routes/notes.ts", "routes/note-content.ts", "routes/note-sharing.ts", "routes/groups.ts", "notes/links.ts", "routes/oidc.ts", "routes/oidc-pending.ts", "routes/admin-auth.ts", "routes/account.ts", "notes/search-index.ts", "knowledge/index-write.ts", "notes/search-query.ts", "mcp/tools/create-transfer-token.ts", "mcp/tools/open-notes-as-files.ts", "routes/uploads.ts", "collab/versions.ts", "routes/admin-versions.ts", "notes/copy-note.ts", "notes/move-note.ts", "routes/admin-password-reset.ts", "routes/password-reset.ts", "trash/service.ts", "routes/admin-trash.ts", "trash/purge.ts", "folders/service.ts", "notes/editing/write-service.ts", "site-limits/store.ts", "routes/avatars.ts", "avatars/oidc-job.ts", "routes/tags.ts", "routes/comments.ts", "knowledge/index-query.ts", "routes/knowledge-fields.ts"];
+const ROUTE_FILES = ["routes/notes.ts", "routes/note-content.ts", "routes/note-sharing.ts", "routes/groups.ts", "notes/links.ts", "routes/oidc.ts", "routes/oidc-pending.ts", "routes/admin-auth.ts", "routes/account.ts", "notes/search-index.ts", "knowledge/index-write.ts", "notes/search-query.ts", "mcp/tools/create-transfer-token.ts", "mcp/tools/open-notes-as-files.ts", "routes/uploads.ts", "collab/versions.ts", "routes/admin-versions.ts", "notes/copy-note.ts", "notes/move-note.ts", "routes/admin-password-reset.ts", "routes/password-reset.ts", "trash/service.ts", "routes/admin-trash.ts", "routes/admin-notifications.ts", "trash/purge.ts", "folders/service.ts", "notes/editing/write-service.ts", "site-limits/store.ts", "routes/avatars.ts", "avatars/oidc-job.ts", "routes/tags.ts", "routes/comments.ts", "knowledge/index-query.ts", "routes/knowledge-fields.ts"];
 
 describe("transaction structure guard (#175)", () => {
   const files = walk(SRC);
@@ -208,6 +208,7 @@ describe("transaction structure guard (#175)", () => {
       { f: "routes/password-reset.ts", all: 1, inTx: 1 }, // complete the reset
       { f: "trash/service.ts", all: 3, inTx: 3 }, // move to trash (trashNotesInTx), restore (restoreNotesInTx), permanent delete (purgeTrashedNotesInTx)
       { f: "routes/admin-trash.ts", all: 1, inTx: 1 }, // trash retention days (updateTrashSettingsInTx)
+      { f: "routes/admin-notifications.ts", all: 1, inTx: 1 }, // notification retention days (updateNotificationSettingsInTx)
       { f: "trash/purge.ts", all: 1, inTx: 1 }, // purge one batch past retention (purgeExpiredBatchInTx)
       { f: "folders/service.ts", all: 4, inTx: 4 }, // create folder (createFolderInTx), rename/move (updateFolderInTx), delete (deleteFolderInTx), place note (placeNoteInTx)
       { f: "notes/editing/write-service.ts", all: 3, inTx: 3 }, // bulk transfer: syncFile's record transaction (recordFileSyncInTx) and tags transaction (writeSyncTagsInTx), and the new-note insert with its tags (createNoteWithTagsInTx)

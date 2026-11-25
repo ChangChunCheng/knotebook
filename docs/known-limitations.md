@@ -136,7 +136,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [Side by side, the columns line up only block by block, at the top level.](./known-limitations/version-history.md)
 - [In the side-by-side comparison, a row of side-by-side columns lines up as one unit.](./known-limitations/version-history.md)
 - [A row of side-by-side columns is marked a little differently from other blocks in a comparison.](./known-limitations/version-history.md)
-- [Copying a note doesn't bring its versions along, moving a note into a group deletes its versions unless you choose to bring them along, and transferring a group's notes deletes their versions.](./known-limitations/version-history.md)
+- [Copying a note doesn't bring its versions along, moving a note into a group deletes its versions and comments unless you choose to bring them along, and transferring a group's notes deletes their versions.](./known-limitations/version-history.md)
 - [Versions kept through a move into a group show who edited them to the group's editors.](./known-limitations/version-history.md)
 - [Changes that were still waiting to be saved when a note is moved into a group with its history kept go into the group's next version, and their editors aren't listed on it.](./known-limitations/version-history.md)
 - [Applying a version to a note whose content is malformed fails with a server error.](./known-limitations/version-history.md)

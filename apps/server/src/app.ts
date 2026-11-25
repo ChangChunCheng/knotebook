@@ -44,6 +44,8 @@ import { adminAuthRoutes } from "./routes/admin-auth.js";
 import { adminVersionsRoutes } from "./routes/admin-versions.js";
 import { adminLimitsRoutes } from "./routes/admin-limits.js";
 import { adminTrashRoutes } from "./routes/admin-trash.js";
+import { adminNotificationsRoutes } from "./routes/admin-notifications.js";
+import { notificationsRoutes } from "./routes/notifications.js";
 import { testHookRoutes } from "./routes/test-hooks.js";
 import { accountRoutes } from "./routes/account.js";
 import { avatarsRoutes } from "./routes/avatars.js";
@@ -81,6 +83,7 @@ import { PresenceRegistry, type PresenceOptions } from "./notes/editing/presence
 import { NoteWriteService } from "./notes/editing/write-service.js";
 import type { ShownLinkTexts } from "./notes/editing/shown-link-texts.js";
 import { createLinkConversion, errorSummary, NOOP_LINK_CONVERSION, type LinkConversion } from "./notes/link-conversion.js";
+import { NOTIFICATION_PURGE_FIRST_DELAY_MS, NOTIFICATION_PURGE_INTERVAL_MS, createNotificationPurger } from "./notifications/retention.js";
 import { TRASH_PURGE_FIRST_DELAY_MS, TRASH_PURGE_INTERVAL_MS, createTrashPurger } from "./trash/purge.js";
 import type { NoteCreateHooks } from "./notes/create.js";
 import type { GroupTestHook } from "./groups/test-hook.js";
@@ -162,6 +165,9 @@ export interface AppDeps {
   startTrashPurge?: boolean;
   trashPurgeFirstDelayMs?: number;
   trashPurgeIntervalMs?: number;
+  startNotificationPurge?: boolean;
+  notificationPurgeFirstDelayMs?: number;
+  notificationPurgeIntervalMs?: number;
   /** Delay before re-verifying the older session's collab connections after the same account signs in again. */
   reloginReverifyDelayMs?: number;
   versionAutoScanIntervalMs?: number;
@@ -446,6 +452,22 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
     });
   }
 
+  if (deps.startNotificationPurge) {
+    const purger = createNotificationPurger({ db: deps.db, log: app.log });
+    const run = (): void => {
+      void purger.runOnce().catch(err => app.log.warn({ err: errorSummary(err) }, "Notification cleanup background job failed"));
+    };
+    const first = setTimeout(run, deps.notificationPurgeFirstDelayMs ?? NOTIFICATION_PURGE_FIRST_DELAY_MS);
+    first.unref();
+    const every = setInterval(run, deps.notificationPurgeIntervalMs ?? NOTIFICATION_PURGE_INTERVAL_MS);
+    every.unref();
+    app.addHook("onClose", async () => {
+      clearTimeout(first);
+      clearInterval(every);
+      await Promise.race([purger.stop(), new Promise<void>(resolve => setTimeout(resolve, SCAN_STOP_GRACE_MS).unref())]);
+    });
+  }
+
   // Before any route registration: route plugins call app.authenticateTokenOrSession.
   app.decorate(
     "authenticateTokenOrSession",
@@ -576,6 +598,8 @@ export function buildApp(deps: AppDeps, options: BuildAppOptions = {}): FastifyI
   void app.register(adminAuthRoutes({ db: deps.db, config: deps.config, registry: oidcRegistry }));
   void app.register(adminVersionsRoutes({ db: deps.db }));
   void app.register(adminTrashRoutes({ db: deps.db }));
+  void app.register(adminNotificationsRoutes({ db: deps.db }));
+  void app.register(notificationsRoutes({ db: deps.db }));
   void app.register(adminLimitsRoutes({ db: deps.db, siteLimits: deps.siteLimits }));
   // Only with KNOTEBOOK_E2E_TEST_HOOKS=1 and a loopback PUBLIC_URL (config.ts).
   if (deps.config.testHooks) void app.register(testHookRoutes({ versions }));

@@ -450,7 +450,29 @@ describe("races", () => {
     expect(await mentionsOf(db, mine.id)).toEqual([]);
   });
 
-  it.todo("a post racing a move that doesn't keep history is deleted with the note's other comments");
+  it("a post that holds the note while a move without keepHistory waits commits first and is then deleted with the note's other comments, mentions, notified rows and notifications", async () => {
+    const { db, pool } = await freshDb();
+    const { alice, bob, noteId } = await personalScene(db);
+    const g = await seedGroup(db, "Garden", [{ userId: alice.id, role: "admin" }]);
+    await say(db, alice, noteId, "early @bob");
+
+    const seen: { move?: Promise<unknown>; interleave?: string } = {};
+    const out = await post(db, { noteId, actor: actorOf(alice), body: "racing @bob" }, async point => {
+      if (point !== "comment-locked") return;
+      seen.move = db.transaction(tx =>
+        moveNoteToGroupInTx(tx, { noteId, userId: alice.id, userHandle: alice.handle, groupId: g.id, folderId: null, lockTimeoutMs: 5000, keepHistory: false }),
+      );
+      seen.interleave = await waitForBlockedOrSettled(pool, seen.move);
+    });
+    expect(seen.interleave).toBe("blocked");
+    expect(out.newNotificationUserIds).toEqual([bob.id]);
+    await seen.move;
+
+    expect(await db.select().from(noteComments).where(eq(noteComments.noteId, noteId))).toEqual([]);
+    expect(await db.select().from(noteCommentMentions)).toEqual([]);
+    expect(await db.select().from(commentNotified)).toEqual([]);
+    expect(await db.select().from(notifications)).toEqual([]);
+  });
 
   it("a write on a group note takes the group's row before the note's, so a group delete (group, then its notes, FOR UPDATE) waits for it without a deadlock", async () => {
     const { db, pool } = await freshDb();
