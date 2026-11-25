@@ -1,5 +1,5 @@
 import "@/i18n/comments-strings";
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type * as Y from "yjs";
 import type { CommentDto } from "@knotebook/shared";
@@ -54,6 +54,29 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
   const [editing, setEditing] = useState<CommentDto | null>(null);
   const [deleting, setDeleting] = useState<CommentDto | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const editDirtyRef = useRef(false);
+  const onEditDirty = useCallback((dirty: boolean) => {
+    editDirtyRef.current = dirty;
+  }, []);
+  const newComposerRef = useRef<HTMLDivElement>(null);
+  const editedIdRef = useRef<string | null>(null);
+
+  // An edit ending drops focus with its composer: give it back to the edited comment's Edit button, or to the composer when a reply is waiting.
+  useEffect(() => {
+    if (editing !== null) {
+      editedIdRef.current = editing.id;
+      return;
+    }
+    const endedId = editedIdRef.current;
+    editedIdRef.current = null;
+    if (endedId === null) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) return;
+    const button = replyTo === null ? findComment(scrollRef.current, endedId)?.querySelector<HTMLElement>("[data-action='edit']") : null;
+    (button ?? newComposerRef.current?.querySelector<HTMLElement>("textarea"))?.focus({ preventScroll: true });
+    // Only the end of an edit matters; a later reply change must not steal focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   // Only this code means the comment is gone; a note-level 404 (access lost, trashed) is the normal error state.
   const targetGone = target !== null && list.error instanceof ApiFail && list.error.code === "comment_not_found";
@@ -202,7 +225,8 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
                 onQuote={onQuote}
                 onReplySummary={scrollToComment}
                 onReply={(r) => {
-                  setEditing(null);
+                  // An edit with unsaved changes stays open; the reply composer takes over when it ends.
+                  if (!editDirtyRef.current) setEditing(null);
                   setReplyTo(r);
                 }}
                 onEdit={(e) => {
@@ -227,11 +251,11 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
         </div>
       )}
       {/* The new-comment composer stays mounted (only hidden) while an edit is open, so its half-written text survives the edit. */}
-      <div hidden={editing !== null}>
+      <div ref={newComposerRef} hidden={editing !== null}>
         <CommentComposer noteId={id} draftAnchor={comments.draftAnchor} onClearAnchor={clearDraftAnchor} replyTo={replyTo} editing={null} onDone={onNewDone} />
       </div>
       {editing !== null && (
-        <CommentComposer key={editing.id} noteId={id} draftAnchor={null} onClearAnchor={clearDraftAnchor} replyTo={null} editing={editing} onDone={() => setEditing(null)} />
+        <CommentComposer key={editing.id} noteId={id} draftAnchor={null} onClearAnchor={clearDraftAnchor} replyTo={null} editing={editing} onDone={() => setEditing(null)} onDirtyChange={onEditDirty} />
       )}
       <Dialog open={deleting !== null} onOpenChange={(next) => !next && !remove.isPending && setDeleting(null)}>
         <DialogContent>

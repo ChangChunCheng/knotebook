@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
-import type { CommentDto, CommentListDto, CommentUnreadCountDto } from "@knotebook/shared";
+import { MENTION_CANDIDATES_MAX, type CommentDto, type CommentListDto, type CommentUnreadCountDto, type MentionCandidateDto, type UserDto } from "@knotebook/shared";
+import { SESSION_QUERY_KEY } from "@/auth/useSession";
 import { api, ApiFail } from "./client";
 
 export const COMMENTS_PAGE_SIZE = 50;
@@ -193,4 +194,60 @@ export function useDeleteComment(noteId: string) {
     mutationFn: (commentId: string) => deleteComment(commentId),
     onSuccess: (_void, commentId) => removeComment(queryClient, noteId, commentId),
   });
+}
+
+export function mentionCandidatesKey(noteId: string, userId: string | null, q: string) {
+  return [...commentsKey(noteId), "candidates", userId, q] as const;
+}
+
+export async function fetchMentionCandidates(noteId: string, q: string): Promise<MentionCandidateDto[]> {
+  const res = await api<{ candidates: MentionCandidateDto[] }>(`/api/notes/${encodeURIComponent(noteId)}/mention-candidates?q=${encodeURIComponent(q)}`);
+  return res.candidates;
+}
+
+function mentionCandidatesOptions(noteId: string, userId: string | null, q: string) {
+  return {
+    queryKey: mentionCandidatesKey(noteId, userId, q),
+    queryFn: () => fetchMentionCandidates(noteId, q),
+    staleTime: 30_000,
+    retry: false,
+  };
+}
+
+/** The key carries the user id because logout doesn't clear the cache. A failed query just means no list. */
+export function useMentionCandidates(noteId: string, q: string | null, enabled: boolean) {
+  const queryClient = useQueryClient();
+  const userId = queryClient.getQueryData<UserDto | null>(SESSION_QUERY_KEY)?.id ?? null;
+  return useQuery({
+    ...mentionCandidatesOptions(noteId, userId, q ?? ""),
+    enabled: enabled && q !== null,
+    placeholderData: (previous: MentionCandidateDto[] | undefined) => previous,
+  });
+}
+
+/** Handles that no candidate query returned: nobody is notified for them. A handle whose query failed is not reported. */
+export function useUnmatchedHandles(noteId: string, handles: readonly string[]): string[] {
+  const queryClient = useQueryClient();
+  const userId = queryClient.getQueryData<UserDto | null>(SESSION_QUERY_KEY)?.id ?? null;
+  const result = useQuery({
+    queryKey: [...commentsKey(noteId), "unmatched", userId, handles.join(",")],
+    queryFn: async () => {
+      const unmatched: string[] = [];
+      for (const h of handles) {
+        try {
+          const found = await queryClient.fetchQuery(mentionCandidatesOptions(noteId, userId, h));
+          // A full page may have cut the exact handle off, so only a short list is a verdict.
+          if (found.length < MENTION_CANDIDATES_MAX && !found.some((c) => c.handle.toLowerCase() === h)) unmatched.push(h);
+        } catch {
+          // No answer is not a verdict.
+        }
+      }
+      return unmatched;
+    },
+    enabled: handles.length > 0,
+    staleTime: 30_000,
+    retry: false,
+    placeholderData: (previous: string[] | undefined) => previous,
+  });
+  return (result.data ?? []).filter((h) => handles.includes(h));
 }

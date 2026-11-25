@@ -32,7 +32,12 @@
       "save": "儲存",
       "replyingTo": "回覆 {{who}}",
       "editing": "正在編輯你的留言",
-      "removePassage": "不附上這個段落"
+      "removePassage": "不附上這個段落",
+      "unmatched": "{{handles}} 不會收到通知：對方看不到這份筆記，或沒有這個帳號名稱。",
+      "counter": "{{count}} / {{max}}"
+    },
+    "mention": {
+      "listLabel": "可提及的人"
     }
   }
 }

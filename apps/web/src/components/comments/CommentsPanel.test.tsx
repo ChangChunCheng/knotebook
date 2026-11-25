@@ -282,6 +282,80 @@ describe("CommentsPanel", () => {
     expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("half written");
   });
 
+  it("pressing Edit while a new comment is still being sent keeps the edit open", async () => {
+    const mine = comment(1, { canEdit: true, body: "first" });
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json({ comments: [mine], olderCursor: null, newerCursor: null }),
+      [`POST /api/notes/${COMMENT_NOTE}/comments`]: json(comment(2), 201),
+    });
+    const base = globalThis.fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => (init?.method === "POST" && String(input).endsWith("/comments") ? gate.then(() => base(input, init)) : base(input, init)));
+    renderPanel();
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "sending" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Comment" }), { key: "Enter", ctrlKey: true });
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "first, edited" } });
+    await act(async () => release());
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(screen.getByText("Editing your comment")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("first, edited");
+  });
+
+  it("Reply while an edit has unsaved changes keeps the text; the reply composer opens when the edit ends", async () => {
+    const mine = comment(1, { canEdit: true, body: "first" });
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json({ comments: [comment(2), mine], olderCursor: null, newerCursor: null }),
+    });
+    renderPanel();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(within(rows()[1]!).getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "first, changed" } });
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Reply" }));
+    expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("first, changed");
+    expect(screen.getByText("Editing your comment")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("Replying to Bob")).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Comment" }));
+  });
+
+  it("Reply while an edit is unchanged ends the edit and opens the reply", async () => {
+    const mine = comment(1, { canEdit: true, body: "first" });
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json({ comments: [comment(2), mine], olderCursor: null, newerCursor: null }),
+    });
+    renderPanel();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(within(rows()[1]!).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Reply" }));
+    expect(screen.queryByText("Editing your comment")).toBeNull();
+    expect(screen.getByText("Replying to Bob")).toBeInTheDocument();
+  });
+
+  it("when an edit ends, focus goes back to that comment's Edit button, or to the composer when a reply is waiting", async () => {
+    const mine = comment(1, { canEdit: true, body: "first" });
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json({ comments: [mine], olderCursor: null, newerCursor: null }),
+      [`PATCH /api/comments/${cid(1)}`]: json({ ...mine, body: "first!" }),
+    });
+    renderPanel();
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(document.activeElement).toBe(within(rows()[0]!).getByRole("button", { name: "Edit" })));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "first!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByText("Editing your comment")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(within(rows()[0]!).getByRole("button", { name: "Edit" })));
+  });
+
   it("composer: posts the body with the passage; the new comment is shown and the passage chip goes away", async () => {
     const created = comment(2, { authorHandle: "alice", authorDisplayName: "Alice", anchor: { blockId: "b1", quote: "the passage" }, body: "my note" });
     const calls = stubCommentFetch({

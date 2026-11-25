@@ -32,7 +32,12 @@
       "save": "Save",
       "replyingTo": "Replying to {{who}}",
       "editing": "Editing your comment",
-      "removePassage": "Don't attach the passage"
+      "removePassage": "Don't attach the passage",
+      "unmatched": "No one will be notified for {{handles}}: they can't see this note, or no one has that handle.",
+      "counter": "{{count}} / {{max}}"
+    },
+    "mention": {
+      "listLabel": "People to mention"
     }
   }
 }

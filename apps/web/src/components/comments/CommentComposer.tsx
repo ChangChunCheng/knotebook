@@ -1,14 +1,26 @@
 import "@/i18n/comments-strings";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { CommentDto } from "@knotebook/shared";
+import { COMMENT_BODY_MAX, COMMENT_MENTIONS_MAX, parseMentionSpans, type CommentDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
-import { useEditComment, usePostComment } from "@/api/comments";
+import { useEditComment, useMentionCandidates, usePostComment, useUnmatchedHandles } from "@/api/comments";
 import { Button } from "@/components/ui/button";
 import { X } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
 import type { CommentDraftAnchor } from "@/lib/comments-context";
+import { cn } from "@/lib/utils";
 import { authorName } from "./comment-format";
+import { MentionList, buildMentionOptions, mentionOptionId, type MentionOption } from "./MentionList";
+import { mentionTokenAt } from "./mention-token";
+
+// Same idle time as the email suggestions, kept local so the lazy chunk adds nothing to the entry chunk's exports.
+const SUGGEST_DEBOUNCE_MS = 200;
+
+const HANDLE_CHAR = /[A-Za-z0-9-]/;
+const LABEL_CHAR = /[A-Za-z0-9._-]/;
+
+/** The counter appears this close to the cap. */
+const COUNTER_FROM = 3600;
 
 export interface CommentComposerProps {
   noteId: string;
@@ -21,20 +33,78 @@ export interface CommentComposerProps {
   editing: CommentDto | null;
   /** After a successful post or save, with the comment the server returned; with null when a reply or edit is cancelled. */
   onDone: (saved: CommentDto | null) => void;
+  /** Whether an edit has unsaved changes; false again when the composer goes away. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return debounced;
 }
 
 /** Remount it (`key`) when `editing` changes: the text starts from the edited comment's body. */
-export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone }: CommentComposerProps) {
+export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone, onDirtyChange }: CommentComposerProps) {
   const { t } = useTranslation();
+  const listId = useId();
   const [text, setText] = useState(editing?.body ?? "");
-  const boxRef = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState<number | null>(null);
+  const [active, setActive] = useState(0);
+  // Esc hides the list for the token it was pressed on; blur hides it until the next focus or edit.
+  const [escapedAt, setEscapedAt] = useState<number | null>(null);
+  const [blurred, setBlurred] = useState(false);
+  const [box, setBox] = useState<HTMLTextAreaElement | null>(null);
+  const pendingCaretRef = useRef<number | null>(null);
   useEffect(() => {
-    if (replyTo !== null || editing !== null) boxRef.current?.focus();
-  }, [replyTo, editing]);
+    if (replyTo !== null || editing !== null) box?.focus();
+  }, [replyTo, editing, box]);
   const post = usePostComment(noteId);
   const edit = useEditComment();
   const pending = post.isPending || edit.isPending;
-  const canSend = text.trim() !== "" && !pending && (editing === null || text !== editing.body);
+  const length = useMemo(() => [...text].length, [text]);
+  const tooLong = length > COMMENT_BODY_MAX;
+  const dirty = editing !== null && text !== editing.body;
+  const canSend = text.trim() !== "" && !tooLong && !pending && (editing === null || dirty);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const token = useMemo(() => (caret === null ? null : mentionTokenAt(text, caret)), [text, caret]);
+  const debouncedHandle = useDebounced(token?.handle ?? null, SUGGEST_DEBOUNCE_MS);
+  const candidates = useMentionCandidates(noteId, debouncedHandle, token !== null);
+  const options = useMemo(
+    () => (token !== null && debouncedHandle === token.handle && candidates.data !== undefined && !candidates.isPlaceholderData ? buildMentionOptions(candidates.data, token) : []),
+    [token, debouncedHandle, candidates.data, candidates.isPlaceholderData],
+  );
+  const expanded = options.length > 0 && !blurred && token !== null && token.start !== escapedAt;
+  const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
+
+  // Handles in the text that resolve to nobody who can read the note. The span being typed is left out by position, and the
+  // list is built from one snapshot of `text` before it is debounced, so a half-typed or just-picked handle is never judged.
+  const liveHandles = useMemo(() => {
+    const tokenStart = token === null ? -1 : [...text.slice(0, token.start)].length;
+    const seen = new Set<string>();
+    for (const span of parseMentionSpans(text)) {
+      if (seen.size >= COMMENT_MENTIONS_MAX) break;
+      if (span.start !== tokenStart) seen.add(span.handle);
+    }
+    return [...seen];
+  }, [text, token]);
+  const judgedKey = useDebounced(liveHandles.join(","), SUGGEST_DEBOUNCE_MS);
+  const judged = useMemo(() => (judgedKey === "" ? [] : judgedKey.split(",")), [judgedKey]);
+  const unmatched = useUnmatchedHandles(noteId, judged).filter((h) => liveHandles.includes(h));
+
+  useLayoutEffect(() => {
+    const next = pendingCaretRef.current;
+    if (next === null || box === null || box.value !== text) return;
+    pendingCaretRef.current = null;
+    box.setSelectionRange(next, next);
+  }, [text, box]);
 
   const fail = (err: unknown) =>
     toast({
@@ -58,6 +128,7 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
       {
         onSuccess: (saved) => {
           setText("");
+          setCaret(null);
           onClearAnchor();
           onDone(saved);
         },
@@ -66,14 +137,61 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
     );
   };
 
+  const pick = (option: MentionOption) => {
+    if (token === null) return;
+    // The rest of the word to the right of the caret belongs to the token being replaced.
+    let end = token.end;
+    const rest = token.label !== null ? LABEL_CHAR : HANDLE_CHAR;
+    while (end < text.length && rest.test(text[end]!)) end++;
+    if (token.label === null && option.label !== null && text[end] === "/") {
+      end++;
+      while (end < text.length && LABEL_CHAR.test(text[end]!)) end++;
+    }
+    const spaced = end < text.length && /\s/.test(text[end]!);
+    const insert = spaced ? option.insert : `${option.insert} `;
+    const next = token.start + option.insert.length + 1;
+    pendingCaretRef.current = next;
+    setText(text.slice(0, token.start) + insert + text.slice(end));
+    setCaret(next);
+    setActive(0);
+    box?.focus();
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+    // Safari ends a composition with an Enter that already reports isComposing = false and keyCode 229.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       submit();
+      return;
+    }
+    if (!expanded) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((activeIndex + 1) % options.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((activeIndex - 1 + options.length) % options.length);
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      pick(options[activeIndex]!);
+    } else if (event.key === "Escape") {
+      // Same event would otherwise reach the panel or sheet; they stay open while there is a draft, but only the list should react.
+      event.preventDefault();
+      event.stopPropagation();
+      setEscapedAt(token!.start);
     }
   };
 
+  const syncCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null);
+  };
+  const onSelect = (event: SyntheticEvent<HTMLTextAreaElement>) => syncCaret(event.currentTarget);
+
   const context = editing !== null ? t("comments.composer.editing") : replyTo !== null ? t("comments.composer.replyingTo", { who: authorName(replyTo) }) : null;
+  const unmatchedId = `${listId}-unmatched`;
+  const counterId = `${listId}-counter`;
+  const describedBy = [unmatched.length > 0 ? unmatchedId : null, length >= COUNTER_FROM ? counterId : null].filter(Boolean).join(" ");
 
   return (
     <form data-testid="comment-composer" onSubmit={submit} className="space-y-2 border-t border-border p-3">
@@ -94,16 +212,38 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
         </div>
       )}
       <textarea
-        ref={boxRef}
+        ref={setBox}
         aria-label={t("comments.composer.label")}
         placeholder={t("comments.composer.placeholder")}
+        aria-autocomplete="list"
+        aria-controls={expanded ? listId : undefined}
+        aria-activedescendant={expanded ? mentionOptionId(listId, activeIndex) : undefined}
+        aria-describedby={describedBy || undefined}
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          setText(event.target.value);
+          syncCaret(event.target);
+          setActive(0);
+          setBlurred(false);
+        }}
+        onSelect={onSelect}
+        onFocus={() => setBlurred(false)}
+        onBlur={() => setBlurred(true)}
         onKeyDown={onKeyDown}
         rows={3}
         className="block w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring pointer-coarse:text-base"
       />
-      <div className="flex justify-end">
+      {expanded && <MentionList id={listId} options={options} active={activeIndex} reference={box} onPick={pick} onHover={setActive} />}
+      {/* Always mounted: a live region that appears together with its text is often not announced. */}
+      <p id={unmatchedId} role="status" data-testid="mention-unmatched" className="text-xs text-muted-foreground empty:sr-only">
+        {unmatched.length > 0 ? t("comments.composer.unmatched", { handles: unmatched.map((h) => `@${h}`).join(", ") }) : null}
+      </p>
+      <div className="flex items-center justify-end gap-3">
+        {length >= COUNTER_FROM && (
+          <span id={counterId} data-testid="comment-counter" className={cn("text-xs tabular-nums text-muted-foreground", tooLong && "text-destructive")}>
+            {t("comments.composer.counter", { count: length, max: COMMENT_BODY_MAX })}
+          </span>
+        )}
         <Button type="submit" size="sm" variant="brandDeep" disabled={!canSend}>
           {editing !== null ? t("comments.composer.save") : t("comments.composer.send")}
         </Button>

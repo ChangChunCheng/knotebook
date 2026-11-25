@@ -92,7 +92,7 @@ export function CommentItem({ comment, blockIds, highlighted, onQuote, onReplySu
             {t("comments.reply")}
           </button>
           {comment.canEdit && (
-            <button type="button" className={ACTION} onClick={() => onEdit(comment)}>
+            <button type="button" data-action="edit" className={ACTION} onClick={() => onEdit(comment)}>
               {t("comments.edit")}
             </button>
           )}
