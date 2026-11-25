@@ -17,7 +17,7 @@ const ALLOWED_DATA = [
   "data-text-color", "data-background-color", "data-style-type", "data-value",
   "data-text-alignment", "data-inline-content-type", "data-target-note-id", "data-snapshot-title",
   "data-label", "data-anchor-block-id",
-  "data-kn-mermaid", "data-kn-media",
+  "data-kn-mermaid", "data-kn-media", "data-kn-code-lang",
   "data-kb-columns", "data-kb-column",
 ];
 

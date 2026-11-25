@@ -1,5 +1,6 @@
 import { normalizeAnchor } from "@knotebook/shared";
 import { renderMermaid, type MermaidTheme } from "@/lib/mermaid";
+import { applyHighlightTokens, cachedCodeTokens, resolveHighlightLanguage, tokenizeCode } from "./code-highlight";
 
 /**
  * Runs after sanitizing, DOM API only.
@@ -8,6 +9,8 @@ import { renderMermaid, type MermaidTheme } from "@/lib/mermaid";
  * - Text links keep only http(s) / mailto / relative URLs; `href="#…"` is removed (reveal would intercept it as a page jump).
  * - mermaid is only collected into a job; drawing (the only innerHTML) happens in `runMermaidJob` after insertion, trusting
  *   the strict config of `lib/mermaid.ts` without sanitizing again.
+ * - code blocks: cached token lists are applied synchronously via `textContent`/`style` (zero flicker on live updates);
+ *   uncached ones keep their plain text and are highlighted asynchronously in `runCodeHighlightJob` (#232).
  */
 export type WikilinkResolution = { kind: "pending" } | { kind: "found"; href: string; title: string } | { kind: "broken" };
 
@@ -21,7 +24,19 @@ export interface MermaidJob {
   code: string;
 }
 
+export interface CodeHighlightJob {
+  el: HTMLElement;
+  lang: string;
+  code: string;
+}
+
+export interface PostprocessJobs {
+  mermaid: MermaidJob[];
+  code: CodeHighlightJob[];
+}
+
 const mermaidSource = new WeakMap<Element, string>();
+const codeHighlightSource = new WeakMap<Element, { lang: string; code: string }>();
 
 function isAllowedTextHref(raw: string): boolean {
   const value = raw.trim();
@@ -63,7 +78,7 @@ function wikilinkNode(el: Element, ctx: PostprocessContext): Node {
   return a;
 }
 
-export function postprocessSlide(root: ParentNode, ctx: PostprocessContext): MermaidJob[] {
+export function postprocessSlide(root: ParentNode, ctx: PostprocessContext): PostprocessJobs {
   for (const el of root.querySelectorAll<HTMLElement>("img[src], video[src], audio[src]")) {
     el.setAttribute("src", ctx.resolveMedia(el.getAttribute("src") ?? ""));
   }
@@ -89,7 +104,7 @@ export function postprocessSlide(root: ParentNode, ctx: PostprocessContext): Mer
   }
   for (const el of root.querySelectorAll('[data-inline-content-type="wikilink"]')) el.replaceWith(wikilinkNode(el, ctx));
 
-  const jobs: MermaidJob[] = [];
+  const mermaid: MermaidJob[] = [];
   for (const el of root.querySelectorAll<HTMLElement>("[data-kn-mermaid]")) {
     const code = el.textContent ?? "";
     if (code.trim() === "") {
@@ -99,9 +114,25 @@ export function postprocessSlide(root: ParentNode, ctx: PostprocessContext): Mer
     el.textContent = "";
     el.classList.add("kn-present-mermaid");
     mermaidSource.set(el, code);
-    jobs.push({ el, code });
+    mermaid.push({ el, code });
   }
-  return jobs;
+
+  const code: CodeHighlightJob[] = [];
+  for (const el of root.querySelectorAll<HTMLElement>("pre > code[data-kn-code-lang]")) {
+    const lang = resolveHighlightLanguage(el.getAttribute("data-kn-code-lang"));
+    if (lang === null) continue;
+    const source = el.textContent ?? "";
+    if (source.trim() === "") continue;
+    const cached = cachedCodeTokens(lang, source);
+    if (cached !== null) {
+      applyHighlightTokens(el, cached);
+      continue;
+    }
+    codeHighlightSource.set(el, { lang, code: source });
+    code.push({ el, lang, code: source });
+  }
+
+  return { mermaid, code };
 }
 
 export function mermaidJobsIn(root: ParentNode): MermaidJob[] {
@@ -109,6 +140,21 @@ export function mermaidJobsIn(root: ParentNode): MermaidJob[] {
     const code = mermaidSource.get(el);
     return code === undefined ? [] : [{ el, code }];
   });
+}
+
+export function codeHighlightJobsIn(root: ParentNode): CodeHighlightJob[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("pre > code[data-kn-code-lang]")).flatMap((el) => {
+    const entry = codeHighlightSource.get(el);
+    return entry === undefined ? [] : [{ el, ...entry }];
+  });
+}
+
+export async function runCodeHighlightJob(job: CodeHighlightJob, isCurrent: () => boolean): Promise<boolean> {
+  const lines = await tokenizeCode(job.lang, job.code);
+  if (!isCurrent() || lines === null) return false;
+  applyHighlightTokens(job.el, lines);
+  codeHighlightSource.delete(job.el);
+  return true;
 }
 
 export async function runMermaidJob(

@@ -10,7 +10,6 @@ Presenting a note as slides. Part of [Known limitations](../known-limitations.md
 - **Changing the slide part of the address by hand while presenting does not move to that slide.** It is read when the presentation opens; reload to jump there.
 - **On touch screens, a swipe doesn't change slides on a slide that scrolls, on a table, on a code block too wide to fit, or on a video or audio player.** There a swipe is left to the content, which scrolls if it can; use the arrows on the screen to move between slides.
 - **iPhone Safari can't show a presentation full screen.** It fills the browser window instead.
-- **Code in a presentation isn't syntax-highlighted.**
 - **Diagrams in a presentation follow the same rules as in the editor**, including that a diagram can load images from other sites (see [Diagrams](../diagrams.md)).
 - **Opening a presentation removes any other query parameters from the address.** The address is rewritten to end in exactly `?present` (keeping whatever follows the `#`) before the slides start, so that nothing else in the address can change how the presentation behaves.
 - **A link to a `#…` anchor inside a slide isn't clickable.** The presentation would otherwise take it as a jump to another slide.

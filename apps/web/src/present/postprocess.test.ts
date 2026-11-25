@@ -1,9 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeSlideFragment } from "./sanitize";
-import { mermaidJobsIn, postprocessSlide, runMermaidJob, type PostprocessContext, type WikilinkResolution } from "./postprocess";
+import {
+  codeHighlightJobsIn,
+  mermaidJobsIn,
+  postprocessSlide,
+  runCodeHighlightJob,
+  runMermaidJob,
+  type PostprocessContext,
+  type WikilinkResolution,
+} from "./postprocess";
 
 const renderMermaid = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/mermaid", () => ({ renderMermaid }));
+const codeHighlight = vi.hoisted(() => ({
+  tokenizeCode: vi.fn(),
+  cachedCodeTokens: vi.fn(() => null),
+}));
+vi.mock("./code-highlight", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./code-highlight")>();
+  return {
+    ...real,
+    tokenizeCode: codeHighlight.tokenizeCode,
+    cachedCodeTokens: codeHighlight.cachedCodeTokens,
+  };
+});
 
 const member = (resolve: (id: string) => WikilinkResolution = () => ({ kind: "pending" })): PostprocessContext => ({
   resolveMedia: (url) => (url.startsWith("javascript:") ? "about:blank" : url),
@@ -16,16 +36,21 @@ const publicCtx: PostprocessContext = {
 
 function run(html: string, ctx: PostprocessContext) {
   const fragment = sanitizeSlideFragment(html);
-  const jobs = postprocessSlide(fragment, ctx);
+  const { mermaid: jobs, code: codeJobs } = postprocessSlide(fragment, ctx);
   const host = document.createElement("div");
   host.append(fragment);
-  return { host, jobs };
+  return { host, jobs, codeJobs };
 }
 
 const WIKILINK = '<p>see <span data-inline-content-type="wikilink" data-target-note-id="n 1" data-snapshot-title="Old &lt;b&gt;title"><span>[[Old]]</span></span></p>';
 
 describe("postprocessSlide", () => {
-  beforeEach(() => renderMermaid.mockReset());
+  beforeEach(() => {
+    renderMermaid.mockReset();
+    codeHighlight.tokenizeCode.mockReset();
+    codeHighlight.cachedCodeTokens.mockReset();
+    codeHighlight.cachedCodeTokens.mockReturnValue(null);
+  });
 
   it("all img/video/audio[src] go through resolveMedia (the public variant maps to the public endpoint)", () => {
     const { host } = run('<img src="/api/uploads/a" alt=""><video src="/api/uploads/v"></video><audio src="/api/uploads/s"></audio>', publicCtx);
@@ -117,6 +142,36 @@ describe("postprocessSlide", () => {
     expect(mermaidJobsIn(host)).toEqual(jobs);
   });
 
+  it("code blocks: supported non-text languages are collected with plain text preserved; text/unknown/blank are skipped", () => {
+    const { host, codeJobs } = run(
+      '<pre><code data-kn-code-lang="ts">const x = 1;</code></pre>' +
+        '<pre><code data-kn-code-lang="text">plain</code></pre>' +
+        '<pre><code data-kn-code-lang="unknown">foo</code></pre>' +
+        '<pre><code data-kn-code-lang="ts">   </code></pre>',
+      member(),
+    );
+    expect(codeJobs).toHaveLength(1);
+    expect(codeJobs[0]).toMatchObject({ lang: "typescript", code: "const x = 1;" });
+    expect(codeJobs[0].el.textContent).toBe("const x = 1;");
+    expect(codeHighlightJobsIn(host)).toEqual(codeJobs);
+  });
+
+  it("code blocks: cache hit applies tokens synchronously without queueing an async job", () => {
+    codeHighlight.cachedCodeTokens.mockReturnValueOnce([
+      [
+        { content: "const", color: "var(--code-token-keyword)", fontStyle: 0 },
+        { content: " x = 1;", color: "var(--code-foreground)", fontStyle: 0 },
+      ],
+    ] as never);
+    const { host, codeJobs } = run('<pre><code data-kn-code-lang="ts">const x = 1;</code></pre>', member());
+    expect(codeJobs).toHaveLength(0);
+    expect(codeHighlightJobsIn(host)).toEqual([]);
+    const spans = Array.from(host.querySelectorAll<HTMLSpanElement>("pre > code > span"));
+    expect(spans).toHaveLength(2);
+    expect(spans[0]!.style.color).toBe("var(--code-token-keyword)");
+    expect(host.querySelector("pre > code")!.textContent).toBe("const x = 1;");
+  });
+
   const WL = (attrs: string) => `<p><span data-inline-content-type="wikilink" data-target-note-id="n1" data-snapshot-title="Snap"${attrs}><a href="/notes/n1">x</a></span></p>`;
   it("#269 member: hit -> text label preferred, href = canonical + #b-anchor; not ready -> /notes/<id> + anchor, label preferred; broken -> label-preferred plain text", () => {
     const found = member(() => ({ kind: "found", href: "/n/h/x", title: "Live" }));
@@ -170,5 +225,51 @@ describe("runMermaidJob", () => {
     const el = document.createElement("div");
     expect(await runMermaidJob({ el, code: "graph TD" }, "light", () => false, "err")).toBe(false);
     expect(el.innerHTML).toBe("");
+  });
+});
+
+describe("runCodeHighlightJob", () => {
+  beforeEach(() => {
+    codeHighlight.tokenizeCode.mockReset();
+    codeHighlight.cachedCodeTokens.mockReset();
+    codeHighlight.cachedCodeTokens.mockReturnValue(null);
+  });
+
+  it("success -> replaces children with spans via textContent/style.color (XSS-safe) and returns true", async () => {
+    const payload = "<img src=x onerror=alert(1)>";
+    codeHighlight.tokenizeCode.mockResolvedValue([
+      [{ content: payload, color: "var(--code-token-string)", fontStyle: 0 }],
+    ]);
+    const { host, codeJobs } = run(
+      `<pre><code data-kn-code-lang="ts">${payload.replace(/</g, "&lt;")}</code></pre>`,
+      member(),
+    );
+    expect(await runCodeHighlightJob(codeJobs[0]!, () => true)).toBe(true);
+    expect(codeHighlight.tokenizeCode).toHaveBeenCalledWith("typescript", payload);
+    expect(host.querySelector("img")).toBeNull();
+    const span = host.querySelector("pre > code > span") as HTMLSpanElement;
+    expect(span.textContent).toBe(payload);
+    expect(span.style.color).toBe("var(--code-token-string)");
+    expect(codeHighlightJobsIn(host)).toEqual([]);
+  });
+
+  it("failure (tokenizeCode returns null) -> leaves plain text intact and returns false", async () => {
+    codeHighlight.tokenizeCode.mockResolvedValue(null);
+    const el = document.createElement("code");
+    el.textContent = "const x = 1;";
+    expect(await runCodeHighlightJob({ el, lang: "typescript", code: "const x = 1;" }, () => true)).toBe(false);
+    expect(el.textContent).toBe("const x = 1;");
+    expect(el.querySelector("span")).toBeNull();
+  });
+
+  it("stale generation (isCurrent returns false) -> drops tokens and returns false", async () => {
+    codeHighlight.tokenizeCode.mockResolvedValue([
+      [{ content: "const", color: "var(--code-token-keyword)", fontStyle: 0 }],
+    ]);
+    const el = document.createElement("code");
+    el.textContent = "const";
+    expect(await runCodeHighlightJob({ el, lang: "typescript", code: "const" }, () => false)).toBe(false);
+    expect(el.querySelector("span")).toBeNull();
+    expect(el.textContent).toBe("const");
   });
 });

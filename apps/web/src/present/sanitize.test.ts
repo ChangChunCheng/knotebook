@@ -96,18 +96,23 @@ describe("sanitizeSlideFragment: what is kept", () => {
     expect(span.getAttribute("data-anchor-block-id")).toBe("b1");
   });
 
-  it("data-kn-media, data-kn-mermaid, color and alignment attributes are kept", () => {
+  it("data-kn-media, data-kn-mermaid, data-kn-code-lang, color and alignment attributes are kept; style on code/span stays stripped", () => {
     const host = clean(
       '<a href="/api/uploads/a" data-kn-media="">f</a><div data-kn-mermaid="">graph TD</div>' +
+        '<pre><code data-kn-code-lang="typescript" data-language="typescript" style="color:red"><span style="color:blue">x</span></code></pre>' +
         '<p data-text-color="red" data-background-color="blue" data-text-alignment="center">x<span data-style-type="textColor" data-value="red">y</span></p>',
     );
     expect(host.querySelector("a")!.hasAttribute("data-kn-media")).toBe(true);
     expect(host.querySelector("div")!.hasAttribute("data-kn-mermaid")).toBe(true);
+    const code = host.querySelector("pre > code")!;
+    expect(code.getAttribute("data-kn-code-lang")).toBe("typescript");
+    expect(code.hasAttribute("data-language")).toBe(false);
+    expect(host.querySelector("[style]")).toBeNull();
     const p = host.querySelector("p")!;
     expect(p.getAttribute("data-text-color")).toBe("red");
     expect(p.getAttribute("data-background-color")).toBe("blue");
     expect(p.getAttribute("data-text-alignment")).toBe("center");
-    expect(host.querySelector("span")!.getAttribute("data-value")).toBe("red");
+    expect(host.querySelector("p > span")!.getAttribute("data-value")).toBe("red");
   });
 
   it("custom color codes (#rrggbb) in data-text-color / data-style-type / data-value keep their original values, style is still stripped", () => {

@@ -8,7 +8,8 @@ import { noteSchema } from "@/collab/schema";
  *    `createHeadlessNoteSchema`); codeBlock(language=mermaid) stays `<pre><code>`.
  * 2. The four file kinds: wrapped around `withGuardedExternalHTML` (`props.url` goes through safeMediaUrl first), marking the
  *    URL-carrying element `data-kn-media=""` so post-processing can tell file links from text links.
- * 3. codeBlock: the uncolored `createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS)` (same as the server headless), not the highlighter.
+ * 3. codeBlock: the uncolored `createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS)` (so the presentation chunk stays off shiki),
+ *    marking `<code>` with `data-kn-code-lang` so postprocess.ts can highlight it lazily (#232).
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BlockNote generic triple; repo convention (same as shared note-schema-config.ts)
@@ -40,6 +41,31 @@ function withMediaMarker<Spec extends FileBlockSpecLike>(spec: Spec): Spec {
   } as Spec;
 }
 
+function markCodeLanguage(output: unknown): void {
+  const dom = (output as { dom?: unknown } | null | undefined)?.dom;
+  if (!(dom instanceof Element)) return;
+  const code = dom.matches("code") ? dom : dom.querySelector("code");
+  const lang = code?.getAttribute("data-language");
+  if (code && lang) code.setAttribute("data-kn-code-lang", lang);
+}
+
+function withCodeLang<Spec extends FileBlockSpecLike>(spec: Spec): Spec {
+  const original = spec.implementation.toExternalHTML;
+  if (!original) return spec;
+  return {
+    ...spec,
+    implementation: {
+      ...spec.implementation,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
+      toExternalHTML(this: unknown, ...args: any[]) {
+        const output = original.apply(this, args as [unknown, ...unknown[]]);
+        markCodeLanguage(output);
+        return output;
+      },
+    },
+  } as Spec;
+}
+
 const presentationMermaidSpec = createBlockSpec(mermaidBlockConfig, {
   render: () => ({ dom: document.createElement("div") }),
   toExternalHTML: (block) => {
@@ -60,7 +86,7 @@ export const presentationSchema = BlockNoteSchema.create({
     image: withMediaMarker(specs.image),
     video: withMediaMarker(specs.video),
     mermaid: presentationMermaidSpec,
-    codeBlock: createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS),
+    codeBlock: withCodeLang(createCodeBlockSpec(CODE_BLOCK_BASE_OPTIONS)),
   },
   inlineContentSpecs: noteSchema.inlineContentSpecs,
   styleSpecs: noteSchema.styleSpecs,

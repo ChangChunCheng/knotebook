@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { blocksToYDoc } from "@blocknote/core/yjs";
 import { YDOC_FRAGMENT } from "@knotebook/shared";
 import { P, row } from "@/test/columns-fixtures";
+import { resetCodeHighlightForTests } from "./code-highlight";
 import { createExportEditor, renderDeck, type RenderedSection } from "./render";
 import type { PostprocessContext, WikilinkResolution } from "./postprocess";
 
@@ -19,6 +20,7 @@ const publicCtx: PostprocessContext = {
 
 let editor: ReturnType<typeof createExportEditor>;
 beforeEach(() => {
+  resetCodeHighlightForTests();
   editor = createExportEditor();
 });
 
@@ -60,11 +62,22 @@ describe("renderDeck: XSS invariants (render pipeline)", () => {
     expect(host.textContent).toContain("<i>f</i>.pdf");
   });
 
-  it("codeBlock(language=mermaid) isn't drawn as a diagram: it's pre>code with no mermaid job", () => {
+  it("codeBlock(language=mermaid) isn't drawn as a diagram: it's pre>code with no mermaid or code highlight job", () => {
     const sections = deck([{ type: "codeBlock", props: { language: "mermaid" }, content: "graph TD" }]);
     const host = slideHost(sections, 0);
     expect(host.querySelector("pre > code")!.textContent).toBe("graph TD");
     expect(sections[0].slides[0].content!.mermaid).toEqual([]);
+    expect(sections[0].slides[0].content!.code).toEqual([]);
+  });
+
+  it("codeBlock(language=ts) collects a canonical typescript highlight job while language=text collects none", () => {
+    const sections = deck([
+      { type: "codeBlock", props: { language: "ts" }, content: "const x = 1;" },
+      { type: "codeBlock", props: { language: "text" }, content: "plain text" },
+    ]);
+    const content = sections[0].slides[0].content!;
+    expect(content.code).toHaveLength(1);
+    expect(content.code[0]).toMatchObject({ lang: "typescript", code: "const x = 1;" });
   });
 
   it("javascript: media -> img remains with no src or src about:blank, never javascript: (the regexp doesn't accept about:blank, the sanitizer drops src)", () => {
