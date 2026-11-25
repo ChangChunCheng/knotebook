@@ -6,7 +6,7 @@ import type { Db } from "../db/index.js";
 import { GROUP_NOT_FOUND_MESSAGE, groupAccess } from "../groups/queries.js";
 import { sendError } from "../http/errors.js";
 import type { StorageSpace } from "../storage/space.js";
-import { readGroupUsageByMember, readSpaceUsage, readSpaceUsageByKind } from "../storage/usage.js";
+import { readGroupUsageByMember, readSpaceContentUsage, readSpaceUsage, readSpaceUsageByKind } from "../storage/usage.js";
 
 export function storageRoutes(deps: { db: Db }) {
   return async function register(app: FastifyInstance): Promise<void> {
@@ -14,8 +14,8 @@ export function storageRoutes(deps: { db: Db }) {
       const space: StorageSpace = { kind: "user", id: request.user!.id };
       const usage = await readSpaceUsage(deps.db, space);
       if (!usage) return sendError(reply, 404, "not_found", "Your account no longer exists.");
-      const byKind = await readSpaceUsageByKind(deps.db, space);
-      const dto: StorageUsageDto = { usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes, planName: usage.planName, byKind };
+      const [byKind, content] = await Promise.all([readSpaceUsageByKind(deps.db, space), readSpaceContentUsage(deps.db, space)]);
+      const dto: StorageUsageDto = { usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes, planName: usage.planName, byKind, content };
       return dto;
     });
 
@@ -26,8 +26,8 @@ export function storageRoutes(deps: { db: Db }) {
       const space: StorageSpace = { kind: "group", id: id.toLowerCase() };
       const usage = await readSpaceUsage(deps.db, space);
       if (!usage) return sendError(reply, 404, "not_found", GROUP_NOT_FOUND_MESSAGE);
-      const [byKind, byMember] = await Promise.all([readSpaceUsageByKind(deps.db, space), readGroupUsageByMember(deps.db, space.id)]);
-      const dto: GroupStorageUsageDto = { usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes, planName: usage.planName, byKind, byMember };
+      const [byKind, byMember, content] = await Promise.all([readSpaceUsageByKind(deps.db, space), readGroupUsageByMember(deps.db, space.id), readSpaceContentUsage(deps.db, space)]);
+      const dto: GroupStorageUsageDto = { usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes, planName: usage.planName, byKind, byMember, content };
       return dto;
     });
   };

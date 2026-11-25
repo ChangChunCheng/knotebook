@@ -10,7 +10,7 @@ import { foreignKeyViolationConstraint, uniqueViolationConstraint } from "../db/
 import { SITE_SETTINGS_MISSING_MESSAGE } from "../auth/tx/admin-site-settings.js";
 import { sendError } from "../http/errors.js";
 import { UUID_RE } from "../notes/service.js";
-import { listSpaceUsage } from "../storage/usage.js";
+import { listSpaceContentUsage, listSpaceUsage, readSpaceContentUsage } from "../storage/usage.js";
 
 export interface AdminStorageRouteDeps {
   db: Db;
@@ -200,6 +200,9 @@ export function adminStorageRoutes(deps: AdminStorageRouteDeps) {
 
     const groupDto = async (id?: string): Promise<AdminGroupDto[]> => {
       const usage = await listSpaceUsage(deps.db, "group");
+      const content = id === undefined
+        ? await listSpaceContentUsage(deps.db, "group")
+        : await readSpaceContentUsage(deps.db, { kind: "group", id }).then(c => new Map([[id, c.noteBytes + c.historyBytes]]));
       const base = deps.db
         .select({
           id: groups.id, name: groups.name, createdAt: groups.createdAt,
@@ -211,7 +214,7 @@ export function adminStorageRoutes(deps: AdminStorageRouteDeps) {
       const rows = id === undefined ? await base.orderBy(sql`lower(${groups.name})`, asc(groups.id)) : await base.where(eq(groups.id, id));
       return rows.map(r => ({
         id: r.id, name: r.name, createdAt: r.createdAt.toISOString(), memberCount: r.memberCount,
-        storage: { planId: r.planId, planName: r.planName, usedBytes: usage.get(r.id) ?? 0, quotaBytes: r.quotaBytes },
+        storage: { planId: r.planId, planName: r.planName, usedBytes: usage.get(r.id) ?? 0, quotaBytes: r.quotaBytes, contentBytes: content.get(r.id) ?? 0 },
       }));
     };
 

@@ -64,7 +64,7 @@ const ACTIVE_OTHER: AdminUserDto = {
   lastActiveAt: null,
   hasPassword: true,
   passwordResetExpiresAt: null,
-  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648 },
+  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648, contentBytes: 0 },
   avatar: null,
 };
 
@@ -80,7 +80,7 @@ const DISABLED_OTHER: AdminUserDto = {
   lastActiveAt: null,
   hasPassword: true,
   passwordResetExpiresAt: null,
-  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648 },
+  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648, contentBytes: 0 },
   avatar: null,
 };
 
@@ -98,7 +98,7 @@ const OTHER_ADMIN: AdminUserDto = {
   lastActiveAt: null,
   hasPassword: true,
   passwordResetExpiresAt: null,
-  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648 },
+  storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 0, quotaBytes: 2147483648, contentBytes: 0 },
   avatar: null,
 };
 
@@ -201,8 +201,8 @@ describe("storage and plan in the users table", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); dismissAllToasts(); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  const OVER: AdminUserDto = { ...ACTIVE_OTHER, id: "u-over", email: "over@example.com", storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2 * 1048576 } };
-  const FREE: AdminUserDto = { ...OTHER_ADMIN, storage: { planId: BIG_ID, planName: "Big", usedBytes: 5 * 1048576, quotaBytes: null } };
+  const OVER: AdminUserDto = { ...ACTIVE_OTHER, id: "u-over", email: "over@example.com", storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 3 * 1048576, quotaBytes: 2 * 1048576, contentBytes: 7 * 1048576 } };
+  const FREE: AdminUserDto = { ...OTHER_ADMIN, storage: { planId: BIG_ID, planName: "Big", usedBytes: 5 * 1048576, quotaBytes: null, contentBytes: 0 } };
 
   function stub(rows: AdminUserDto[], extra: (url: string, method: string, init?: RequestInit) => Response | null = () => null) {
     return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -218,13 +218,25 @@ describe("storage and plan in the users table", () => {
   }
 
   it("usage cell: normal / unlimited / over / exactly equal (warning color, >=)", async () => {
-    const FULL: AdminUserDto = { ...ACTIVE_OTHER, id: "u-full", email: "full@example.com", storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 1048576, quotaBytes: 1048576 } };
+    const FULL: AdminUserDto = { ...ACTIVE_OTHER, id: "u-full", email: "full@example.com", storage: { planId: BASIC_ID, planName: "Basic", usedBytes: 1048576, quotaBytes: 1048576, contentBytes: 0 } };
     renderUsersRoute(stub([ACTIVE_OTHER, OVER, FREE, FULL]));
     expect(await screen.findByText("over@example.com")).toBeInTheDocument();
     expect(screen.getByText("3 MB of 2 MB")).toHaveClass("text-destructive");
     expect(screen.getByText("1 MB of 1 MB")).toHaveClass("text-destructive");
     expect(screen.getByText("5 MB (no limit)")).not.toHaveClass("text-destructive");
     expect(screen.getByText("0 B of 2 GB")).not.toHaveClass("text-destructive");
+  });
+
+  it("second muted line under the usage: notes and history size; never red, even for a space over its limit", async () => {
+    renderUsersRoute(stub([ACTIVE_OTHER, OVER]));
+    expect(await screen.findByText("over@example.com")).toBeInTheDocument();
+    const lines = screen.getAllByTestId("content-bytes");
+    expect(lines.map((el) => el.textContent)).toEqual(["Notes and history: 0 B", "Notes and history: 7 MB"]);
+    for (const el of lines) {
+      expect(el).toHaveClass("text-muted-foreground");
+      expect(el).not.toHaveClass("text-destructive");
+      expect(el.closest(".text-destructive")).toBeNull();
+    }
   });
 
   it("column widths: the main column and the email column split 1 : 1.5 (the main column no longer takes 2/3 alone and squeezes email)", async () => {
@@ -236,7 +248,7 @@ describe("storage and plan in the users table", () => {
   });
 
   it("changing the plan: PATCH {planId}; after success the row's dropdown shows the new plan", async () => {
-    const updated = { ...ACTIVE_OTHER, storage: { planId: BIG_ID, planName: "Big", usedBytes: 0, quotaBytes: null } };
+    const updated = { ...ACTIVE_OTHER, storage: { planId: BIG_ID, planName: "Big", usedBytes: 0, quotaBytes: null, contentBytes: 0 } };
     const fetchMock = stub([ACTIVE_OTHER], (url, method) =>
       url === `/api/admin/users/${ACTIVE_OTHER.id}/storage-plan` && method === "PATCH" ? fakeResponse({ ok: true, status: 200, json: () => Promise.resolve(updated) }) : null);
     renderUsersRoute(fetchMock);
@@ -277,7 +289,7 @@ describe("storage and plan in the users table", () => {
 
   it("a row's plan isn't in the list -> the dropdown still shows that plan (adds an option), not the first in the list", async () => {
     const NEWPLAN_ID = "99999999-9999-4999-8999-999999999999";
-    const row: AdminUserDto = { ...ACTIVE_OTHER, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576 } };
+    const row: AdminUserDto = { ...ACTIVE_OTHER, storage: { planId: NEWPLAN_ID, planName: "Brand new", usedBytes: 0, quotaBytes: 1048576, contentBytes: 0 } };
     renderUsersRoute(stub([row]));
     const select = await screen.findByRole("combobox", { name: `Storage plan for ${ACTIVE_OTHER.email}` });
     await waitFor(() => expect(selectedValue(select)).toBe(NEWPLAN_ID));

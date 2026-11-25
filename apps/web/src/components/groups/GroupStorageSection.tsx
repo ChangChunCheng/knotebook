@@ -7,6 +7,7 @@ import { useUpdateGroupAutoVersions } from "@/api/versionSettings";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { AutoVersionsSwitch } from "@/settings/AutoVersionsSwitch";
+import { ContentUsageGroup } from "@/settings/ContentUsageGroup";
 import { SettingsGroup, SettingsPage } from "@/settings/SettingsLayout";
 import { StorageByKindGroup } from "@/settings/SettingsStorageUsageSection";
 import { StorageUsageGroup } from "@/settings/StorageUsageGroup";
@@ -93,6 +94,7 @@ export function GroupStorageSection() {
   return (
     <SettingsPage title={t("groups.nav.storage")}>
       <StorageUsageGroup title={t("settings.storage.usageTitle")} query={query} />
+      <ContentUsageGroup content={query.data?.content} pending={query.isPending} />
       <StorageByKindGroup byKind={query.data?.byKind} pending={query.isPending} />
       {query.data && <ByMemberGroup usage={query.data} />}
       <GroupAutoVersionsGroup group={group} />

@@ -11,7 +11,7 @@ import type { UserGate } from "../auth/session.js";
 import type { CollabHooks } from "../collab/hooks.js";
 import { UUID_RE } from "../notes/service.js";
 import { foreignKeyViolationConstraint } from "../db/pg-errors.js";
-import { listSpaceUsage, readSpaceUsage } from "../storage/usage.js";
+import { listSpaceContentUsage, listSpaceUsage, readSpaceContentUsage, readSpaceUsage } from "../storage/usage.js";
 import { redactDbError } from "../lib/redact-db-error.js";
 import { TxAbort } from "../http/tx-abort.js";
 import type { AdminTestHook } from "../auth/admin-test-hook.js";
@@ -96,7 +96,8 @@ const adminUserColumns = {
 async function storageOfUser(db: Db, userId: string): Promise<SpaceStorageDto> {
   const usage = await readSpaceUsage(db, { kind: "user", id: userId });
   if (!usage) throw new Error(`storageOfUser: 找不到使用者 ${userId}`);
-  return { planId: usage.planId, planName: usage.planName, usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes };
+  const content = await readSpaceContentUsage(db, { kind: "user", id: userId });
+  return { planId: usage.planId, planName: usage.planName, usedBytes: usage.usedBytes, quotaBytes: usage.quotaBytes, contentBytes: content.noteBytes + content.historyBytes };
 }
 
 // A malformed :id gets the same 404 as an unknown user (pg throws on a bad uuid string, which would surface as a 500).
@@ -105,13 +106,14 @@ export function adminUsersRoutes(deps: AdminUsersRouteDeps) {
     app.get("/api/admin/users", { preHandler: app.requireAdmin }, async () => {
       // Secondary key id: createdAt isn't unique at millisecond precision. Users with no attachments and no avatar are absent from the usage map → 0.
       const usage = await listSpaceUsage(deps.db, "user");
+      const content = await listSpaceContentUsage(deps.db, "user");
       const rows = await deps.db
         .select({ ...adminUserColumns, planId: storagePlans.id, planName: storagePlans.name, quotaBytes: storagePlans.quotaBytes })
         .from(users)
         .innerJoin(storagePlans, eq(storagePlans.id, users.storagePlanId))
         .orderBy(asc(users.createdAt), asc(users.id));
       const avatars = await readAvatarRefs(deps.db, rows.map(r => r.id));
-      return rows.map(r => toAdminUserDto(r, { planId: r.planId, planName: r.planName, usedBytes: usage.get(r.id) ?? 0, quotaBytes: r.quotaBytes }, avatars.get(r.id) ?? null));
+      return rows.map(r => toAdminUserDto(r, { planId: r.planId, planName: r.planName, usedBytes: usage.get(r.id) ?? 0, quotaBytes: r.quotaBytes, contentBytes: content.get(r.id) ?? 0 }, avatars.get(r.id) ?? null));
     });
 
     app.post("/api/admin/users/:id/disable", { preHandler: app.requireAdmin }, async (request, reply) => {

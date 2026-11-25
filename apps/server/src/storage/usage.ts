@@ -1,6 +1,6 @@
 // Non-transactional reads that may borrow a pool connection: call them only outside a transaction.
 import { eq, sql } from "drizzle-orm";
-import { emptyStorageByKind, kindOfMime, type GroupStorageMemberUsageDto, type StorageByKind, type StorageQuotaErrorDetail } from "@knotebook/shared";
+import { emptyStorageByKind, kindOfMime, type ContentUsageDto, type GroupStorageMemberUsageDto, type StorageByKind, type StorageQuotaErrorDetail } from "@knotebook/shared";
 import type { Db } from "../db/index.js";
 import type { DbOrTx } from "../db/tx.js";
 import { groups, notes, storagePlans, uploads, userAvatars, users } from "../db/schema.js";
@@ -95,4 +95,32 @@ export async function listSpaceUsage(db: DbOrTx, kind: "user" | "group"): Promis
     for (const r of avatarRows) m.set(r.id, (m.get(r.id) ?? 0) + r.bytes);
   }
   return m;
+}
+
+// Display only, never part of the limit. octet_length on a TOASTed bytea reads the stored raw size without detoasting. Trashed notes are included on purpose, like attachments.
+const spaceColumn = (kind: "user" | "group") => sql.raw(kind === "user" ? "n.owner_id" : "n.group_id");
+
+export async function readSpaceContentUsage(db: DbOrTx, space: StorageSpace): Promise<ContentUsageDto> {
+  const col = spaceColumn(space.kind);
+  const res = await db.execute<{ note_bytes: string; history_bytes: string }>(sql`
+    select
+      (select coalesce(sum(octet_length(s.ydoc)), 0) from note_states s join notes n on n.id = s.note_id where ${col} = ${space.id})::bigint as note_bytes,
+      ((select coalesce(sum(octet_length(v.ydoc)), 0) from note_versions v join notes n on n.id = v.note_id where ${col} = ${space.id})
+       + (select coalesce(sum(octet_length(b.ydoc)), 0) from note_state_backups b join notes n on n.id = b.note_id where ${col} = ${space.id}))::bigint as history_bytes`);
+  const row = res.rows[0];
+  return { noteBytes: Number(row?.note_bytes ?? 0), historyBytes: Number(row?.history_bytes ?? 0) };
+}
+
+/** Note plus history bytes per space in one statement; spaces with no content are absent (the caller fills in 0). */
+export async function listSpaceContentUsage(db: DbOrTx, kind: "user" | "group"): Promise<Map<string, number>> {
+  const col = spaceColumn(kind);
+  const res = await db.execute<{ id: string; bytes: string }>(sql`
+    select t.id, sum(t.bytes)::bigint as bytes from (
+      select ${col} as id, octet_length(s.ydoc) as bytes from note_states s join notes n on n.id = s.note_id
+      union all
+      select ${col}, octet_length(v.ydoc) from note_versions v join notes n on n.id = v.note_id
+      union all
+      select ${col}, octet_length(b.ydoc) from note_state_backups b join notes n on n.id = b.note_id
+    ) t where t.id is not null group by t.id`);
+  return new Map(res.rows.map(r => [r.id, Number(r.bytes)]));
 }
