@@ -34,7 +34,7 @@ export interface MoveNoteInput {
   folderId: string | null;
   lockTimeoutMs: number;
   /** true = keep the note's versions; anything else clears them. */
-  keepVersions?: boolean;
+  keepHistory?: boolean;
 }
 
 export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: GroupTestHook): Promise<{ removedShareUserIds: string[] }> {
@@ -90,7 +90,7 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
 
   await recordRedirectsInTx(tx, [userNotePath(input.userHandle, row.slug)], input.noteId);
   // Unless the mover chose to keep them, versions and editors from the personal period must not be exposed to group editors.
-  if (input.keepVersions === true) await clearPendingVersionStateInTx(tx, input.noteId);
+  if (input.keepHistory === true) await clearPendingVersionStateInTx(tx, input.noteId);
   else await resetNoteVersionsInTx(tx, { noteId: input.noteId });
   return { removedShareUserIds: removed.map(r => r.userId) };
 }

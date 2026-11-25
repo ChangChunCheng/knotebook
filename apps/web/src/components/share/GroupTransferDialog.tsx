@@ -95,7 +95,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
   const move = useMoveNoteToGroup(note.id);
   const confirmStillPersonal = useConfirmNoteStillPersonal(note.id);
   const [submitting, setSubmitting] = useState(false);
-  const [keepVersions, setKeepVersions] = useState(false);
+  const [keepHistory, setKeepHistory] = useState(false);
 
   const busy = submitting || move.isPending;
   const dataKnown = sharesQuery.isSuccess && linkQuery.isSuccess;
@@ -114,7 +114,7 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
       }
       if (group === null) return;
       await move.mutateAsync(
-        folder === undefined ? { groupId: group.id, keepVersions } : { groupId: group.id, folderId: folder.id, keepVersions },
+        folder === undefined ? { groupId: group.id, keepHistory } : { groupId: group.id, folderId: folder.id, keepHistory },
       );
       toast({ title: t("share.move.movedToGroup", { group: destination }) });
     } catch (err) {
@@ -148,10 +148,10 @@ function MoveDialog({ note, target, onClose, returnFocusRef }: TransferDialogPro
         {token && <li>{t("share.move.moveClosesPublicLink")}</li>}
         <li>{t("share.move.moveUrlChange")}</li>
         <li>{t("share.move.moveOwnership")}</li>
-        <li>{keepVersions ? t("share.move.keepVersionsHint") : t("share.move.moveClearsVersions")}</li>
+        <li>{keepHistory ? t("share.move.keepVersionsHint") : t("share.move.moveClearsVersions")}</li>
       </ul>
       <div className="flex items-center gap-2">
-        <Checkbox id="move-keep-versions" checked={keepVersions} disabled={busy} onCheckedChange={(value) => setKeepVersions(value === true)} />
+        <Checkbox id="move-keep-versions" checked={keepHistory} disabled={busy} onCheckedChange={(value) => setKeepHistory(value === true)} />
         <label htmlFor="move-keep-versions" className="cursor-pointer text-sm">
           {t("share.move.keepVersions")}
         </label>

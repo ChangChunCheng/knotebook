@@ -298,7 +298,7 @@ describe("#180 move_note_to_group", () => {
       "Move one of your own personal notes into one of your groups, where the group's roles then decide who can read and change it. " +
       "A single note can't be taken out of a group again, here or in the web app — copy_note can copy it out instead. Moving removes the " +
       "note's per-person shares and its public link, and gives it the group's URL (the old one forwards to it for a month); it also removes " +
-      "the note's version history unless you pass keep_versions: true, which brings the history along and lets the group's editors see the " +
+      "the note's version history unless you pass keep_history: true, which brings the history along and lets the group's editors see the " +
       "earlier versions and who edited them. Your own access becomes what your group role allows, which can be read-only — see the reply's `role`.";
     const GID = "The id of one of your groups where your role lets you create notes. A group's id is the `id` in the `owner` of its notes in list_notes or search_notes.";
     const OUT = "The note after the move, in the same shape list_notes returns.";
@@ -307,8 +307,8 @@ describe("#180 move_note_to_group", () => {
     expect(tool.inputSchema.properties.group_id!.description).toBe(GID);
     expect(tool.inputSchema.properties.note_id!.description).toBe("The note's id, as returned by list_notes or search_notes.");
     expect(tool.outputSchema.properties.note!.description).toBe(OUT);
-    expect(tool.inputSchema.properties.keep_versions!.description).toBe(KEEP);
-    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "keep_versions", "note_id"]);
+    expect(tool.inputSchema.properties.keep_history!.description).toBe(KEEP);
+    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(["folder_id", "group_id", "keep_history", "note_id"]);
     for (const s of [DESC, GID, OUT, KEEP]) expect(res.body).toContain(JSON.stringify(s).slice(1, -1));
   });
 
@@ -335,7 +335,7 @@ describe("#180 move_note_to_group", () => {
     client.disconnect();
   });
 
-  it("keep_versions: true keeps versions, counter and base; false and omitted clear; pending is cleared in each case", async () => {
+  it("keep_history: true keeps versions, counter and base; false and omitted clear; pending is cleared in each case", async () => {
     const { app, db } = await buildTestApp();
     const me = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: me.id, role: "member" }]);
@@ -350,12 +350,12 @@ describe("#180 move_note_to_group", () => {
       return n.id;
     };
     const kept = await seeded();
-    const r1 = await call(app, { token }, "move_note_to_group", { note_id: kept, group_id: g.id, keep_versions: true });
+    const r1 = await call(app, { token }, "move_note_to_group", { note_id: kept, group_id: g.id, keep_history: true });
     expect(r1.isError, JSON.stringify(r1.structuredContent)).toBeUndefined();
     expect(await versionsOf(db, kept)).toHaveLength(1);
     expect(await noteBase(db, kept)).toMatchObject({ counter: 1, baseSeq: 1 });
     expect(await pendingOf(db, kept)).toEqual(NO_PENDING);
-    for (const args of [{ keep_versions: false }, {}]) {
+    for (const args of [{ keep_history: false }, {}]) {
       const id = await seeded();
       const r = await call(app, { token }, "move_note_to_group", { note_id: id, group_id: g.id, ...args });
       expect(r.isError, JSON.stringify(r.structuredContent)).toBeUndefined();

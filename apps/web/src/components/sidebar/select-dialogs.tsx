@@ -91,10 +91,10 @@ function ConfirmShell({
 export function MoveConfirmDialog({
   count,
   groupName,
-  keepVersions,
-  onKeepVersionsChange,
+  keepHistory,
+  onKeepHistoryChange,
   ...rest
-}: ConfirmProps & { groupName: string; keepVersions: boolean; onKeepVersionsChange: (keep: boolean) => void }) {
+}: ConfirmProps & { groupName: string; keepHistory: boolean; onKeepHistoryChange: (keep: boolean) => void }) {
   const { t } = useTranslation();
   return (
     <ConfirmShell
@@ -109,14 +109,14 @@ export function MoveConfirmDialog({
         <li>{t("select.moveClosesPublicLinks")}</li>
         <li>{t("select.moveUrlChange")}</li>
         <li>{t("select.moveOwnership")}</li>
-        <li>{keepVersions ? t("select.moveKeepVersionsHint") : t("select.moveClearsVersions")}</li>
+        <li>{keepHistory ? t("select.moveKeepVersionsHint") : t("select.moveClearsVersions")}</li>
       </ul>
       <div className="flex items-center gap-2">
         <Checkbox
           id="select-move-keep-versions"
-          checked={keepVersions}
+          checked={keepHistory}
           disabled={rest.progress !== null}
-          onCheckedChange={(value) => onKeepVersionsChange(value === true)}
+          onCheckedChange={(value) => onKeepHistoryChange(value === true)}
         />
         <label htmlFor="select-move-keep-versions" className="cursor-pointer text-sm">
           {t("select.moveKeepVersions")}

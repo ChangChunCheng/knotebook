@@ -22,10 +22,10 @@ export const MOVE_NOTE_TO_GROUP_DESCRIPTION =
   "Move one of your own personal notes into one of your groups, where the group's roles then decide who can read and change it. " +
   "A single note can't be taken out of a group again, here or in the web app — copy_note can copy it out instead. Moving removes the " +
   "note's per-person shares and its public link, and gives it the group's URL (the old one forwards to it for a month); it also removes " +
-  "the note's version history unless you pass keep_versions: true, which brings the history along and lets the group's editors see the " +
+  "the note's version history unless you pass keep_history: true, which brings the history along and lets the group's editors see the " +
   "earlier versions and who edited them. Your own access becomes what your group role allows, which can be read-only — see the reply's `role`.";
 
-const MOVE_KEEP_VERSIONS_DESCRIBE =
+const MOVE_KEEP_HISTORY_DESCRIBE =
   "Set true to bring the note's version history along. Leave it out or set false and the history is removed and can't be restored. " +
   "Kept versions keep their names and still list who edited each one (handle, avatar, agent label); the group's editors can see that list, and it can name people who are not in the group.";
 
@@ -41,7 +41,7 @@ export const moveNoteToGroupInput = {
   note_id: NOTE_ID.describe("The note's id, as returned by list_notes or search_notes."),
   group_id: GROUP_ID.describe(MOVE_GROUP_ID_DESCRIBE),
   folder_id: FOLDER_ID.optional().describe(MOVE_TO_GROUP_FOLDER_ID_DESCRIBE),
-  keep_versions: z.boolean().optional().describe(MOVE_KEEP_VERSIONS_DESCRIBE),
+  keep_history: z.boolean().optional().describe(MOVE_KEEP_HISTORY_DESCRIBE),
 };
 export const moveNoteToGroupOutput = { note: noteSummarySchema.describe("The note after the move, in the same shape list_notes returns.") };
 
@@ -69,7 +69,7 @@ export interface MoveNoteToGroupArgs {
   note_id: string;
   group_id: string;
   folder_id?: string;
-  keep_versions?: boolean;
+  keep_history?: boolean;
 }
 
 export async function moveNoteToGroupTool(args: MoveNoteToGroupArgs, ctx: McpToolCtx): Promise<CallToolResult> {
@@ -83,7 +83,7 @@ export async function moveNoteToGroupTool(args: MoveNoteToGroupArgs, ctx: McpToo
       userHandle: ctx.userHandle,
       groupId: args.group_id,
       ...(args.folder_id === undefined ? {} : { folderId: args.folder_id }),
-      keepVersions: args.keep_versions === true,
+      keepHistory: args.keep_history === true,
     },
   );
   switch (out.kind) {

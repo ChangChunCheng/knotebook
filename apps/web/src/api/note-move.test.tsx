@@ -137,11 +137,11 @@ describe("useMoveNoteToGroup", () => {
     const setSpy = vi.spyOn(client, "setQueryData");
     const invSpy = vi.spyOn(client, "invalidateQueries");
 
-    await result.current.mutateAsync({ groupId: GID, keepVersions: true });
+    await result.current.mutateAsync({ groupId: GID, keepHistory: true });
 
     const post = f.calls.find(c => c.method === "POST");
     expect(post).toMatchObject({ url: `${NOTE_URL}/move` });
-    expect(JSON.parse(post!.body!)).toEqual({ groupId: GID, keepVersions: true });
+    expect(JSON.parse(post!.body!)).toEqual({ groupId: GID, keepHistory: true });
 
     const sets = setSpy.mock.calls.slice(0, 3);
     expect(sets.map(c => c[0])).toEqual([["shares", ID], ["public-link", ID], ["note", ID]]);
@@ -159,7 +159,7 @@ describe("useMoveNoteToGroup", () => {
     setupFetch({ [`POST ${NOTE_URL}/move`]: () => fakeResponse(200, moved) });
     const client = makeClient();
     const { result } = renderHook(() => useMoveNoteToGroup(ID), { wrapper: wrapperFor(client) });
-    await result.current.mutateAsync({ groupId: GID, keepVersions: true });
+    await result.current.mutateAsync({ groupId: GID, keepHistory: true });
     expect(client.getQueryData(["public-link", ID])).toBeUndefined();
   });
 
@@ -185,7 +185,7 @@ describe("useMoveNoteToGroup", () => {
     f.arm();
 
     let rejected = false;
-    const p = result.current.mutateAsync({ groupId: GID, keepVersions: true }).catch(() => {
+    const p = result.current.mutateAsync({ groupId: GID, keepHistory: true }).catch(() => {
       rejected = true;
     });
     await waitFor(() => {
@@ -376,14 +376,14 @@ describe("useConfirmNoteStillPersonal", () => {
 });
 
 describe("move / copy with a folder", () => {
-  it("move body contains only keys with values (no folderId given = no such key); keepVersions is always sent, true or false", async () => {
+  it("move body contains only keys with values (no folderId given = no such key); keepHistory is always sent, true or false", async () => {
     const f = setupFetch({ [`POST ${NOTE_URL}/move`]: () => fakeResponse(200, noteDto({ groupId: GID })) });
     const client = makeClient();
     const { result } = renderHook(() => useMoveNoteToGroup(ID), { wrapper: wrapperFor(client) });
-    await result.current.mutateAsync({ groupId: "G", keepVersions: true });
-    expect(Object.keys(JSON.parse(f.calls[0]!.body!))).toEqual(["groupId", "keepVersions"]);
-    await result.current.mutateAsync({ groupId: "G", folderId: "GF", keepVersions: false });
-    expect(JSON.parse(f.calls[1]!.body!)).toEqual({ groupId: "G", folderId: "GF", keepVersions: false });
+    await result.current.mutateAsync({ groupId: "G", keepHistory: true });
+    expect(Object.keys(JSON.parse(f.calls[0]!.body!))).toEqual(["groupId", "keepHistory"]);
+    await result.current.mutateAsync({ groupId: "G", folderId: "GF", keepHistory: false });
+    expect(JSON.parse(f.calls[1]!.body!)).toEqual({ groupId: "G", folderId: "GF", keepHistory: false });
   });
 
   it("a move refetches an open versions list: applyMovedNote's ['notes'] invalidation covers the versions keys", () => {
@@ -417,7 +417,7 @@ describe("move / copy with a folder", () => {
     const client = makeClient();
     const invSpy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => ({ move: useMoveNoteToGroup(ID), copy: useCopyNote(ID) }), { wrapper: wrapperFor(client) });
-    await (kind === "move" ? result.current.move.mutateAsync({ groupId: GID, keepVersions: true }) : result.current.copy.mutateAsync({ groupId: GID })).catch(() => undefined);
+    await (kind === "move" ? result.current.move.mutateAsync({ groupId: GID, keepHistory: true }) : result.current.copy.mutateAsync({ groupId: GID })).catch(() => undefined);
     await waitFor(() => expect(keysOf(invSpy)).toContainEqual(["folders"]));
   });
 });

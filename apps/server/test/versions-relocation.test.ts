@@ -47,23 +47,23 @@ describe("REST form (not loaded)", () => {
     expect(list).toMatchObject({ versions: [], current: { baseSeq: null, nextSeq: 1 }, nextBefore: null });
   });
 
-  it("move with keepVersions false clears like an omitted flag; a non-boolean is a 400", async () => {
+  it("move with keepHistory false clears like an omitted flag; a non-boolean is a 400", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const g = await seedGroup(db, "G", [{ userId: u.id, role: "admin" }]);
     const n = await seedNote(db, { ownerId: u.id });
     await seedDoc(db, n.id, paraDoc(["personal"]));
     expect((await save(app, n.id, u.id)).statusCode).toBe(201);
-    const bad = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: "yes" } });
+    const bad = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepHistory: "yes" } });
     expect(bad.statusCode).toBe(400);
     expect(await versionsOf(db, n.id)).toHaveLength(1);
-    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: false } });
+    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepHistory: false } });
     expect(r.statusCode).toBe(200);
     expect(await versionsOf(db, n.id)).toEqual([]);
     expect(await noteBase(db, n.id)).toEqual({ counter: 0, baseSeq: null, baseFingerprint: null });
   });
 
-  it("move with keepVersions true keeps versions, counter and base, clears pending; the list continues numbering; group viewers still get 403", async () => {
+  it("move with keepHistory true keeps versions, counter and base, clears pending; the list continues numbering; group viewers still get 403", async () => {
     const { app, db } = await buildTestApp();
     const u = await seedUser(db);
     const viewer = await seedUser(db);
@@ -76,7 +76,7 @@ describe("REST form (not loaded)", () => {
     const baseId = await baseVersionIdOf(db, n.id);
     const pending = { versionPendingAt: new Date("2026-10-14T00:00:00.000Z"), versionPendingEditors: [{ user_id: u.id, agent_label: null }], versionPendingRefFingerprint: "ref" };
     await db.update(notes).set(pending).where(eq(notes.id, n.id));
-    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepVersions: true } });
+    const r = await app.inject({ method: "POST", url: `/api/notes/${n.id}/move`, cookies: await cookieOf(u.id), payload: { groupId: g.id, keepHistory: true } });
     expect(r.statusCode).toBe(200);
     expect(await versionsOf(db, n.id)).toHaveLength(1);
     expect(await noteBase(db, n.id)).toEqual(before);
@@ -213,13 +213,13 @@ describe("loaded notes (real collab)", () => {
     expect(await versionsOf(s.ctx.db, s.note.id)).toEqual([]); // loadFingerprint = the current content at rebuild and the move cleared pending, so the scan does not cut
   });
 
-  it("keepVersions true on a loaded note: state is rebuilt on the group key, the next automatic version continues the numbering and its snapshot is served", async () => {
+  it("keepHistory true on a loaded note: state is rebuilt on the group key, the next automatic version continues the numbering and its snapshot is served", async () => {
     const s = await setup();
     const client = await seedContent(s.ctx, s.session, s.note.id, "personal period");
     const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
     await s.ctx.collab.versions.cutIfDirty(s.note.id, live, { kind: "manual" });
     const oldV1 = (await versionsOf(s.ctx.db, s.note.id))[0]!;
-    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepVersions: true }) });
+    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepHistory: true }) });
     expect(r.status).toBe(200);
     await waitFor("state rebuilt", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.spaceKey === `g:${s.g.id}`);
     const p = topLevelBlocks(client.doc.getXmlFragment(YDOC_FRAGMENT))[0]!.get(0) as import("yjs").XmlElement;
@@ -237,14 +237,14 @@ describe("loaded notes (real collab)", () => {
     expect((await snap.json()).id).toBe(rows[1]!.id);
   });
 
-  it("keepVersions true with group automatic versions on: personal-period pending editors are not listed on the group's first automatic version", async () => {
+  it("keepHistory true with group automatic versions on: personal-period pending editors are not listed on the group's first automatic version", async () => {
     const s = await setup();
     const sharee = await seedUser(s.ctx.db);
     const client = await seedContent(s.ctx, s.session, s.note.id, "personal period");
     const live = s.ctx.collab.hocuspocus.documents.get(s.note.id)!;
     await s.ctx.collab.versions.cutIfDirty(s.note.id, live, { kind: "manual" });
     await s.ctx.db.update(notes).set({ versionPendingAt: new Date(), versionPendingEditors: [{ user_id: sharee.id, agent_label: null }], versionPendingRefFingerprint: "ref" }).where(eq(notes.id, s.note.id));
-    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepVersions: true }) });
+    const r = await s.session.fetch(`/api/notes/${s.note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: s.g.id, keepHistory: true }) });
     expect(r.status).toBe(200);
     expect(await pendingOf(s.ctx.db, s.note.id)).toEqual(NO_PENDING);
     await waitFor("state rebuilt", 5_000, () => s.ctx.collab.versions.debugState(s.note.id)?.spaceKey === `g:${s.g.id}`);

@@ -30,8 +30,8 @@ export async function refetchAfterFailure(queryClient: QueryClient, noteId: stri
   void queryClient.invalidateQueries({ queryKey: ["groups"] });
 }
 
-/** `keepVersions` is required: the server treats an omitted flag as "clear", so the UI must always say which. */
-type MoveInput = { groupId: string; folderId?: string; keepVersions: boolean };
+/** `keepHistory` is required: the server treats an omitted flag as "clear", so the UI must always say which. */
+type MoveInput = { groupId: string; folderId?: string; keepHistory: boolean };
 
 export function useMoveNoteToGroup(noteId: string) {
   const queryClient = useQueryClient();
@@ -41,8 +41,8 @@ export function useMoveNoteToGroup(noteId: string) {
         method: "POST",
         body: JSON.stringify(
           input.folderId === undefined
-            ? { groupId: input.groupId, keepVersions: input.keepVersions }
-            : { groupId: input.groupId, folderId: input.folderId, keepVersions: input.keepVersions },
+            ? { groupId: input.groupId, keepHistory: input.keepHistory }
+            : { groupId: input.groupId, folderId: input.folderId, keepHistory: input.keepHistory },
         ),
       }),
     onSuccess: note => {
