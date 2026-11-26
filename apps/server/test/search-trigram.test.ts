@@ -68,11 +68,11 @@ describe("hits through the real queries", () => {
         setCjkYieldsTrigrams(cjk);
         for (const [q, ids] of expected) {
           const mode = `cjkYieldsTrigrams=${cjk} q=${q}`;
-          const mcp = await searchNotesForUser(db, { userId: u.id, query: q, limit: 20 });
+          const mcp = await searchNotesForUser(db, { userId: u.id, terms: [q], mode: "all", limit: 20 });
           expect(sorted(mcp.rows.map(r => r.id)), `MCP ${mode}`).toEqual(sorted(ids));
-          const bodyOnly = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, bodyOnly: true }));
+          const bodyOnly = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, terms: [q], mode: "all", limit: 20, bodyOnly: true }));
           expect(sorted(bodyOnly.rows.map(r => r.id)), `bodyOnly ${mode}`).toEqual(sorted(ids));
-          const paged = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, query: q, limit: 20, page: { after: null } }));
+          const paged = await db.transaction(tx => runNoteSearchInTx(tx, { userId: u.id, terms: [q], mode: "all", limit: 20, page: { after: null } }));
           expect(sorted(paged.rows.map(r => r.id)), `page ${mode}`).toEqual(sorted(ids));
         }
       }

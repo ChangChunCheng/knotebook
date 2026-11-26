@@ -21,7 +21,7 @@ describe("search transaction turns JIT off", () => {
       type Probe = { jit: string; pid: number };
       const before = (await db.execute<Probe>(probe)).rows[0]!;
       const during = await db.transaction(async tx => {
-        const r = await runNoteSearchInTx(tx, { userId: u.id, query: "kubernetes", limit: 20 });
+        const r = await runNoteSearchInTx(tx, { userId: u.id, terms: ["kubernetes"], mode: "all", limit: 20 });
         expect(r.rows).toHaveLength(1);
         return (await tx.execute<Probe>(probe)).rows[0]!;
       });

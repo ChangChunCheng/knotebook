@@ -138,4 +138,40 @@ describe("GET /api/search?tags=", () => {
     expect(del.statusCode, del.body).toBeLessThan(300);
     expect(idsOf(await ok(app, await asUser(alice.id), `?q=needle&tags=${t}`))).toEqual([]);
   });
+
+  it("several keywords combined with tags (all, any, match=body, and cursor pagination)", async () => {
+    const { app, db } = await buildTestApp();
+    const alice = await seedUser(db);
+    const auth = await asUser(alice.id);
+    const [a, b] = [await seedTag(db, { ownerId: alice.id }, "a"), await seedTag(db, { ownerId: alice.id }, "b")];
+    const bothTagsBothTerms = await seedIndexedNote(db, { ownerId: alice.id }, "alpha title", [{ id: "p", text: "beta body" }]);
+    const bothTagsOneTerm = await seedIndexedNote(db, { ownerId: alice.id }, "plain", [{ id: "p", text: "only beta here" }]);
+    const bothTagsNoTerm = await seedIndexedNote(db, { ownerId: alice.id }, "plain", [{ id: "p", text: "unrelated" }]);
+    const oneTagBothTerms = await seedIndexedNote(db, { ownerId: alice.id }, "alpha", [{ id: "p", text: "beta" }]);
+    await attach(db, bothTagsBothTerms.id, a, b);
+    await attach(db, bothTagsOneTerm.id, a, b);
+    await attach(db, bothTagsNoTerm.id, a, b);
+    await attach(db, oneTagBothTerms.id, a);
+
+    const q = encodeURIComponent("alpha beta");
+    const allRes = await ok(app, auth, `?q=${q}&tags=${a},${b}`);
+    expect(allRes.hits.map(h => h.note.id)).toEqual([bothTagsBothTerms.id]);
+    expect(allRes.hits[0]!.matchedTerms).toEqual(["alpha", "beta"]);
+
+    const anyRes = await ok(app, auth, `?q=${q}&keywords=any&tags=${a},${b}`);
+    expect(anyRes.hits.map(h => h.note.id)).toEqual([bothTagsBothTerms.id, bothTagsOneTerm.id]);
+    expect(anyRes.hits.map(h => h.matchedTerms)).toEqual([["alpha", "beta"], ["beta"]]);
+
+    const bodyRes = await ok(app, auth, `?q=${q}&match=body&tags=${a},${b}`);
+    expect(bodyRes.hits.map(h => h.note.id)).toEqual([bothTagsBothTerms.id]);
+
+    // Pagination under multi-keyword + tags: cursor continues and rejects mismatched tags.
+    const page1 = await ok(app, auth, `?q=${q}&keywords=any&tags=${a},${b}&limit=1`);
+    expect(page1.hits.map(h => h.note.id)).toEqual([bothTagsBothTerms.id]);
+    expect(page1.nextCursor).not.toBeNull();
+    const page2 = await ok(app, auth, `?q=${q}&keywords=any&tags=${a},${b}&limit=1&cursor=${page1.nextCursor}`);
+    expect(page2.hits.map(h => h.note.id)).toEqual([bothTagsOneTerm.id]);
+    expect(page2.nextCursor).toBeNull();
+    expect((await get(app, auth, `?q=${q}&keywords=any&tags=${a}&limit=1&cursor=${page1.nextCursor}`)).statusCode).toBe(400);
+  });
 });

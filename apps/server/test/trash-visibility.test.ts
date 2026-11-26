@@ -69,7 +69,7 @@ describe("search", () => {
     const mine = await seedNote(db, { ownerId: u.id }, { title: "trashprobe mine" });
     const grp = await seedNote(db, { groupId: g.id }, { title: "trashprobe group" });
     const bystander = await seedNote(db, { ownerId: u.id }, { title: "trashprobe bystander" });
-    const ids = async () => (await searchNotesForUser(db, { userId: u.id, query: "trashprobe", limit: 20 })).rows.map(r => r.id).sort();
+    const ids = async () => (await searchNotesForUser(db, { userId: u.id, terms: ["trashprobe"], mode: "all", limit: 20 })).rows.map(r => r.id).sort();
 
     expect(await ids()).toEqual([mine.id, grp.id, bystander.id].sort());
     await markTrashed(pool(db), mine.id, u.id);

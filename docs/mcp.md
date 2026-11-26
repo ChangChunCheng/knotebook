@@ -141,12 +141,21 @@ Tool inputs are snake_case (`note_id`, `group_id`); replies use camelCase. Every
 
 ### `search_notes`
 
-**Takes** `query` (1–200 characters, used exactly as sent — it is not trimmed) and `limit` (1–50, default 20).
+**Takes** `query` (1–200 characters, checked before splitting; see [Keywords](#keywords)), `keywords` (`"all"`, the default, or `"any"`) and `limit` (1–50, default 20).
 
 **Answers** `notes`, best match first, and `truncated`, plus `matchesTruncated: true` only when some matches were left out. Each entry in `notes` is a `list_notes` entry with two more fields:
 
 - `matchedOn` — `"title"`, `"body"` or `"both"`: where your text was found.
-- `matches` — up to 3 sections of the note that contain your text, in document order, each `{sectionId, heading, headingTruncated?, snippet}`. `heading` is cut like every other heading (see [Limits](#limits)) and is empty for `_top`; `snippet` is an excerpt of that section's text around its first hit. `matches` is always empty when `matchedOn` is `"title"`. For a body match it can be empty only in a reply that carries `matchesTruncated: true`: to keep a reply small, matches are added note by note in the order of `notes`, and adding stops for good at the first one that doesn't fit. Ask for fewer notes with `limit` to get them.
+- `matchedTerms` — only when the query has more than one keyword: the keywords this note contains (in its title or body), in query order.
+- `matches` — up to 3 sections of the note that contain your text, each `{sectionId, heading, headingTruncated?, snippet, matchedTerms?}`. With one keyword they are in document order; with several, the sections containing the most different keywords come first, then document order, and each carries `matchedTerms`, the keywords that section contains. `heading` is cut like every other heading (see [Limits](#limits)) and is empty for `_top`; `snippet` is an excerpt of that section's text around its first hit. `matches` is always empty when `matchedOn` is `"title"`. For a body match it can be empty only in a reply that carries `matchesTruncated: true`: to keep a reply small, matches are added note by note in the order of `notes`, and adding stops for good at the first one that doesn't fit. Ask for fewer notes with `limit` to get them.
+
+#### Keywords
+
+The query is split into keywords at whitespace (any whitespace, including the ideographic space U+3000), and text in double quotes is one keyword with its spaces kept, so `"release notes" 2026` is two keywords. There is no word segmentation: CJK text needs spaces between keywords too, so `部署 正式機` is two keywords and `部署正式機` is one. A keyword repeated (ignoring case) counts once; a `"` that isn't closed runs to the end of the query; a query made only of quotes and spaces is searched for as it is, trimmed, so `"` can still be found. At most 8 keywords; more, or nothing left to search, answers `invalid_body`.
+
+- **One keyword** (no spaces, or one quoted phrase) behaves exactly as before keywords existed: one literal match, ranked as below. Note that a query with spaces in it used to be one literal text and is now several keywords; quote it to keep it as one.
+- **Several keywords, `keywords: "all"`** (the default): a note must contain every keyword, each in its title or its body; different keywords can be in different sections. **`keywords: "any"`**: a note needs at least one, and notes containing more of them come first.
+- **Ranking with several keywords**, after the number of keywords found: the title equals the keywords joined by single spaces, then the title starts with them, then the title contains every keyword the note matched, then the title contains some of them, then a match in the body only; within each, the most recently updated note comes first. How often a keyword occurs doesn't count.
 
 **Matching** is case-insensitive and literal — `%` and `_` are ordinary characters, not wildcards; how far case-insensitivity reaches beyond ASCII depends on the database (see [Known limitations](./known-limitations.md)). Notes whose title contains your text come first — exact titles, then titles that start with your text, then the rest — followed by notes that match only in the body; within each of those groups, the most recently updated note comes first. Body text is matched one section at a time, so text that runs across the boundary between two sections is not found. Inside a section, each block's text is separated from the next block's by one line break, so the end of one paragraph and the start of the next don't run together into a match.
 
@@ -158,9 +167,9 @@ Tool inputs are snake_case (`note_id`, `group_id`); replies use camelCase. Every
 
 **On a deployment without the collaboration component**, no tool there reads a `sectionId`, and body text gets into the index only when the server starts and when a note is copied.
 
-There is **no next page**: when `truncated` is true the answer is a narrower query, not a cursor.
+A reply can also return fewer than `limit` notes with `truncated: true` when the notes themselves (including `matchedTerms`) would exceed the reply size budget. There is **no next page**: when `truncated` is true the answer is a narrower query, not a cursor.
 
-**Errors** `too_many_requests` — searches have a budget of their own, 60 per minute per user by default (see [Limits](#limits)).
+**Errors** `invalid_body` — more than 8 keywords, or nothing to search (see [Keywords](#keywords)); this isn't counted against the search budget. `too_many_requests` — searches have a budget of their own, 60 per minute per user by default (see [Limits](#limits)).
 
 ### `read_note_outline`
 

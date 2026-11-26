@@ -160,9 +160,17 @@ describe("SearchResults", () => {
     expect(screen.getByRole("status")).toHaveTextContent("標題符合 · 3 篇");
   });
 
-  it("highlight marks only the first hit, keeps the original case, and the title text is complete", async () => {
+  it("#399 two keywords: a title needs both, and each keyword's first hit is marked", async () => {
+    stubFetch([note("s1", "Slug of Ham"), note("s2", "Slug only")]);
+    renderResults("ham slug");
+    const link = await screen.findByRole("link", { name: /^Slug of Ham/ });
+    expect(Array.from(link.querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["Slug", "Ham"]);
+    expect(screen.queryByRole("link", { name: /^Slug only/ })).toBeNull();
+  });
+
+  it("highlight marks only the first hit, keeps the original case, and the title text is complete (a quoted phrase is one keyword)", async () => {
     stubFetch([note("s1", "Has A Slug")]);
-    renderResults("a sl");
+    renderResults('"a sl"');
     const link = await screen.findByRole("link", { name: /^Has A Slug/ });
     const marks = link.querySelectorAll("mark");
     expect(marks).toHaveLength(1);
@@ -454,17 +462,25 @@ describe("SearchResults x body matches (#93)", () => {
 
 describe("highlightTitle", () => {
   it("not found, or lowercasing changes the length: returns the original string", () => {
-    expect(highlightTitle("Beta", "zz")).toBe("Beta");
-    expect(highlightTitle("İstanbul", "stan")).toBe("İstanbul");
+    expect(highlightTitle("Beta", ["zz"])).toBe("Beta");
+    expect(highlightTitle("İstanbul", ["stan"])).toBe("İstanbul");
   });
 
   it("two hits: only the first is marked, original case kept", () => {
-    const { container } = render(<>{highlightTitle("Alpha alpha", "alpha")}</>);
+    const { container } = render(<>{highlightTitle("Alpha alpha", ["alpha"])}</>);
     const marks = container.querySelectorAll("mark");
     expect(marks).toHaveLength(1);
     expect(marks[0]).toHaveTextContent("Alpha");
     expect(marks[0].previousSibling).toBeNull();
     expect(container.textContent).toBe("Alpha alpha");
     expect(marks[0].nextSibling?.textContent).toBe(" alpha");
+  });
+
+  it("#399 several keywords: the first hit of each is marked in text order; overlapping hits merge into one mark", () => {
+    const { container } = render(<>{highlightTitle("Deploy to Prod tonight", ["prod", "deploy"])}</>);
+    expect(Array.from(container.querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["Deploy", "Prod"]);
+    expect(container.textContent).toBe("Deploy to Prod tonight");
+    const merged = render(<>{highlightTitle("database", ["data", "tab"])}</>);
+    expect(Array.from(merged.container.querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["datab"]);
   });
 });

@@ -52,6 +52,7 @@
     "bodyLoadingMore": "Loading…",
     "bodySearchTooShort": "Type one more character to search note text too.",
     "bodySearchTooLong": "Too long to search note text; matching titles only.",
+    "bodySearchTooManyTerms": "Too many keywords to search note text (up to {{max}}); matching titles only.",
     "clearSearch": "Clear search",
     "emptyMyNotes": "No personal notes yet.",
     "emptyWorkspace": "You're not in any group yet.",
