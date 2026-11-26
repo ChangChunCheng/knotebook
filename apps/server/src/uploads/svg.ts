@@ -33,7 +33,7 @@ function isValidXmlCodePoint(cp: number): boolean {
   );
 }
 
-/** True when `bytes` is valid UTF-8 well-formed XML 1.0 whose root element is `<svg>`. */
+/** True when `bytes` is valid UTF-8 well-formed XML 1.0 whose root element is `<svg>` in the SVG namespace. */
 export function isValidSvgXml(bytes: Uint8Array): boolean {
   if (bytes.length === 0) return false;
 
@@ -441,8 +441,9 @@ function isSvgRootElement(tagName: string, attrs: ReadonlyMap<string, string>): 
   const colon = tagName.indexOf(":");
   if (colon === -1) {
     if (tagName !== "svg") return false;
-    const xmlns = attrs.get("xmlns");
-    return xmlns === undefined || xmlns === SVG_NAMESPACE;
+    // Standalone `image/svg+xml` renders as a broken image without the SVG namespace;
+    // DTD entity references (e.g. legacy Illustrator `xmlns="&ns_svg;"`) are not expanded and fail here too.
+    return attrs.get("xmlns") === SVG_NAMESPACE;
   }
   // Reject multiple colons or empty prefix/local name.
   if (colon === 0 || tagName.indexOf(":", colon + 1) !== -1) return false;

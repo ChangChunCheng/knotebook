@@ -496,9 +496,23 @@ describe("POST /api/notes/:id/uploads", () => {
       message: "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.",
     });
 
-    const badSvg = await postUpload(app, note.id, singleFileBody(Buffer.from("<svg><rect></svg>", "utf-8"), { filename: "bad.svg", contentType: "image/svg+xml" }), { cookie });
+    const badSvg = await postUpload(
+      app,
+      note.id,
+      singleFileBody(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect></svg>', "utf-8"), { filename: "bad.svg", contentType: "image/svg+xml" }),
+      { cookie },
+    );
     expect(badSvg.statusCode).toBe(415);
     expect(badSvg.json().error.code).toBe("unsupported_media_type");
+
+    const noXmlnsSvg = await postUpload(
+      app,
+      note.id,
+      singleFileBody(Buffer.from('<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>', "utf-8"), { filename: "no-xmlns.svg", contentType: "image/svg+xml" }),
+      { cookie },
+    );
+    expect(noXmlnsSvg.statusCode).toBe(415);
+    expect(noXmlnsSvg.json().error.code).toBe("unsupported_media_type");
   });
 
   it("201: SVG upload (including animated style and active tags kept verbatim) -> stored as image/svg+xml and served with CSP sandbox + nosniff (#389)", async () => {

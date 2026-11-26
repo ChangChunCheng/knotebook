@@ -92,7 +92,8 @@ describe("accepted upload types", () => {
 describe("detectImageMimeType (SVG XML content validation, #389)", () => {
   it.each([
     ["minimal self-closing", '<svg xmlns="http://www.w3.org/2000/svg"/>'],
-    ["plain root without xmlns", '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'],
+    ["single-quoted xmlns", "<svg xmlns='http://www.w3.org/2000/svg'><rect width='10' height='10'/></svg>"],
+    ["viewBox-only without explicit width/height", '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450"><rect width="800" height="450"/></svg>'],
     ["leading/trailing whitespace and comments", '  <!-- lead -->\n<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>\n<!-- tail --> '],
     ["xml declaration + DOCTYPE", '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 10"/></svg>'],
     ["prefixed svg namespace", '<s:svg xmlns:s="http://www.w3.org/2000/svg"><s:rect width="1" height="1"/></s:svg>'],
@@ -118,34 +119,41 @@ describe("detectImageMimeType (SVG XML content validation, #389)", () => {
     ["HTML root", "<html><body><svg/></body></html>"],
     ["script root", "<script>alert(1)</script>"],
     ["uppercase SVG root (XML is case-sensitive)", '<SVG xmlns="http://www.w3.org/2000/svg"/>'],
+    ["missing xmlns (renders broken when served as image/svg+xml)", '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'],
+    ["legacy Illustrator entity xmlns (entities are not expanded; rejected with 415)", '<!DOCTYPE svg [<!ENTITY ns_svg "http://www.w3.org/2000/svg">]><svg xmlns="&ns_svg;"><rect width="10" height="10"/></svg>'],
     ["wrong root namespace (XHTML)", '<svg xmlns="http://www.w3.org/1999/xhtml"/>'],
     ["prefixed svg without matching xmlns", '<s:svg xmlns:s="http://www.w3.org/1999/xhtml"/>'],
     ["prefixed svg with unbound prefix", "<s:svg/>"],
     ["unclosed child tag", '<svg xmlns="http://www.w3.org/2000/svg"><rect></svg>'],
     ["mismatched end tag", '<svg xmlns="http://www.w3.org/2000/svg"><g></rect></svg>'],
     ["unclosed root", '<svg xmlns="http://www.w3.org/2000/svg"><rect/>'],
-    ["unquoted attribute", '<svg width=10/>'],
-    ["duplicate attribute", '<svg width="10" width="20"/>'],
-    ["missing whitespace between attributes", '<svg width="10"height="20"/>'],
-    ["bare ampersand in text", "<svg>a & b</svg>"],
-    ["undeclared entity", "<svg>&unknown;</svg>"],
-    ["NUL numeric char reference", "<svg>&#0;</svg>"],
-    ["double hyphen inside comment", "<svg><!-- bad -- comment --></svg>"],
-    ["triple hyphen closing comment", "<svg><!-- bad ---></svg>"],
-    ["unescaped ]]> in text", "<svg>a ]]> b</svg>"],
-    ["trailing text after root", "<svg/>trailing"],
-    ["two root elements", "<svg/><svg/>"],
-    ["XML declaration after whitespace", '  <?xml version="1.0"?><svg/>'],
-    ["invalid XML declaration", '<?xml version="2.0"?><svg/>'],
-    ["NUL byte inside SVG", "<svg>\x00</svg>"],
-    ["plain text mentioning <svg>", "not xml <svg></svg>"],
-    ["unclosed CDATA", "<svg><![CDATA[oops</svg>"],
+    ["unquoted attribute", '<svg xmlns="http://www.w3.org/2000/svg" width=10/>'],
+    ["duplicate attribute", '<svg xmlns="http://www.w3.org/2000/svg" width="10" width="20"/>'],
+    ["missing whitespace between attributes", '<svg xmlns="http://www.w3.org/2000/svg" width="10"height="20"/>'],
+    ["bare ampersand in text", '<svg xmlns="http://www.w3.org/2000/svg">a & b</svg>'],
+    ["undeclared entity", '<svg xmlns="http://www.w3.org/2000/svg">&unknown;</svg>'],
+    ["NUL numeric char reference", '<svg xmlns="http://www.w3.org/2000/svg">&#0;</svg>'],
+    ["double hyphen inside comment", '<svg xmlns="http://www.w3.org/2000/svg"><!-- bad -- comment --></svg>'],
+    ["triple hyphen closing comment", '<svg xmlns="http://www.w3.org/2000/svg"><!-- bad ---></svg>'],
+    ["unescaped ]]> in text", '<svg xmlns="http://www.w3.org/2000/svg">a ]]> b</svg>'],
+    ["trailing text after root", '<svg xmlns="http://www.w3.org/2000/svg"/>trailing'],
+    ["two root elements", '<svg xmlns="http://www.w3.org/2000/svg"/><svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ["XML declaration after whitespace", '  <?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ["invalid XML declaration", '<?xml version="2.0"?><svg xmlns="http://www.w3.org/2000/svg"/>'],
+    ["NUL byte inside SVG", '<svg xmlns="http://www.w3.org/2000/svg">\x00</svg>'],
+    ["plain text mentioning <svg>", 'not xml <svg xmlns="http://www.w3.org/2000/svg"></svg>'],
+    ["unclosed CDATA", '<svg xmlns="http://www.w3.org/2000/svg"><![CDATA[oops</svg>'],
   ])("invalid XML / non-SVG (%s) -> null", (_label, xml) => {
     expect(detectImageMimeType(enc(xml))).toBe(null);
   });
 
   it("invalid UTF-8 bytes -> null", () => {
-    const invalidUtf8 = Uint8Array.from([0x3c, 0x73, 0x76, 0x67, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x73, 0x76, 0x67, 0x3e]);
+    const prefix = enc('<svg xmlns="http://www.w3.org/2000/svg">');
+    const suffix = enc("</svg>");
+    const invalidUtf8 = new Uint8Array(prefix.length + 2 + suffix.length);
+    invalidUtf8.set(prefix, 0);
+    invalidUtf8.set([0xff, 0xfe], prefix.length);
+    invalidUtf8.set(suffix, prefix.length + 2);
     expect(detectImageMimeType(invalidUtf8)).toBe(null);
   });
 

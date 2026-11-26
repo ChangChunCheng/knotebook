@@ -440,6 +440,30 @@ describe("#462 image zoom button floating layer", () => {
     expect(zoomBtn()).not.toBeNull();
   });
 
+  it("uploaded viewBox-only SVG image with non-zero natural dimensions shows zoom button and opens lightbox (#389)", () => {
+    const html = `<div class="bn-block-outer" data-id="svg1"><div class="bn-block"><div class="bn-block-content" data-content-type="image"><div class="bn-file-block-content-wrapper">
+      <div class="bn-visual-media-wrapper"><img class="bn-visual-media" src="/api/uploads/diagram-svg" alt="diagram.svg" data-testid="svg1" /></div>
+      <figcaption class="bn-file-caption">Slide diagram</figcaption></div></div></div></div>`;
+    render(<Host zoom={zoom} html={html} />);
+    // Browsers synthesize positive naturalWidth/naturalHeight for a viewBox-only SVG (e.g. 16:9).
+    setLoaded(img("svg1"), true, { w: 300, h: 169 });
+    fireEvent.pointerOver(img("svg1"), { pointerType: "mouse" });
+    const button = zoomBtn();
+    expect(button).not.toBeNull();
+    fireEvent.click(button!);
+    expect(open).toHaveBeenCalledWith(
+      {
+        kind: "image",
+        src: expect.stringContaining("/api/uploads/diagram-svg"),
+        alt: "diagram.svg",
+        caption: "Slide diagram",
+        naturalWidth: 300,
+        naturalHeight: 169,
+      },
+      { button, media: img("svg1") },
+    );
+  });
+
   it("CSS guard: during a drag-and-drop the zoom button layer takes no pointer and is hidden", () => {
     const css = readFileSync(`${process.cwd()}/src/index.css`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const rules = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g)).map((m) => ({ selector: m[1]!, body: m[2]! }));

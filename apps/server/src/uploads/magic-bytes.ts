@@ -38,7 +38,7 @@ export function detectRasterImageMimeType(bytes: Uint8Array): RasterImageMimeTyp
   return null;
 }
 
-/** Detects raster formats by magic bytes, or SVG by XML well-formedness and an `<svg>` root element. */
+/** Detects raster formats by magic bytes, or SVG by XML well-formedness and an `<svg>` root element in the SVG namespace. */
 export function detectImageMimeType(bytes: Uint8Array): ImageMimeType | null {
   const raster = detectRasterImageMimeType(bytes);
   if (raster !== null) return raster;

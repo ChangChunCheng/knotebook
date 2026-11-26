@@ -30,6 +30,12 @@ const ANIMATED_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height=
 <rect width="40" height="40"/>
 </svg>`;
 
+// Slide-diagram SVG with only `viewBox` and no explicit `width`/`height` attributes (#389).
+const VIEWBOX_ONLY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+<rect width="800" height="450" fill="#2563eb"/>
+<circle cx="400" cy="225" r="120" fill="#f8fafc"/>
+</svg>`;
+
 function watchActivity(context: BrowserContext): { markers: string[]; dialogs: string[] } {
   const seen = { markers: [] as string[], dialogs: [] as string[] };
   const marker = (url: string) => (new URL(url).pathname.startsWith(MARKER) ? new URL(url).pathname : null);
@@ -199,6 +205,64 @@ test("positive control: the same hostile SVG served without the upload CSP does 
     await page.goto(`${ORIGIN}/e2e-svg-unprotected.svg`);
     await expect.poll(() => seen.markers.length, { timeout: 10_000 }).toBeGreaterThan(0);
     await expect.poll(() => seen.dialogs.length, { timeout: 10_000 }).toBeGreaterThan(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("viewBox-only SVG without width/height renders at a visible default size and opens in lightbox zoom (#389)", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  try {
+    const page = await context.newPage();
+    await loginAs(page, ADMIN.email, ADMIN.password);
+    await createNote(page, `E2E svg viewBox ${Date.now()}`);
+    const noteId = await noteIdFromUrl(page);
+
+    const upload = await page.request.post(`/api/notes/${noteId}/uploads`, {
+      headers: { Origin: ORIGIN },
+      multipart: { file: { name: "diagram.svg", mimeType: "image/svg+xml", buffer: Buffer.from(VIEWBOX_ONLY_SVG) } },
+    });
+    expect(upload.status()).toBe(201);
+    const { url } = (await upload.json()) as { url: string };
+    await pasteMarkdown(page, `![diagram](${url})\n`);
+
+    const img = editorLocator(page).locator(`img[src*="${url}"]`);
+    await expect(img).toBeVisible({ timeout: 15_000 });
+    await expect.poll(
+      () => img.evaluate((el) => ((el as HTMLImageElement).complete ? (el as HTMLImageElement).naturalWidth : 0)),
+      { timeout: 15_000 },
+    ).toBeGreaterThan(0);
+    const natural = await img.evaluate((el) => ({
+      w: (el as HTMLImageElement).naturalWidth,
+      h: (el as HTMLImageElement).naturalHeight,
+    }));
+    expect(natural.w).toBeGreaterThan(0);
+    expect(natural.h).toBeGreaterThan(0);
+
+    const box = await img.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(0);
+    expect(box!.height).toBeGreaterThan(0);
+    expect(Math.abs(box!.width / box!.height - 800 / 450)).toBeLessThan(0.05);
+
+    // Lightbox zoom: hover reveals Zoom in button, clicking opens the dialog with a zoomable <img>.
+    await img.hover();
+    const zoomButton = page.locator("[data-kb-zoom-layer]").getByRole("button", { name: "Zoom in", exact: true });
+    await expect(zoomButton).toBeVisible();
+    await zoomButton.click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const zoomed = dialog.locator("img");
+    await expect(zoomed).toBeVisible();
+    const beforeZoom = (await zoomed.boundingBox())!;
+    expect(beforeZoom.width).toBeGreaterThan(0);
+    expect(beforeZoom.height).toBeGreaterThan(0);
+    await page.keyboard.press("+");
+    await expect.poll(async () => (await zoomed.boundingBox())!.width).toBeGreaterThan(beforeZoom.width + 1);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
   } finally {
     await context.close();
   }

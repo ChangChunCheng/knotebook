@@ -46,10 +46,10 @@ describe("MCP SVG output helpers and schemas (#389)", () => {
     ]);
   });
 
-  it("readNoteImageOutput accepts image/svg+xml and tool descriptions document SVG text return", () => {
+  it("readNoteImageOutput accepts image/svg+xml and tool descriptions document SVG text return and cap", () => {
     expect(readNoteImageOutput.mimeType.safeParse("image/svg+xml").success).toBe(true);
-    expect(READ_NOTE_IMAGE_DESCRIPTION_TOKEN).toContain("SVG comes back as its UTF-8 XML text");
-    expect(READ_NOTE_IMAGE_DESCRIPTION_SESSION).toContain("SVG comes back as its UTF-8 XML text");
+    expect(READ_NOTE_IMAGE_DESCRIPTION_TOKEN).toContain("SVGs up to 102400 bytes as UTF-8 XML text");
+    expect(READ_NOTE_IMAGE_DESCRIPTION_SESSION).toContain("SVGs up to 102400 bytes as UTF-8 XML text");
     expect(UPLOAD_NEXT).toContain("415: not a PNG, JPEG, GIF, WebP or SVG image");
   });
 });
