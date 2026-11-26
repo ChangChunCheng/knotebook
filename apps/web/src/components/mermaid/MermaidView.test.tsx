@@ -733,3 +733,32 @@ describe("MermaidView - zoom view", () => {
     expect(screen.getByRole("button", { name: "Zoom in" }).className).not.toContain("hidden");
   });
 });
+
+describe("MermaidView initiallyEditing", () => {
+  it("opens the source editor focused, and Esc commits what was typed", () => {
+    const onChange = vi.fn();
+    render(<MermaidView code="" editable theme="light" onChange={onChange} initiallyEditing />);
+    const area = screen.getByRole("textbox");
+    expect(document.activeElement).toBe(area);
+    fireEvent.change(area, { target: { value: "graph TD; A-->B;" } });
+    fireEvent.keyDown(area, { key: "Escape" });
+    expect(onChange).toHaveBeenCalledWith("graph TD; A-->B;");
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("an empty source left on blur is not written and shows the empty-block placeholder", () => {
+    const onChange = vi.fn();
+    render(<MermaidView code="" editable theme="light" onChange={onChange} initiallyEditing />);
+    fireEvent.blur(screen.getByRole("textbox"));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText(i18n.t("note.mermaid.empty"))).toBeTruthy();
+  });
+
+  it("stays closed by default and when the viewer cannot edit", () => {
+    const { rerender } = render(<MermaidView code="" editable theme="light" onChange={vi.fn()} />);
+    expect(screen.queryByRole("textbox")).toBeNull();
+    rerender(<MermaidView code="" editable={false} theme="light" onChange={vi.fn()} initiallyEditing />);
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+});
