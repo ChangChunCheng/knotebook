@@ -28,6 +28,8 @@ export const TRASHLAZY_RE = /^TrashLazy-[A-Za-z0-9_-]+\.js$/;
 export const SELECTLAZY_RE = /^SelectLazy-[A-Za-z0-9_-]+\.js$/;
 // A select.*.json key in entry means the string pack (or a module importing it by value, e.g. lib/select-batch.ts) is statically imported.
 export const SELECT_I18N_MARKER = 'deleteSelected_one';
+// A groups.storage.* key that lives only in groups-admin.en.json (lazy group settings strings); in entry means groups-admin-strings is statically imported.
+export const GROUPS_ADMIN_I18N_MARKER = 'byMemberEmpty';
 // Presence only catches the whole group merging back or a rename; FOLDER_I18N_MARKER catches a single static import.
 export const FOLDERLAZY_RE = /^FolderLazy-[A-Za-z0-9_-]+\.js$/;
 // A folders.*.json key in entry means the string pack is statically imported.
@@ -283,6 +285,12 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
   if (entrySource.includes(TAGS_I18N_MARKER)) {
     throw new Error(
       `entry chunk ${entryName} 含標籤管理字串包的鍵名 ${TAGS_I18N_MARKER}——\`@/i18n/tags-strings\`（或 import 它的標籤管理模組）被首包靜態 import；標籤管理字串只能經 lazy chunk 載入`
+    );
+  }
+
+  if (entrySource.includes(GROUPS_ADMIN_I18N_MARKER)) {
+    throw new Error(
+      `entry chunk ${entryName} 含群組設定字串包的鍵名 ${GROUPS_ADMIN_I18N_MARKER}——\`@/i18n/groups-admin-strings\`（或 import 它的群組設定模組）被首包靜態 import；群組設定字串只能經 lazy chunk 載入`
     );
   }
 
