@@ -57,6 +57,10 @@ export interface MermaidViewProps {
   theme: MermaidTheme;
   /** Called only when the source actually changed (see `commit`). */
   onChange(code: string): void;
+  /** Opens the source editor on mount, for a block the user just created by typing. */
+  initiallyEditing?: boolean;
+  /** Called after the source editor closes by any route; `viaEscape` tells Esc from blur. */
+  onClose?: (viaEscape: boolean) => void;
 }
 
 /**
@@ -67,9 +71,9 @@ export interface MermaidViewProps {
  * `securityLevel: "strict"` (mermaid's built-in DOMPurify) and `htmlLabels: false` and never calls
  * `bindFunctions`. Read that file's notes before changing it.
  */
-export function MermaidView({ code, editable, theme, onChange }: MermaidViewProps): JSX.Element {
+export function MermaidView({ code, editable, theme, onChange, initiallyEditing = false, onClose }: MermaidViewProps): JSX.Element {
   const { t } = useTranslation();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initiallyEditing && editable);
   const [draft, setDraft] = useState(code);
   const [rendered, setRendered] = useState<Rendered | null>(() => initialRendered(code, theme));
   const result = rendered?.result ?? null;
@@ -142,9 +146,10 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
   };
 
   /** No `onChange` when unchanged: this is a shared document, and a pointless `updateBlock` makes a Yjs update, a store push, and dirties others' undo stacks. */
-  const commit = (): void => {
+  const commit = (viaEscape = false): void => {
     setEditing(false);
     if (draft !== code) onChange(draft);
+    onClose?.(viaEscape);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -152,7 +157,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation(); // keep Esc from reaching editor/dialog handlers
-      commit();
+      commit(true);
     }
   };
 
@@ -286,7 +291,7 @@ export function MermaidView({ code, editable, theme, onChange }: MermaidViewProp
             spellCheck={false}
             rows={Math.max(3, draft.split("\n").length + 1)}
             onChange={(event) => setDraft(event.target.value)}
-            onBlur={commit}
+            onBlur={() => commit()}
             onKeyDown={handleKeyDown}
             className="w-full resize-y rounded-md border border-input bg-muted/40 p-3 font-mono text-sm pointer-coarse:text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
