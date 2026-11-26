@@ -87,6 +87,7 @@ Each part below lists what works today and what is planned. Planned items are wh
 
 - **MCP endpoint**: `/api/mcp` gives Claude Code, Claude Desktop and other MCP clients up to twenty-three tools to search, read a note section by section, create, edit, rename, copy and move notes, manage folders, move notes to the trash and back, read images, read and post comments, and list mentions ([MCP](docs/mcp.md)).
 - **Notes as files**: with `open_notes_as_files`, an assistant that has a shell downloads many notes as Markdown files and sends the changed files back; only the parts a file changed are written ([MCP](docs/mcp.md#open_notes_as_files)).
+- **Comments, @mentions and notifications**: anyone who can read a note can comment on it or on a passage; `@handle` notifies a person and `@handle/label` one of their agents, with a bell in the app and `read_comments`, `post_comment` and `list_notifications` for agents ([Comments](docs/comments.md)).
 - **Knowledge info and tags for agents**: agents read and write knowledge info as a comment under each heading, and set tags through a file's `tags:` line ([AI editing](docs/ai-editing.md#knowledge-info)).
 - **API tokens and OAuth**: personal API tokens with scopes, or apps you authorize over OAuth, which are read-only unless you allow more ([API tokens](docs/api-tokens.md)). **Settings → Authorization → Connect Claude with MCP** shows ready-to-paste setup for your server.
 - **AI quick actions in the editor**: select text and run Rewrite, Translate, Summarize, Continue writing or Instruct (follows an instruction you type), with the result shown as an inline diff, streamed from a provider a site admin sets up: any OpenAI-compatible API (including a local Ollama) or Anthropic. Nothing is sent anywhere until an admin sets one up, and admins can rename, turn off or add actions ([AI quick actions](docs/ai.md)).
@@ -97,7 +98,6 @@ Each part below lists what works today and what is planned. Planned items are wh
 - Search for agents that answers with index lines first (when to read, conclusion, last verified), so an agent reads only the one or two most relevant notes.
 - Writing back: an agent puts new findings in a place to be sorted, or suggests changes to an existing note.
 - Search with several keywords, ranked by how well notes match ([#399](https://github.com/sw-willie-wu/knotebook/issues/399)); semantic search ([#92](https://github.com/sw-willie-wu/knotebook/issues/92)).
-- Comments, @mentions (including mentioning an agent) and notifications ([#289](https://github.com/sw-willie-wu/knotebook/issues/289)).
 - A built-in agent and chat in the app ([#264](https://github.com/sw-willie-wu/knotebook/issues/264), [#118](https://github.com/sw-willie-wu/knotebook/issues/118)).
 
 ### See and undo what agents change

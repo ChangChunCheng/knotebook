@@ -10,3 +10,8 @@ export type CommentChangeOp = "created" | "edited" | "deleted";
 export function broadcastCommentChange(collab: CollabServer | undefined, noteId: string, op: CommentChangeOp, commentId: string): void {
   collab?.hocuspocus.documents.get(noteId)?.broadcastStateless(JSON.stringify({ type: "comment", op, commentId }));
 }
+
+/** The whole thread is gone (a move that clears history), so there is no single comment to name; clients refetch what they show. */
+export function broadcastCommentsCleared(collab: CollabServer | undefined, noteId: string): void {
+  collab?.hocuspocus.documents.get(noteId)?.broadcastStateless(JSON.stringify({ type: "comment", op: "cleared", commentId: "" }));
+}

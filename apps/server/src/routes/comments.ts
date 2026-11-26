@@ -23,6 +23,7 @@ import {
 } from "../comments/queries.js";
 import { deleteCommentInTx, editCommentInTx, postCommentInTx, type CommentActor } from "../comments/tx/write.js";
 import type { CollabServer } from "../collab/server.js";
+import type { NotificationHub } from "../notifications/hub.js";
 import type { Db } from "../db/index.js";
 import type { GroupTestHook } from "../groups/test-hook.js";
 import { COMMENT_BODY_LIMIT } from "../http/body-limits.js";
@@ -35,6 +36,7 @@ import { NOTE_NOT_FOUND_MESSAGE } from "../tags/messages.js";
 export interface CommentsRouteDeps {
   db: Db;
   collab?: CollabServer;
+  notifications?: NotificationHub;
   limiters: { comment: FixedWindowLimiter; commentRead: FixedWindowLimiter; userSuggest: FixedWindowLimiter };
   groupTestHook?: GroupTestHook;
 }
@@ -184,6 +186,7 @@ export function commentsRoutes(deps: CommentsRouteDeps) {
         throw err;
       }
       broadcastCommentChange(deps.collab, out.noteId, "created", out.comment.id);
+      deps.notifications?.notify(out.newNotificationUserIds);
       const dto = await getComment(deps.db, out.comment.id, viewerOf(request, access));
       // Deleted again between the commit and this read.
       if (dto === null) return commentNotFound(reply);
@@ -210,6 +213,7 @@ export function commentsRoutes(deps: CommentsRouteDeps) {
         throw err;
       }
       broadcastCommentChange(deps.collab, out.noteId, "edited", out.comment.id);
+      deps.notifications?.notify(out.newNotificationUserIds);
       const dto = await getComment(deps.db, out.comment.id, viewerOf(request, found.access));
       if (dto === null) return commentNotFound(reply);
       return reply.send(dto satisfies CommentDto);

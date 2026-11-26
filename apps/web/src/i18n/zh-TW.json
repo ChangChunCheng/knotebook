@@ -417,6 +417,10 @@
     "passwordLoginOff": "本站目前關閉帳號密碼登入，這個連結暫時不能使用，請聯絡站長。",
     "backToLogin": "回登入頁"
   },
+  "notificationBell": {
+    "label": "通知",
+    "unread": "通知，{{count}} 則未讀"
+  },
   "userMenu": {
     "language": "語言",
     "languageEn": "English",

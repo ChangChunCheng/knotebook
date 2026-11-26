@@ -151,6 +151,11 @@ export interface NotificationListDto {
   nextCursor: string | null;
 }
 
+// Mirror the CHECK on site_settings.notification_retention_days.
+export const NOTIFICATION_RETENTION_DAYS_MIN = 1;
+export const NOTIFICATION_RETENTION_DAYS_MAX = 3650;
+export const NOTIFICATION_RETENTION_DAYS_DEFAULT = 30;
+
 export interface NotificationSettingsDto {
   /** Null = never delete. */
   retentionDays: number | null;

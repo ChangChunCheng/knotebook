@@ -86,6 +86,7 @@ export async function postCommentTool(
     return toolError(err.errCode, err.message);
   }
   broadcastCommentChange(ctx.collab, out.noteId, "created", out.comment.id);
+  ctx.notifications?.notify(out.newNotificationUserIds);
   const dto = await getComment(ctx.db, out.comment.id, { userId: ctx.userId, isSiteAdmin: false, canDeleteOthers: false });
   // Deleted again between the commit and this read.
   if (dto === null) return toolError("comment_not_found", COMMENT_NOT_FOUND_MESSAGE);

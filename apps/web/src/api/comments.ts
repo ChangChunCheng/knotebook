@@ -187,12 +187,16 @@ export function removeComment(queryClient: QueryClient, noteId: string, commentI
   restartListRefetches(queryClient, noteId);
 }
 
-export type CommentChangeOp = "created" | "edited" | "deleted";
+export type CommentChangeOp = "created" | "edited" | "deleted" | "cleared";
 
 /** Fetches the comment only when a thread is loaded; the unread count is refetched either way. */
 export async function applyCommentChange(queryClient: QueryClient, noteId: string, op: CommentChangeOp, commentId: string): Promise<void> {
   const userId = sessionUserId(queryClient);
   void queryClient.invalidateQueries({ queryKey: commentUnreadKey(noteId, userId) });
+  if (op === "cleared") {
+    void queryClient.invalidateQueries({ queryKey: commentListsKey(noteId, userId) });
+    return;
+  }
   const lists = queryClient.getQueriesData<CommentPages>({ queryKey: commentListsKey(noteId, userId) }).filter(([, data]) => data !== undefined);
   if (lists.length === 0) {
     restartListRefetches(queryClient, noteId);

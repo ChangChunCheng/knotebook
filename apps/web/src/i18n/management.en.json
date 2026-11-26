@@ -485,6 +485,15 @@
       "save": "Save",
       "saved": "Trash settings saved"
     },
+    "notifications": {
+      "title": "Notifications",
+      "autoLabel": "Delete old notifications automatically",
+      "daysLabel": "Days to keep notifications",
+      "description": "Mention and reply notifications are deleted once they're older than this (checked once an hour, up to 20,000 per check). Turn it off to keep them until people delete them.",
+      "daysInvalid": "Use a whole number from 1 to 3650.",
+      "save": "Save",
+      "saved": "Notification settings saved"
+    },
     "groups": {
       "title": "Groups",
       "description": "Every group on this site, with its storage use and plan.",
