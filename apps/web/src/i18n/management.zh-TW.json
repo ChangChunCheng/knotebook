@@ -485,6 +485,15 @@
       "save": "儲存",
       "saved": "已儲存垃圾桶設定"
     },
+    "notifications": {
+      "title": "通知",
+      "autoLabel": "自動刪除",
+      "daysLabel": "通知保留天數",
+      "description": "提及與回覆的通知超過保留天數就會自動刪除（每小時檢查一次，每次最多 20,000 則）。關閉後會一直保留，直到使用者自己刪除。",
+      "daysInvalid": "請填 1 到 3650 的整數。",
+      "save": "儲存",
+      "saved": "已儲存通知設定"
+    },
     "groups": {
       "title": "群組",
       "description": "站台上所有群組的儲存空間用量與方案。",
