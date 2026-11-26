@@ -635,3 +635,37 @@ test("E11c home search -> click a result (shell swap) -> clearing the query on t
   await expect(search).toHaveValue("");
   await expect(mark).toHaveCount(0);
 });
+
+test("E-399: two keywords - the sidebar lists only notes containing both, marks both words in the snippet, a quoted phrase stays one keyword, and clicking jumps to the first block holding either", async ({ page }) => {
+  test.setTimeout(120_000);
+  await asNewUser(page, "E2E Fulltext 399");
+  const stamp = Date.now();
+  const ka = `ka${stamp}`;
+  const kb = `kb${stamp}`;
+  const both = await createNoteViaApi(page, `E2E ft both ${stamp}`, `## Sec\n\n${filler("pre", 20)}\n\nfirst ${kb} line\n\nthen ${ka} and ${kb} together\n\n${filler("post", 40)}\n`);
+  const onlyA = await createNoteViaApi(page, `E2E ft onlyA ${stamp}`, `## Sec\n\nonly ${ka} here\n`);
+  await waitIndexed(page, ka, both.id);
+  await waitIndexed(page, ka, onlyA.id);
+
+  await page.goto("/");
+  const sidebar = page.getByRole("complementary");
+  const search = sidebar.getByRole("textbox", { name: "Search notes" });
+  await search.fill(`${ka} ${kb}`);
+  const results = bodyRegion(sidebar);
+  const bothLink = results.locator(`a[href^="${pathOf(both)}#b-"]`);
+  await expect(bothLink).toHaveCount(1, { timeout: 15_000 });
+  await expect(results.locator(`a[href^="${pathOf(onlyA)}"]`)).toHaveCount(0);
+  await expect(bothLink.locator("mark")).toHaveText([kb, ka]); // text order: the excerpt starts at "first kb"
+
+  // A quoted phrase is one literal keyword: "ka kb" (with a space) is in neither note.
+  await search.fill(`"${ka} ${kb}"`);
+  await expect(sidebar.getByText("No notes match")).toBeVisible({ timeout: 15_000 });
+
+  await search.fill(`${kb} ${ka}`);
+  await expect(bothLink).toHaveCount(1, { timeout: 15_000 });
+  await bothLink.click();
+  await page.waitForURL((u) => u.pathname === pathOf(both), { timeout: 15_000 });
+  await expect(titleBox(page)).toHaveValue(both.title, { timeout: 15_000 });
+  const firstHit = await matchBlockId(page, `first ${kb}`);
+  await expectAnchorFlash(page, firstHit);
+});

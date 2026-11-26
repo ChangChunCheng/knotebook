@@ -403,7 +403,7 @@ describe("#108 shared wiring of the two tools", () => {
       "While you page, a note shared with you, a note moved into one of your groups, or the notes of a group you join appear at their own unchanged positions, which may already be above your cursor."
     );
     expect(byName("search_notes")).toContain(
-      "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body."
+      "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body; with several keywords, notes containing more of them come first."
     );
     expect(byName("search_notes")).not.toContain("Searches note titles only");
   });

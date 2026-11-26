@@ -13,7 +13,7 @@ import type { Db } from "../src/db/index.js";
 import type { Tx } from "../src/db/tx.js";
 
 const at = (db: Db, id: string, iso: string) => db.update(notes).set({ updatedAt: new Date(iso) }).where(eq(notes.id, id));
-const search = (db: Db, userId: string, query: string, limit = 20) => searchNotesForUser(db, { userId, query, limit });
+const search = (db: Db, userId: string, query: string, limit = 20) => searchNotesForUser(db, { userId, terms: [query], mode: "all", limit });
 const idsOf = (r: Awaited<ReturnType<typeof search>>) => r.rows.map(x => x.id);
 
 describe("ranking and the two columns", () => {
@@ -166,7 +166,7 @@ describe("isolation level", () => {
     const { db } = await freshDb();
     const u = await seedUser(db);
     const res = await db.transaction(async tx => {
-      await runNoteSearchInTx(tx, { userId: u.id, query: "x", limit: 5 });
+      await runNoteSearchInTx(tx, { userId: u.id, terms: ["x"], mode: "all", limit: 5 });
       return tx.execute(sql`select current_setting('transaction_isolation') as iso, current_setting('transaction_read_only') as ro`);
     });
     expect(res.rows[0]).toEqual({ iso: "repeatable read", ro: "on" });
@@ -200,7 +200,7 @@ describe("isolation level", () => {
             return typeof v === "function" ? v.bind(target) : v;
           },
         }) as Tx;
-        const out = await runNoteSearchInTx(proxied, { userId: u.id, query: "snapword", limit: 5 });
+        const out = await runNoteSearchInTx(proxied, { userId: u.id, terms: ["snapword"], mode: "all", limit: 5 });
         expect(wiped, "刪除真的落在兩句之間").toBe(true);
         return out;
       });
@@ -260,7 +260,7 @@ const keyOf = (row: { rank: number; updatedAtKey?: string; id: string }): PageKe
   return { rank: row.rank, updatedAtKey: row.updatedAtKey, id: row.id };
 };
 async function onePage(db: Db, userId: string, query: string, limit: number, after: PageKey | null, bodyOnly?: boolean) {
-  const r = await searchNotesForUser(db, { userId, query, limit, ...(bodyOnly !== undefined ? { bodyOnly } : {}), page: { after } });
+  const r = await searchNotesForUser(db, { userId, terms: [query], mode: "all", limit, ...(bodyOnly !== undefined ? { bodyOnly } : {}), page: { after } });
   const page = r.rows.slice(0, limit);
   return { ids: page.map(x => x.id), next: r.rows.length > limit ? keyOf(page.at(-1)!) : null };
 }
@@ -283,7 +283,7 @@ describe("bodyOnly and keyset pagination (#93)", () => {
     const t = await seedIndexedNote(db, { ownerId: u.id }, "zq1 title", P);
     const both = await seedIndexedNote(db, { ownerId: u.id }, "zq1 both", [{ id: "p", text: "has zq1" }]);
     const body = await seedIndexedNote(db, { ownerId: u.id }, "plain", [{ id: "p", text: "has zq1" }]);
-    const r = await searchNotesForUser(db, { userId: u.id, query: "zq1", limit: 20, bodyOnly: true });
+    const r = await searchNotesForUser(db, { userId: u.id, terms: ["zq1"], mode: "all", limit: 20, bodyOnly: true });
     expect(idsOf(r)).toEqual([both.id, body.id]);
     expect(new Set(idsOf(await search(db, u.id, "zq1")))).toEqual(new Set([t.id, both.id, body.id]));
   });
@@ -293,7 +293,7 @@ describe("bodyOnly and keyset pagination (#93)", () => {
     const u = await seedUser(db);
     for (let i = 0; i < 25; i += 1) await seedIndexedNote(db, { ownerId: u.id }, `zq2 t${i}`, P);
     const body = await seedIndexedNote(db, { ownerId: u.id }, "plain", [{ id: "p", text: "zq2 inside" }]);
-    const r = await searchNotesForUser(db, { userId: u.id, query: "zq2", limit: 20, bodyOnly: true });
+    const r = await searchNotesForUser(db, { userId: u.id, terms: ["zq2"], mode: "all", limit: 20, bodyOnly: true });
     expect(idsOf(r)).toEqual([body.id]);
   });
 

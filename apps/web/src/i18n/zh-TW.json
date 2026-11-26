@@ -52,6 +52,7 @@
     "bodyLoadingMore": "載入中…",
     "bodySearchTooShort": "再多打一個字就會搜尋內文。",
     "bodySearchTooLong": "搜尋字太長，只比對標題。",
+    "bodySearchTooManyTerms": "關鍵字太多（最多 {{max}} 個），只比對標題。",
     "clearSearch": "清除搜尋",
     "emptyMyNotes": "還沒有個人筆記。",
     "emptyWorkspace": "還沒有加入任何群組。",

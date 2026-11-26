@@ -74,7 +74,7 @@
 - **知識資訊**：標題可以記下何時讀、一句結論、依據、最後驗證日，以及是否仍有效、待驗證或已過時，標題後面會有小狀態圖示；每個資料夾與空間各有一份索引（[知識資訊](docs/knowledge.md)）。
 - **版本歷史**：編輯停手後自動存版，也可以手動存；預覽版本、左右並排比較兩個版本，或套用較舊的版本（[版本歷史](docs/versions.md)）。
 - **簡報模式**：把筆記當簡報播放，每個標題是一張投影片；從筆記或它的公開連結都能播。
-- **搜尋**：側邊欄依標題與內文找筆記，並在符合的段落開啟筆記；REST API 與 MCP 的搜尋也一樣（[MCP](docs/mcp.md#search_notes)）。
+- **搜尋**：側邊欄依標題與內文找筆記，可以用空白分開多個關鍵字或用引號包住片語，並在符合的段落開啟筆記；REST API 與 MCP 的搜尋也一樣，另外可以改成任一關鍵字符合（[MCP](docs/mcp.md#search_notes)）。
 - **資料夾、最愛、標籤與垃圾桶**：資料夾最多五層，可以建在你的筆記與每個群組裡，在「與我共享」裡也能建只有你看得到的資料夾，用**移動到…**、一次選取多篇，或用滑鼠拖曳把筆記放進去（[資料夾](docs/sharing.md#folders)）；最愛只有你自己看得到（[最愛](docs/sharing.md#favorites)）；標籤用來標記筆記，顯示在內文上方，側邊欄有色點與篩選（[標籤](docs/sharing.md#tags)）；刪除的筆記在垃圾桶保留 7 天，站台管理員可以改天數或關閉自動刪除（[垃圾桶中的筆記](docs/sharing.md#notes-in-the-trash)）。
 - **分享與群組**：個人筆記可以維持私人、分享給指定的人編輯或檢視，或以唯讀的公開連結發布，公開連結可以設自訂網址（[分享](docs/sharing.md)）；群組擁有自己的筆記，成員能做什麼取決於角色，可以是內建的（管理員、一般成員）或自訂的（[群組中的筆記](docs/sharing.md#notes-in-a-group)）。
 
@@ -98,7 +98,7 @@
 
 - 給 agent 的搜尋先回索引行（何時讀、結論、最後驗證日），agent 只要讀最相關的一兩篇。
 - 寫回：agent 把新的結論放進待整理的地方，或對既有筆記提出修改建議。
-- 多關鍵字搜尋，依符合程度排序（[#399](https://github.com/sw-willie-wu/knotebook/issues/399)）；語意檢索（[#92](https://github.com/sw-willie-wu/knotebook/issues/92)）。
+- 語意檢索（[#92](https://github.com/sw-willie-wu/knotebook/issues/92)）。
 - 留言、@提及（也能 @ agent）與通知（[#289](https://github.com/sw-willie-wu/knotebook/issues/289)）。
 - 內建 agent 與 app 內的對話（[#264](https://github.com/sw-willie-wu/knotebook/issues/264)、[#118](https://github.com/sw-willie-wu/knotebook/issues/118)）。
 

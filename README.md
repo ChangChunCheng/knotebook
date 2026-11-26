@@ -72,7 +72,7 @@ Each part below lists what works today and what is planned. Planned items are wh
 - **Knowledge info**: a heading can carry when to read it, a one-line conclusion, its basis, when it was last verified and whether it is verified, needs review or outdated, shown as a small status icon after the heading (a site admin chooses which of these fields are used), with an index of it for each folder and space ([Knowledge info](docs/knowledge.md), [the index](docs/knowledge.md#the-index)).
 - **Version history**: versions saved automatically after a pause in editing, or by hand; preview one, compare two side by side, and apply an older one ([Version history](docs/versions.md)).
 - **Presentation mode**: play a note as a slide show whose slides are its headings, from the note or from its public link.
-- **Search**: the sidebar finds notes by title and body text and opens a note at the matching section; the REST API and MCP search the same way ([MCP](docs/mcp.md#search_notes)).
+- **Search**: the sidebar finds notes by title and body text, with several keywords or a quoted phrase, and opens a note at the matching section; the REST API and MCP search the same way, and can also match any of the keywords ([MCP](docs/mcp.md#search_notes)).
 - **Folders, favorites, tags and trash**: folders up to five levels deep in your notes, in each group and, for you alone, among the notes shared with you, filled with **Move to…**, by selecting several notes, or by dragging with a mouse ([Folders](docs/sharing.md#folders)); favorites that are yours alone ([Favorites](docs/sharing.md#favorites)); tags that label notes, shown above the text and as colored dots and a filter in the sidebar ([Tags](docs/sharing.md#tags)); a trash that keeps deleted notes for 7 days unless a site admin sets another number of days or turns that off ([Notes in the trash](docs/sharing.md#notes-in-the-trash)).
 - **Sharing and groups**: a personal note is private, shared with chosen people as editors or viewers, or published as a read-only public link, which can have a custom address ([Sharing](docs/sharing.md)); a group owns its notes, and what a member can do comes from their role, built in (Admin, Member) or custom ([Notes in a group](docs/sharing.md#notes-in-a-group)).
 
@@ -97,7 +97,7 @@ Each part below lists what works today and what is planned. Planned items are wh
 
 - Search for agents that answers with index lines first (when to read, conclusion, last verified), so an agent reads only the one or two most relevant notes.
 - Writing back: an agent puts new findings in a place to be sorted, or suggests changes to an existing note.
-- Search with several keywords, ranked by how well notes match ([#399](https://github.com/sw-willie-wu/knotebook/issues/399)); semantic search ([#92](https://github.com/sw-willie-wu/knotebook/issues/92)).
+- Semantic search ([#92](https://github.com/sw-willie-wu/knotebook/issues/92)).
 - A built-in agent and chat in the app ([#264](https://github.com/sw-willie-wu/knotebook/issues/264), [#118](https://github.com/sw-willie-wu/knotebook/issues/118)).
 
 ### See and undo what agents change

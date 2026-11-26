@@ -327,10 +327,11 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [Attachments, text in images, media captions and file names, and link addresses aren't searched.](./known-limitations/search.md)
 - [Only about the first million characters and the first 2000 sections of a note are searchable.](./known-limitations/search.md)
 - [The sidebar searches body text only from the second character, 20 notes at a time.](./known-limitations/search.md)
-- [Clicking a body-text match jumps to the first block in its section that contains the search text; if none is found it stops at the section heading, also scrolled to the middle (or, for a match before the first heading, at the top of the note), and a reload jumps there again.](./known-limitations/search.md)
+- [Clicking a body-text match jumps to the first block in its section that contains the search text (with several keywords, any of them); if none is found it stops at the section heading, also scrolled to the middle (or, for a match before the first heading, at the top of the note), and a reload jumps there again.](./known-limitations/search.md)
 - [Right after an upgrade, older notes can be found by title only until the server has indexed them.](./known-limitations/search.md)
 - [How far search ignores case depends on the database's locale.](./known-limitations/search.md)
-- [Searches without three letters or digits in a row read through all the body text the searcher can see.](./known-limitations/search.md)
+- [Searches with a keyword that has no three letters or digits in a row read through all the body text the searcher can see.](./known-limitations/search.md)
+- [Keywords are split only at spaces and quotes, and ranking doesn't count how often they occur.](./known-limitations/search.md)
 - [A link to a note with no text of its own is searchable under the text it was made with, not under the note's current title.](./known-limitations/search.md)
 - [Sections with a duplicated or malformed block id aren't searchable, and neither is any body text of a note with a top-level block whose id isn't a non-empty string.](./known-limitations/search.md)
 

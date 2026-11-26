@@ -8,6 +8,7 @@ import { isPlainLeftClick, useWikilinkActivate } from "@/components/wikilink/use
 import { useActiveNote } from "@/lib/active-note";
 import { useCloseSidebarDrawer } from "@/lib/sidebar-drawer";
 import { cn } from "@/lib/utils";
+import { lowerSearchTerms } from "@/lib/search-match";
 import { displaySnippet } from "./body-snippet";
 import { flattenRows, mergeSearchRows } from "./search-merge";
 import { highlightTitle, searchMetaLineClass, SearchRow, SearchTitleLine } from "./SearchResults";
@@ -25,7 +26,7 @@ export interface BodySearchProps {
   query: string;
   debounced: string;
   titleNotes: NoteDto[];
-  titleLowerQuery: string;
+  titleLowerTerms: readonly string[];
   notes: NoteDto[];
   location: LocationContext;
   onStatus?: (status: { count: number; more: boolean } | null) => void;
@@ -57,14 +58,14 @@ export function BodySearchResults({ query, debounced, tagIds, tagSpace, ...rest 
 export function BodySearchView({
   state,
   titleNotes,
-  titleLowerQuery,
+  titleLowerTerms,
   notes,
   location,
   onStatus,
 }: {
   state: BodySearchState;
   titleNotes: NoteDto[];
-  titleLowerQuery: string;
+  titleLowerTerms: readonly string[];
   notes: NoteDto[];
   location: LocationContext;
   onStatus?: BodySearchProps["onStatus"];
@@ -77,7 +78,7 @@ export function BodySearchView({
   const ready = state.kind === "ready";
   const items = flattenRows(mergeSearchRows(titleNotes, ready ? state.hits : [], notes));
   const forQuery = ready ? state.forQuery : "";
-  const lowerQuery = forQuery.toLowerCase();
+  const lowerTerms = lowerSearchTerms(forQuery);
   const more = ready && state.hasMore;
   // Stale (debouncing or a new query in flight): don't report, or old body hits would be counted in "N results".
   const reportable = ready && !state.stale;
@@ -134,7 +135,7 @@ export function BodySearchView({
                 key={`${item.note.id}:title`}
                 note={item.note}
                 label={label}
-                titleLowerQuery={titleLowerQuery}
+                titleLowerTerms={titleLowerTerms}
                 active={active}
                 onClick={onTitleClick(item.note)}
               />
@@ -144,8 +145,8 @@ export function BodySearchView({
                 note={item.note}
                 match={item.match}
                 label={label}
-                titleLowerQuery={titleLowerQuery}
-                lowerQuery={lowerQuery}
+                titleLowerTerms={titleLowerTerms}
+                lowerTerms={lowerTerms}
                 active={active}
                 current={current}
                 onMatchClick={onMatchClick}
@@ -177,19 +178,19 @@ export function BodySearchView({
 function TitleOnlyItem({
   note,
   label,
-  titleLowerQuery,
+  titleLowerTerms,
   active,
   onClick,
 }: {
   note: NoteDto;
   label: string;
-  titleLowerQuery: string;
+  titleLowerTerms: readonly string[];
   active: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   return (
     <li data-node-kind="note" data-node-id={note.id} data-testid="search-hit">
-      <SearchRow note={note} label={label} lowerQuery={titleLowerQuery} active={active} onClick={onClick} />
+      <SearchRow note={note} label={label} lowerTerms={titleLowerTerms} active={active} onClick={onClick} />
     </li>
   );
 }
@@ -198,8 +199,8 @@ function MatchItem({
   note,
   match,
   label,
-  titleLowerQuery,
-  lowerQuery,
+  titleLowerTerms,
+  lowerTerms,
   active,
   current,
   onMatchClick,
@@ -207,8 +208,8 @@ function MatchItem({
   note: NoteDto;
   match: NoteSearchMatchDto;
   label: string;
-  titleLowerQuery: string;
-  lowerQuery: string;
+  titleLowerTerms: readonly string[];
+  lowerTerms: readonly string[];
   active: boolean;
   current: boolean;
   onMatchClick: (note: NoteDto, match: NoteSearchMatchDto, href: string) => (event: MouseEvent<HTMLAnchorElement>) => void;
@@ -228,11 +229,11 @@ function MatchItem({
           active && "bg-brand-soft text-brand-on-soft hover:bg-brand-soft-strong",
         )}
       >
-        <SearchTitleLine note={note} lowerQuery={titleLowerQuery} active={active} />
+        <SearchTitleLine note={note} lowerTerms={titleLowerTerms} active={active} />
         <div className={cn("mt-0.5", searchMetaLineClass(active))} title={label}>
           {label}
         </div>
-        <div className="mt-0.5 line-clamp-2 text-[12px] break-words">{highlightTitle(displaySnippet(match.snippet, lowerQuery), lowerQuery)}</div>
+        <div className="mt-0.5 line-clamp-2 text-[12px] break-words">{highlightTitle(displaySnippet(match.snippet, lowerTerms), lowerTerms)}</div>
       </a>
     </li>
   );

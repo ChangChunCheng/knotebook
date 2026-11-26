@@ -62,7 +62,7 @@ function renderView(state: BodySearchState, opts: ViewOpts = {}) {
     <BodySearchView
       state={state}
       titleNotes={opts.titleNotes ?? []}
-      titleLowerQuery="needle"
+      titleLowerTerms={["needle"]}
       notes={opts.notes ?? NOTES}
       location={LOCATION}
       {...(opts.onStatus ? { onStatus: opts.onStatus } : {})}

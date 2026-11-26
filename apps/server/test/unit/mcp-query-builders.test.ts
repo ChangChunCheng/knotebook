@@ -15,7 +15,7 @@ import pg from "pg";
 import { createDb } from "../../src/db/index.js";
 import { buildNoteListQuery } from "../../src/mcp/queries.js";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { buildNoteSearchQuery as buildFullTextQuery, buildSearchMatchesQuery } from "../../src/notes/search-sql.js";
+import { buildMultiTermNoteSearchQuery, buildNoteSearchQuery as buildFullTextQuery, buildSearchMatchesQuery } from "../../src/notes/search-sql.js";
 import { GOLDEN_PARAMS, GOLDEN_SQL, GOLDEN_USER } from "./search-sql-golden.js";
 
 const pool = new pg.Pool({ connectionString: "postgres://u:p@127.0.0.1:1/none" });
@@ -151,5 +151,29 @@ describe("#93 notes/search-sql", () => {
     expect(q.sql).not.toContain("zeta");
     expect(q.params).toEqual(expect.arrayContaining(["zeta", a, b]));
     expect(q.sql).toMatch(/rn <= \$\d+|rn <= 3/);
+  });
+
+  it("#399 multi-term query: scans note_search_sections once via CTE, builds fresh on repeated calls, binds terms and tags as parameters", () => {
+    const tag = randomUUID();
+    const key = { rank: 4, updatedAtKey: "2026-01-01T00:00:00.123456Z", id: randomUUID() };
+    const first = buildMultiTermNoteSearchQuery(db, {
+      userId: USER,
+      terms: ["alpha", "beta", "gamma", "delta"],
+      mode: "any",
+      limit: 20,
+      bodyOnly: true,
+      tagIds: [tag],
+      page: { after: key },
+    });
+    buildMultiTermNoteSearchQuery(db, { userId: USER, terms: ["one", "two"], mode: "all", limit: 10 });
+    const { sql, params } = first.toSQL();
+    expect(countUnionAll(sql)).toBe(2);
+    expect(sql.split(`from "note_search_sections"`).length - 1).toBe(1);
+    expect(sql).toContain(`"body_hits"`);
+    expect(sql).toContain(`bool_or(`);
+    expect(sql).not.toContain("alpha");
+    expect(sql).not.toContain(tag);
+    expect(params).toContain("%alpha%");
+    expect(params).toContain(tag);
   });
 });

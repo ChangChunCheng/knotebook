@@ -21,6 +21,7 @@ import {
   MCP_IMAGE_MAX_BYTES,
   MCP_LIST_WIRE_BUDGET,
   MCP_PAGE_MAX,
+  MCP_SEARCH_WIRE_BUDGET,
   escapedLength,
 } from "../src/mcp/limits.js";
 import { fingerprintOf } from "../src/notes/editing/fingerprint.js";
@@ -655,6 +656,50 @@ describe("#108 single response size", () => {
     expect(np.notes).toHaveLength(50); // so the `every` on the next line isn't vacuously true over an empty array
     expect(np.notes.every(n => n.matches.length === 3)).toBe(true);
     expect("matchesTruncated" in np).toBe(false);
+  });
+
+  /**
+   * Case (v-b) (#399): 50 worst-case group notes with a 2-keyword query of 197 U+0001 characters (200 code units total).
+   * Each note carries `matchedTerms` (~2 560 wire bytes each, ~128 000 over 50 notes), so 50 notes alone exceed N even
+   * before adding any section matches. The reply budget trims trailing notes and sets `truncated: true` so wire <= N.
+   */
+  it("(v-b) #399 search_notes multi-keyword: 50 worst-case group notes + worst-case 200-char matchedTerms -> trimmed to <= N with truncated: true", async () => {
+    const ctx = await buildCollabTestApp();
+    const o = await owner(ctx);
+    const handle = `h${"a".repeat(31)}`;
+    await ctx.db.update(users).set({ handle }).where(eq(users.id, o.id));
+    const g = await seedGroup(ctx.db, `${'"'.repeat(67)}${"\u0001".repeat(13)}`, [{ userId: o.id, role: "member" }]);
+    const f = await seedFolder(ctx.db, { group: g.id }, { name: '"'.repeat(40) });
+    const term1 = `${"\u0001".repeat(99)}a`;
+    const term2 = `${"\u0001".repeat(98)}b`;
+    const query = `${term1} ${term2}`;
+    expect(query.length).toBe(200);
+    for (let i = 0; i < 50; i += 1) {
+      const n = String(i).padStart(4, "0");
+      const id = await seedMaxNote(ctx.db, { groupId: g.id }, o.id, { title: '"'.repeat(200), slug: `${n}-${"s".repeat(95)}`, agentLabel: "g".repeat(32) });
+      await setNoteFolder(ctx.db.$client, id, f.id);
+      await ctx.db.insert(noteStates).values({ noteId: id, ydoc: Buffer.from(Y.encodeStateAsUpdate(new Y.Doc())), version: 1 });
+      const rows = [
+        { sectionId: `${"s".repeat(62)}00`, ord: 1, heading: '"'.repeat(200), body: `${term1} ${term2}` },
+      ];
+      await writeSearchIndex(ctx.db, id, 1, { rows, contentHash: `m399-${i}`, indexedUnits: rows[0]!.body.length, capped: false, extractorVersion: SEARCH_EXTRACTOR_VERSION });
+    }
+    const { wire, sc } = await callWireResult<{ notes: Array<{ matchedTerms?: string[]; matches: unknown[] }>; truncated: boolean }>(
+      ctx.app,
+      o.token,
+      "(v-b) search_notes multi-keyword worst",
+      "search_notes",
+      { query, limit: 50 },
+    );
+    expect(wire).toBeLessThanOrEqual(MCP_MAX_WIRE);
+    expect(wireCost(sc)).toBeLessThanOrEqual(MCP_SEARCH_WIRE_BUDGET);
+    expect(sc.truncated).toBe(true);
+    expect(sc.notes.length).toBeGreaterThanOrEqual(1);
+    expect(sc.notes.length).toBeLessThan(50);
+    expect(sc.notes.every(n => n.matchedTerms?.length === 2)).toBe(true);
+    // Lower-bound sentinel: 50 copies of the returned note shape (even with empty matches) really exceed N.
+    const oneNoteCost = wireCost({ ...sc.notes[0]!, matches: [] });
+    expect(oneNoteCost * 50).toBeGreaterThan(MCP_MAX_WIRE);
   });
 
   /**

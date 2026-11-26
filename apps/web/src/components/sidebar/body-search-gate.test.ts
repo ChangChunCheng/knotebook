@@ -16,6 +16,9 @@ describe("bodySearchGate (needs at least 2 characters; over 200 code units is no
     ["a".repeat(201), "tooLong"],
     ["😀".repeat(100), "search"], // 200 code units
     ["😀".repeat(101), "tooLong"], // 101 code points, 202 code units
+    ["a b c d e f g h", "search"], // #399: 8 keywords
+    ["a b c d e f g h i", "tooManyTerms"],
+    ["a b c d e f g h a", "search"], // a repeat doesn't count
   ] as const)("%j -> %s", (raw, gate) => {
     expect(bodySearchGate(raw)).toBe(gate);
   });

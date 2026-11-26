@@ -80,6 +80,14 @@ describe("sectionUnits (splits the same way as sectionize in note-sections.ts)",
 });
 
 describe("findMatchBlock", () => {
+  it("#399 several keywords: the first block in the section containing any of them; a quoted phrase is one keyword", () => {
+    const root = buildRoot([H("h1", 2, "S"), P("a", "nothing"), P("b", "has beta"), P("c", "alpha and beta"), H("h2", 2, "T"), P("d", "alpha")]);
+    expect(idOf(findMatchBlock(root, "h1", "alpha beta"))).toBe("b");
+    expect(idOf(findMatchBlock(root, "h1", '"alpha and"'))).toBe("c");
+    expect(findMatchBlock(root, "h1", "   ")).toBeNull();
+    root.remove();
+  });
+
   it("ordinary paragraph: first block with the text inside the range; a match outside the range does not count", () => {
     root = buildRoot([P("t1", "needle in top"), H("h1", 1, "One"), P("a", "nothing"), P("b", "has the Needle here"), P("c", "needle again"), H("h2", 1, "Two"), P("d", "needle")]);
     expect(idOf(findMatchBlock(root, "h1", "needle"))).toBe("b");

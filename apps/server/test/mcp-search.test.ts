@@ -27,7 +27,7 @@ type HitSchema = { properties: { matchedOn: Described; matches: Described & { it
 interface ListedTool {
   name: string;
   description: string;
-  inputSchema: { properties: { query: Described } };
+  inputSchema: { properties: { query: Described; keywords: Described & { enum: string[] } } };
   outputSchema: { properties: { notes: { items: HitSchema }; matchesTruncated: Described } };
 }
 
@@ -46,9 +46,10 @@ describe("verbatim descriptions (two deployment shapes)", () => {
     const t = tools.find(x => x.name === "search_notes")!;
     expect(t.description).toBe(SEARCH_NOTES_DESCRIPTION_READ);
     expect(SEARCH_NOTES_DESCRIPTION_READ).toBe(
-      "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body. A body match lists up to 3 sections in document order, each with an excerpt near the first hit; pass a `sectionId` to read_note_section. `matches` can be empty for a body match; read the note's outline then. Saved changes are usually searchable within seconds, but right after an upgrade older notes may match by title only for a while. Attachments are not searched.",
+      "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. Separate keywords with spaces (there is no word segmentation, so CJK keywords need spaces too) and put a phrase in double quotes; up to 8 keywords. By default a note must contain every keyword, each in its title or body; set `keywords` to `any` to match any of them. Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body; with several keywords, notes containing more of them come first. A body match lists up to 3 sections, those containing the most keywords first and then in document order, each with an excerpt near the first hit; pass a `sectionId` to read_note_section. `matches` can be empty for a body match; read the note's outline then. Saved changes are usually searchable within seconds, but right after an upgrade older notes may match by title only for a while. Attachments are not searched.",
     );
-    expect(t.inputSchema.properties.query.description).toBe("Text to look for in note titles and body text. Matched literally — `%` and `_` are not wildcards.");
+    expect(t.inputSchema.properties.query.description).toBe("Keywords to look for in note titles and body text, separated by spaces; a phrase in double quotes is one keyword. Matched literally — `%` and `_` are not wildcards.");
+    expect(t.inputSchema.properties.keywords).toMatchObject({ enum: ["all", "any"], description: "`all` (default): a note must contain every keyword. `any`: at least one, notes with more keywords first." });
     const item = t.outputSchema.properties.notes.items.properties;
     expect(item.matches.items.properties.sectionId.description).toBe("Pass this to read_note_section.");
     expect(item.matchedOn.description).toBe("Whether your text was found in the title, the body, or both.");
@@ -64,7 +65,7 @@ describe("verbatim descriptions (two deployment shapes)", () => {
     const t = tools.find(x => x.name === "search_notes")!;
     expect(t.description).toBe(SEARCH_NOTES_DESCRIPTION_NO_READ);
     expect(SEARCH_NOTES_DESCRIPTION_NO_READ).toBe(
-      "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body. A body match lists up to 3 sections in document order, each with an excerpt near the first hit; `matches` can be empty for a body match. Attachments are not searched.",
+      "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. Separate keywords with spaces (there is no word segmentation, so CJK keywords need spaces too) and put a phrase in double quotes; up to 8 keywords. By default a note must contain every keyword, each in its title or body; set `keywords` to `any` to match any of them. Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body; with several keywords, notes containing more of them come first. A body match lists up to 3 sections, those containing the most keywords first and then in document order, each with an excerpt near the first hit; `matches` can be empty for a body match. Attachments are not searched.",
     );
     for (const banned of ["read_note_section", "outline", "seconds"]) expect(t.description).not.toContain(banned);
     expect(t.outputSchema.properties.notes.items.properties.matches.items.properties.sectionId.description).toBe("The section's id.");
@@ -124,5 +125,52 @@ describe("end to end", () => {
     const m = hitsOf(await call(app, token, "search_notes", { query: "zeta" })).find(h => h.id === n.id)!.matches[0]!;
     expect(m.snippet).toContain("zeta tail");
     expect(JSON.stringify(m.snippet).length - 2).toBeLessThanOrEqual(160);
+  });
+});
+
+describe("#399 several keywords", () => {
+  async function callError(app: FastifyInstance, token: string, args: unknown) {
+    const res = await mcpPost(app, rpc("tools/call", { name: "search_notes", arguments: args }), { token });
+    expect(res.statusCode).toBe(200);
+    return res.json().result as { isError?: true; structuredContent: { code: string; message: string } };
+  }
+
+  it("all by default; matchedTerms on notes and sections only for several keywords; one keyword keeps the old reply shape", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const { token } = await seedTokenForUser(db, u.id, "notes:read");
+    const both = await seedIndexedNote(db, { ownerId: u.id }, "Deploy runbook", [{ id: "p", text: "first copy the prod database" }]);
+    await seedIndexedNote(db, { ownerId: u.id }, "deploy only", [{ id: "p", text: "nothing else" }]);
+    const p = await call(app, token, "search_notes", { query: "deploy prod" });
+    const hits = hitsOf(p);
+    expect(hits.map(h => h.id)).toEqual([both.id]);
+    expect(hits[0]).toMatchObject({ matchedOn: "both", matchedTerms: ["deploy", "prod"] });
+    expect(hits[0]!.matches).toEqual([{ sectionId: "_top", heading: "", snippet: "first copy the prod database", matchedTerms: ["prod"] }]);
+
+    const single = hitsOf(await call(app, token, "search_notes", { query: "prod" }));
+    expect(single[0]).not.toHaveProperty("matchedTerms");
+    expect(single[0]!.matches[0]).not.toHaveProperty("matchedTerms");
+  });
+
+  it("keywords: any returns notes with any keyword, more keywords first; a quoted phrase is one keyword", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const { token } = await seedTokenForUser(db, u.id, "notes:read");
+    const two = await seedIndexedNote(db, { ownerId: u.id }, "a", [{ id: "p", text: "release notes and rollback" }]);
+    const one = await seedIndexedNote(db, { ownerId: u.id }, "b", [{ id: "p", text: "rollback only" }]);
+    await seedIndexedNote(db, { ownerId: u.id }, "c", [{ id: "p", text: "release of the notes" }]);
+    const p = await call(app, token, "search_notes", { query: '"release notes" rollback', keywords: "any" });
+    expect(hitsOf(p).map(h => [h.id, h.matchedTerms])).toEqual([[two.id, ["release notes", "rollback"]], [one.id, ["rollback"]]]);
+  });
+
+  it("over 8 keywords or nothing to search -> invalid_body, before the rate limiter", async () => {
+    const { app, db } = await buildTestApp();
+    const u = await seedUser(db);
+    const { token } = await seedTokenForUser(db, u.id, "notes:read");
+    for (const query of ["a b c d e f g h i", "   "]) {
+      const r = await callError(app, token, { query });
+      expect(r.isError).toBe(true);
+      expect(r.structuredContent).toEqual({ code: "invalid_body", message: "Give 1 to 8 keywords: separate them with spaces, or put a phrase in double quotes." });
+    }
   });
 });
