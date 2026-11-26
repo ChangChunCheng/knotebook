@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import "@/i18n/groups-admin-strings";
 import { STORAGE_KINDS, formatBytes, type GroupDto, type GroupStorageUsageDto } from "@knotebook/shared";
 import { ApiFail } from "@/api/client";
 import { useAuthConfig } from "@/api/authConfig";
