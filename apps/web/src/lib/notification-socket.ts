@@ -87,7 +87,8 @@ export function startNotificationSocket(handlers: NotificationSocketHandlers, op
       if (event.code === NOTIFICATIONS_CLOSE_UNAUTHORIZED) {
         void handlers.probe().then((result) => {
           if (stopped) return;
-          if (result === "unauthorized") stop();
+          // Signed out here, but the same user can sign back in from another tab without this one remounting, so keep listening for focus.
+          if (result === "unauthorized") waitingForFocus = true;
           else scheduleReconnect();
         });
         return;

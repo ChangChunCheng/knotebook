@@ -138,14 +138,29 @@ describe("startNotificationSocket", () => {
     expect(sockets).toHaveLength(2);
   });
 
-  it("stops for good when the probe says the session is gone", async () => {
+  it("waits for focus instead of a timer when the probe says the session is gone, and recovers after a re-login", async () => {
     probeResult = "unauthorized";
     start();
     last().serverClose(NOTIFICATIONS_CLOSE_UNAUTHORIZED);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(sockets).toHaveLength(1);
+
+    // Still signed out: focus costs one attempt, which ends in another 4401 and a probe, and no loop.
     window.dispatchEvent(new Event("focus"));
-    expect(sockets).toHaveLength(1);
+    expect(sockets).toHaveLength(2);
+    last().serverClose(NOTIFICATIONS_CLOSE_UNAUTHORIZED);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sockets).toHaveLength(2);
+    expect(handlers.probe).toHaveBeenCalledTimes(2);
+
+    probeResult = "authenticated";
+    window.dispatchEvent(new Event("focus"));
+    expect(sockets).toHaveLength(3);
+    last().open();
+    expect(handlers.onConnected).toHaveBeenCalledTimes(1);
+    last().serverClose(NOTIFICATIONS_CLOSE_UNAUTHORIZED);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(sockets).toHaveLength(4);
   });
 
   it("keeps trying when the probe itself fails", async () => {

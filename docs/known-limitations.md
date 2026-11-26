@@ -168,6 +168,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 
 - [A tab that cannot reach the collaboration server keeps retrying in the background; edits made while offline are still lost if you reload before it recovers.](./known-limitations/collaboration.md)
 - [The notification bell updates live only with a single app instance.](./known-limitations/collaboration.md)
+- [A notification that arrives while the bell is opening can be marked seen without being shown.](./known-limitations/collaboration.md)
 - [Clearing notifications in the bell also clears them for your agents.](./known-limitations/collaboration.md)
 - [A note's title is not part of the real-time collaborative document.](./known-limitations/collaboration.md)
 - [A collaboration client that sends ten messages the server doesn't recognize gets disconnected — including a hypothetical newer client version.](./known-limitations/collaboration.md)

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Page, type Request, type Response } from "@playwright/test";
 import { RUN, apiCreateNote, createAccount, openAs, waitForNoteTitle } from "./knowledge-helpers.js";
 
 test.use({ actionTimeout: 15_000 });
@@ -22,6 +22,33 @@ const badge = (page: Page) => page.getByTestId("notification-badge");
 const isCountResponse = (res: Response) => res.url().endsWith("/api/notifications/unread-count") && res.status() === 200;
 const popover = (page: Page) => page.getByTestId("notifications-popover");
 
+// Reloads and resolves once the notification socket exists, every count request issued before it appeared has been answered, and the
+// page has been idle for 500 ms (so an on-connect refetch, when one is issued, has finished too). That refetch is not awaited on its
+// own: when the socket opens while the first count is still in flight, the invalidation joins that request and issues no new one.
+async function reloadUntilSocketLive(page: Page): Promise<void> {
+  let requests = 0;
+  let responses = 0;
+  const onRequest = (req: Request) => {
+    if (req.url().endsWith("/api/notifications/unread-count")) requests += 1;
+  };
+  const onResponse = (res: Response) => {
+    if (isCountResponse(res)) responses += 1;
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  try {
+    const socket = page.waitForEvent("websocket", (ws) => ws.url().includes("/collab/notifications"));
+    await page.reload();
+    await socket;
+    const issuedBeforeSocket = requests;
+    await expect.poll(() => responses, { timeout: 20_000 }).toBeGreaterThanOrEqual(issuedBeforeSocket);
+    await page.waitForLoadState("networkidle");
+  } finally {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+  }
+}
+
 test("79-1 a mention reaches the bell live; opening clears the badge for good; the row opens the comment", async ({ browser }) => {
   test.setTimeout(180_000);
   const alice = await createAccount(browser, "alice");
@@ -34,9 +61,7 @@ test("79-1 a mention reaches the bell live; opening clears the badge for good; t
     const aliceHandle = note.path.split("/")[2]!;
     await share(a.page, note.id, bob.email);
 
-    const firstCount = a.page.waitForResponse(isCountResponse);
-    await a.page.reload();
-    await firstCount;
+    await reloadUntilSocketLive(a.page);
     await expect(bell(a.page)).toBeVisible({ timeout: 15_000 });
     await expect(badge(a.page)).toHaveCount(0);
 
@@ -89,6 +114,7 @@ test("79-2 deleting one notification and clearing all", async ({ browser }) => {
     const note = await apiCreateNote(a.page, `E2E clear ${RUN}`, "Body.");
     const aliceHandle = note.path.split("/")[2]!;
     await share(a.page, note.id, bob.email);
+    await reloadUntilSocketLive(a.page);
     await expect(bell(a.page)).toBeVisible({ timeout: 15_000 });
 
     await comment(b.page, note.id, `@${aliceHandle} first ${RUN}`);
