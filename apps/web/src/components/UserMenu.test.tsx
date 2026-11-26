@@ -222,8 +222,6 @@ describe("UserMenu accent picker", () => {
     }
   });
 
-  // #79: accessible name of the accent group - the RadioGroup's role=group must resolve t("userMenu.accent");
-  // the assertion does not hard-code the English text.
   it("places the bell 12px left of the gear, reserves its width in the trigger and keeps its hit area off the gear", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -241,10 +239,14 @@ describe("UserMenu accent picker", () => {
     // name margin 40 + flex gap 8 + gear 16 + padding 6 = 70 >= 34 + 28px bell box, leaving 8px of text clearance
     expect(trigger).toHaveClass("p-1.5", "gap-2");
     expect(trigger.querySelector("span.truncate")).toHaveClass("mr-10");
+    // the arithmetic above assumes a 16px gear
+    expect(trigger.querySelector("svg:last-of-type")).toHaveClass("h-4", "w-4");
     // the bell's hit extension (-inset-2 = 8px) must be smaller than the 12px gap
-    expect(ICON_28_HIT).toContain("after:-inset-2");
+    expect(ICON_28_HIT).toMatch(/pointer-coarse:after:-inset-2(\s|$)/);
   });
 
+  // #79: accessible name of the accent group - the RadioGroup's role=group must resolve t("userMenu.accent");
+  // the assertion does not hard-code the English text.
   it("accent RadioGroup has an accessible name (aria-labelledby points at the accent Label)", async () => {
     renderMenu();
     await openMenu();
