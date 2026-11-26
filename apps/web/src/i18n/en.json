@@ -417,6 +417,10 @@
     "passwordLoginOff": "Password sign-in is turned off on this site right now, so this link can't be used. Ask the site administrator.",
     "backToLogin": "Back to sign in"
   },
+  "notificationBell": {
+    "label": "Notifications",
+    "unread": "Notifications, {{count}} unread"
+  },
   "userMenu": {
     "language": "Language",
     "languageEn": "English",

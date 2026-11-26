@@ -167,6 +167,8 @@ Each section below names one page and lists the bold headings of its entries; fo
 [Collaboration and presence](./known-limitations/collaboration.md): editing with others in real time, reconnecting, and the people and AI assistants shown in a note.
 
 - [A tab that cannot reach the collaboration server keeps retrying in the background; edits made while offline are still lost if you reload before it recovers.](./known-limitations/collaboration.md)
+- [The notification bell updates live only with a single app instance.](./known-limitations/collaboration.md)
+- [Clearing notifications in the bell also clears them for your agents.](./known-limitations/collaboration.md)
 - [A note's title is not part of the real-time collaborative document.](./known-limitations/collaboration.md)
 - [A collaboration client that sends ten messages the server doesn't recognize gets disconnected — including a hypothetical newer client version.](./known-limitations/collaboration.md)
 - [An AI's presence is only visible to people who have the note open at that moment, and it fades after 2 minutes.](./known-limitations/collaboration.md)

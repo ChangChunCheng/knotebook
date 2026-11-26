@@ -141,6 +141,7 @@ export function panelFetch(user: UserDto) {
     if (url === "/api/folders") return Promise.resolve(new Response(JSON.stringify(FOLDER_LIST_EMPTY), { status: 200, headers: { "Content-Type": "application/json" } }));
     if (url === "/api/notes") return Promise.resolve(json([]));
     if (url === "/api/favorites") return Promise.resolve(json([]));
+    if (url === "/api/notifications/unread-count") return Promise.resolve(json({ count: 0 }));
     if (url in PANEL3_GETS) return Promise.resolve(json(PANEL3_GETS[url]));
     return reject();
   });
