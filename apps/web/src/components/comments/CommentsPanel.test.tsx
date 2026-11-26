@@ -452,27 +452,86 @@ describe("CommentsPanel", () => {
     expect(screen.queryByText("Replying to Bob")).toBeNull();
   });
 
-  it("text typed while a comment is on its way stays, in the open composer and after closing", async () => {
+  it("reopened while the comment is still on its way: the composer is empty, and the comment is posted once", async () => {
+    const calls = stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json(page([1])),
+      [`POST /api/notes/${COMMENT_NOTE}/comments`]: json(comment(2, { body: "sent once" }), 201),
+    });
+    const release = gatePost();
+    renderPanel({ open: "host-open-passage" });
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Reply" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "sent once" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
+    fireEvent.click(screen.getByText("host-open"));
+    await screen.findByTestId("comments-panel");
+    const box = screen.getByRole("textbox", { name: "Comment" });
+    expect(box).toHaveValue("");
+    expect(screen.queryByTestId("composer-anchor")).toBeNull();
+    expect(screen.queryByText("Replying to Bob")).toBeNull();
+    await release();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(box).toHaveValue("");
+    expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/comments"))).toHaveLength(1);
+  });
+
+  it("a post that fails after the panel closed comes back as the draft, with its reply and passage", async () => {
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json(page([1])),
+      [`POST /api/notes/${COMMENT_NOTE}/comments`]: json({ error: { code: "rate_limited", message: "Slow down" } }, 429),
+    });
+    const release = gatePost();
+    renderPanel({ open: "host-open-passage" });
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Reply" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: "try again" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
+    await release();
+    fireEvent.click(screen.getByText("host-open"));
+    await screen.findByTestId("comments-panel");
+    expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("try again");
+    expect(screen.getByText("Replying to Bob")).toBeInTheDocument();
+    expect(screen.getByTestId("composer-anchor")).toHaveTextContent("the passage");
+  });
+
+  it.each([
+    ["stays open", false],
+    ["is closed before the answer", true],
+  ])("text typed while a comment is on its way stays with the reply and passage, whether the panel %s", async (_name, closeEarly) => {
     stubCommentFetch({
       [READ]: json(null, 204),
       [NEWEST_URL]: json(page([1])),
       [`POST /api/notes/${COMMENT_NOTE}/comments`]: json(comment(2, { body: "first part" }), 201),
     });
     const release = gatePost();
-    renderPanel();
+    renderPanel({ open: "host-open-passage" });
     await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.click(within(rows()[0]!).getByRole("button", { name: "Reply" }));
     const box = screen.getByRole("textbox", { name: "Comment" });
     fireEvent.change(box, { target: { value: "first part" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.change(box, { target: { value: "second thought" } });
+    if (closeEarly) fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
     await release();
+    if (closeEarly) {
+      fireEvent.click(screen.getByText("host-open"));
+      await screen.findByTestId("comments-panel");
+    }
     await waitFor(() => expect(rows()).toHaveLength(2));
-    expect(box).toHaveValue("second thought");
+    expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("second thought");
+    expect(screen.getByText("Replying to Bob")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("composer-anchor")).toHaveTextContent("the passage"));
 
     fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
     fireEvent.click(screen.getByText("host-open"));
     await screen.findByTestId("comments-panel");
     expect(screen.getByRole("textbox", { name: "Comment" })).toHaveValue("second thought");
+    expect(screen.getByText("Replying to Bob")).toBeInTheDocument();
+    expect(screen.getByTestId("composer-anchor")).toHaveTextContent("the passage");
   });
 
   it("a passage or reply restored when the thread remounts (note switch) doesn't take the focus; a passage picked again does", async () => {

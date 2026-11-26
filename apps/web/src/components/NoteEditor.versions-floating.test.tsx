@@ -255,6 +255,21 @@ describe("NoteEditor versions panel: floating and fixed", () => {
     doc.destroy();
   });
 
+  it("640-1279, a window too short with the stack saved as collapsed: the first press of the toggle shows the bubble for now and saves nothing", async () => {
+    window.localStorage.setItem(CORNER_STACK_COLLAPSED_STORAGE_KEY, "1");
+    const { row, doc } = await renderAt("overlay");
+    await screen.findByTestId("corner-toggle");
+    stubBoxes(row, { rowHeight: 390, anchorTop: 330, header: 57 });
+    await openPanel();
+    const toggle = screen.getByTestId("corner-toggle");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("versions-bubble")).toHaveAttribute("aria-pressed", "true");
+    expect(window.localStorage.getItem(CORNER_STACK_COLLAPSED_STORAGE_KEY)).toBe("1");
+    doc.destroy();
+  });
+
   it.each(["overlay", "docked"] as const)("%s: ✕ gives the focus to the history bubble, or to the toggle while the stack is collapsed", async (tier) => {
     const { doc } = await renderAt(tier);
     await openPanel();

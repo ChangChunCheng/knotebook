@@ -42,7 +42,7 @@ interface ScrollSnapshot {
 export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () => void }) {
   const { t } = useTranslation();
   const comments = useComments();
-  const { noteId, target, targetSeq, reportTargetMissing, open, showNewest, clearDraftAnchor, readDraft, saveDraft, clearSentDraft, takeAnchorFocus } = comments;
+  const { noteId, target, targetSeq, reportTargetMissing, open, showNewest, clearDraftAnchor, readDraft, saveDraft, takeDraft, settleSentDraft, takeAnchorFocus } = comments;
   const id = noteId ?? "";
   const list = useCommentList(id, target, comments.enabled);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.comments) ?? [], [list.data]);
@@ -271,7 +271,8 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
           onDone={onNewDone}
           initialText={draft.text}
           onTextChange={saveText}
-          onSent={clearSentDraft}
+          onSendStart={takeDraft}
+          onSendEnd={settleSentDraft}
           takeAnchorFocus={takeAnchorFocus}
         />
       </div>

@@ -20,7 +20,7 @@ import { AppShell, SidebarDrawerButton } from "@/components/AppShell";
 import { BackToListButton } from "@/components/BackToListButton";
 import { NoteBrowseBar } from "@/components/NoteBrowseBar";
 import { CornerStack } from "@/components/CornerStack";
-import { isCornerStackCollapsed, setCornerStackCollapsed } from "@/components/corner-stack-state";
+import { CORNER_STACK_COLLAPSED_STORAGE_KEY, isCornerStackCollapsed, setCornerStackCollapsed } from "@/components/corner-stack-state";
 import { NarrowTopBar } from "@/components/NarrowTopBar";
 import { NoteMenu } from "@/components/NoteMenu";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -283,14 +283,17 @@ describe("floating sidebar (640-1279): targets", () => {
     for (const id of FULL_TOUR) expect(stopTarget(STOPS[id], ctx()), id).toEqual(expected[id]);
   });
 
-  it("versions: a collapsed corner stack is expanded first, so the bubble the text is about is there", async () => {
+  it("versions: a collapsed corner stack is expanded for the stop without saving it, and collapses again when the stop is left", async () => {
     setCornerStackCollapsed(true);
     try {
       await renderPage();
       expect(screen.queryByTestId("versions-bubble")).toBeNull();
       act(() => prepareStop(STOPS.versions, ctx()));
-      expect(isCornerStackCollapsed()).toBe(false);
       expect(stopTarget(STOPS.versions, ctx())).toEqual([screen.getByTestId("versions-bubble")]);
+      expect(window.localStorage.getItem(CORNER_STACK_COLLAPSED_STORAGE_KEY)).toBe("1");
+      act(() => STOPS.versions.leave?.(ctx()));
+      expect(isCornerStackCollapsed()).toBe(true);
+      expect(screen.queryByTestId("versions-bubble")).toBeNull();
     } finally {
       setCornerStackCollapsed(false);
     }

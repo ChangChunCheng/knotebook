@@ -22,7 +22,7 @@ const CORNER_STACK_CLEARANCE_CSS_VAR = "--corner-stack-clearance";
 // Below this the floating panel's header, list and composer no longer fit.
 const FLOATING_PANEL_MIN_REM = 18;
 
-/** `tight`: the floating panel wouldn't keep its minimum height above the expanded stack, so only the toggle shows; pressing it then shows the bubbles for now (`shown`) without changing the saved choice. */
+/** `tight`: the floating panel wouldn't keep its minimum height above the expanded stack, so only the toggle shows, whatever the saved choice; pressing it then shows the bubbles for now (`shown`) without changing that choice. */
 export interface CornerStackRoom {
   tight: boolean;
   shown: boolean;
@@ -45,7 +45,7 @@ export function useCornerStackBubbles(room?: CornerStackRoom): {
   const v = !phone && versions.enabled;
   const c = !phone && comments.enabled;
   const bubbles = (v ? 1 : 0) + (c ? 1 : 0);
-  const expanded = preferExpanded && (room === undefined || !room.tight || room.shown);
+  const expanded = room?.tight ? room.shown : preferExpanded;
   return { versions: v, comments: c, bubbles, preferExpanded, expanded, count: bubbles === 0 ? 0 : 1 + (expanded ? bubbles : 0) };
 }
 
@@ -80,10 +80,10 @@ export function useCornerStackRoom(
       const panelHeight = box.height - (header?.getBoundingClientRect().height ?? 0) - clearance(1 + bubbles);
       const minPx = FLOATING_PANEL_MIN_REM * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
       // A row with no height isn't laid out (jsdom, hidden): nothing to fit.
-      const nextTight = preferExpanded && box.height > 0 && panelHeight < minPx;
+      const nextTight = box.height > 0 && panelHeight < minPx;
       setTight(nextTight);
       if (!nextTight) setShown(false);
-      const all = preferExpanded && (!nextTight || shown);
+      const all = nextTight ? shown : preferExpanded;
       row.style.setProperty(CORNER_STACK_CLEARANCE_CSS_VAR, `${clearance(all ? 1 + bubbles : 1)}px`);
     };
     measure();

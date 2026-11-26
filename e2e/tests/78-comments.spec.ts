@@ -154,7 +154,6 @@ test("78-3 a short window (844x390): with a panel open only the toggle stays and
     await expect(page.getByTestId("comments-bubble")).toHaveCount(0);
     const panel = (await commentsPanel(page).boundingBox())!;
     const stack = (await page.getByTestId("corner-stack").boundingBox())!;
-    console.log(`MEASURE 844x390 panel ${JSON.stringify(panel)} stack ${JSON.stringify(stack)}`);
     expect(panel.y + panel.height, "the panel ends above the toggle").toBeLessThanOrEqual(stack.y);
     expect(await page.evaluate(() => localStorage.getItem("cornerStack.collapsed"))).toBeNull();
 

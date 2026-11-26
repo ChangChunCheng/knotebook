@@ -38,8 +38,9 @@ export interface CommentComposerProps {
   /** A new comment's text to start from, and every change to it, so an unsent comment outlives the composer. */
   initialText?: string;
   onTextChange?: (text: string) => void;
-  /** After a new comment is posted, also when the composer is gone by then. */
-  onSent?: (sent: SentCommentDraft) => void;
+  /** When a new comment's post starts, and when it ends (also when the composer is gone by then). */
+  onSendStart?: (noteId: string) => void;
+  onSendEnd?: (sent: SentCommentDraft, posted: boolean) => void;
   /** Whether the passage takes focus; without it, it always does. */
   takeAnchorFocus?: () => boolean;
 }
@@ -54,7 +55,7 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** Remount it (`key`) when `editing` changes: the text starts from the edited comment's body. */
-export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone, onDirtyChange, initialText, onTextChange, onSent, takeAnchorFocus }: CommentComposerProps) {
+export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone, onDirtyChange, initialText, onTextChange, onSendStart, onSendEnd, takeAnchorFocus }: CommentComposerProps) {
   const { t } = useTranslation();
   const listId = useId();
   const [text, setText] = useState(editing?.body ?? initialText ?? "");
@@ -77,6 +78,8 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
   }, []);
   const anchorRef = useRef(draftAnchor);
   anchorRef.current = draftAnchor;
+  const textRef = useRef(text);
+  textRef.current = text;
   // A reply restored with the draft (the thread remounted on a note switch) leaves focus where the person is.
   const restoredReplyRef = useRef<CommentDto | null | undefined>(replyTo);
   useEffect(() => {
@@ -150,8 +153,9 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
       edit.mutate({ commentId: editing.id, body: text }, { onSuccess: (saved) => onDone(saved), onError: fail });
       return;
     }
-    const sent = { noteId, text, anchor: draftAnchor };
-    // Not `mutate`'s own callbacks: they are skipped once the composer unmounts, which would leave the sent text as a draft to post again.
+    const sent = { noteId, text, replyTo, anchor: draftAnchor };
+    onSendStart?.(noteId);
+    // Not `mutate`'s own callbacks: they are skipped once the composer unmounts, and the draft must be settled either way.
     post
       .mutateAsync({
         body: text,
@@ -160,15 +164,18 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
       })
       .then(
         (saved) => {
-          onSent?.(sent);
-          if (!mountedRef.current) return;
-          // Text typed while the post was on its way stays.
-          setText((current) => (current === sent.text ? "" : current));
+          onSendEnd?.(sent, true);
+          // Text typed while the post was on its way stays, and so do its reply and passage.
+          if (!mountedRef.current || textRef.current !== sent.text) return;
+          setText("");
           setCaret(null);
           if (anchorRef.current === sent.anchor) onClearAnchor();
           onDone(saved);
         },
-        fail,
+        (err: unknown) => {
+          onSendEnd?.(sent, false);
+          fail(err);
+        },
       );
   };
 

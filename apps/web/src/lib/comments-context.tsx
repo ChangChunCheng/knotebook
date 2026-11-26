@@ -25,10 +25,10 @@ export interface CommentDraft {
   text: string;
   replyTo: CommentDto | null;
 }
-/** What a successful post sent, so the draft is cleared only if it still holds exactly that. */
 export interface SentCommentDraft {
   noteId: string;
   text: string;
+  replyTo: CommentDto | null;
   anchor: CommentDraftAnchor | null;
 }
 const EMPTY_DRAFT: CommentDraft = { text: "", replyTo: null };
@@ -56,8 +56,13 @@ export interface CommentsContextValue {
   /** This note's unsent comment, kept while the thread is closed or the version history is shown; read once when the thread mounts. */
   readDraft(): CommentDraft;
   saveDraft(patch: Partial<CommentDraft>): void;
-  /** Safe to call after the thread unmounted: a post can finish after the person switched panels or notes. */
-  clearSentDraft(sent: SentCommentDraft): void;
+  /**
+   * A post takes the note's draft out of the store when it starts, so a thread reopened before the answer can't post it again, and
+   * settles it when it ends (also after the thread unmounted): a failed post is put back if nothing was written since; text written
+   * meanwhile keeps the sent comment's reply and passage.
+   */
+  takeDraft(noteId: string): void;
+  settleSentDraft(sent: SentCommentDraft, posted: boolean): void;
   /** True once per `open({draftAnchor})`: a passage just picked takes the composer's focus, one restored on a note switch doesn't. */
   takeAnchorFocus(): boolean;
   open(opts?: OpenCommentsOptions): void;
@@ -80,7 +85,8 @@ export const NOOP_COMMENTS: CommentsContextValue = {
   draftAnchor: null,
   readDraft: () => EMPTY_DRAFT,
   saveDraft: noop,
-  clearSentDraft: noop,
+  takeDraft: noop,
+  settleSentDraft: noop,
   takeAnchorFocus: () => false,
   open: noop,
   close: noop,
@@ -286,10 +292,17 @@ export function useCommentsController({
     },
     [noteId],
   );
-  const clearSentDraft = useCallback((sent: SentCommentDraft) => {
-    if (draftsRef.current.get(sent.noteId)?.text === sent.text) draftsRef.current.delete(sent.noteId);
+  const takeDraft = useCallback((id: string) => {
+    draftsRef.current.delete(id);
+    setAnchors((prev) => withoutKey(prev, id));
+  }, []);
+  const settleSentDraft = useCallback((sent: SentCommentDraft, posted: boolean) => {
+    const draft = draftsRef.current.get(sent.noteId);
+    if (draft === undefined && posted) return;
+    const base = draft ?? { text: sent.text, replyTo: null };
+    draftsRef.current.set(sent.noteId, { ...base, replyTo: base.replyTo ?? sent.replyTo });
     const anchor = sent.anchor;
-    if (anchor !== null) setAnchors((prev) => (prev.get(sent.noteId) === anchor ? withoutKey(prev, sent.noteId) : prev));
+    if (anchor !== null) setAnchors((prev) => (prev.has(sent.noteId) ? prev : new Map(prev).set(sent.noteId, anchor)));
   }, []);
   const takeAnchorFocus = useCallback(() => {
     const take = anchorFocusRef.current;
@@ -311,7 +324,8 @@ export function useCommentsController({
       draftAnchor: active ? draftAnchor : null,
       readDraft,
       saveDraft,
-      clearSentDraft,
+      takeDraft,
+      settleSentDraft,
       takeAnchorFocus,
       open,
       close,
@@ -319,6 +333,6 @@ export function useCommentsController({
       reportTargetMissing,
       clearDraftAnchor,
     }),
-    [active, noteId, mode, target, targetSeq, targetMissing, newCommentsPending, draftAnchor, readDraft, saveDraft, clearSentDraft, takeAnchorFocus, open, close, showNewest, reportTargetMissing, clearDraftAnchor],
+    [active, noteId, mode, target, targetSeq, targetMissing, newCommentsPending, draftAnchor, readDraft, saveDraft, takeDraft, settleSentDraft, takeAnchorFocus, open, close, showNewest, reportTargetMissing, clearDraftAnchor],
   );
 }

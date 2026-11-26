@@ -238,25 +238,36 @@ describe("comments context", () => {
     expect(result.current.draftAnchor).toBeNull();
   });
 
-  it("clearSentDraft(): clears the note it names, also after a note change, and only while the draft still holds the sent text and passage", () => {
+  it("takeDraft() empties the note's draft when a post starts; settleSentDraft() puts a failed one back only into an empty store, and gives text written meanwhile the sent reply and passage", () => {
     stubCommentFetch({ [READ]: json(null, 204) });
     const OTHER = "22222222-2222-4222-8222-222222222222";
     const anchor = { blockId: "b1", quote: "hello" };
+    const reply = comment(3);
+    const sent = { noteId: COMMENT_NOTE, text: "sent", replyTo: reply, anchor };
     const { result, rerender } = setup();
     act(() => result.current.open({ draftAnchor: anchor }));
-    act(() => result.current.saveDraft({ text: "sent", replyTo: comment(3) }));
-    rerender({ noteId: OTHER, enabled: true });
-    act(() => result.current.clearSentDraft({ noteId: COMMENT_NOTE, text: "sent", anchor }));
-    rerender({ noteId: COMMENT_NOTE, enabled: true });
+    act(() => result.current.saveDraft({ text: "sent", replyTo: reply }));
+    act(() => result.current.takeDraft(COMMENT_NOTE));
     expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
     expect(result.current.draftAnchor).toBeNull();
 
-    const newer = { blockId: "b2", quote: "later" };
-    act(() => result.current.open({ draftAnchor: newer }));
-    act(() => result.current.saveDraft({ text: "typed after send" }));
-    act(() => result.current.clearSentDraft({ noteId: COMMENT_NOTE, text: "sent", anchor }));
-    expect(result.current.readDraft().text).toBe("typed after send");
-    expect(result.current.draftAnchor).toBe(newer);
+    // Settled after a note change: the note it names is the one changed.
+    rerender({ noteId: OTHER, enabled: true });
+    act(() => result.current.settleSentDraft(sent, false));
+    rerender({ noteId: COMMENT_NOTE, enabled: true });
+    expect(result.current.readDraft()).toEqual({ text: "sent", replyTo: reply });
+    expect(result.current.draftAnchor).toBe(anchor);
+
+    act(() => result.current.takeDraft(COMMENT_NOTE));
+    act(() => result.current.settleSentDraft(sent, true));
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+    expect(result.current.draftAnchor).toBeNull();
+
+    act(() => result.current.takeDraft(COMMENT_NOTE));
+    act(() => result.current.saveDraft({ text: "written meanwhile" }));
+    act(() => result.current.settleSentDraft(sent, false));
+    expect(result.current.readDraft()).toEqual({ text: "written meanwhile", replyTo: reply });
+    expect(result.current.draftAnchor).toBe(anchor);
   });
 
   it("takeAnchorFocus(): true once after open({draftAnchor}), not for a plain open", () => {

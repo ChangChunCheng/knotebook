@@ -6,6 +6,8 @@ export const CORNER_STACK_COLLAPSED_STORAGE_KEY = "cornerStack.collapsed";
 // Only a failed write lands here, as in `sidebar/collapse.ts`: where `getItem` works but `setItem` throws (Safari private mode, a full
 // quota), reading storage first would undo every toggle.
 let overlay: boolean | null = null;
+// Expanded without saving it, for as long as something needs the bubbles on screen (the tour's version history stop).
+let forNow = false;
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void): () => void {
@@ -15,7 +17,12 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+function notify(): void {
+  for (const listener of [...listeners]) listener();
+}
+
 export function isCornerStackCollapsed(): boolean {
+  if (forNow) return false;
   if (overlay !== null) return overlay;
   try {
     return window.localStorage.getItem(CORNER_STACK_COLLAPSED_STORAGE_KEY) === "1";
@@ -32,7 +39,14 @@ export function setCornerStackCollapsed(collapsed: boolean): void {
   } catch {
     overlay = collapsed;
   }
-  for (const listener of [...listeners]) listener();
+  forNow = false;
+  notify();
+}
+
+export function showCornerStackForNow(on: boolean): void {
+  if (forNow === on) return;
+  forNow = on;
+  notify();
 }
 
 export function useCornerStackExpanded(): [expanded: boolean, toggle: () => void] {
@@ -54,4 +68,5 @@ export function focusFromCorner(): boolean {
 /** @internal tests only. */
 export function __resetCornerStackForTests(): void {
   overlay = null;
+  forNow = false;
 }
