@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { SearchTermsMode } from "@knotebook/shared";
 import { freshDb } from "./helpers.js";
-import { seedGroup, seedShare, seedUser } from "./group-helpers.js";
+import { planOf, seedGroup, seedPlannerData, seedShare, seedUser } from "./group-helpers.js";
 import { notes } from "../src/db/schema.js";
 import { groupMatchesByNote, searchNotesForUser } from "../src/notes/search-query.js";
 import { seedIndexedNote } from "./search-helpers.js";
 import type { Db } from "../src/db/index.js";
-import type { SearchPageKey } from "../src/notes/search-sql.js";
+import { buildMultiTermNoteSearchQuery, type SearchPageKey } from "../src/notes/search-sql.js";
 
 // #399: queries with two or more keywords. One-keyword behaviour is covered (unchanged) by search-query.test.ts.
 
@@ -133,5 +133,79 @@ describe("keyset pages and visibility", () => {
     const r = await search(db, a.id, ["kilo", "lima"]);
     expect(idsOf(r).sort()).toEqual([own.id, sharedNote.id, groupNote.id].sort());
     expect(idsOf(r)).not.toContain(hidden.id);
+  });
+});
+
+type PlanNode = { "Node Type": string; "Relation Name"?: string; "Index Name"?: string; "Actual Loops"?: number; Plans?: PlanNode[] };
+
+function countNssScans(node: PlanNode): number {
+  const self = node["Relation Name"] === "note_search_sections" ? 1 : 0;
+  return self + (node.Plans ?? []).reduce((n, child) => n + countNssScans(child), 0);
+}
+
+function executedTrigramScans(node: PlanNode): number {
+  const self = node["Index Name"] === "nss_body_trgm_idx" && (node["Actual Loops"] ?? 0) >= 1 ? 1 : 0;
+  return self + (node.Plans ?? []).reduce((n, child) => n + executedTrigramScans(child), 0);
+}
+
+describe("query plan (no repeated note_search_sections subplans)", () => {
+  it("EXPLAIN (costs off) scans note_search_sections once even with 3 keywords, bodyOnly and a keyset cursor", async () => {
+    const { db, pool } = await freshDb();
+    const { userId, noteId } = await seedPlannerData(pool);
+    await pool.query(
+      `insert into note_search_sections (note_id, section_id, ord, body)
+       select id, 's1', 1, 'body text for ' || title from notes`,
+    );
+    await pool.query("analyze note_search_sections");
+
+    const q = buildMultiTermNoteSearchQuery(db, {
+      userId,
+      terms: ["alpha", "beta", "gamma"],
+      mode: "any",
+      limit: 20,
+      bodyOnly: true,
+      page: { after: { rank: 4, updatedAtKey: "2026-01-01T00:00:00.000000Z", id: noteId } },
+    });
+    const plan = await planOf(pool, q.toSQL());
+    // Single scan of note_search_sections across all 3 union branches, WHERE, rank, body_hit, term_hits and keyset.
+    expect(plan.match(/on note_search_sections/g)).toHaveLength(1);
+    expect(plan).not.toMatch(/SubPlan\s+\d+/);
+  });
+
+  it("EXPLAIN ANALYZE on 2000 notes x 20 sections scans note_search_sections once and executes nss_body_trgm_idx", async () => {
+    const { db, pool } = await freshDb();
+    const u = await seedUser(db);
+    await pool.query(
+      `insert into notes (owner_id, title, slug) select $1, 'plan note ' || g, 'plan-' || g from generate_series(1, 2000) g`,
+      [u.id],
+    );
+    await pool.query(
+      `insert into note_search_sections (note_id, section_id, ord, body)
+       select n.id, 's' || o, o,
+              repeat('the editor keeps every version of this note and the team can share it with a group ', 6) || o || ' ' || n.title
+         from notes n cross join generate_series(1, 20) o
+        where n.owner_id = $1`,
+      [u.id],
+    );
+    await pool.query("analyze notes, note_search_sections");
+
+    const q = buildMultiTermNoteSearchQuery(db, {
+      userId: u.id,
+      terms: ["qzxv", "wpyk"],
+      mode: "all",
+      limit: 20,
+    }).toSQL();
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("set local jit = off");
+      const r = await client.query(`explain (analyze, format json) ${q.sql}`, q.params);
+      await client.query("rollback");
+      const entry = (r.rows[0]["QUERY PLAN"] as Array<{ Plan: PlanNode; "Execution Time": number }>)[0]!;
+      expect(countNssScans(entry.Plan)).toBe(1);
+      expect(executedTrigramScans(entry.Plan)).toBeGreaterThanOrEqual(2);
+    } finally {
+      client.release();
+    }
   });
 });

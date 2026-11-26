@@ -45,7 +45,7 @@ const searchQuerySchema = z
       .pipe(z.number().int().min(1, INVALID_LIMIT).max(SEARCH_LIMIT_MAX, INVALID_LIMIT))
       .optional(),
     match: z.enum(["all", "body"]).optional(),
-    terms: z.enum(SEARCH_TERMS_MODES).optional(),
+    keywords: z.enum(SEARCH_TERMS_MODES).optional(),
     cursor: z.string().optional(),
     tags: z.string().optional(),
   })
@@ -53,10 +53,13 @@ const searchQuerySchema = z
 
 type Match = "all" | "body";
 
-// `terms=any` is added only when given, so a cursor issued before #399 for the same query still verifies.
-function fingerprintOf(match: Match, q: string, tagIds: readonly string[], mode: SearchTermsMode): string {
-  const base = tagIds.length === 0 ? `${match}\0${q}` : `${match}\0${q}\0${[...tagIds].sort().join(",")}`;
-  return createHash("sha256").update(mode === "any" ? `${base}\0any` : base, "utf8").digest("hex").slice(0, 16);
+// `multiTerm` and `keywords=any` are added only when active: single-keyword cursors issued before #399 keep verifying,
+// while pre-#399 cursors for queries with spaces (now split into keywords with different ranks) get 400.
+function fingerprintOf(match: Match, q: string, tagIds: readonly string[], mode: SearchTermsMode, multiTerm: boolean): string {
+  let input = tagIds.length === 0 ? `${match}\0${q}` : `${match}\0${q}\0${[...tagIds].sort().join(",")}`;
+  if (multiTerm) input += "\0multi";
+  if (mode === "any") input += "\0any";
+  return createHash("sha256").update(input, "utf8").digest("hex").slice(0, 16);
 }
 
 const RANK_RE = /^(0|[1-9][0-9]?)$/;
@@ -106,7 +109,7 @@ export function searchRoutes(deps: SearchRouteDeps) {
       const { q } = parsed.data;
       const limit = parsed.data.limit ?? SEARCH_LIMIT_DEFAULT;
       const match: Match = parsed.data.match ?? "all";
-      const mode: SearchTermsMode = parsed.data.terms ?? "all";
+      const mode: SearchTermsMode = parsed.data.keywords ?? "all";
       const terms = parseSearchTerms(q);
       if (terms === null || terms.length === 0) return sendError(reply, 400, "invalid_body", INVALID_TERMS);
       const userId = request.user!.id;
@@ -116,7 +119,7 @@ export function searchRoutes(deps: SearchRouteDeps) {
         if (resolved === null) return sendError(reply, 400, "invalid_tags", INVALID_SEARCH_TAGS_MESSAGE);
         tagIds = resolved;
       }
-      const fp = fingerprintOf(match, q, tagIds, mode);
+      const fp = fingerprintOf(match, q, tagIds, mode, terms.length > 1);
       let after: SearchPageKey | null = null;
       if (parsed.data.cursor !== undefined) {
         after = decodeSearchCursor(parsed.data.cursor, fp, maxSearchRank(terms.length, mode));

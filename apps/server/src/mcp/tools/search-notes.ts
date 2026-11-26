@@ -20,7 +20,7 @@ import { buildSnippet } from "../../notes/search-snippet.js";
 import { noteSummariesForModel, noteSummarySchema, type NoteSummaryForModel } from "../dto.js";
 import { MCP_SEARCH_WIRE_BUDGET, MCP_SNIPPET_MAX, MCP_TEXT_MAX, escapedLength, truncateText } from "../limits.js";
 import { toolError, toolResult } from "../tool-result.js";
-import { wireCost } from "../wire-budget.js";
+import { countWithinWireBudget, wireCost } from "../wire-budget.js";
 import type { McpToolCtx } from "../context.js";
 
 const DEFAULT_LIMIT = 20;
@@ -33,7 +33,7 @@ const MATCHES_TRUNCATED_RESERVE = 64;
 const DESC_HEAD =
   "Find notes among the ones you can see by text in their title or body. Matching is case-insensitive and literal. " +
   "Separate keywords with spaces (there is no word segmentation, so CJK keywords need spaces too) and put a phrase in double quotes; " +
-  `up to ${SEARCH_TERMS_MAX} keywords. By default a note must contain every keyword, each in its title or body; set \`terms\` to \`any\` to match any of them. ` +
+  `up to ${SEARCH_TERMS_MAX} keywords. By default a note must contain every keyword, each in its title or body; set \`keywords\` to \`any\` to match any of them. ` +
   "Notes whose title matches come first — exact titles, then titles that start with your text, then the rest — then notes that match only in the body; " +
   "with several keywords, notes containing more of them come first. ";
 export const SEARCH_NOTES_DESCRIPTION_READ =
@@ -63,7 +63,7 @@ export const searchNotesInput = {
     .max(MAX_QUERY)
     .refine(noNul)
     .describe("Keywords to look for in note titles and body text, separated by spaces; a phrase in double quotes is one keyword. Matched literally — `%` and `_` are not wildcards."),
-  terms: z
+  keywords: z
     .enum(SEARCH_TERMS_MODES)
     .optional()
     .describe("`all` (default): a note must contain every keyword. `any`: at least one, notes with more keywords first."),
@@ -121,9 +121,16 @@ export function assembleSearchPayload(
   truncated: boolean,
   budget: number = MCP_SEARCH_WIRE_BUDGET,
 ): { notes: SearchHitForModel[]; truncated: boolean; matchesTruncated?: true } {
-  let total = wireCost({ notes, truncated }) + MATCHES_TRUNCATED_RESERVE;
+  // Multi-keyword `matchedTerms` repeats up to 200 query code units (each up to 13 wire units when JSON-escaped and
+  // mirrored) on every note, so 50 worst-case notes can exceed `budget` even before any section matches are added.
+  // Trim the trailing notes under the same wire budget and mark `truncated: true` so the reply never exceeds the cap.
+  const base = wireCost({ notes: [], truncated: false }) + MATCHES_TRUNCATED_RESERVE;
+  const keptCount = countWithinWireBudget(notes.map(n => wireCost(n)), base, budget);
+  const keptNotes = keptCount < notes.length ? notes.slice(0, keptCount) : notes;
+  const notesTruncated = truncated || keptCount < notes.length;
+  let total = wireCost({ notes: keptNotes, truncated: notesTruncated }) + MATCHES_TRUNCATED_RESERVE;
   let cut = false;
-  outer: for (let i = 0; i < notes.length; i += 1) {
+  outer: for (let i = 0; i < keptNotes.length; i += 1) {
     for (const m of candidates[i] ?? []) {
       const c = wireCost(m) + 2; // Two copies of the comma; an upper bound
       if (total + c > budget) {
@@ -131,10 +138,10 @@ export function assembleSearchPayload(
         break outer;
       }
       total += c;
-      notes[i]!.matches.push(m);
+      keptNotes[i]!.matches.push(m);
     }
   }
-  return cut ? { notes, truncated, matchesTruncated: true as const } : { notes, truncated };
+  return cut ? { notes: keptNotes, truncated: notesTruncated, matchesTruncated: true as const } : { notes: keptNotes, truncated: notesTruncated };
 }
 
 function matchedOnOf(row: NoteSearchRow): MatchedOn {
@@ -154,7 +161,7 @@ function toMatch(m: SearchMatchRow, terms: readonly string[]): SearchMatchForMod
 
 export interface SearchNotesArgs {
   query: string;
-  terms?: "all" | "any";
+  keywords?: "all" | "any";
   limit?: number;
 }
 
@@ -163,7 +170,7 @@ export async function searchNotes(args: SearchNotesArgs, ctx: McpToolCtx): Promi
   if (terms === null || terms.length === 0) return toolError("invalid_body", SEARCH_TERMS_INVALID_MESSAGE);
   if (!ctx.limiters.search.consume(ctx.userId)) return toolError("too_many_requests", SEARCH_RATE_LIMITED_MESSAGE);
   const limit = args.limit ?? DEFAULT_LIMIT;
-  const { rows, matches } = await searchNotesForUser(ctx.db, { userId: ctx.userId, terms, mode: args.terms ?? "all", limit });
+  const { rows, matches } = await searchNotesForUser(ctx.db, { userId: ctx.userId, terms, mode: args.keywords ?? "all", limit });
   const truncated = rows.length > limit;
   const page = truncated ? rows.slice(0, limit) : rows;
   const byNote = groupMatchesByNote(matches);

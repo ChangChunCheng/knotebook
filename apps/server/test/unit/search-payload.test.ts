@@ -29,6 +29,22 @@ describe("assembleSearchPayload", () => {
     expect(out.notes.map(n => n.matches.length)).toEqual([1, 0]);
     expect(out).toMatchObject({ matchesTruncated: true, truncated: false });
   });
+
+  it("notes themselves exceed budget (e.g. heavy matchedTerms) -> trims trailing notes, sets truncated: true, stays within budget", () => {
+    const heavyTerms = ["\u0001".repeat(80), "\u0001".repeat(80)];
+    const notes = [note("a"), note("b"), note("c")].map(n => ({ ...n, matchedTerms: heavyTerms }));
+    const one = JSON.stringify(notes[0]!);
+    const oneCost = one.length + JSON.stringify(one).length + 2;
+    const base = JSON.stringify({ notes: [], truncated: false });
+    const baseCost = base.length + JSON.stringify(base).length + 64;
+    // Budget fits 2 notes (not 3).
+    const budget = baseCost + oneCost * 2 + 10;
+    const out = assembleSearchPayload(notes, [[m(10)], [m(10)], [m(10)]], false, budget);
+    expect(out.notes.map(n => n.id)).toEqual(["a", "b"]);
+    expect(out.truncated).toBe(true);
+    const serialized = JSON.stringify(out);
+    expect(serialized.length + JSON.stringify(serialized).length).toBeLessThanOrEqual(budget);
+  });
 });
 
 describe("#93 when the bucket is charged", () => {

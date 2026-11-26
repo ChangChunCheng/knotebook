@@ -25,7 +25,7 @@
  * and 160 after (a PG character is a code point); the snippet is picked in JS (`notes/search-snippet.ts`).
  */
 import { SEARCH_TERMS_MAX, type SearchTermsMode } from "@knotebook/shared";
-import { and, asc, desc, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import type { DbOrTx } from "../db/tx.js";
 import { escapeLike } from "../db/like.js";
@@ -199,30 +199,62 @@ export interface MultiTermSearchQueryOpts extends Omit<NoteSearchQueryOpts, "que
   mode: SearchTermsMode;
 }
 
-function bodyHasTerm(t: string): SQL {
-  const match = usesTrigramPath(t)
+function bodyMatchesTerm(t: string): SQL {
+  return usesTrigramPath(t)
     ? sql`lower(${noteSearchSections.body}) like lower(${"%" + escapeLike(t) + "%"})`
     : sql`position(lower(${t}) in lower(${noteSearchSections.body})) > 0`;
-  return sql`exists (select 1 from ${noteSearchSections} where ${noteSearchSections.noteId} = ${notes.id} and ${noteSearchSections.sourceKind} = 'note' and ${match})`;
 }
 
 const countTrue = (conds: SQL[]): SQL => sql`(${sql.join(conds.map(c => sql`(case when ${c} then 1 else 0 end)`), sql` + `)})`;
 
+/**
+ * Multi-keyword note search (#399). Visibility (owned ∪ shared ∪ grouped) and any tag filter run once in the `visible`
+ * CTE, and `body_hits` scans `note_search_sections` once across all keywords with `bool_or(...)` grouped by `note_id`.
+ * Because `visible` is referenced twice (by `body_hits` and the outer query), PostgreSQL materializes it and `body_hits`
+ * aggregates once, avoiding per-branch / per-expression repeated subplans while still allowing `nss_body_trgm_idx`
+ * (BitmapOr) or `nss_note_idx` (per visible note).
+ */
 export function buildMultiTermNoteSearchQuery(db: DbOrTx, opts: MultiTermSearchQueryOpts) {
   const terms = opts.terms;
   if (terms.length < 2 || terms.length > SEARCH_TERMS_MAX) throw new Error("search: multi-term query needs 2 to SEARCH_TERMS_MAX terms");
-  const titleHits = terms.map(t => sql`position(lower(${t}) in lower(${notes.title})) > 0`);
-  const bodyHits = terms.map(bodyHasTerm);
+  const { owned, shared, grouped } = visibleNoteBranches(db, opts.userId, {
+    extraWhere: notesHavingAllTagsSql(opts.tagIds ?? []),
+  });
+  const visible = db.$with("visible").as(unionAll(owned, shared, grouped));
+  const bodyMatches = terms.map(bodyMatchesTerm);
+  const bodyAggSelection: Record<string, SQL.Aliased<boolean> | typeof noteSearchSections.noteId> = {
+    noteId: noteSearchSections.noteId,
+  };
+  for (let i = 0; i < terms.length; i += 1) {
+    bodyAggSelection[`bh${i}`] = sql<boolean>`bool_or(${bodyMatches[i]!})`.as(`bh${i}`);
+  }
+  const bodyHitsCte = db.$with("body_hits").as(
+    db
+      .select(bodyAggSelection)
+      .from(noteSearchSections)
+      .where(
+        and(
+          sql`${noteSearchSections.noteId} in (select ${visible.id} from ${visible})`,
+          sql`${noteSearchSections.sourceKind} = 'note'`,
+          sql`(${sql.join(bodyMatches, sql` or `)})`,
+        ),
+      )
+      .groupBy(noteSearchSections.noteId),
+  );
+
+  const titleHits = terms.map(t => sql`position(lower(${t}) in lower(${visible.title})) > 0`);
+  const bodyHits = terms.map((_, i) => sql`coalesce("body_hits".${sql.identifier(`bh${i}`)}, false)`);
   const termHits = terms.map((_, i) => sql`(${titleHits[i]!} or ${bodyHits[i]!})`);
   const anyTitle = sql`(${sql.join(titleHits, sql` or `)})`;
-  const anyBody = sql`(${sql.join(bodyHits, sql` or `)})`;
+  // Every row in `body_hits` satisfied `(m0 or m1 or ...)`, so a non-null join key is equivalent to `bh0 or ... or bhN`.
+  const anyBody = sql`("body_hits"."note_id" is not null)`;
   const matched = opts.mode === "any" ? sql`(${sql.join(termHits, sql` or `)})` : sql`(${sql.join(termHits, sql` and `)})`;
   const phrase = terms.join(" ");
   const matchedCount = countTrue(termHits);
   const titleCount = countTrue(titleHits);
   const rankExpr = sql<number>`((${terms.length} - ${matchedCount}) * 5 + case
-    when lower(${notes.title}) = lower(${phrase}) then 0
-    when position(lower(${phrase}) in lower(${notes.title})) = 1 then 1
+    when lower(${visible.title}) = lower(${phrase}) then 0
+    when position(lower(${phrase}) in lower(${visible.title})) = 1 then 1
     when ${titleCount} = ${matchedCount} then 2
     when ${titleCount} > 0 then 3
     else 4 end)`;
@@ -237,15 +269,41 @@ export function buildMultiTermNoteSearchQuery(db: DbOrTx, opts: MultiTermSearchQ
       ? undefined
       : or(
           sql`${rankExpr} > ${after.rank}`,
-          and(sql`${rankExpr} = ${after.rank}`, sql`(${notes.updatedAt}, ${notes.id}) < (${after.updatedAtKey}::timestamptz, ${after.id}::uuid)`),
+          and(sql`${rankExpr} = ${after.rank}`, sql`(${visible.updatedAt}, ${visible.id}) < (${after.updatedAtKey}::timestamptz, ${after.id}::uuid)`),
         );
-  const updatedAtKey = sql<string>`to_char(${notes.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("updated_at_key");
-  const { owned, shared, grouped } = visibleNoteBranches(db, opts.userId, {
-    extraWhere: and(opts.bodyOnly === true ? and(matched, anyBody) : matched, keysetCond, notesHavingAllTagsSql(opts.tagIds ?? [])),
-    extra: { rank, titleHit: titleHitCol, bodyHit: bodyHitCol, termHits: termHitsCol, ...(page !== undefined ? { updatedAtKey } : {}) },
-  });
-  return unionAll(owned, shared, grouped)
-    .orderBy(asc(rank), desc(notes.updatedAt), desc(notes.id))
+  const updatedAtKey = sql<string>`to_char(${visible.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("updated_at_key");
+
+  return db
+    .with(visible, bodyHitsCte)
+    .select({
+      id: visible.id,
+      title: visible.title,
+      ownerId: visible.ownerId,
+      slug: visible.slug,
+      slugIsCustom: visible.slugIsCustom,
+      prevSlug: visible.prevSlug,
+      ownerHandle: visible.ownerHandle,
+      createdAt: visible.createdAt,
+      updatedAt: visible.updatedAt,
+      lastEditedAt: visible.lastEditedAt,
+      lastEditedAgentLabel: visible.lastEditedAgentLabel,
+      editorHandle: visible.editorHandle,
+      groupId: visible.groupId,
+      groupName: visible.groupName,
+      groupCanDelete: visible.groupCanDelete,
+      groupCanManagePublicLink: visible.groupCanManagePublicLink,
+      viewerFolderId: visible.viewerFolderId,
+      rank,
+      titleHit: titleHitCol,
+      bodyHit: bodyHitCol,
+      termHits: termHitsCol,
+      ...(page !== undefined ? { updatedAtKey } : {}),
+      role: visible.role,
+    })
+    .from(visible)
+    .leftJoin(bodyHitsCte, eq(sql`"body_hits"."note_id"`, visible.id))
+    .where(and(opts.bodyOnly === true ? and(matched, anyBody) : matched, keysetCond))
+    .orderBy(asc(sql.raw('"rank"')), desc(visible.updatedAt), desc(visible.id))
     .limit(opts.limit + 1);
 }
 
