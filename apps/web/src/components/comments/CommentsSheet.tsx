@@ -3,6 +3,7 @@ import { useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import type * as Y from "yjs";
+import { NotePanelSwitch, consumeNotePanelSwitch } from "@/components/NotePanelSwitch";
 import { Button } from "@/components/ui/button";
 import { SAFE_INSETS } from "@/components/ui/safe-area";
 import { useComments } from "@/lib/comments-context";
@@ -33,6 +34,10 @@ export function CommentsSheet({ doc, returnFocusRef }: { doc: Y.Doc; returnFocus
             if (active instanceof HTMLTextAreaElement && active.value !== "") event.preventDefault();
           }}
           onCloseAutoFocus={(event) => {
+            if (consumeNotePanelSwitch()) {
+              event.preventDefault();
+              return;
+            }
             const target = returnFocus?.isConnected ? returnFocus : returnFocusRef?.current;
             if (!target?.isConnected) return;
             event.preventDefault();
@@ -45,6 +50,7 @@ export function CommentsSheet({ doc, returnFocusRef }: { doc: Y.Doc; returnFocus
             </Button>
             <DialogPrimitive.Title className="text-sm font-semibold">{t("comments.title")}</DialogPrimitive.Title>
           </header>
+          <NotePanelSwitch current="comments" />
           {/* The sheet covers the note: close it before the note scrolls to a quoted passage. */}
           <CommentThread key={noteId ?? ""} doc={doc} onPassage={close} />
         </DialogPrimitive.Content>

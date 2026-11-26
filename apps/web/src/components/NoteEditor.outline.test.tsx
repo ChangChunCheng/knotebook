@@ -19,6 +19,7 @@ import { resetNoteWidthsForTest, setNoteWidth } from "@/components/note-width";
 import { ARTICLE_COLUMN_MAX, articleColumn, type ArticleColumnState } from "@/components/ui/article-column";
 import { PHONE_EDIT_TOOLBAR_CLEARANCE_PX } from "@/components/ai/SelectionAiController";
 import { CORNER_STACK_FOOTPRINT_PX, cornerStackFootprint } from "@/components/corner-stack-geometry";
+import { CORNER_STACK_COLLAPSED_STORAGE_KEY } from "@/components/corner-stack-state";
 import { CommentsProvider, NOOP_COMMENTS, type CommentsContextValue } from "@/lib/comments-context";
 import { PHONE_FAB_FOOTPRINT_PX } from "@/components/sidebar/PhoneListFabs";
 import { NoteEditor } from "./NoteEditor";
@@ -245,7 +246,7 @@ describe("NoteEditor: mounting conditions of the right-side heading outline", ()
     doc.destroy();
   });
 
-  it("versions panel open: floating tier (panel covers the card) -> not mounted; fixed tier (panel is the third column) -> mounted, no bubble", async () => {
+  it("versions panel open: floating tier (panel covers the card) -> not mounted; fixed tier (panel is the third column) -> mounted, above the stack that stays", async () => {
     const overlay = await renderAt("overlay", { panelOpen: true, mode: "panel" });
     expect(stub()).toBeNull();
     overlay.unmount();
@@ -254,7 +255,8 @@ describe("NoteEditor: mounting conditions of the right-side heading outline", ()
     outline.props = [];
     const docked = await renderAt("docked", { panelOpen: true, mode: "panel" });
     expect(stub()).not.toBeNull();
-    expect(lastProps().bubbleShown).toBe(false);
+    expect(lastProps().bubbleShown).toBe(true);
+    expect(lastProps().bubbleCount).toBe(2);
     docked.doc.destroy();
   });
 
@@ -595,11 +597,16 @@ describe("NoteEditor: phone position bubble, bottom sheet and the header menu en
     editing.doc.destroy();
   });
 
-  it("640-767: the track's bottom end stops above the versions bubble", async () => {
-    const { doc } = await renderPhone({ tier: "compact" });
-    expect(lastBubble().bottomReserve).toBe(CORNER_STACK_FOOTPRINT_PX);
+  it("640-767: the track's bottom end stops above the stack: the toggle and the versions bubble, or the toggle alone when collapsed", async () => {
+    const { doc, unmount } = await renderPhone({ tier: "compact" });
+    expect(lastBubble().bottomReserve).toBe(cornerStackFootprint(2));
     expect(lastBubble().editToolbarHeight).toBe(0);
+    unmount();
     doc.destroy();
+    window.localStorage.setItem(CORNER_STACK_COLLAPSED_STORAGE_KEY, "1");
+    const collapsed = await renderPhone({ tier: "compact" });
+    expect(lastBubble().bottomReserve).toBe(CORNER_STACK_FOOTPRINT_PX);
+    collapsed.doc.destroy();
   });
 
   it("tapping the bubble while editing (the bubble doesn't take focus, the toolbar stays): the sheet gets a restoreFocus that returns focus to the editor without scrolling; the toolbar collapsing while the sheet is open doesn't change it", async () => {
@@ -739,19 +746,19 @@ describe("NoteEditor: the outline and the comments panel share the right-hand sl
     return doc;
   }
 
-  it("two bubbles: the outline stops above both; one bubble for a viewer", async () => {
+  it("two bubbles and the toggle: the outline stops above all three; the toggle and one bubble for a viewer", async () => {
     const both = await renderWithComments("docked", {});
     expect(lastProps().bubbleShown).toBe(true);
-    expect(lastProps().bubbleCount).toBe(2);
+    expect(lastProps().bubbleCount).toBe(3);
     cleanup();
     both.destroy();
     outline.props = [];
     const viewer = await renderWithComments("docked", {}, false);
-    expect(lastProps().bubbleCount).toBe(1);
+    expect(lastProps().bubbleCount).toBe(2);
     viewer.destroy();
   });
 
-  it("comments panel open: floating tier -> no outline; fixed tier -> outline without bubbles", async () => {
+  it("comments panel open: floating tier -> no outline; fixed tier -> outline above the stack that stays", async () => {
     const overlay = await renderWithComments("overlay", { panelOpen: true, mode: "panel" });
     expect(stub()).toBeNull();
     cleanup();
@@ -759,13 +766,13 @@ describe("NoteEditor: the outline and the comments panel share the right-hand sl
     outline.props = [];
     const docked = await renderWithComments("docked", { panelOpen: true, mode: "panel" });
     expect(stub()).not.toBeNull();
-    expect(lastProps().bubbleShown).toBe(false);
+    expect(lastProps().bubbleCount).toBe(3);
     docked.destroy();
   });
 
-  it("640-767: the phone outline track stops above both bubbles", async () => {
+  it("640-767: the phone outline track stops above both bubbles and the toggle", async () => {
     const doc = await renderWithComments("compact", {});
-    expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.bottomReserve).toBe(cornerStackFootprint(2));
+    expect(phoneStubs.bubble[phoneStubs.bubble.length - 1]!.bottomReserve).toBe(cornerStackFootprint(3));
     doc.destroy();
   });
 });

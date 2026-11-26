@@ -181,6 +181,8 @@
     "overSizeLimit": "This note is over the size limit; editing may be slow. Delete content to shrink it.",
     "titlePlaceholder": "Untitled",
     "readOnly": "Read-only",
+    "cornerToggle": "Note panels",
+    "cornerToggleUnread": "Note panels, unread comments",
     "menu": {
       "label": "More",
       "labelFor": "Note actions for {{title}}",

@@ -57,7 +57,7 @@ describe("comments context", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
-  it("open({commentId, draftAnchor}) sets the target (lowercased) and the passage; close() clears both; a new open of the same comment bumps targetSeq", () => {
+  it("open({commentId, draftAnchor}) sets the target (lowercased) and the passage; clearDraftAnchor() drops the passage, close() the target; a new open of the same comment bumps targetSeq", () => {
     stubCommentFetch({ [READ]: json(null, 204) });
     const { result } = setup();
     act(() => result.current.open({ commentId: cid(7).toUpperCase(), draftAnchor: { blockId: "b1", quote: "hello" } }));
@@ -201,6 +201,83 @@ describe("comments context", () => {
     expect(result.current.panelOpen).toBe(true);
     rerender({ noteId: COMMENT_NOTE, enabled: false });
     expect(result.current.mode).toBeNull();
+  });
+
+  it("the unsent comment and its passage outlive close() and a note change, per note; saving an empty draft forgets it; losing access drops both", () => {
+    stubCommentFetch({ [READ]: json(null, 204) });
+    const OTHER = "22222222-2222-4222-8222-222222222222";
+    const reply = comment(3);
+    const { result, rerender } = setup();
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+    act(() => result.current.open({ draftAnchor: { blockId: "b1", quote: "hello" } }));
+    act(() => result.current.saveDraft({ text: "half a thought" }));
+    act(() => result.current.saveDraft({ replyTo: reply }));
+    act(() => result.current.close());
+    expect(result.current.draftAnchor).toEqual({ blockId: "b1", quote: "hello" });
+    expect(result.current.readDraft()).toEqual({ text: "half a thought", replyTo: reply });
+
+    rerender({ noteId: null, enabled: true });
+    rerender({ noteId: OTHER, enabled: true });
+    expect(result.current.draftAnchor).toBeNull();
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+    act(() => result.current.saveDraft({ text: "on the other note" }));
+
+    rerender({ noteId: COMMENT_NOTE, enabled: true });
+    expect(result.current.draftAnchor).toEqual({ blockId: "b1", quote: "hello" });
+    expect(result.current.readDraft().text).toBe("half a thought");
+    act(() => result.current.saveDraft({ text: "", replyTo: null }));
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+
+    rerender({ noteId: OTHER, enabled: true });
+    expect(result.current.readDraft().text).toBe("on the other note");
+    rerender({ noteId: OTHER, enabled: false });
+    rerender({ noteId: OTHER, enabled: true });
+    expect(result.current.readDraft().text).toBe("");
+    rerender({ noteId: COMMENT_NOTE, enabled: false });
+    rerender({ noteId: COMMENT_NOTE, enabled: true });
+    expect(result.current.draftAnchor).toBeNull();
+  });
+
+  it("takeDraft() empties the note's draft when a post starts; settleSentDraft() puts a failed one back only into an empty store, and gives text written meanwhile the sent reply and passage", () => {
+    stubCommentFetch({ [READ]: json(null, 204) });
+    const OTHER = "22222222-2222-4222-8222-222222222222";
+    const anchor = { blockId: "b1", quote: "hello" };
+    const reply = comment(3);
+    const sent = { noteId: COMMENT_NOTE, text: "sent", replyTo: reply, anchor };
+    const { result, rerender } = setup();
+    act(() => result.current.open({ draftAnchor: anchor }));
+    act(() => result.current.saveDraft({ text: "sent", replyTo: reply }));
+    act(() => result.current.takeDraft(COMMENT_NOTE));
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+    expect(result.current.draftAnchor).toBeNull();
+
+    // Settled after a note change: the note it names is the one changed.
+    rerender({ noteId: OTHER, enabled: true });
+    act(() => result.current.settleSentDraft(sent, false));
+    rerender({ noteId: COMMENT_NOTE, enabled: true });
+    expect(result.current.readDraft()).toEqual({ text: "sent", replyTo: reply });
+    expect(result.current.draftAnchor).toBe(anchor);
+
+    act(() => result.current.takeDraft(COMMENT_NOTE));
+    act(() => result.current.settleSentDraft(sent, true));
+    expect(result.current.readDraft()).toEqual({ text: "", replyTo: null });
+    expect(result.current.draftAnchor).toBeNull();
+
+    act(() => result.current.takeDraft(COMMENT_NOTE));
+    act(() => result.current.saveDraft({ text: "written meanwhile" }));
+    act(() => result.current.settleSentDraft(sent, false));
+    expect(result.current.readDraft()).toEqual({ text: "written meanwhile", replyTo: reply });
+    expect(result.current.draftAnchor).toBe(anchor);
+  });
+
+  it("takeAnchorFocus(): true once after open({draftAnchor}), not for a plain open", () => {
+    stubCommentFetch({ [READ]: json(null, 204) });
+    const { result } = setup();
+    act(() => result.current.open());
+    expect(result.current.takeAnchorFocus()).toBe(false);
+    act(() => result.current.open({ draftAnchor: { blockId: "b1", quote: "" } }));
+    expect(result.current.takeAnchorFocus()).toBe(true);
+    expect(result.current.takeAnchorFocus()).toBe(false);
   });
 
   it("reportTargetMissing(): back to the newest page with the notice; the next open at a comment clears it", () => {

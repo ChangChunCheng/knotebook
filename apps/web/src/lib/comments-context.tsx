@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { CommentDto } from "@knotebook/shared";
 import {
   applyCommentChange,
   commentListKey,
@@ -20,6 +21,17 @@ export interface CommentDraftAnchor {
   blockId: string;
   quote: string;
 }
+export interface CommentDraft {
+  text: string;
+  replyTo: CommentDto | null;
+}
+export interface SentCommentDraft {
+  noteId: string;
+  text: string;
+  replyTo: CommentDto | null;
+  anchor: CommentDraftAnchor | null;
+}
+const EMPTY_DRAFT: CommentDraft = { text: "", replyTo: null };
 export interface OpenCommentsOptions {
   /** Opens the thread at this comment (a window around it) instead of the newest page. */
   commentId?: string;
@@ -41,6 +53,18 @@ export interface CommentsContextValue {
   /** A comment was posted after the loaded window, which doesn't reach the newest comment. */
   newCommentsPending: boolean;
   draftAnchor: CommentDraftAnchor | null;
+  /** This note's unsent comment, kept while the thread is closed or the version history is shown; read once when the thread mounts. */
+  readDraft(): CommentDraft;
+  saveDraft(patch: Partial<CommentDraft>): void;
+  /**
+   * A post takes the note's draft out of the store when it starts, so a thread reopened before the answer can't post it again, and
+   * settles it when it ends (also after the thread unmounted): a failed post is put back if nothing was written since; text written
+   * meanwhile keeps the sent comment's reply and passage.
+   */
+  takeDraft(noteId: string): void;
+  settleSentDraft(sent: SentCommentDraft, posted: boolean): void;
+  /** True once per `open({draftAnchor})`: a passage just picked takes the composer's focus, one restored on a note switch doesn't. */
+  takeAnchorFocus(): boolean;
   open(opts?: OpenCommentsOptions): void;
   close(): void;
   showNewest(): void;
@@ -59,6 +83,11 @@ export const NOOP_COMMENTS: CommentsContextValue = {
   targetMissing: false,
   newCommentsPending: false,
   draftAnchor: null,
+  readDraft: () => EMPTY_DRAFT,
+  saveDraft: noop,
+  takeDraft: noop,
+  settleSentDraft: noop,
+  takeAnchorFocus: () => false,
   open: noop,
   close: noop,
   showNewest: noop,
@@ -101,6 +130,13 @@ export function parseCommentMessage(payload: string): { op: CommentChangeOp; com
 
 const MARK_READ_DEBOUNCE_MS = 1000;
 
+function withoutKey<V>(map: ReadonlyMap<string, V>, key: string): ReadonlyMap<string, V> {
+  if (!map.has(key)) return map;
+  const next = new Map(map);
+  next.delete(key);
+  return next;
+}
+
 export function useCommentsController({
   noteId,
   enabled,
@@ -123,7 +159,10 @@ export function useCommentsController({
   const [targetSeq, setTargetSeq] = useState(0);
   const [targetMissing, setTargetMissing] = useState(false);
   const [newCommentsPending, setNewCommentsPending] = useState(false);
-  const [draftAnchor, setDraftAnchor] = useState<CommentDraftAnchor | null>(null);
+  // Per note, so a passage picked on one note never attaches to a comment on another. Text is in a ref: a keystroke must not render the page.
+  const [anchors, setAnchors] = useState<ReadonlyMap<string, CommentDraftAnchor>>(() => new Map());
+  const draftsRef = useRef(new Map<string, CommentDraft>());
+  const anchorFocusRef = useRef(false);
   const [forNote, setForNote] = useState(noteId);
 
   // Same rule as the version history: the panel stays open across a note change and shows the new note's thread; the full-page sheet closes.
@@ -133,7 +172,6 @@ export function useCommentsController({
     setTarget(null);
     setTargetMissing(false);
     setNewCommentsPending(false);
-    setDraftAnchor(null);
   }
 
   const active = enabled && noteId !== null;
@@ -143,7 +181,8 @@ export function useCommentsController({
     if (active || noteId === null) return;
     setMode(null);
     setTarget(null);
-    setDraftAnchor(null);
+    draftsRef.current.delete(noteId);
+    setAnchors((prev) => withoutKey(prev, noteId));
   }, [active, noteId]);
 
   useEffect(() => {
@@ -217,16 +256,19 @@ export function useCommentsController({
         setTargetMissing(false);
         setNewCommentsPending(false);
       }
-      if (opts?.draftAnchor !== undefined) setDraftAnchor(opts.draftAnchor);
+      const anchor = opts?.draftAnchor;
+      if (anchor !== undefined && noteId !== null) {
+        anchorFocusRef.current = true;
+        setAnchors((prev) => new Map(prev).set(noteId, anchor));
+      }
     },
-    [active],
+    [active, noteId],
   );
   const close = useCallback(() => {
     setMode(null);
     setTarget(null);
     setTargetMissing(false);
     setNewCommentsPending(false);
-    setDraftAnchor(null);
   }, []);
   const showNewest = useCallback(() => {
     setTarget(null);
@@ -237,7 +279,37 @@ export function useCommentsController({
     setTargetMissing(true);
     setNewCommentsPending(false);
   }, []);
-  const clearDraftAnchor = useCallback(() => setDraftAnchor(null), []);
+  const clearDraftAnchor = useCallback(() => {
+    if (noteId !== null) setAnchors((prev) => withoutKey(prev, noteId));
+  }, [noteId]);
+  const readDraft = useCallback(() => (noteId === null ? EMPTY_DRAFT : (draftsRef.current.get(noteId) ?? EMPTY_DRAFT)), [noteId]);
+  const saveDraft = useCallback(
+    (patch: Partial<CommentDraft>) => {
+      if (noteId === null) return;
+      const next = { ...(draftsRef.current.get(noteId) ?? EMPTY_DRAFT), ...patch };
+      if (next.text === "" && next.replyTo === null) draftsRef.current.delete(noteId);
+      else draftsRef.current.set(noteId, next);
+    },
+    [noteId],
+  );
+  const takeDraft = useCallback((id: string) => {
+    draftsRef.current.delete(id);
+    setAnchors((prev) => withoutKey(prev, id));
+  }, []);
+  const settleSentDraft = useCallback((sent: SentCommentDraft, posted: boolean) => {
+    const draft = draftsRef.current.get(sent.noteId);
+    if (draft === undefined && posted) return;
+    const base = draft ?? { text: sent.text, replyTo: null };
+    draftsRef.current.set(sent.noteId, { ...base, replyTo: base.replyTo ?? sent.replyTo });
+    const anchor = sent.anchor;
+    if (anchor !== null) setAnchors((prev) => (prev.has(sent.noteId) ? prev : new Map(prev).set(sent.noteId, anchor)));
+  }, []);
+  const takeAnchorFocus = useCallback(() => {
+    const take = anchorFocusRef.current;
+    anchorFocusRef.current = false;
+    return take;
+  }, []);
+  const draftAnchor = noteId === null ? null : (anchors.get(noteId) ?? null);
 
   return useMemo<CommentsContextValue>(
     () => ({
@@ -250,12 +322,17 @@ export function useCommentsController({
       targetMissing: active && targetMissing,
       newCommentsPending: active && newCommentsPending,
       draftAnchor: active ? draftAnchor : null,
+      readDraft,
+      saveDraft,
+      takeDraft,
+      settleSentDraft,
+      takeAnchorFocus,
       open,
       close,
       showNewest,
       reportTargetMissing,
       clearDraftAnchor,
     }),
-    [active, noteId, mode, target, targetSeq, targetMissing, newCommentsPending, draftAnchor, open, close, showNewest, reportTargetMissing, clearDraftAnchor],
+    [active, noteId, mode, target, targetSeq, targetMissing, newCommentsPending, draftAnchor, readDraft, saveDraft, takeDraft, settleSentDraft, takeAnchorFocus, open, close, showNewest, reportTargetMissing, clearDraftAnchor],
   );
 }

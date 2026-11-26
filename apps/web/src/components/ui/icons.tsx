@@ -51,6 +51,14 @@ export function ChevronDown(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function ChevronUp(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg data-icon="chevron-up" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  );
+}
+
 export function ArrowLeft(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>

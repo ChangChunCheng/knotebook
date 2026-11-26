@@ -161,6 +161,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [Pressing Esc in the sidebar's search box while previewing a version also closes the preview](./known-limitations/version-history.md)
 - [Applying a version from before the upgrade to 0.11 brings back ordinary links, and the one-time conversion doesn't convert them again.](./known-limitations/version-history.md)
 - [In a comparison or the AI box's preview, a link to a note you can't see can show as removed and added again inside a block that changed for another reason.](./known-limitations/version-history.md)
+- [On a short window, such as a phone held sideways, the floating version history and comments panels are short too.](./known-limitations/version-history.md)
 
 ## Collaboration and presence
 
