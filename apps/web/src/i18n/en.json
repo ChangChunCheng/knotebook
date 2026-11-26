@@ -184,6 +184,7 @@
       "label": "More",
       "labelFor": "Note actions for {{title}}",
       "versions": "Version history",
+      "comments": "Comments",
       "aiEdits": "AI edit history",
       "present": "Present",
       "moveTo": "Move to…",

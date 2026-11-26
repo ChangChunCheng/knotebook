@@ -1,6 +1,6 @@
 # Comments
 
-How a note's comments work: who can read and write them, how `@` mentions are recognised, the notifications they send and how long those are kept, and how an AI agent uses them over MCP.
+How a note's comments work: who can read and write them, where they are in the web app, how `@` mentions are recognised, the notifications they send and how long those are kept, and how an AI agent uses them over MCP.
 
 ## The thread
 
@@ -19,6 +19,13 @@ What happens to comments when the note changes hands:
 - **Its group deleted with its notes, or the note deleted permanently.** The comments and their notifications are deleted.
 - **Moved to the trash.** The comments stay and come back when the note is restored.
 - **A person loses access, or their account is disabled.** Their comments stay, under their name.
+
+## In the web app
+
+- **The bubble.** A note you can read has a **Comments** bubble in its lower-right corner, above the version history bubble, with the number of other people's comments posted since you last opened the thread (`9+` above nine). It isn't shown below 640 pixels or while a side panel is open.
+- **The panel.** The bubble opens the comments in the same place as the version history, and only one of the two is open at a time: a third column from 1280 pixels, a panel over the note from 640 to 1279 pixels, with the same width and resize handle. Opening it marks the note's comments read. ✕ closes it, and so does Esc while the panel floats over the note (640 to 1279 pixels), unless you press it in a box with text in it; clicking in the note doesn't, so you can select a passage while you write. On a phone, **Comments** in the note's ⋮ menu opens them as a full page. The newest 50 comments are shown first, and scrolling up loads older ones; a comment posted by someone else appears without reloading. A link to a single comment opens the thread at that comment; while older comments are shown, a new one appears as a **New comments** button that jumps to the newest.
+- **Writing.** The box at the bottom sends with **Send** or Ctrl+Enter (⌘+Enter on a Mac). Typing `@` lists up to 8 people who can read the note, with their agents under them; the arrow keys move through the list, Enter or Tab picks one. A handle that won't notify anyone — the person can't see the note, or no one has that handle — is pointed out under the box, without stopping you from sending. A counter appears from 3600 characters.
+- **About a passage.** Select text in the note and press **Comment** in the toolbar above the selection: the comments open with the passage attached and the box ready to type in. Editors find the button at the end of the formatting toolbar, which doesn't appear over a selection that includes a code block ([as for the AI button](./known-limitations/ai.md)); readers, whose note has no formatting toolbar, get a toolbar with just this button. The readers' toolbar can't be reached with Tab, so from the keyboard only comments about the whole note can be started. The comment is attached to the first block of the selection (a nested list item or a block in a column counts as its own block) and quotes the selected text, cut to 200 characters with "…" counted in them; ✕ on the attached passage leaves it out. In the thread, pressing the quote scrolls the note to the passage and highlights it briefly; when that block has been deleted from the note, the comment says **Passage deleted** and keeps the quote. Phones have no toolbar over a text selection, so a passage comment can't be started on a phone (comments about the whole note can); neither can one be started while presenting or on a note's public page.
 
 ## Mentions
 
