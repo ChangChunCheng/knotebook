@@ -6,6 +6,7 @@ import {
   commentListsKey,
   commentUnreadKey,
   listHasComment,
+  sessionUserId,
   markCommentsRead,
   type CommentChangeOp,
 } from "@/api/comments";
@@ -163,7 +164,7 @@ export function useCommentsController({
   const markRead = useCallback(() => {
     if (noteId === null) return;
     void markCommentsRead(noteId).then(
-      () => queryClient.setQueryData(commentUnreadKey(noteId), { count: 0 }),
+      () => queryClient.setQueryData(commentUnreadKey(noteId, sessionUserId(queryClient)), { count: 0 }),
       () => {},
     );
   }, [noteId, queryClient]);
@@ -186,16 +187,16 @@ export function useCommentsController({
         if (msg.op !== "created" || !isOpenRef.current) return;
         markReadSoon();
         const around = targetRef.current;
-        if (around !== null && queryClient.getQueryData(commentListKey(noteId, around)) !== undefined && !listHasComment(queryClient, noteId, around, msg.commentId)) {
+        if (around !== null && queryClient.getQueryData(commentListKey(noteId, sessionUserId(queryClient), around)) !== undefined && !listHasComment(queryClient, noteId, around, msg.commentId)) {
           setNewCommentsPending(true);
         }
       });
     };
     // Messages sent while disconnected are lost; every (re)sync reloads what is shown.
     const onSynced = () => {
-      void queryClient.invalidateQueries({ queryKey: commentListsKey(noteId) });
+      void queryClient.invalidateQueries({ queryKey: commentListsKey(noteId, sessionUserId(queryClient)) });
       if (isOpenRef.current) markRead();
-      else void queryClient.invalidateQueries({ queryKey: commentUnreadKey(noteId) });
+      else void queryClient.invalidateQueries({ queryKey: commentUnreadKey(noteId, sessionUserId(queryClient)) });
     };
     provider.on("stateless", onStateless);
     provider.on("synced", onSynced);

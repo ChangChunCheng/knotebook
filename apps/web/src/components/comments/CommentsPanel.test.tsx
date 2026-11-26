@@ -156,6 +156,17 @@ describe("CommentsPanel", () => {
     expect(anchor.requestAnchor).not.toHaveBeenCalled();
   });
 
+  it("before the document has any block (not synced yet) a quote stays clickable instead of showing Passage deleted", async () => {
+    const doc = new Y.Doc();
+    stubCommentFetch({ [READ]: json(null, 204), [NEWEST_URL]: json({ comments: [comment(1, { anchor: { blockId: "b1", quote: "q" } })], olderCursor: null, newerCursor: null }) });
+    const { anchor } = renderPanel({ doc });
+    const quote = await screen.findByTestId("comment-quote");
+    expect(quote.tagName).toBe("BUTTON");
+    expect(quote).not.toHaveAttribute("data-passage-deleted");
+    fireEvent.click(quote);
+    expect(anchor.requestAnchor).toHaveBeenCalledWith("b1");
+  });
+
   it("the passage state follows the live document", async () => {
     const doc = docWithBlocks("b1");
     stubCommentFetch({ [READ]: json(null, 204), [NEWEST_URL]: json({ comments: [comment(1, { anchor: { blockId: "b2", quote: "q" } })], olderCursor: null, newerCursor: null }) });
@@ -408,6 +419,47 @@ describe("CommentsPanel", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(within(rows()[0]!).getByTestId("comment-reply-deleted")).toBeInTheDocument();
+  });
+
+  it("after a confirmed delete focus goes to the next comment's first action, the previous one's for the last, the composer when none is left", async () => {
+    stubCommentFetch({
+      [READ]: json(null, 204),
+      [NEWEST_URL]: json({ comments: [comment(1, { canDelete: true }), comment(2, { canDelete: true }), comment(3, { canDelete: true })], olderCursor: null, newerCursor: null }),
+      [`DELETE /api/comments/${cid(1)}`]: json(null, 204),
+      [`DELETE /api/comments/${cid(3)}`]: json(null, 204),
+      [`DELETE /api/comments/${cid(2)}`]: json(null, 204),
+    });
+    renderPanel();
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    const del = async (row: HTMLElement) => {
+      fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+      const dialog = await screen.findByRole("dialog", { name: "Delete this comment?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    };
+    await del(rows()[0]!);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    await waitFor(() => expect(document.activeElement).toBe(within(rows()[0]!).getByRole("button", { name: "Reply" })));
+    await del(rows()[1]!);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await waitFor(() => expect(document.activeElement).toBe(within(rows()[0]!).getByRole("button", { name: "Reply" })));
+    await del(rows()[0]!);
+    await waitFor(() => expect(screen.queryAllByTestId("comment")).toHaveLength(0));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Comment" })));
+  });
+
+  it("closing with ✕ gives the focus to the bubble when one is there", async () => {
+    stubCommentFetch({ [READ]: json(null, 204), [NEWEST_URL]: json(page([])) });
+    renderPanel();
+    await screen.findByText("No comments yet.");
+    const bubble = document.createElement("button");
+    bubble.setAttribute("data-testid", "comments-bubble");
+    document.body.appendChild(bubble);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Close comments" }));
+      await waitFor(() => expect(document.activeElement).toBe(bubble));
+    } finally {
+      bubble.remove();
+    }
   });
 
   it("live edited and deleted update the loaded comments in place", async () => {

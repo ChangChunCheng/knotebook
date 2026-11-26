@@ -76,9 +76,9 @@ describe("comments context", () => {
   it("opening marks the note read and sets the unread count to 0", async () => {
     const calls = stubCommentFetch({ [READ]: json(null, 204) });
     const { result, queryClient } = setup();
-    queryClient.setQueryData(commentUnreadKey(COMMENT_NOTE), { count: 4 });
+    queryClient.setQueryData(commentUnreadKey(COMMENT_NOTE, null), { count: 4 });
     act(() => result.current.open());
-    await waitFor(() => expect(queryClient.getQueryData(commentUnreadKey(COMMENT_NOTE))).toEqual({ count: 0 }));
+    await waitFor(() => expect(queryClient.getQueryData(commentUnreadKey(COMMENT_NOTE, null))).toEqual({ count: 0 }));
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
 
@@ -91,11 +91,11 @@ describe("comments context", () => {
     });
     const { queryClient, live } = setup();
     const reply = comment(4, { replyToId: cid(1), replyTo: { id: cid(1), authorHandle: "bob", excerpt: "comment 1" } });
-    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null), {
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, null), {
       pages: [{ comments: [comment(1), comment(2), reply], olderCursor: null, newerCursor: null }],
       pageParams: [{ kind: "newest" }],
     });
-    const list = () => queryClient.getQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null));
+    const list = () => queryClient.getQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, null));
 
     act(() => live.stateless("created", cid(3)));
     await waitFor(() => expect(ids(list())).toEqual([cid(1), cid(2), cid(3), cid(4)]));
@@ -132,13 +132,13 @@ describe("comments context", () => {
     });
     const { result, queryClient, live } = setup();
     act(() => result.current.open({ commentId: cid(5) }));
-    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, cid(5)), {
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, cid(5)), {
       pages: [page([4, 5, 6], "older", "newer")],
       pageParams: [{ kind: "around", commentId: cid(5) }],
     });
     act(() => live.stateless("created", cid(60)));
     await waitFor(() => expect(result.current.newCommentsPending).toBe(true));
-    expect(ids(queryClient.getQueryData<CommentPages>(commentListKey(COMMENT_NOTE, cid(5))))).toEqual([cid(4), cid(5), cid(6)]);
+    expect(ids(queryClient.getQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, cid(5))))).toEqual([cid(4), cid(5), cid(6)]);
     act(() => result.current.showNewest());
     expect(result.current.target).toBeNull();
     expect(result.current.newCommentsPending).toBe(false);
@@ -151,10 +151,10 @@ describe("comments context", () => {
       [`/api/notes/${COMMENT_NOTE}/comments/unread-count`]: () => json({ count: unread }),
     });
     const { result, queryClient, live } = setup();
-    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null), { pages: [page([1])], pageParams: [{ kind: "newest" }] });
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, null), { pages: [page([1])], pageParams: [{ kind: "newest" }] });
     act(() => live.emit("synced"));
-    expect(queryClient.getQueryState(commentListKey(COMMENT_NOTE, null))?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(commentUnreadKey(COMMENT_NOTE))).toBeUndefined();
+    expect(queryClient.getQueryState(commentListKey(COMMENT_NOTE, null, null))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(commentUnreadKey(COMMENT_NOTE, null))).toBeUndefined();
     act(() => result.current.open());
     await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
     unread = 0;
@@ -169,7 +169,7 @@ describe("comments context", () => {
       [`/api/notes/${COMMENT_NOTE}/comments/unread-count`]: json({ count: 1 }),
     });
     const { result, queryClient, live } = setup();
-    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null), { pages: [page([1])], pageParams: [{ kind: "newest" }] });
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, null), { pages: [page([1])], pageParams: [{ kind: "newest" }] });
     act(() => result.current.open());
     await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
     act(() => live.stateless("created", cid(2)));

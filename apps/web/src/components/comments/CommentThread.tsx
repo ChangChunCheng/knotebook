@@ -60,6 +60,8 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
   }, []);
   const newComposerRef = useRef<HTMLDivElement>(null);
   const editedIdRef = useRef<string | null>(null);
+  // Set while a delete is confirmed: the comment to focus afterwards (null = the composer). Undefined = leave focus to the dialog.
+  const afterDeleteFocusRef = useRef<string | null | undefined>(undefined);
 
   // An edit ending drops focus with its composer: give it back to the edited comment's Edit button, or to the composer when a reply is waiting.
   useEffect(() => {
@@ -175,6 +177,8 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
   const confirmDelete = () => {
     const victim = deleting;
     if (victim === null) return;
+    const at = rows.findIndex((c) => c.id === victim.id);
+    afterDeleteFocusRef.current = (rows[at + 1] ?? rows[at - 1])?.id ?? null;
     remove.mutate(victim.id, {
       onSuccess: () => {
         setDeleting(null);
@@ -182,6 +186,7 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
         if (replyTo?.id === victim.id) setReplyTo(null);
       },
       onError: (err) => {
+        afterDeleteFocusRef.current = undefined;
         setDeleting(null);
         toast({
           title: err instanceof ApiFail ? t(`errors.${err.code}`, { defaultValue: t("errors.fallback") }) : t("errors.fallback"),
@@ -258,7 +263,17 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
         <CommentComposer key={editing.id} noteId={id} draftAnchor={null} onClearAnchor={clearDraftAnchor} replyTo={null} editing={editing} onDone={() => setEditing(null)} onDirtyChange={onEditDirty} />
       )}
       <Dialog open={deleting !== null} onOpenChange={(next) => !next && !remove.isPending && setDeleting(null)}>
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            const next = afterDeleteFocusRef.current;
+            afterDeleteFocusRef.current = undefined;
+            if (next === undefined) return;
+            // The Delete button went away with its comment.
+            event.preventDefault();
+            const target = next === null ? null : findComment(scrollRef.current, next)?.querySelector<HTMLElement>("[role='group'] button");
+            (target ?? newComposerRef.current?.querySelector<HTMLElement>("textarea"))?.focus({ preventScroll: true });
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{t("comments.deleteTitle")}</DialogTitle>
             <DialogDescription>{t("comments.deleteBody")}</DialogDescription>

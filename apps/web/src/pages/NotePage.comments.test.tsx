@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import * as Y from "yjs";
 import type { NoteDto, UserDto } from "@knotebook/shared";
 import i18n from "@/i18n";
@@ -111,8 +111,13 @@ function stubFetch(note: NoteDto) {
   );
 }
 
+// The mocked collab state is read on render: a navigation re-renders the page.
+const nav: { go: (to: string) => void } = { go: () => {} };
+
 function SearchProbe() {
   const location = useLocation();
+  const navigate = useNavigate();
+  nav.go = (to) => navigate(to);
   return <span data-testid="search">{location.search}</span>;
 }
 
@@ -190,6 +195,24 @@ describe("NotePage comments", () => {
     fireEvent.click(within(sheet).getByRole("button", { name: "Back" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Comments" })).toBeNull());
     expect(panels().commentsMode).toBeNull();
+  });
+
+  it.each([
+    ["connected without access", { phase: "connected", role: "none" } as CollabState],
+    ["kicked", { phase: "kicked" } as CollabState],
+  ])("losing access (%s) closes the open comments and removes their text", async (_name, lost) => {
+    stubLayoutTier("phone");
+    stubFetch(ownerNote);
+    renderPage();
+    await screen.findByTestId("panels");
+    pressTrigger(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Comments" }));
+    const sheet = await screen.findByRole("dialog", { name: "Comments" });
+    expect(await within(sheet).findByText("hello from bob")).toBeInTheDocument();
+    collab.state = lost;
+    act(() => nav.go("/notes/my-note?x=1"));
+    await waitFor(() => expect(screen.queryByText("hello from bob")).toBeNull());
+    expect(screen.queryByRole("dialog", { name: "Comments" })).toBeNull();
   });
 
   it("?comment=<id> opens the comments at that comment and drops the parameter; other search parameters stay", async () => {

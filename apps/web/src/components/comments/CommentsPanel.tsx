@@ -19,7 +19,12 @@ import { CommentThread } from "./CommentThread";
 
 export function CommentsPanel({ doc, width, onWidthChange }: { doc: Y.Doc; width: number; onWidthChange: (px: number, commit: boolean) => void }) {
   const { t } = useTranslation();
-  const { close, noteId } = useComments();
+  const { close: closeComments, noteId } = useComments();
+  // As with Esc, the bubble is back once the panel is closed and takes the focus the ✕ had.
+  const close = () => {
+    closeComments();
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="comments-bubble"]')?.focus({ preventScroll: true }));
+  };
   const asideRef = useRef<HTMLElement>(null);
   const [renderedWidth, setRenderedWidth] = useState(0);
   useEffect(() => {
