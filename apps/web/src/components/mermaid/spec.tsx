@@ -1,7 +1,8 @@
-import type { JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { createReactBlockSpec, type ReactCustomBlockRenderProps } from "@blocknote/react";
 import { MERMAID_LANGUAGE, mermaidBlockConfig } from "@knotebook/shared";
 import { useTheme } from "@/theme";
+import { consumeMermaidEdit, peekMermaidEdit } from "./auto-edit";
 import { MermaidView } from "./MermaidView";
 
 // These live in `@knotebook/shared` (`note-schema-config.ts`) so the server's headless schema shares them. They are
@@ -49,10 +50,20 @@ export function commitCode(editor: MermaidRenderProps["editor"], block: MermaidR
 /** `useTheme()` is read here because BlockNote calls render, leaving no way to pass props; `ThemeProvider` is at the app root. */
 function MermaidBlock({ block, editor }: MermaidRenderProps): JSX.Element {
   const { resolvedTheme } = useTheme();
+  const [initiallyEditing] = useState(() => peekMermaidEdit(block.id));
+  useEffect(() => consumeMermaidEdit(block.id), [block.id]);
+  // Only the editor that opened by itself hands focus back: the textarea took it from the note, and Esc would otherwise leave it on the page body.
+  const returnFocus = useRef(initiallyEditing);
   return (
     <MermaidView
       code={block.props.code}
       editable={editor.isEditable}
+      initiallyEditing={initiallyEditing}
+      onClose={(viaEscape) => {
+        const handBack = returnFocus.current && viaEscape;
+        returnFocus.current = false;
+        if (handBack) editor.focus();
+      }}
       theme={resolvedTheme}
       onChange={(code) => commitCode(editor, block, code)}
     />
