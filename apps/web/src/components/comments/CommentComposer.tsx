@@ -61,6 +61,10 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
   useEffect(() => {
     if (replyTo !== null || editing !== null) box?.focus();
   }, [replyTo, editing, box]);
+  // A passage picked in the note leaves focus in the editor or its toolbar, and the next thing the person does is type the comment.
+  useEffect(() => {
+    if (draftAnchor !== null && editing === null) box?.focus({ preventScroll: true });
+  }, [draftAnchor, editing, box]);
   const post = usePostComment(noteId);
   const edit = useEditComment();
   const pending = post.isPending || edit.isPending;

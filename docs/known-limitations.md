@@ -365,6 +365,7 @@ Each section below names one page and lists the bold headings of its entries; fo
 - [How the phone layout behaves with an on-screen keyboard, a notch or a home indicator, and the slide-in when a note opens hasn't been checked on a real phone.](./known-limitations/phone.md)
 - [With a selection that crosses two side-by-side columns, the block type button changes only the first column's blocks.](./known-limitations/phone.md)
 - [While the dialog for adding or editing a link is open, a collaborator typing before the link shifts where it lands.](./known-limitations/phone.md)
+- [A comment about a passage can't be started on a phone.](./known-limitations/phone.md)
 
 ## Keyboard shortcuts
 

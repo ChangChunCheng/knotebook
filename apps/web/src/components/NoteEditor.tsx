@@ -64,6 +64,7 @@ import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
 import { CornerStack, useCornerStackBubbles } from "@/components/CornerStack";
 import { CommentsLazyBoundary } from "@/components/comments/CommentsLazyBoundary";
+import { ViewerCommentToolbar } from "@/components/comments/ViewerCommentToolbar";
 import { useComments } from "@/lib/comments-context";
 import { useVersions } from "@/lib/versions-context";
 import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
@@ -715,6 +716,7 @@ export function NoteEditor({
                 >
                   {/* sole owner of the formatting toolbar controller and AI box; NoteEditorView never touches AI context */}
                   <SelectionAiController />
+                  {!editable && <ViewerCommentToolbar />}
                 </NoteEditorView>
                 </KnowledgeControllerContext.Provider>
                 <HeadingAnchorButtons container={columnEl} />

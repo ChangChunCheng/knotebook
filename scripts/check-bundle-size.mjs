@@ -40,6 +40,8 @@ export const SHORTCUTS_I18N_MARKER = 'columnBackspace';
 export const HELP_I18N_MARKER = 'whatsNew';
 // mobile-toolbar.*.json key: the string pack must stay in the NotePage chain.
 export const MOBILE_TOOLBAR_I18N_MARKER = 'hideKeyboard';
+// comment-toolbar.*.json top-level key: the selection toolbars' string pack must stay in the NotePage chain.
+export const COMMENT_TOOLBAR_I18N_MARKER = 'commentToolbar';
 // Presence only catches the whole group merging back or a rename; TOUR_I18N_MARKER catches a static import of a single tour module or the string pack.
 export const TOURLAZY_RE = /^TourLazy-[A-Za-z0-9_-]+\.js$/;
 // Chosen over keys like next/back, which already appear in entry.
@@ -313,6 +315,12 @@ export function checkBundleSize(assetsDir, { maxEntryBytes = MAX_ENTRY_BYTES } =
     throw new Error(
       `entry chunk ${entryName} 含手機編輯工具列字串包的鍵名 ${MOBILE_TOOLBAR_I18N_MARKER}——\`@/i18n/mobile-toolbar-strings\`（或 import 它的工具列模組）` +
         `被首包靜態 import；手機編輯工具列只能放在 NotePage chunk`
+    );
+  }
+  if (entrySource.includes(COMMENT_TOOLBAR_I18N_MARKER)) {
+    throw new Error(
+      `entry chunk ${entryName} 含選取工具列留言按鈕字串包的鍵名 ${COMMENT_TOOLBAR_I18N_MARKER}——\`@/i18n/comment-toolbar-strings\`（或 import 它的工具列模組）` +
+        `被首包靜態 import；選取工具列只能放在 NotePage chunk`
     );
   }
 

@@ -3,10 +3,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import i18n from "@/i18n";
 import "@/i18n/comments-strings";
+import "@/i18n/comment-toolbar-strings";
 import enRaw from "./en.json?raw";
 import zhTWRaw from "./zh-TW.json?raw";
 import commentsEn from "./comments.en.json";
 import commentsZhTW from "./comments.zh-TW.json";
+import toolbarEn from "./comment-toolbar.en.json";
+import toolbarZhTW from "./comment-toolbar.zh-TW.json";
 
 // The comments panel's strings live in a lazy bundle; only `note.menu.comments` (⋮ item and bubble name) is in the main files.
 
@@ -53,8 +56,39 @@ describe("comments lazy bundle", () => {
       const src = readFileSync(join(dir, name), "utf8");
       if (lazyKey.test(src)) expect(src, name).toMatch(/import\s+["']@\/i18n\/comments-strings["']/);
     }
-    for (const path of ["src/components/comments/CommentsLazyBoundary.tsx", "src/components/CornerStack.tsx", "src/components/NoteMenu.tsx", "src/components/NoteEditor.tsx", "src/pages/NotePage.tsx", "src/lib/comments-context.tsx"]) {
+    for (const path of [
+      "src/components/comments/CommentsLazyBoundary.tsx",
+      "src/components/comments/PassageCommentButton.tsx",
+      "src/components/comments/ViewerCommentToolbar.tsx",
+      "src/components/comments/passage.ts",
+      "src/components/ai/AiToolbar.tsx",
+      "src/components/CornerStack.tsx",
+      "src/components/NoteMenu.tsx",
+      "src/components/NoteEditor.tsx",
+      "src/pages/NotePage.tsx",
+      "src/lib/comments-context.tsx",
+    ]) {
       expect(readFileSync(join(process.cwd(), path), "utf8"), path).not.toMatch(/comments-strings/);
     }
+  });
+});
+
+// The selection toolbars' Comment button sits outside the lazy chunk, so its one string has its own small pack.
+describe("comment toolbar pack", () => {
+  it("has the same keys in both locales, under commentToolbar only, and overlaps neither the main files nor the comments pack", () => {
+    expect(Object.keys(toolbarEn)).toEqual(["commentToolbar"]);
+    expect(flattenKeys(toolbarZhTW).sort()).toEqual(flattenKeys(toolbarEn).sort());
+    for (const raw of [enRaw, zhTWRaw]) expect((JSON.parse(raw) as { commentToolbar?: unknown }).commentToolbar).toBeUndefined();
+    expect((commentsEn as { commentToolbar?: unknown }).commentToolbar).toBeUndefined();
+  });
+
+  it("resolves after registration, in Taiwan usage for zh-TW", () => {
+    expect(i18n.t("commentToolbar.comment", { lng: "en" })).toBe("Comment");
+    expect(i18n.t("commentToolbar.comment", { lng: "zh-TW" })).toBe("留言");
+  });
+
+  it("is imported by the module that renders it", () => {
+    const src = readFileSync(join(process.cwd(), "src/components/comments/PassageCommentButton.tsx"), "utf8");
+    expect(src).toMatch(/import\s+["']@\/i18n\/comment-toolbar-strings["']/);
   });
 });
