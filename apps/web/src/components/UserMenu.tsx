@@ -100,7 +100,7 @@ export function UserMenu({ variant = "row", bell }: { variant?: "row" | "avatar"
               size={24}
               className="bg-primary text-primary-foreground"
             />
-            <span aria-hidden="true" className={cn("min-w-0 flex-1 truncate", bell !== undefined && "mr-8")}>
+            <span aria-hidden="true" className={cn("min-w-0 flex-1 truncate", bell !== undefined && "mr-10")}>
               {user.displayName}
             </span>
             <Settings aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -218,8 +218,8 @@ export function UserMenu({ variant = "row", bell }: { variant?: "row" | "avatar"
   return (
     <div className="relative">
       {menu}
-      {/* 6 px trigger padding + 16 px gear + 4 px gap */}
-      <div className="absolute right-[26px] top-1/2 -translate-y-1/2">{bell}</div>
+      {/* right edge = 6 px trigger padding + 16 px gear + 12 px gap = 34 px; the 8 px coarse-pointer hit extension stays 4 px clear of the gear. The name's mr-10 (40 px) + 8 px flex gap + 16 px gear + 6 px padding reserves 70 px = bell's 28 px box + 34 px, plus 8 px before the bell. */}
+      <div className="absolute right-[34px] top-1/2 -translate-y-1/2">{bell}</div>
     </div>
   );
 }
