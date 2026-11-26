@@ -11,7 +11,7 @@
  */
 import { and, eq, isNull } from "drizzle-orm";
 import type { Tx } from "../../db/tx.js";
-import { groupMembers, groupRoles, groups, noteCommentReads, noteComments, noteShares, notes, uploads } from "../../db/schema.js";
+import { groupMembers, groupRoles, groups, noteCommentReads, noteComments, noteShares, notes, notifications, uploads } from "../../db/schema.js";
 import { FOLDER_NOT_FOUND_MESSAGE, NOTE_FOLDER_ROLE_FORBIDDEN_MESSAGE } from "../../folders/messages.js";
 import { lockFolderInTx } from "../../folders/tx/lock.js";
 import type { GroupTestHook } from "../../groups/test-hook.js";
@@ -38,7 +38,7 @@ export interface MoveNoteInput {
   keepHistory?: boolean;
 }
 
-export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: GroupTestHook): Promise<{ removedShareUserIds: string[] }> {
+export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: GroupTestHook): Promise<{ removedShareUserIds: string[]; clearedNotificationUserIds: string[] }> {
   const [row] = await tx
     .select({ ownerId: notes.ownerId, slug: notes.slug })
     .from(notes)
@@ -91,12 +91,15 @@ export async function moveNoteToGroupInTx(tx: Tx, input: MoveNoteInput, hook?: G
 
   await recordRedirectsInTx(tx, [userNotePath(input.userHandle, row.slug)], input.noteId);
   // Unless the mover chose to keep them, versions and editors from the personal period must not be exposed to group editors.
+  let clearedNotificationUserIds: string[] = [];
   if (input.keepHistory === true) await clearPendingVersionStateInTx(tx, input.noteId);
   else {
     await resetNoteVersionsInTx(tx, { noteId: input.noteId });
     // Comments follow the same choice (mentions, notified rows and notifications cascade). A post that raced the move committed before the note lock was granted, so it is deleted too.
+    // The cascade below does not report which rows it removed, so the owners are read first.
+    clearedNotificationUserIds = (await tx.selectDistinct({ userId: notifications.userId }).from(notifications).where(eq(notifications.noteId, input.noteId))).map(r => r.userId);
     await tx.delete(noteComments).where(eq(noteComments.noteId, input.noteId));
     await tx.delete(noteCommentReads).where(eq(noteCommentReads.noteId, input.noteId));
   }
-  return { removedShareUserIds: removed.map(r => r.userId) };
+  return { removedShareUserIds: removed.map(r => r.userId), clearedNotificationUserIds };
 }

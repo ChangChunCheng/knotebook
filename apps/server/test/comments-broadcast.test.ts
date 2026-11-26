@@ -3,7 +3,9 @@ import type { TestClient } from "./helpers.js";
 import { broadcastCommentChange } from "../src/comments/broadcast.js";
 import type { GroupTestHook } from "../src/groups/test-hook.js";
 import { buildCollabTestApp } from "./helpers.js";
-import { sleep } from "./group-helpers.js";
+import { seedTokenForUser } from "./editing-helpers.js";
+import { seedGroup, sleep } from "./group-helpers.js";
+import { mcpPost, rpc } from "./mcp-helpers.js";
 
 const PASSWORD = "correct-horse-battery";
 
@@ -38,7 +40,7 @@ async function setup(opts: { groupTestHook?: GroupTestHook } = {}) {
   const bobSession = await ctx.loginAs("bob@example.com", PASSWORD);
   const send = (method: string, path: string, body?: unknown) =>
     aliceSession.fetch(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  return { ctx, note, aliceSession, bobSession, send };
+  return { ctx, alice, note, aliceSession, bobSession, send };
 }
 
 describe("comment live signal", () => {
@@ -125,5 +127,43 @@ describe("comment live signal", () => {
     expect((await bobSession.fetch(`/api/comments/${made.id}`, { method: "DELETE" })).status).toBe(403);
     await sleep(300);
     expect(watcher).toHaveLength(1);
+  });
+});
+
+describe("comment live signal on a move into a group", () => {
+  it("also fires for a move over MCP", async () => {
+    const { ctx, alice, note, aliceSession } = await setup();
+    const group = await seedGroup(ctx.db, "Garden", [{ userId: alice.id, role: "admin" }]);
+    await aliceSession.fetch(`/api/notes/${note.id}/comments`, { method: "POST", body: JSON.stringify({ body: "before the move" }) });
+    const seen = recordMessages(await aliceSession.connect(note.id));
+    await sleep(100);
+    seen.length = 0;
+
+    const { token } = await seedTokenForUser(ctx.db, alice.id, "notes:read notes:write notes:move");
+    const res = await mcpPost(ctx.app, rpc("tools/call", { name: "move_note_to_group", arguments: { note_id: note.id, group_id: group.id } }), { token });
+    expect(res.statusCode, res.body).toBe(200);
+    await until(() => seen.length === 1, "cleared");
+    expect(seen[0]).toEqual({ type: "comment", op: "cleared", commentId: "" });
+  });
+
+  it("tells open tabs the thread is gone when the move clears history, and stays silent when it keeps it", async () => {
+    for (const keepHistory of [false, true]) {
+      const { ctx, alice, note, aliceSession } = await setup();
+      const group = await seedGroup(ctx.db, "Garden", [{ userId: alice.id, role: "admin" }]);
+      await aliceSession.fetch(`/api/notes/${note.id}/comments`, { method: "POST", body: JSON.stringify({ body: "before the move" }) });
+      const seen = recordMessages(await aliceSession.connect(note.id));
+      await sleep(100);
+      seen.length = 0;
+
+      const moved = await aliceSession.fetch(`/api/notes/${note.id}/move`, { method: "POST", body: JSON.stringify({ groupId: group.id, keepHistory }) });
+      expect(moved.status).toBe(200);
+      if (keepHistory) {
+        await sleep(400);
+        expect(seen).toEqual([]);
+      } else {
+        await until(() => seen.length === 1, "cleared");
+        expect(seen[0]).toEqual({ type: "comment", op: "cleared", commentId: "" });
+      }
+    }
   });
 });

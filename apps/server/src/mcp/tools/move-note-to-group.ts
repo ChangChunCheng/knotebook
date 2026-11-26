@@ -76,7 +76,7 @@ export async function moveNoteToGroupTool(args: MoveNoteToGroupArgs, ctx: McpToo
   const denied = requireMoveScope(ctx, MOVE_NEEDS_MOVE_MESSAGE);
   if (denied !== null) return denied;
   const out = await moveNoteToGroup(
-    { db: ctx.db, collabHooks: ctx.collabHooks, versions: ctx.versions, storageLockTimeoutMs: ctx.storageLockTimeoutMs, groupTestHook: ctx.groupTestHook },
+    { db: ctx.db, collabHooks: ctx.collabHooks, collab: ctx.collab, notifications: ctx.notifications, versions: ctx.versions, storageLockTimeoutMs: ctx.storageLockTimeoutMs, groupTestHook: ctx.groupTestHook },
     {
       noteId: args.note_id,
       userId: ctx.userId,

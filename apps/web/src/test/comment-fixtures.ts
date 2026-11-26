@@ -73,7 +73,7 @@ export function createLiveSource() {
     emit(event: string, arg?: unknown) {
       listeners.get(event)?.forEach((fn) => fn(arg as never));
     },
-    stateless(op: "created" | "edited" | "deleted", commentId: string) {
+    stateless(op: "created" | "edited" | "deleted" | "cleared", commentId: string) {
       this.emit("stateless", { payload: JSON.stringify({ type: "comment", op, commentId }) });
     },
     count(event: string) {

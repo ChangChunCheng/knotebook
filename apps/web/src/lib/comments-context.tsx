@@ -84,7 +84,7 @@ export interface CommentsLiveSource {
   off(event: "synced", fn: () => void): unknown;
 }
 
-const OPS: readonly CommentChangeOp[] = ["created", "edited", "deleted"];
+const OPS: readonly CommentChangeOp[] = ["created", "edited", "deleted", "cleared"];
 
 export function parseCommentMessage(payload: string): { op: CommentChangeOp; commentId: string } | null {
   let msg: unknown;

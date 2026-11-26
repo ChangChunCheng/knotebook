@@ -122,6 +122,7 @@ describe("comments context", () => {
     expect(calls.some((c) => c.url.startsWith("/api/comments/"))).toBe(false);
     expect(parseCommentMessage(JSON.stringify({ type: "comment", op: "renamed", commentId: "x" }))).toBeNull();
     expect(parseCommentMessage(JSON.stringify({ type: "comment", op: "deleted", commentId: "x" }))).toEqual({ op: "deleted", commentId: "x" });
+    expect(parseCommentMessage(JSON.stringify({ type: "comment", op: "cleared", commentId: "" }))).toEqual({ op: "cleared", commentId: "" });
   });
 
   it("live: while opened at a comment whose window doesn't reach the newest, a created comment only raises newCommentsPending; showNewest() clears target and flag", async () => {
@@ -160,6 +161,19 @@ describe("comments context", () => {
     unread = 0;
     act(() => live.emit("synced"));
     await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+  });
+
+  it("cleared: invalidates every loaded list and the unread count without fetching a comment", async () => {
+    const calls = stubCommentFetch({});
+    const { queryClient, live } = setup();
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, null), { pages: [page([1])], pageParams: [{ kind: "newest" }] });
+    queryClient.setQueryData<CommentPages>(commentListKey(COMMENT_NOTE, null, cid(1)), { pages: [page([1])], pageParams: [{ kind: "around", commentId: cid(1) }] });
+    queryClient.setQueryData(commentUnreadKey(COMMENT_NOTE, null), { count: 4 });
+    act(() => live.stateless("cleared", ""));
+    expect(queryClient.getQueryState(commentListKey(COMMENT_NOTE, null, null))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(commentListKey(COMMENT_NOTE, null, cid(1)))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(commentUnreadKey(COMMENT_NOTE, null))?.isInvalidated).toBe(true);
+    expect(calls.some((c) => c.url.startsWith("/api/comments/"))).toBe(false);
   });
 
   it("a created comment while the thread is open marks it read again (debounced)", async () => {
