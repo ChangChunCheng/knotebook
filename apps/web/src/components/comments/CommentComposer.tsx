@@ -7,7 +7,7 @@ import { useEditComment, useMentionCandidates, usePostComment, useUnmatchedHandl
 import { Button } from "@/components/ui/button";
 import { X } from "@/components/ui/icons";
 import { toast } from "@/components/ui/toast";
-import type { CommentDraftAnchor } from "@/lib/comments-context";
+import type { CommentDraftAnchor, SentCommentDraft } from "@/lib/comments-context";
 import { cn } from "@/lib/utils";
 import { authorName } from "./comment-format";
 import { MentionList, buildMentionOptions, mentionOptionId, type MentionOption } from "./MentionList";
@@ -35,6 +35,13 @@ export interface CommentComposerProps {
   onDone: (saved: CommentDto | null) => void;
   /** Whether an edit has unsaved changes; false again when the composer goes away. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** A new comment's text to start from, and every change to it, so an unsent comment outlives the composer. */
+  initialText?: string;
+  onTextChange?: (text: string) => void;
+  /** After a new comment is posted, also when the composer is gone by then. */
+  onSent?: (sent: SentCommentDraft) => void;
+  /** Whether the passage takes focus; without it, it always does. */
+  takeAnchorFocus?: () => boolean;
 }
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -47,10 +54,13 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** Remount it (`key`) when `editing` changes: the text starts from the edited comment's body. */
-export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone, onDirtyChange }: CommentComposerProps) {
+export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, editing, onDone, onDirtyChange, initialText, onTextChange, onSent, takeAnchorFocus }: CommentComposerProps) {
   const { t } = useTranslation();
   const listId = useId();
-  const [text, setText] = useState(editing?.body ?? "");
+  const [text, setText] = useState(editing?.body ?? initialText ?? "");
+  useEffect(() => {
+    onTextChange?.(text);
+  }, [text, onTextChange]);
   const [caret, setCaret] = useState<number | null>(null);
   const [active, setActive] = useState(0);
   // Esc hides the list for the token it was pressed on; blur hides it until the next focus or edit.
@@ -58,13 +68,30 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
   const [blurred, setBlurred] = useState(false);
   const [box, setBox] = useState<HTMLTextAreaElement | null>(null);
   const pendingCaretRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
   useEffect(() => {
-    if (replyTo !== null || editing !== null) box?.focus();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const anchorRef = useRef(draftAnchor);
+  anchorRef.current = draftAnchor;
+  // A reply restored with the draft (the thread remounted on a note switch) leaves focus where the person is.
+  const restoredReplyRef = useRef<CommentDto | null | undefined>(replyTo);
+  useEffect(() => {
+    if (editing !== null) {
+      box?.focus();
+      return;
+    }
+    if (replyTo === restoredReplyRef.current) return;
+    restoredReplyRef.current = undefined;
+    if (replyTo !== null) box?.focus();
   }, [replyTo, editing, box]);
   // A passage picked in the note leaves focus in the editor or its toolbar, and the next thing the person does is type the comment.
   useEffect(() => {
-    if (draftAnchor !== null && editing === null) box?.focus({ preventScroll: true });
-  }, [draftAnchor, editing, box]);
+    if (draftAnchor !== null && editing === null && box !== null && (takeAnchorFocus?.() ?? true)) box.focus({ preventScroll: true });
+  }, [draftAnchor, editing, box, takeAnchorFocus]);
   const post = usePostComment(noteId);
   const edit = useEditComment();
   const pending = post.isPending || edit.isPending;
@@ -123,22 +150,26 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
       edit.mutate({ commentId: editing.id, body: text }, { onSuccess: (saved) => onDone(saved), onError: fail });
       return;
     }
-    post.mutate(
-      {
+    const sent = { noteId, text, anchor: draftAnchor };
+    // Not `mutate`'s own callbacks: they are skipped once the composer unmounts, which would leave the sent text as a draft to post again.
+    post
+      .mutateAsync({
         body: text,
         ...(replyTo !== null ? { replyToId: replyTo.id } : {}),
         ...(draftAnchor !== null ? { anchor: { blockId: draftAnchor.blockId, quote: draftAnchor.quote === "" ? null : draftAnchor.quote } } : {}),
-      },
-      {
-        onSuccess: (saved) => {
-          setText("");
+      })
+      .then(
+        (saved) => {
+          onSent?.(sent);
+          if (!mountedRef.current) return;
+          // Text typed while the post was on its way stays.
+          setText((current) => (current === sent.text ? "" : current));
           setCaret(null);
-          onClearAnchor();
+          if (anchorRef.current === sent.anchor) onClearAnchor();
           onDone(saved);
         },
-        onError: fail,
-      },
-    );
+        fail,
+      );
   };
 
   const pick = (option: MentionOption) => {

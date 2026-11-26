@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
+import { focusCornerBubble } from "@/components/corner-stack-state";
 import { useIsOverlay } from "@/lib/layout-tiers";
 import { useComments } from "@/lib/comments-context";
 import { isOverlayOpen, useVersions } from "@/lib/versions-context";
@@ -7,14 +8,15 @@ import { isOverlayOpen, useVersions } from "@/lib/versions-context";
 export const PANEL_SLOT = "[data-versions-panel-slot]";
 // The comments panel's slot in the same place. Pressing outside doesn't close it: selecting a passage in the note is part of writing a comment.
 export const COMMENTS_PANEL_SLOT = "[data-comments-panel-slot]";
-// Panel (with its error frame), the menus and popper it opens (portalled outside the panel), the history bubble: pressing inside these doesn't count as "clicking the note area".
+// Panel (with its error frame), the menus and popper it opens (portalled outside the panel), the corner bubbles: pressing inside these doesn't count as "clicking the note area"
+// (a bubble switches or closes the panel itself, and the toggle never closes it).
 // Dialogs are covered by the "a dialog in document yields" check below.
-const KEEP_OPEN = `${PANEL_SLOT}, [data-testid="versions-bubble"], [role="menu"], [data-radix-popper-content-wrapper]`;
+const KEEP_OPEN = `${PANEL_SLOT}, [data-testid="corner-stack"], [role="menu"], [data-radix-popper-content-wrapper]`;
 
 /**
  * 640–1279 floats the version panel over the note instead of a third column; the fixed segment (>= 1280) never gets these rules.
- * List only (no preview): pressing outside the panel, history bubble and the menus and dialogs they open closes it, like the sidebar drawer. Diff view (preview open): clicking the note area doesn't close; only the panel's ✕ and Esc inside the panel close.
- * Esc in the panel closes it (and the preview); focus goes to the history bubble (not rendered while the panel is open).
+ * List only (no preview): pressing outside the panel, the corner stack and the menus and dialogs they open closes it, like the sidebar drawer. Diff view (preview open): clicking the note area doesn't close; only the panel's ✕ and Esc inside the panel close.
+ * Esc in the panel closes it (and the preview); focus goes to the history bubble, or to the stack's toggle while the stack is collapsed.
  * The panel is non-modal, so a document `pointerdown` (capture) is used, not a backdrop. The returned `onKeyDown` goes on the row container (the panel is under it; React bubbling runs before the window preview-Esc listener).
  */
 export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HTMLElement>) => void } {
@@ -37,7 +39,7 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
   useEffect(() => {
     if (panelOpen || !restoreFocusRef.current) return;
     restoreFocusRef.current = false;
-    document.querySelector<HTMLElement>('[data-testid="versions-bubble"]')?.focus({ preventScroll: true });
+    focusCornerBubble("versions-bubble");
   }, [panelOpen]);
 
   const comments = useComments();
@@ -47,7 +49,7 @@ export function useFloatingPanelDismiss(): { onKeyDown: (event: KeyboardEvent<HT
   useEffect(() => {
     if (commentsOpen || !restoreCommentsFocusRef.current) return;
     restoreCommentsFocusRef.current = false;
-    document.querySelector<HTMLElement>('[data-testid="comments-bubble"]')?.focus({ preventScroll: true });
+    focusCornerBubble("comments-bubble");
   }, [commentsOpen]);
 
   const onKeyDown = useCallback(

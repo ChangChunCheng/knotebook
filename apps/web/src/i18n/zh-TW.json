@@ -181,6 +181,8 @@
     "overSizeLimit": "這篇筆記超過大小上限，編輯可能變慢。刪掉一些內容可以讓它變小。",
     "titlePlaceholder": "無標題",
     "readOnly": "唯讀",
+    "cornerToggle": "筆記面板",
+    "cornerToggleUnread": "筆記面板，有未讀留言",
     "menu": {
       "label": "更多",
       "labelFor": "{{title}} 的筆記選單",

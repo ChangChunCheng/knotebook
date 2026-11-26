@@ -197,6 +197,53 @@ describe("NotePage comments", () => {
     expect(panels().commentsMode).toBeNull();
   });
 
+  it("phone: the switch at the top of the sheet moves between the comments and the version history; focus stays in the open sheet and the unsent comment comes back", async () => {
+    stubLayoutTier("phone");
+    stubFetch(ownerNote);
+    renderPage();
+    await screen.findByTestId("panels");
+    const more = screen.getByRole("button", { name: "More" });
+    pressTrigger(more);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Comments" }));
+    const sheet = await screen.findByRole("dialog", { name: "Comments" });
+    const switcher = within(sheet).getByRole("group", { name: "Note panels" });
+    expect(within(switcher).getByRole("button", { name: "Comments" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(within(sheet).getByRole("textbox", { name: "Comment" }), { target: { value: "half a thought" } });
+    const menuFocus = vi.spyOn(more, "focus");
+
+    fireEvent.click(within(switcher).getByRole("button", { name: "Version history" }));
+    const versionsSheet = await screen.findByRole("dialog", { name: "Version history" });
+    expect(screen.queryByRole("dialog", { name: "Comments" })).toBeNull();
+    expect(panels()).toMatchObject({ commentsMode: null });
+    const back = within(versionsSheet).getByRole("group", { name: "Note panels" });
+    expect(within(back).getByRole("button", { name: "Version history" })).toHaveAttribute("aria-pressed", "true");
+    // The closed sheet hands focus back a task later; it must not pull it out of the open one.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(versionsSheet.contains(document.activeElement)).toBe(true);
+    expect(menuFocus).not.toHaveBeenCalled();
+
+    fireEvent.click(within(back).getByRole("button", { name: "Comments" }));
+    const again = await screen.findByRole("dialog", { name: "Comments" });
+    expect(screen.queryByRole("dialog", { name: "Version history" })).toBeNull();
+    expect(within(again).getByRole("textbox", { name: "Comment" })).toHaveValue("half a thought");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(again.contains(document.activeElement)).toBe(true);
+    expect(menuFocus).not.toHaveBeenCalled();
+  });
+
+  it("phone: a viewer's comments sheet has no switch (no version history)", async () => {
+    stubLayoutTier("phone");
+    collab.state = { phase: "connected", role: "viewer" };
+    stubFetch({ ...ownerNote, role: "viewer", ownerId: "u-bob", ownerHandle: "bob", permissions: VIEWER_PERMS });
+    renderPage();
+    await screen.findByTestId("panels");
+    pressTrigger(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Comments" }));
+    const sheet = await screen.findByRole("dialog", { name: "Comments" });
+    expect(await within(sheet).findByText("hello from bob")).toBeInTheDocument();
+    expect(within(sheet).queryByRole("group", { name: "Note panels" })).toBeNull();
+  });
+
   it.each([
     ["connected without access", { phase: "connected", role: "none" } as CollabState],
     ["kicked", { phase: "kicked" } as CollabState],

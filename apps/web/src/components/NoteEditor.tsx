@@ -63,7 +63,7 @@ import { createUploadFile, type Translate } from "@/uploads/upload-file";
 import { createFilePanel } from "@/components/FilePanel";
 import { AiSessionProvider } from "@/components/ai/AiSession";
 import { createNoteSizeGuard, createNoteSizePasteHandlers, formatNoteLimit } from "@/lib/note-size-guard";
-import { CornerStack, useCornerStackBubbles } from "@/components/CornerStack";
+import { CornerStack, useCornerStackBubbles, useCornerStackRoom } from "@/components/CornerStack";
 import { CommentsLazyBoundary } from "@/components/comments/CommentsLazyBoundary";
 import { ViewerCommentToolbar } from "@/components/comments/ViewerCommentToolbar";
 import { useComments } from "@/lib/comments-context";
@@ -413,7 +413,7 @@ export function NoteEditor({
   const commentsPanelOpen = useComments().panelOpen;
   // Both panels share the right-hand slot, its width setting and its floating rules; at most one is open.
   const panelOpen = versionsPanelOpen || commentsPanelOpen;
-  const cornerBubbles = useCornerStackBubbles().count;
+  const corner = useCornerStackBubbles();
   const panelWidth = useVersionsPanelWidth();
   // floating panel (640-1279: the versions panel floats over the note): top edge leaves room for the header (`floating-panel.ts`)
   const rowRef = useRef<HTMLDivElement>(null);
@@ -554,6 +554,8 @@ export function NoteEditor({
   // Phones have their own entry. Outline is hidden during version preview (it maps only the live document) and when the floating version panel would cover it (768-1279). Layout is measured only when it may appear: a changed measurement re-renders this layer, once per frame while resizing.
   const outlineHeadings = useOutlineHeadings(editor);
   const overlay = useIsOverlay();
+  const cornerRoom = useCornerStackRoom(rowRef, scrollEl, panelOpen && overlay && !phone, corner.bubbles, corner.preferExpanded);
+  const cornerBubbles = useCornerStackBubbles(cornerRoom).count;
   const outlineCompact = useIsOutlineCompact();
   const outlineCanShow = !outlineCompact && !hasPreview && !(panelOpen && overlay) && outlineHeadings.length > 0;
   const outlineBox = useOutlineBox(outlineCanShow ? scrollEl : null, outlineCanShow ? columnEl : null);
@@ -749,7 +751,7 @@ export function NoteEditor({
             </div>
           )}
           {/* history bubble anchor */}
-          <CornerStack scrollRef={scrollRootRef} />
+          <CornerStack scrollRef={scrollRootRef} room={cornerRoom} />
           {!footerInScroll && footerSlot}
         </div>
         {versionsPanelOpen && (

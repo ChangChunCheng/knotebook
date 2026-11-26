@@ -42,7 +42,7 @@ interface ScrollSnapshot {
 export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () => void }) {
   const { t } = useTranslation();
   const comments = useComments();
-  const { noteId, target, targetSeq, reportTargetMissing, open, showNewest, clearDraftAnchor } = comments;
+  const { noteId, target, targetSeq, reportTargetMissing, open, showNewest, clearDraftAnchor, readDraft, saveDraft, clearSentDraft, takeAnchorFocus } = comments;
   const id = noteId ?? "";
   const list = useCommentList(id, target, comments.enabled);
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.comments) ?? [], [list.data]);
@@ -50,7 +50,12 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
   const blockIds = useBlockIds(doc, rows.some((c) => c.anchor !== null));
   const remove = useDeleteComment(id);
 
-  const [replyTo, setReplyTo] = useState<CommentDto | null>(null);
+  const [draft] = useState(readDraft);
+  const [replyTo, setReplyTo] = useState<CommentDto | null>(draft.replyTo);
+  useEffect(() => {
+    saveDraft({ replyTo });
+  }, [replyTo, saveDraft]);
+  const saveText = useCallback((text: string) => saveDraft({ text }), [saveDraft]);
   const [editing, setEditing] = useState<CommentDto | null>(null);
   const [deleting, setDeleting] = useState<CommentDto | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -257,7 +262,18 @@ export function CommentThread({ doc, onPassage }: { doc: Y.Doc; onPassage?: () =
       )}
       {/* The new-comment composer stays mounted (only hidden) while an edit is open, so its half-written text survives the edit. */}
       <div ref={newComposerRef} hidden={editing !== null}>
-        <CommentComposer noteId={id} draftAnchor={comments.draftAnchor} onClearAnchor={clearDraftAnchor} replyTo={replyTo} editing={null} onDone={onNewDone} />
+        <CommentComposer
+          noteId={id}
+          draftAnchor={comments.draftAnchor}
+          onClearAnchor={clearDraftAnchor}
+          replyTo={replyTo}
+          editing={null}
+          onDone={onNewDone}
+          initialText={draft.text}
+          onTextChange={saveText}
+          onSent={clearSentDraft}
+          takeAnchorFocus={takeAnchorFocus}
+        />
       </div>
       {editing !== null && (
         <CommentComposer key={editing.id} noteId={id} draftAnchor={null} onClearAnchor={clearDraftAnchor} replyTo={null} editing={editing} onDone={() => setEditing(null)} onDirtyChange={onEditDirty} />

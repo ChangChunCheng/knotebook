@@ -69,3 +69,105 @@ test("78-1 a reader comments on a passage with a mention; the owner sees it live
     await b.context.close();
   }
 });
+
+test("78-2 the corner bubbles switch between the comments and the version history at every wide width; the floating panel ends above them, and an unsent comment survives", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const alice = await createAccount(browser, "alice");
+  const bob = await createAccount(browser, "bob");
+  const a = await openAs(browser, alice, { viewport: { width: 1024, height: 800 } });
+  const b = await openAs(browser, bob);
+  try {
+    const title = `E2E panel switch ${RUN}`;
+    const note = await apiCreateNote(a.page, title, "Some text to talk about.");
+    const shared = await a.page.request.put(`/api/notes/${note.id}/shares`, { data: { email: bob.email, role: "viewer" } });
+    expect(shared.status(), await shared.text()).toBe(200);
+    await openNote(a.page, note, title);
+    const page = a.page;
+    const box = (locator: Locator) => locator.boundingBox().then((b) => b!);
+
+    for (const width of [1024, 1440]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.getByTestId("comments-bubble").click();
+      const composer = commentsPanel(page).getByRole("textbox", { name: "Comment" });
+      await expect(composer).toBeFocused({ timeout: 15_000 });
+      await composer.fill(`half a thought ${width}`);
+
+      await page.getByTestId("versions-bubble").click();
+      const versions = page.getByTestId("versions-panel");
+      await expect(versions).toBeVisible();
+      await expect(commentsPanel(page)).toHaveCount(0);
+      await expect(page.getByTestId("versions-bubble")).toHaveAttribute("aria-pressed", "true");
+      // Neither the floating panel (1024) nor the third column (1440) covers the stack.
+      const stack = await box(page.getByTestId("corner-stack"));
+      const panel = await box(versions);
+      const overlaps = stack.x < panel.x + panel.width && panel.x < stack.x + stack.width && stack.y < panel.y + panel.height && panel.y < stack.y + stack.height;
+      expect(overlaps, `${width}: the panel leaves the stack uncovered`).toBe(false);
+
+      await page.getByTestId("comments-bubble").click();
+      await expect(versions).toHaveCount(0);
+      await expect(commentsPanel(page).getByRole("textbox", { name: "Comment" })).toHaveValue(`half a thought ${width}`);
+
+      // Collapsing only hides the bubbles; the panel stays.
+      await page.getByTestId("corner-toggle").click();
+      await expect(page.getByTestId("comments-bubble")).toHaveCount(0);
+      await expect(commentsPanel(page)).toBeVisible();
+      await expect(page.getByTestId("corner-toggle")).toBeFocused();
+      await page.getByTestId("corner-toggle").click();
+      await page.getByTestId("comments-bubble").click();
+      await expect(commentsPanel(page)).toHaveCount(0);
+    }
+
+    // The collapsed state is remembered across a reload, and the collapsed toggle tells of a comment someone else posted.
+    await page.getByTestId("corner-toggle").click();
+    const posted = await b.page.request.post(`/api/notes/${note.id}/comments`, { data: { body: `from bob ${RUN}` } });
+    expect(posted.status(), await posted.text()).toBe(201);
+    await page.reload();
+    const toggle = page.getByTestId("corner-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false", { timeout: 15_000 });
+    await expect(page.getByTestId("versions-bubble")).toHaveCount(0);
+    await expect(toggle).toHaveAccessibleName("Note panels, unread comments");
+    await expect(page.getByTestId("corner-unread-dot")).toBeVisible();
+    await toggle.click();
+    await expect(page.getByTestId("comments-bubble")).toHaveAccessibleName("Comments (1)");
+    await page.getByTestId("comments-bubble").click();
+    await expect(commentsPanel(page).getByTestId("comment").filter({ hasText: `from bob ${RUN}` })).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await a.context.close();
+    await b.context.close();
+  }
+});
+
+test("78-3 a short window (844x390): with a panel open only the toggle stays and the panel ends above it; pressing the toggle shows the bubbles without saving it", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const alice = await createAccount(browser, "alice");
+  const a = await openAs(browser, alice, { viewport: { width: 1024, height: 800 } });
+  try {
+    const title = `E2E short window ${RUN}`;
+    const note = await apiCreateNote(a.page, title, "Some text to talk about.");
+    await openNote(a.page, note, title);
+    const page = a.page;
+    await page.getByTestId("comments-bubble").click();
+    await expect(commentsPanel(page)).toBeVisible();
+    await page.setViewportSize({ width: 844, height: 390 });
+    const toggle = page.getByTestId("corner-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("comments-bubble")).toHaveCount(0);
+    const panel = (await commentsPanel(page).boundingBox())!;
+    const stack = (await page.getByTestId("corner-stack").boundingBox())!;
+    console.log(`MEASURE 844x390 panel ${JSON.stringify(panel)} stack ${JSON.stringify(stack)}`);
+    expect(panel.y + panel.height, "the panel ends above the toggle").toBeLessThanOrEqual(stack.y);
+    expect(await page.evaluate(() => localStorage.getItem("cornerStack.collapsed"))).toBeNull();
+
+    await toggle.click();
+    await expect(page.getByTestId("comments-bubble")).toHaveAttribute("aria-pressed", "true");
+    expect(await page.evaluate(() => localStorage.getItem("cornerStack.collapsed"))).toBeNull();
+    await toggle.click();
+    await expect(page.getByTestId("comments-bubble")).toHaveCount(0);
+
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await expect(page.getByTestId("comments-bubble")).toHaveAttribute("aria-pressed", "true");
+    await expect(commentsPanel(page)).toBeVisible();
+  } finally {
+    await a.context.close();
+  }
+});

@@ -20,6 +20,7 @@ import { AppShell, SidebarDrawerButton } from "@/components/AppShell";
 import { BackToListButton } from "@/components/BackToListButton";
 import { NoteBrowseBar } from "@/components/NoteBrowseBar";
 import { CornerStack } from "@/components/CornerStack";
+import { isCornerStackCollapsed, setCornerStackCollapsed } from "@/components/corner-stack-state";
 import { NarrowTopBar } from "@/components/NarrowTopBar";
 import { NoteMenu } from "@/components/NoteMenu";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -280,6 +281,19 @@ describe("floating sidebar (640-1279): targets", () => {
       userMenu: [hamburger],
     };
     for (const id of FULL_TOUR) expect(stopTarget(STOPS[id], ctx()), id).toEqual(expected[id]);
+  });
+
+  it("versions: a collapsed corner stack is expanded first, so the bubble the text is about is there", async () => {
+    setCornerStackCollapsed(true);
+    try {
+      await renderPage();
+      expect(screen.queryByTestId("versions-bubble")).toBeNull();
+      act(() => prepareStop(STOPS.versions, ctx()));
+      expect(isCornerStackCollapsed()).toBe(false);
+      expect(stopTarget(STOPS.versions, ctx())).toEqual([screen.getByTestId("versions-bubble")]);
+    } finally {
+      setCornerStackCollapsed(false);
+    }
   });
 
   it("body: stops that have a narrow-window text use it", () => {

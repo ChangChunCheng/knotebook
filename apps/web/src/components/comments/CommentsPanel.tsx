@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type * as Y from "yjs";
 import { PaneResizeHandle } from "@/components/PaneResizeHandle";
+import { focusCornerBubble, focusFromCorner } from "@/components/corner-stack-state";
 import { cardSurface } from "@/components/ui/card";
 import { X } from "@/components/ui/icons";
 import {
@@ -20,10 +21,10 @@ import { CommentThread } from "./CommentThread";
 export function CommentsPanel({ doc, width, onWidthChange }: { doc: Y.Doc; width: number; onWidthChange: (px: number, commit: boolean) => void }) {
   const { t } = useTranslation();
   const { close: closeComments, noteId } = useComments();
-  // As with Esc, the bubble is back once the panel is closed and takes the focus the ✕ had.
+  // As with Esc, the bubble takes the focus the ✕ had.
   const close = () => {
     closeComments();
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="comments-bubble"]')?.focus({ preventScroll: true }));
+    requestAnimationFrame(() => focusCornerBubble("comments-bubble"));
   };
   const asideRef = useRef<HTMLElement>(null);
   const [renderedWidth, setRenderedWidth] = useState(0);
@@ -34,11 +35,10 @@ export function CommentsPanel({ doc, width, onWidthChange }: { doc: Y.Doc; width
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  // The bubble that opened the panel unmounts with it, which leaves focus on the page. The panel also remounts on every note switch
-  // while it stays open: focus that is somewhere else stays there.
+  // Opened from a bubble, or from the version history panel that just unmounted (focus is then on the page). The panel also remounts on
+  // every note switch while it stays open: focus that is somewhere else stays there.
   useEffect(() => {
-    const active = document.activeElement;
-    if (active === null || active === document.body) asideRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
+    if (focusFromCorner()) asideRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
   }, []);
   // As in the version history panel: the floating segment can be narrower than the setting, and widening up to the setting must not lower it.
   const overlay = useIsOverlay();

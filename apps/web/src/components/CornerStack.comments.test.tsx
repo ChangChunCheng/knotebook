@@ -8,6 +8,7 @@ import { VersionsProvider, useVersions, useVersionsController } from "@/lib/vers
 import { stubLayoutTier } from "@/test/layout-tier";
 import { COMMENT_NOTE, createLiveSource, json, stubCommentFetch } from "@/test/comment-fixtures";
 import { CornerStack } from "./CornerStack";
+import { __resetCornerStackForTests } from "./corner-stack-state";
 import { CORNER_STACK_FOOTPRINT_PX, cornerStackFootprint } from "./corner-stack-geometry";
 
 const UNREAD = `/api/notes/${COMMENT_NOTE}/comments/unread-count`;
@@ -20,6 +21,7 @@ function Probe() {
     <div>
       <span data-testid="open">{JSON.stringify({ versions: v.panelOpen, comments: c.panelOpen })}</span>
       <button type="button" onClick={() => v.open()}>probe-open-versions</button>
+      <button type="button" onClick={() => c.open()}>probe-open-comments</button>
     </div>
   );
 }
@@ -53,6 +55,8 @@ describe("CornerStack comments bubble", () => {
   let tier: ReturnType<typeof stubLayoutTier>;
   beforeEach(async () => {
     await i18n.changeLanguage("en");
+    window.localStorage.clear();
+    __resetCornerStackForTests();
     tier = stubLayoutTier("docked");
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -61,7 +65,8 @@ describe("CornerStack comments bubble", () => {
     stubCommentFetch({ [UNREAD]: json({ count: 0 }) });
     renderStack(true);
     const stack = await screen.findByTestId("corner-stack");
-    expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble", "comments-bubble"]);
+    expect(Array.from(stack.children).map((el) => el.getAttribute("data-testid"))).toEqual(["corner-toggle", "corner-bubbles"]);
+    expect(Array.from(screen.getByTestId("corner-bubbles").children).map((el) => el.getAttribute("data-testid"))).toEqual(["versions-bubble", "comments-bubble"]);
     expect(stack).toHaveClass("flex-col-reverse");
     expect(screen.getByTestId("comments-bubble")).toHaveAttribute("aria-label", "Comments");
   });
@@ -89,14 +94,50 @@ describe("CornerStack comments bubble", () => {
     expect(screen.queryByTestId("corner-stack")).toBeNull();
   });
 
-  it("clicking opens the comments panel and the stack hides; opening version history closes the comments panel (one right-hand panel at a time)", async () => {
+  it("the bubbles switch panels both ways while one is open; the open panel's bubble is pressed and closes it", async () => {
     stubCommentFetch({ [UNREAD]: json({ count: 0 }), [READ]: json(null, 204) });
     renderStack(true);
+    const pressed = () => ({
+      versions: screen.getByTestId("versions-bubble").getAttribute("aria-pressed"),
+      comments: screen.getByTestId("comments-bubble").getAttribute("aria-pressed"),
+    });
     fireEvent.click(await screen.findByTestId("comments-bubble"));
     expect(open()).toEqual({ versions: false, comments: true });
-    expect(screen.queryByTestId("corner-stack")).toBeNull();
-    fireEvent.click(screen.getByText("probe-open-versions"));
+    expect(pressed()).toEqual({ versions: "false", comments: "true" });
+    fireEvent.click(screen.getByTestId("versions-bubble"));
     expect(open()).toEqual({ versions: true, comments: false });
+    expect(pressed()).toEqual({ versions: "true", comments: "false" });
+    fireEvent.click(screen.getByTestId("comments-bubble"));
+    expect(open()).toEqual({ versions: false, comments: true });
+    fireEvent.click(screen.getByTestId("comments-bubble"));
+    expect(open()).toEqual({ versions: false, comments: false });
+    expect(pressed()).toEqual({ versions: "false", comments: "false" });
+    fireEvent.click(screen.getByText("probe-open-versions"));
+    fireEvent.click(screen.getByTestId("versions-bubble"));
+    expect(open()).toEqual({ versions: false, comments: false });
+  });
+
+  it("collapsed with unread comments: the toggle shows a dot and its name says so; none without unread ones or when expanded", async () => {
+    stubCommentFetch({ [UNREAD]: json({ count: 2 }) });
+    renderStack(false);
+    await waitFor(() => expect(screen.getByTestId("comments-unread")).toHaveTextContent("2"));
+    const toggle = screen.getByTestId("corner-toggle");
+    expect(screen.queryByTestId("corner-unread-dot")).toBeNull();
+    expect(toggle).toHaveAttribute("aria-label", "Note panels");
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("corner-unread-dot")).toHaveAttribute("aria-hidden", "true");
+    expect(toggle).toHaveAttribute("aria-label", "Note panels, unread comments");
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("corner-unread-dot")).toBeNull();
+  });
+
+  it("collapsed without unread comments: no dot", async () => {
+    stubCommentFetch({ [UNREAD]: json({ count: 0 }) });
+    renderStack(true);
+    fireEvent.click(await screen.findByTestId("corner-toggle"));
+    await waitFor(() => expect(screen.getByTestId("corner-toggle")).toHaveAttribute("aria-expanded", "false"));
+    expect(screen.queryByTestId("corner-unread-dot")).toBeNull();
+    expect(screen.getByTestId("corner-toggle")).toHaveAttribute("aria-label", "Note panels");
   });
 
   it("geometry: the footprint grows by one bubble and the gap per extra bubble", () => {
