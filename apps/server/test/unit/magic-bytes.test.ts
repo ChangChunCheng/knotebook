@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { detectImageMimeType } from "../../src/uploads/magic-bytes.js";
+import { kindOfMime } from "@knotebook/shared";
+import { detectImageMimeType, type ImageMimeType } from "../../src/uploads/magic-bytes.js";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -66,5 +67,22 @@ describe("detectImageMimeType (magic bytes)", () => {
 
   it("JPEG first 2 bytes match but the 3rd byte is not FF -> null", () => {
     expect(detectImageMimeType(Uint8Array.from([0xff, 0xd8, 0x00, 0x00]))).toBe(null);
+  });
+});
+
+describe("accepted upload types", () => {
+  // Record<ImageMimeType, ...> makes adding an accepted type a compile error until a sample is added here.
+  const SAMPLES: Record<ImageMimeType, Uint8Array> = {
+    "image/png": PNG_BYTES,
+    "image/jpeg": JPEG_BYTES,
+    "image/gif": GIF89A_BYTES,
+    "image/webp": WEBP_BYTES,
+  };
+
+  it("every type the upload route accepts is classified as something other than \"other\" in storage usage", () => {
+    for (const [mime, bytes] of Object.entries(SAMPLES)) {
+      expect(detectImageMimeType(bytes)).toBe(mime);
+      expect(kindOfMime(mime)).not.toBe("other");
+    }
   });
 });
