@@ -46,8 +46,23 @@ const MAX_ECHOED_PREFIX_CHARS = 64;
 
 /** The prefix comes from an untrusted file and is echoed to clients that may render it: bound its length and drop invisible direction/format characters. */
 export function echoablePrefix(prefix: string | undefined): string {
-  const visible = Array.from((prefix ?? "").replace(/[\p{Cc}\p{Cf}]/gu, ""));
-  return visible.length > MAX_ECHOED_PREFIX_CHARS ? `${visible.slice(0, MAX_ECHOED_PREFIX_CHARS).join("")}…` : visible.join("");
+  let out = "";
+  let kept = 0;
+  for (const ch of prefix ?? "") {
+    if (/[\p{Cc}\p{Cf}]/u.test(ch)) continue;
+    if (kept === MAX_ECHOED_PREFIX_CHARS) return `${out}…`;
+    out += ch;
+    kept++;
+  }
+  return out;
+}
+
+/** An empty echoable prefix (all invisible characters) would read as `the prefix ""`, so the message leaves it out. */
+export function undeclaredPrefixMessage(prefix: string | undefined): string {
+  const shown = echoablePrefix(prefix);
+  return shown === ""
+    ? "SVG files must declare every namespace prefix they use."
+    : `SVG files must declare every namespace prefix they use: the prefix "${shown}" has no matching xmlns declaration.`;
 }
 
 export function uploadsRoutes(deps: UploadsRouteDeps) {
@@ -173,7 +188,7 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
           svg === "missing_xmlns"
             ? 'SVG files must declare xmlns="http://www.w3.org/2000/svg" on the root <svg> element.'
             : svg === "undeclared_prefix"
-              ? `SVG files must declare every namespace prefix they use: the prefix "${echoablePrefix(detail.prefix)}" has no matching xmlns declaration.`
+              ? undeclaredPrefixMessage(detail.prefix)
               : "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.";
         return sendError(reply, 415, "unsupported_media_type", message);
       }

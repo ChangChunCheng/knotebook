@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { kindOfMime } from "@knotebook/shared";
 import { detectImageMimeType, detectRasterImageMimeType, type ImageMimeType } from "../../src/uploads/magic-bytes.js";
 import { validateSvgXml } from "../../src/uploads/svg.js";
-import { echoablePrefix } from "../../src/routes/uploads.js";
+import { echoablePrefix, undeclaredPrefixMessage } from "../../src/routes/uploads.js";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -228,6 +228,11 @@ describe("echoablePrefix (untrusted prefix echoed in the 415 message)", () => {
     expect(huge).toBe(`${"a".repeat(64)}…`);
     expect(echoablePrefix("x\u061Cy\u202Ez\u2066w\u2069")).toBe("xyzw");
     expect(echoablePrefix("xlink")).toBe("xlink");
+  });
+
+  it("a prefix with nothing visible left falls back to wording without the prefix", () => {
+    expect(undeclaredPrefixMessage("\u200C\u061C")).toBe("SVG files must declare every namespace prefix they use.");
+    expect(undeclaredPrefixMessage("xlink")).toContain('the prefix "xlink"');
   });
 });
 

@@ -45,7 +45,7 @@ function UploadTab({ noteId, blockId }: { noteId: string; blockId: string }) {
         },
         (err: unknown) => {
           setUploading(false);
-          // Use `errors.<code>` when it resolves (e.g. file_too_large: the generic "try again" would mislead); `defaultValue` falls back to the generic text.
+          // `uploadErrorKey` picks the most specific text (e.g. file_too_large, or the SVG-specific one) because the generic "try again" would mislead; `defaultValue` falls back to it when no translation exists.
           const code = err instanceof ApiFail ? err.code : undefined;
           const key = uploadErrorKey(err, file);
           const title = key ? t(key, { defaultValue: t("note.filePanel.upload.error") }) : t("note.filePanel.upload.error");
