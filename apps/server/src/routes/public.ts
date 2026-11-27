@@ -10,7 +10,7 @@ import { noteStates, notes, uploads, users } from "../db/schema.js";
 import { preparePublicDoc } from "../notes/public-doc.js";
 import { publicLinksFor } from "../notes/public-links.js";
 import { UUID_RE } from "../notes/service.js";
-import { uploadFilePath } from "../uploads/service.js";
+import { setUploadResponseHeaders, uploadFilePath } from "../uploads/service.js";
 
 // All four routes go through the single resolvePublicNote (token and alias forms): the step order and identical 404s must exist once. The lookup must include `public_token IS NOT NULL` so unpublishing kills both forms.
 // The response never includes the token (an alias page would turn a guessable URL into an unrevocable handle). Tokens are kept out of logs by redactPublicTokens in app.ts; this file must not log request URLs.
@@ -163,10 +163,8 @@ export function publicRoutes(deps: PublicRoutesDeps) {
         return sendError(reply, 404, "not_found", "No file with that id.");
       }
 
-      reply.header("x-content-type-options", "nosniff");
       // Same as the logged-in uploads GET; blobs stay readable from browser caches after revocation (docs/known-limitations.md).
-      reply.header("cache-control", "private, max-age=31536000, immutable");
-      reply.type(row.mime);
+      setUploadResponseHeaders(reply, row.mime);
       return reply.send(createReadStream(filePath));
     }
 

@@ -21,6 +21,25 @@ export function assertUploadsDirWritable(uploadsDir: string): void {
   }
 }
 
+/**
+ * Neutralizes direct navigation to uploaded files (especially SVG): `sandbox` isolates the document
+ * in an opaque origin with scripts disabled, `default-src 'none'` blocks external fetches/frames,
+ * `style-src 'unsafe-inline'` keeps embedded `<style>` (including CSS `@keyframes`) working, and
+ * `img-src data:; font-src data:` allows inline data-URI images and `@font-face` fonts inside SVGs.
+ */
+export const UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox";
+
+/** Response headers shared by upload download endpoints. */
+export function setUploadResponseHeaders(
+  reply: { header(name: string, value: string): unknown; type(value: string): unknown },
+  mime: string,
+): void {
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("content-security-policy", UPLOAD_CSP);
+  reply.header("cache-control", "private, max-age=31536000, immutable");
+  reply.type(mime);
+}
+
 /** Shared with the DELETE-note transaction so both compute the same path. */
 export function uploadFilePath(uploadsDir: string, id: string): string {
   return path.join(uploadsDir, id);

@@ -122,7 +122,7 @@ describe("create_transfer_token flow", () => {
         "`storage_quota_exceeded` means the note's storage space has no room for this file: don't retry until space has been " +
         "freed, and then ask for a new token. A 409 `server_busy` means the server was busy and the token is used up: ask for " +
         "a new token and retry. Once the server has started reading the file, a rejection (for example 413: too large, 415: " +
-        "not a PNG, JPEG, GIF or WebP image) still uses the token up."
+        "not a PNG, JPEG, GIF, WebP or SVG image) still uses the token up."
     );
     const exp = Date.parse(p.expiresAt);
     expect(exp).toBeGreaterThanOrEqual(before + 10 * 60_000 - 5_000);

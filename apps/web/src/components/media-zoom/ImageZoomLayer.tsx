@@ -53,15 +53,29 @@ function imageUnder(node: EventTarget | null): HTMLImageElement | null | undefin
   return own ?? null;
 }
 
+function zoomSizeOf(img: HTMLImageElement): { naturalWidth: number; naturalHeight: number } {
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  const rect = img.getBoundingClientRect();
+  // A viewBox-only SVG has no intrinsic pixel size, so browsers report a small default naturalWidth (~267-300px)
+  // even when it fills the note column. Use at least the rendered size (preserving aspect ratio) so zoom doesn't shrink it.
+  if (rect.width > 0 && rect.height > 0 && (rect.width > nw || rect.height > nh)) {
+    const scale = Math.max(rect.width / nw, rect.height / nh);
+    return { naturalWidth: nw * scale, naturalHeight: nh * scale };
+  }
+  return { naturalWidth: nw, naturalHeight: nh };
+}
+
 function sourceOf(img: HTMLImageElement) {
   const caption = img.closest(".bn-block-content")?.querySelector("figcaption.bn-file-caption")?.textContent ?? "";
+  const { naturalWidth, naturalHeight } = zoomSizeOf(img);
   return {
     kind: "image" as const,
     src: img.currentSrc || img.src,
     alt: img.alt,
     caption,
-    naturalWidth: img.naturalWidth,
-    naturalHeight: img.naturalHeight,
+    naturalWidth,
+    naturalHeight,
   };
 }
 

@@ -20,7 +20,8 @@ import { spaceOfNote } from "../storage/space.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
 import { isSpaceFull, precheckDetail, quotaErrorDetail, readSpaceUsage } from "../storage/usage.js";
 import { detectImageMimeType } from "../uploads/magic-bytes.js";
-import { uploadFilePath } from "../uploads/service.js";
+import { validateSvgXml } from "../uploads/svg.js";
+import { setUploadResponseHeaders, uploadFilePath } from "../uploads/service.js";
 import { insertUploadInTx } from "../uploads/tx/insert-upload.js";
 
 export interface UploadsRouteDeps {
@@ -154,11 +155,15 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
         return sendError(reply, 413, "file_too_large", "The file is over the size limit.");
       }
 
-      // Only magic bytes are trusted, never the claimed Content-Type or extension.
+      // Only the file content is trusted, never the claimed Content-Type or extension.
       const mime = detectImageMimeType(fileBuf);
       if (mime === null) {
         drainWithCap(request);
-        return sendError(reply, 415, "unsupported_media_type", "Unsupported image format. Upload a PNG, JPEG, GIF or WebP image.");
+        const message =
+          validateSvgXml(fileBuf) === "missing_xmlns"
+            ? 'SVG files must declare xmlns="http://www.w3.org/2000/svg" on the root <svg> element.'
+            : "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.";
+        return sendError(reply, 415, "unsupported_media_type", message);
       }
 
       const id = randomUUID();
@@ -227,9 +232,7 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
         return sendError(reply, 404, "not_found", "No file with that id.");
       }
 
-      reply.header("x-content-type-options", "nosniff");
-      reply.header("cache-control", "private, max-age=31536000, immutable");
-      reply.type(row.mime);
+      setUploadResponseHeaders(reply, row.mime);
       return reply.send(createReadStream(filePath));
     });
   };
