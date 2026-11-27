@@ -246,9 +246,9 @@ export function CommentComposer({ noteId, draftAnchor, onClearAnchor, replyTo, e
         </div>
       )}
       {editing === null && draftAnchor !== null && (
-        <div data-testid="composer-anchor" className="flex items-start gap-1 rounded-md border-l-2 border-brand bg-muted px-2 py-1 text-xs">
+        <div data-testid="composer-anchor" className="flex items-start gap-1 rounded-md border border-border bg-brand-soft px-2 py-1 text-xs">
           <span className="min-w-0 flex-1 line-clamp-2">{draftAnchor.quote || t("comments.passage")}</span>
-          <button type="button" aria-label={t("comments.composer.removePassage")} onClick={onClearAnchor} className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent pointer-coarse:p-2">
+          <button type="button" aria-label={t("comments.composer.removePassage")} onClick={onClearAnchor} className="rounded-sm p-0.5 text-muted-foreground hover:bg-brand-soft-strong pointer-coarse:p-2">
             <X aria-hidden="true" className="h-3 w-3" />
           </button>
         </div>
