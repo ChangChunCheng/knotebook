@@ -518,6 +518,25 @@ describe("POST /api/notes/:id/uploads", () => {
     });
   });
 
+  it("415: SVG that uses an undeclared namespace prefix -> the message names the prefix (#389)", async () => {
+    const { app, db } = await buildTestApp();
+    const owner = await insertUser(db, { email: "owner-svg-prefix@example.com" });
+    const cookie = await cookieFor(owner.id);
+    const note = await createNote(db, owner.id);
+
+    const res = await postUpload(
+      app,
+      note.id,
+      singleFileBody(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><use xlink:href="#r"/></svg>', "utf-8"), { filename: "prefix.svg", contentType: "image/svg+xml" }),
+      { cookie },
+    );
+    expect(res.statusCode).toBe(415);
+    expect(res.json().error).toEqual({
+      code: "unsupported_media_type",
+      message: 'SVG files must declare every namespace prefix they use: the prefix "xlink" has no matching xmlns declaration.',
+    });
+  });
+
   it("201: SVG upload (including animated style and active tags kept verbatim) -> stored as image/svg+xml and served with CSP sandbox + nosniff (#389)", async () => {
     const { app, db } = await buildTestApp();
     const owner = await insertUser(db, { email: "owner-svg@example.com" });

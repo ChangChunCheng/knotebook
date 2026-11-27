@@ -20,7 +20,7 @@ import { spaceOfNote } from "../storage/space.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
 import { isSpaceFull, precheckDetail, quotaErrorDetail, readSpaceUsage } from "../storage/usage.js";
 import { detectImageMimeType } from "../uploads/magic-bytes.js";
-import { validateSvgXml } from "../uploads/svg.js";
+import { validateSvgXml, type SvgValidationDetail } from "../uploads/svg.js";
 import { setUploadResponseHeaders, uploadFilePath } from "../uploads/service.js";
 import { insertUploadInTx } from "../uploads/tx/insert-upload.js";
 
@@ -42,6 +42,29 @@ export interface UploadsRouteDeps {
  * doesn't burn the token) → atomic consumption. Any failure after consumption burns the token, including the in-transaction 409 storage_quota_exceeded (same code and shape as
  * the pre-check) and 409 server_busy (space-lock timeout/deadlock). CSRF stays exempt: Bearer isn't an ambient credential.
  */
+const MAX_ECHOED_PREFIX_CHARS = 64;
+
+/** The prefix comes from an untrusted file and is echoed to clients that may render it: bound its length and drop invisible direction/format characters. */
+export function echoablePrefix(prefix: string | undefined): string {
+  let out = "";
+  let kept = 0;
+  for (const ch of prefix ?? "") {
+    if (/[\p{Cc}\p{Cf}]/u.test(ch)) continue;
+    if (kept === MAX_ECHOED_PREFIX_CHARS) return `${out}…`;
+    out += ch;
+    kept++;
+  }
+  return out;
+}
+
+/** An empty echoable prefix (all invisible characters) would read as `the prefix ""`, so the message leaves it out. */
+export function undeclaredPrefixMessage(prefix: string | undefined): string {
+  const shown = echoablePrefix(prefix);
+  return shown === ""
+    ? "SVG files must declare every namespace prefix they use."
+    : `SVG files must declare every namespace prefix they use: the prefix "${shown}" has no matching xmlns declaration.`;
+}
+
 export function uploadsRoutes(deps: UploadsRouteDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const transferAuth = createTransferAuth({
@@ -159,10 +182,14 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
       const mime = detectImageMimeType(fileBuf);
       if (mime === null) {
         drainWithCap(request);
+        const detail: SvgValidationDetail = {};
+        const svg = validateSvgXml(fileBuf, detail);
         const message =
-          validateSvgXml(fileBuf) === "missing_xmlns"
+          svg === "missing_xmlns"
             ? 'SVG files must declare xmlns="http://www.w3.org/2000/svg" on the root <svg> element.'
-            : "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.";
+            : svg === "undeclared_prefix"
+              ? undeclaredPrefixMessage(detail.prefix)
+              : "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.";
         return sendError(reply, 415, "unsupported_media_type", message);
       }
 

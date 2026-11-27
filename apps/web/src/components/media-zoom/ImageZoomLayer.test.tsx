@@ -157,6 +157,22 @@ describe("#462 image zoom button floating layer", () => {
     );
   });
 
+  it("zoom baseline is the larger of natural and rendered size, keeping the natural aspect ratio", () => {
+    spies.push(stubRects([['[data-testid="img1"]', new DOMRect(0, 0, 400, 300)]]));
+    render(<Host zoom={zoom} />);
+    hoverImg();
+    setLoaded(img(), true, { w: 800, h: 600 });
+    fireEvent.click(zoomBtn()!);
+    expect(open.mock.calls[0]![0]).toMatchObject({ naturalWidth: 800, naturalHeight: 600 });
+    open.mockClear();
+    setLoaded(img(), true, { w: 300, h: 150 });
+    spies.push(stubRects([['[data-testid="img1"]', new DOMRect(0, 0, 600, 400)]]));
+    fireEvent.click(zoomBtn()!);
+    const source = open.mock.calls[0]![0] as { naturalWidth: number; naturalHeight: number };
+    expect(source.naturalWidth).toBeCloseTo(800);
+    expect(source.naturalHeight).toBeCloseTo(400);
+  });
+
   it("short image (height 60): the button sits above the image, outside it; height 300: inside", () => {
     const imgRect = [new DOMRect(300, 100, 400, 60)];
     spies.push(
