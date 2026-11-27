@@ -62,6 +62,7 @@ import { KnowledgeFieldsProvider } from "@/components/knowledge/fields-context";
 import { toast } from "@/components/ui/toast";
 import { cardSurface } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { preloadableLazy } from "@/lib/preloadable-lazy";
 import { exitOwnedFullscreen } from "@/present/fullscreen";
 import { LazyPresentation } from "@/present/lazy";
 import { PresentationShell, type PresentationShellStatus } from "@/present/PresentationShell";
@@ -71,8 +72,8 @@ import { exitFullscreenIfLeftPresentation, isPresentingSearch } from "@/present/
 const PreviewBanner = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.PreviewBanner })));
 const VersionPreview = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionPreview })));
 const VersionsDialogs = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionsDialogs })));
-const VersionsSheet = lazy(() => import("@/components/versions/VersionsLazy").then((m) => ({ default: m.VersionsSheet })));
-const CommentsSheet = lazy(() => import("@/components/comments/CommentsLazy").then((m) => ({ default: m.CommentsSheet })));
+const VersionsSheet = preloadableLazy(() => import("@/components/versions/VersionsLazy").then((m) => m.VersionsSheet));
+const CommentsSheet = preloadableLazy(() => import("@/components/comments/CommentsLazy").then((m) => m.CommentsSheet));
 
 const COMMENT_PARAM = "comment";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -405,6 +406,14 @@ export default function NotePage() {
     onOpen: versions.close,
   });
   closeCommentsRef.current = comments.close;
+  const sheetOpen = versions.mode === "sheet" || comments.mode === "sheet";
+  const bothPanels = versions.enabled && comments.enabled;
+  useEffect(() => {
+    if (!sheetOpen || !bothPanels) return;
+    // The sheet's switch opens the other sheet: unloaded, the note would show between the two while its chunk loads.
+    VersionsSheet.preload();
+    CommentsSheet.preload();
+  }, [sheetOpen, bothPanels]);
 
   // `?comment=<id>` (a notification's link) opens the thread at that comment; the parameter is then dropped so a reload doesn't reopen it.
   const commentParam = new URLSearchParams(location.search).get(COMMENT_PARAM);
