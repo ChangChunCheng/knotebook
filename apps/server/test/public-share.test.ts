@@ -609,14 +609,14 @@ describe("public image endpoint (GET /api/public/notes/:token/uploads/:uploadId)
     const res = await app.inject({ method: "GET", url: `/api/public/notes/${token}/uploads/${uploadId}` });
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
-    expect(res.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(res.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
     expect(res.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
     expect(res.headers["content-type"]).toBe("image/png");
 
     const svgRes = await app.inject({ method: "GET", url: `/api/public/notes/${token}/uploads/${svgRow.id}` });
     expect(svgRes.statusCode).toBe(200);
     expect(svgRes.headers["x-content-type-options"]).toBe("nosniff");
-    expect(svgRes.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(svgRes.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
     expect(svgRes.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
     expect(svgRes.headers["content-type"]).toBe("image/svg+xml");
   });
@@ -935,7 +935,7 @@ describe("public alias image endpoint (GET /api/public/notes/:handle/:slug/uploa
       const res = await app.inject({ method: "GET", url: `/api/public/notes/kim/pics/uploads/${uploadId}` });
       expect(res.statusCode).toBe(200);
       expect(res.headers["x-content-type-options"]).toBe("nosniff");
-      expect(res.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      expect(res.headers["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
       expect(res.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
       expect(res.headers["content-type"]).toBe("image/png");
       expect(res.rawPayload).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));

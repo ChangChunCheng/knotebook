@@ -25,9 +25,9 @@ describe("upload response headers (#389)", () => {
 
     setUploadResponseHeaders(reply, "image/svg+xml");
 
-    expect(UPLOAD_CSP).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(UPLOAD_CSP).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
     expect(headers.get("x-content-type-options")).toBe("nosniff");
-    expect(headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
     expect(headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(mime).toBe("image/svg+xml");
   });

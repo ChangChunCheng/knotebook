@@ -744,7 +744,7 @@ describe("#108 single response size", () => {
     const result = res.json().result as { isError?: true; content: Array<{ type: string; text?: string }> };
     expect(result.isError).toBeUndefined();
     expect(result.content[1]?.type).toBe("text");
-    console.log(`[案 11c] (vi-b) read_note_image SVG 上限 wire=${res.body.length}  餘裕 ×${(MCP_MAX_WIRE / res.body.length).toFixed(2)}`);
+    console.log(`[case 11c] (vi-b) read_note_image SVG cap wire=${res.body.length} headroom ×${(MCP_MAX_WIRE / res.body.length).toFixed(2)}`);
     expect(res.body.length).toBeLessThanOrEqual(MCP_MAX_WIRE);
     expect(res.body.length).toBeLessThanOrEqual(MCP_LIST_WIRE_BUDGET);
 

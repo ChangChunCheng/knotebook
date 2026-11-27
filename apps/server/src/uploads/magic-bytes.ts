@@ -23,7 +23,7 @@ function matchesAt(bytes: Uint8Array, signature: readonly number[], offset: numb
   return true;
 }
 
-/** Magic-byte detection for raster formats only (never accepts SVG; used by avatars and provider icons). */
+/** Magic-byte detection for raster formats only (never accepts SVG). */
 export function detectRasterImageMimeType(bytes: Uint8Array): RasterImageMimeType | null {
   if (matchesAt(bytes, PNG_SIGNATURE, 0)) return "image/png";
   if (matchesAt(bytes, JPEG_SIGNATURE, 0)) return "image/jpeg";

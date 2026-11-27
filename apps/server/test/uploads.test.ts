@@ -79,7 +79,7 @@ const MALICIOUS_SVG_BYTES = Buffer.from(
   "utf-8",
 );
 const NOT_AN_IMAGE_BYTES = Buffer.from("this is definitely not an image, just plain text bytes", "utf-8");
-const EXPECTED_UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+const EXPECTED_UPLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox";
 
 function singleFileBody(data: Buffer, opts: { filename?: string; contentType?: string; boundary?: string } = {}): Buffer {
   return buildMultipartBody(
@@ -512,7 +512,10 @@ describe("POST /api/notes/:id/uploads", () => {
       { cookie },
     );
     expect(noXmlnsSvg.statusCode).toBe(415);
-    expect(noXmlnsSvg.json().error.code).toBe("unsupported_media_type");
+    expect(noXmlnsSvg.json().error).toEqual({
+      code: "unsupported_media_type",
+      message: 'SVG files must declare xmlns="http://www.w3.org/2000/svg" on the root <svg> element.',
+    });
   });
 
   it("201: SVG upload (including animated style and active tags kept verbatim) -> stored as image/svg+xml and served with CSP sandbox + nosniff (#389)", async () => {

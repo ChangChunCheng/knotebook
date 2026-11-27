@@ -20,6 +20,7 @@ import { spaceOfNote } from "../storage/space.js";
 import { StorageQuotaExceeded } from "../storage/tx/quota.js";
 import { isSpaceFull, precheckDetail, quotaErrorDetail, readSpaceUsage } from "../storage/usage.js";
 import { detectImageMimeType } from "../uploads/magic-bytes.js";
+import { validateSvgXml } from "../uploads/svg.js";
 import { setUploadResponseHeaders, uploadFilePath } from "../uploads/service.js";
 import { insertUploadInTx } from "../uploads/tx/insert-upload.js";
 
@@ -158,7 +159,11 @@ export function uploadsRoutes(deps: UploadsRouteDeps) {
       const mime = detectImageMimeType(fileBuf);
       if (mime === null) {
         drainWithCap(request);
-        return sendError(reply, 415, "unsupported_media_type", "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.");
+        const message =
+          validateSvgXml(fileBuf) === "missing_xmlns"
+            ? 'SVG files must declare xmlns="http://www.w3.org/2000/svg" on the root <svg> element.'
+            : "Unsupported image format. Upload a PNG, JPEG, GIF, WebP or SVG image.";
+        return sendError(reply, 415, "unsupported_media_type", message);
       }
 
       const id = randomUUID();

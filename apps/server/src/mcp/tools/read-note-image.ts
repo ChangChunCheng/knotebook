@@ -77,7 +77,7 @@ export async function readNoteImage(args: { note_id: string; upload_id: string }
   }
   if (buf.length > maxBytes) return tooLarge(ctx, buf.length, row.noteId, isSvg); // DB size and the real file disagree
   const meta = { noteId: row.noteId, uploadId: row.id, mimeType: row.mime as z.infer<typeof readNoteImageOutput.mimeType>, bytes: buf.length };
-  // Most MCP clients reject `image/svg+xml` in image content blocks; return the XML source as text instead.
+  // Image content blocks are for raster formats models accept; return SVG as UTF-8 XML text instead.
   if (isSvg) {
     return toolResultWithText(meta, buf.toString("utf-8"));
   }

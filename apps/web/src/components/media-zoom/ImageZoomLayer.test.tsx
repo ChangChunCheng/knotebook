@@ -440,28 +440,35 @@ describe("#462 image zoom button floating layer", () => {
     expect(zoomBtn()).not.toBeNull();
   });
 
-  it("uploaded viewBox-only SVG image with non-zero natural dimensions shows zoom button and opens lightbox (#389)", () => {
+  it("uploaded viewBox-only SVG rendered wider than its browser fallback naturalWidth uses at least the rendered size as zoom baseline (#389)", () => {
     const html = `<div class="bn-block-outer" data-id="svg1"><div class="bn-block"><div class="bn-block-content" data-content-type="image"><div class="bn-file-block-content-wrapper">
       <div class="bn-visual-media-wrapper"><img class="bn-visual-media" src="/api/uploads/diagram-svg" alt="diagram.svg" data-testid="svg1" /></div>
       <figcaption class="bn-file-caption">Slide diagram</figcaption></div></div></div></div>`;
+    spies.push(
+      stubRects([
+        ['[data-testid="col"]', new DOMRect(0, 0, 800, 2000)],
+        ['[data-testid="svg1"]', new DOMRect(0, 0, 720, 405)],
+      ]),
+    );
     render(<Host zoom={zoom} html={html} />);
-    // Browsers synthesize positive naturalWidth/naturalHeight for a viewBox-only SVG (e.g. 16:9).
-    setLoaded(img("svg1"), true, { w: 300, h: 169 });
+    // Browsers synthesize a small fallback naturalWidth (~267x150) for a viewBox-only SVG even when it fills the column.
+    setLoaded(img("svg1"), true, { w: 267, h: 150 });
     fireEvent.pointerOver(img("svg1"), { pointerType: "mouse" });
     const button = zoomBtn();
     expect(button).not.toBeNull();
     fireEvent.click(button!);
-    expect(open).toHaveBeenCalledWith(
-      {
-        kind: "image",
-        src: expect.stringContaining("/api/uploads/diagram-svg"),
-        alt: "diagram.svg",
-        caption: "Slide diagram",
-        naturalWidth: 300,
-        naturalHeight: 169,
-      },
-      { button, media: img("svg1") },
-    );
+    expect(open).toHaveBeenCalledTimes(1);
+    const [source, origin] = open.mock.calls[0]!;
+    expect(source).toMatchObject({
+      kind: "image",
+      src: expect.stringContaining("/api/uploads/diagram-svg"),
+      alt: "diagram.svg",
+      caption: "Slide diagram",
+    });
+    expect(source.naturalWidth).toBeGreaterThanOrEqual(720);
+    expect(source.naturalHeight).toBeGreaterThanOrEqual(405);
+    expect(source.naturalWidth / source.naturalHeight).toBeCloseTo(267 / 150, 5);
+    expect(origin).toEqual({ button, media: img("svg1") });
   });
 
   it("CSS guard: during a drag-and-drop the zoom button layer takes no pointer and is hidden", () => {

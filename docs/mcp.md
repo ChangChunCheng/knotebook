@@ -591,7 +591,7 @@ The four commands call REST endpoints, so a failure there is an HTTP status with
 
 **Takes** `note_id` and `upload_id` — the id from `/api/uploads/<id>` in the note's markdown; the whole `/api/uploads/<id>` is accepted too.
 
-**Answers** for raster images (`image/png`, `image/jpeg`, `image/gif`, `image/webp`), the image itself as an MCP image content block; for SVG (`image/svg+xml`), its UTF-8 XML source as a text content block (most MCP clients don't accept `image/svg+xml` in an image block); plus `noteId` (the note the image was uploaded to), `uploadId`, `mimeType` and `bytes`.
+**Answers** for raster images (`image/png`, `image/jpeg`, `image/gif`, `image/webp`), the image itself as an MCP image content block; for SVG (`image/svg+xml`), its UTF-8 XML source as a text content block (image content blocks are for raster formats models accept); plus `noteId` (the note the image was uploaded to), `uploadId`, `mimeType` and `bytes`.
 
 - Raster images up to 5 242 880 bytes (5 MiB) come back inline as an image block; SVGs up to 102 400 bytes (100 KiB) come back inline as a UTF-8 XML text block. Anything larger answers `file_too_large` with `noteId` and `bytes`: with a token, download it with `create_transfer_token` (`purpose: "download"`) for that `noteId`; over a browser session, open it in the browser.
 - You need to be able to read `note_id` **and** the note the image was uploaded to — the same rule as fetching `/api/uploads/<id>` in the browser. An image block copied from another note shows only if you can read that note; an image with an external URL can't be read here.

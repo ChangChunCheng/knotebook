@@ -119,7 +119,7 @@ test("SVG upload: hostile SVG inert in the note, presentation, public page and w
       const res = await owner.request.get(url);
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toBe("image/svg+xml");
-      expect(res.headers()["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      expect(res.headers()["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
       expect(res.headers()["x-content-type-options"]).toBe("nosniff");
     }
 
@@ -173,7 +173,7 @@ test("SVG upload: hostile SVG inert in the note, presentation, public page and w
     await expectLoaded(publicAnim);
     await expectAnimating(publicAnim);
     const publicRes = await anon.request.get(publicHostile);
-    expect(publicRes.headers()["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    expect(publicRes.headers()["content-security-policy"]).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox");
 
     await anon.getByRole("button", { name: "Present" }).click();
     await expect(anon.locator(".reveal.ready")).toBeVisible({ timeout: 15_000 });
@@ -257,7 +257,7 @@ test("viewBox-only SVG without width/height renders at a visible default size an
     const zoomed = dialog.locator("img");
     await expect(zoomed).toBeVisible();
     const beforeZoom = (await zoomed.boundingBox())!;
-    expect(beforeZoom.width).toBeGreaterThan(0);
+    expect(beforeZoom.width).toBeGreaterThanOrEqual(box!.width - 1);
     expect(beforeZoom.height).toBeGreaterThan(0);
     await page.keyboard.press("+");
     await expect.poll(async () => (await zoomed.boundingBox())!.width).toBeGreaterThan(beforeZoom.width + 1);

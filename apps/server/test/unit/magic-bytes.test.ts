@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { kindOfMime } from "@knotebook/shared";
 import { detectImageMimeType, detectRasterImageMimeType, type ImageMimeType } from "../../src/uploads/magic-bytes.js";
+import { validateSvgXml } from "../../src/uploads/svg.js";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -155,6 +156,14 @@ describe("detectImageMimeType (SVG XML content validation, #389)", () => {
     invalidUtf8.set([0xff, 0xfe], prefix.length);
     invalidUtf8.set(suffix, prefix.length + 2);
     expect(detectImageMimeType(invalidUtf8)).toBe(null);
+  });
+
+  it("validateSvgXml distinguishes missing_xmlns on well-formed SVG from malformed XML or wrong namespaces", () => {
+    expect(validateSvgXml(enc('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'))).toBe("valid");
+    expect(validateSvgXml(enc('<svg viewBox="0 0 10 10"><rect/></svg>'))).toBe("missing_xmlns");
+    expect(validateSvgXml(enc("<s:svg><s:rect/></s:svg>"))).toBe("missing_xmlns");
+    expect(validateSvgXml(enc("<svg><rect></svg>"))).toBe("invalid");
+    expect(validateSvgXml(enc('<svg xmlns="http://www.w3.org/1999/xhtml"/>'))).toBe("invalid");
   });
 
   it("large SVG parses in linear time (no quadratic DOM cost)", () => {

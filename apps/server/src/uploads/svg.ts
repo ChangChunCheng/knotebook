@@ -33,24 +33,31 @@ function isValidXmlCodePoint(cp: number): boolean {
   );
 }
 
+export type SvgValidationResult = "valid" | "missing_xmlns" | "invalid";
+
 /** True when `bytes` is valid UTF-8 well-formed XML 1.0 whose root element is `<svg>` in the SVG namespace. */
 export function isValidSvgXml(bytes: Uint8Array): boolean {
-  if (bytes.length === 0) return false;
+  return validateSvgXml(bytes) === "valid";
+}
+
+/** Validates UTF-8 XML 1.0 well-formedness and checks for a root `<svg>` element declaring the SVG namespace. */
+export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
+  if (bytes.length === 0) return "invalid";
 
   let text: string;
   try {
     text = UTF8_DECODER.decode(bytes);
   } catch {
-    return false;
+    return "invalid";
   }
-  if (text.length === 0 || ILLEGAL_XML_CHAR_RE.test(text)) return false;
+  if (text.length === 0 || ILLEGAL_XML_CHAR_RE.test(text)) return "invalid";
 
   const len = text.length;
   let i = 0;
 
   // Fast reject for inputs that cannot possibly start with XML markup.
   const firstNonSpace = skipSpaceFrom(text, 0);
-  if (firstNonSpace >= len || text.charCodeAt(firstNonSpace) !== 0x3c /* '<' */) return false;
+  if (firstNonSpace >= len || text.charCodeAt(firstNonSpace) !== 0x3c /* '<' */) return "invalid";
 
   const declaredEntities = new Set<string>();
 
@@ -280,155 +287,135 @@ export function isValidSvgXml(bytes: Uint8Array): boolean {
     return null;
   }
 
-  // 1. Optional XML declaration at offset 0.
-  if (text.startsWith("<?xml", 0)) {
-    if (!parsePI(true)) return false;
+  function parseStartTag(collectAttrs: boolean): { tagName: string; attrs: Map<string, string> | null; selfClosing: boolean } | null {
+    // Caller verified `<` at `i`.
+    i++;
+    const tagName = readName();
+    if (tagName === null) return null;
+
+    const attrs = collectAttrs ? new Map<string, string>() : null;
+    const seenAttrs = collectAttrs ? null : new Set<string>();
+    let selfClosing = false;
+    while (true) {
+      const beforeSpace = i;
+      skipSpace();
+      if (i >= len) return null;
+      const ch = text.charCodeAt(i);
+      if (ch === 0x3e /* '>' */) {
+        i++;
+        break;
+      }
+      if (ch === 0x2f /* '/' */) {
+        if (i + 1 >= len || text.charCodeAt(i + 1) !== 0x3e /* '>' */) return null;
+        i += 2;
+        selfClosing = true;
+        break;
+      }
+      if (i === beforeSpace) return null; // whitespace required between tag and attributes
+      const attrName = readName();
+      if (attrName === null) return null;
+      if (attrs !== null) {
+        if (attrs.has(attrName)) return null;
+      } else {
+        if (seenAttrs!.has(attrName)) return null;
+        seenAttrs!.add(attrName);
+      }
+      skipSpace();
+      if (i >= len || text.charCodeAt(i) !== 0x3d /* '=' */) return null;
+      i++;
+      skipSpace();
+      const attrValue = parseAttributeValue();
+      if (attrValue === null) return null;
+      attrs?.set(attrName, attrValue);
+    }
+    return { tagName, attrs, selfClosing };
   }
 
-  // 2. Prolog: whitespace, comments, PIs, and at most one DOCTYPE.
+  if (text.startsWith("<?xml", 0)) {
+    if (!parsePI(true)) return "invalid";
+  }
+
   let sawDoctype = false;
   while (i < len) {
     skipSpace();
-    if (i >= len) return false;
-    if (text.charCodeAt(i) !== 0x3c /* '<' */) return false;
+    if (i >= len) return "invalid";
+    if (text.charCodeAt(i) !== 0x3c /* '<' */) return "invalid";
     if (text.startsWith("<!--", i)) {
-      if (!parseComment()) return false;
+      if (!parseComment()) return "invalid";
     } else if (text.startsWith("<?", i)) {
-      if (!parsePI(false)) return false;
+      if (!parsePI(false)) return "invalid";
     } else if (text.startsWith("<!DOCTYPE", i)) {
-      if (sawDoctype || !parseDoctype()) return false;
+      if (sawDoctype || !parseDoctype()) return "invalid";
       sawDoctype = true;
     } else {
       break;
     }
   }
 
-  // 3. Root element + element tree.
   const stack: string[] = [];
-  let parsedRoot = false;
+  let rootStatus: SvgValidationResult | null = null;
 
   while (i < len) {
-    if (!parsedRoot) {
-      if (text.charCodeAt(i) !== 0x3c /* '<' */) return false;
-      i++;
-      const tagName = readName();
-      if (tagName === null) return false;
-
-      const attrs = new Map<string, string>();
-      let selfClosing = false;
-      while (true) {
-        const beforeSpace = i;
-        skipSpace();
-        if (i >= len) return false;
-        const ch = text.charCodeAt(i);
-        if (ch === 0x3e /* '>' */) {
-          i++;
-          break;
-        }
-        if (ch === 0x2f /* '/' */) {
-          if (i + 1 >= len || text.charCodeAt(i + 1) !== 0x3e /* '>' */) return false;
-          i += 2;
-          selfClosing = true;
-          break;
-        }
-        if (i === beforeSpace) return false; // whitespace required between tag/attrs
-        const attrName = readName();
-        if (attrName === null || attrs.has(attrName)) return false;
-        skipSpace();
-        if (i >= len || text.charCodeAt(i) !== 0x3d /* '=' */) return false;
-        i++;
-        skipSpace();
-        const attrValue = parseAttributeValue();
-        if (attrValue === null) return false;
-        attrs.set(attrName, attrValue);
-      }
-
-      if (!isSvgRootElement(tagName, attrs)) return false;
-      parsedRoot = true;
-      if (!selfClosing) stack.push(tagName);
+    if (rootStatus === null) {
+      if (text.charCodeAt(i) !== 0x3c /* '<' */) return "invalid";
+      const root = parseStartTag(true);
+      if (root === null) return "invalid";
+      rootStatus = classifySvgRootElement(root.tagName, root.attrs!);
+      if (rootStatus === "invalid") return "invalid";
+      if (!root.selfClosing) stack.push(root.tagName);
       if (stack.length === 0) break;
       continue;
     }
 
-    // Inside root element.
     const ch = text.charCodeAt(i);
     if (ch === 0x3c /* '<' */) {
       if (text.startsWith("</", i)) {
         i += 2;
         const endName = readName();
-        if (endName === null) return false;
+        if (endName === null) return "invalid";
         skipSpace();
-        if (i >= len || text.charCodeAt(i) !== 0x3e /* '>' */) return false;
+        if (i >= len || text.charCodeAt(i) !== 0x3e /* '>' */) return "invalid";
         i++;
-        if (stack.length === 0 || stack.pop() !== endName) return false;
+        if (stack.length === 0 || stack.pop() !== endName) return "invalid";
         if (stack.length === 0) break;
       } else if (text.startsWith("<!--", i)) {
-        if (!parseComment()) return false;
+        if (!parseComment()) return "invalid";
       } else if (text.startsWith("<![CDATA[", i)) {
         i += 9;
         const end = text.indexOf("]]>", i);
-        if (end === -1) return false;
+        if (end === -1) return "invalid";
         i = end + 3;
       } else if (text.startsWith("<?", i)) {
-        if (!parsePI(false)) return false;
+        if (!parsePI(false)) return "invalid";
       } else {
-        i++;
-        const tagName = readName();
-        if (tagName === null) return false;
-        const seenAttrs = new Set<string>();
-        let selfClosing = false;
-        while (true) {
-          const beforeSpace = i;
-          skipSpace();
-          if (i >= len) return false;
-          const c = text.charCodeAt(i);
-          if (c === 0x3e /* '>' */) {
-            i++;
-            break;
-          }
-          if (c === 0x2f /* '/' */) {
-            if (i + 1 >= len || text.charCodeAt(i + 1) !== 0x3e /* '>' */) return false;
-            i += 2;
-            selfClosing = true;
-            break;
-          }
-          if (i === beforeSpace) return false;
-          const attrName = readName();
-          if (attrName === null || seenAttrs.has(attrName)) return false;
-          seenAttrs.add(attrName);
-          skipSpace();
-          if (i >= len || text.charCodeAt(i) !== 0x3d /* '=' */) return false;
-          i++;
-          skipSpace();
-          if (parseAttributeValue() === null) return false;
-        }
-        if (!selfClosing) stack.push(tagName);
+        const child = parseStartTag(false);
+        if (child === null) return "invalid";
+        if (!child.selfClosing) stack.push(child.tagName);
       }
     } else if (ch === 0x26 /* '&' */) {
-      if (!parseReference()) return false;
+      if (!parseReference()) return "invalid";
     } else if (ch === 0x5d /* ']' */ && text.startsWith("]]>", i)) {
-      return false;
+      return "invalid";
     } else {
       i++;
     }
   }
 
-  if (!parsedRoot || stack.length !== 0) return false;
+  if (rootStatus === null || stack.length !== 0) return "invalid";
 
-  // 4. Epilog: only whitespace, comments and processing instructions are allowed after root closes.
   while (i < len) {
     skipSpace();
     if (i >= len) break;
     if (text.startsWith("<!--", i)) {
-      if (!parseComment()) return false;
+      if (!parseComment()) return "invalid";
     } else if (text.startsWith("<?", i)) {
-      if (!parsePI(false)) return false;
+      if (!parsePI(false)) return "invalid";
     } else {
-      return false;
+      return "invalid";
     }
   }
 
-  return true;
+  return rootStatus;
 }
 
 function skipSpaceFrom(text: string, start: number): number {
@@ -437,18 +424,21 @@ function skipSpaceFrom(text: string, start: number): number {
   return pos;
 }
 
-function isSvgRootElement(tagName: string, attrs: ReadonlyMap<string, string>): boolean {
+function classifySvgRootElement(tagName: string, attrs: ReadonlyMap<string, string>): SvgValidationResult {
   const colon = tagName.indexOf(":");
   if (colon === -1) {
-    if (tagName !== "svg") return false;
+    if (tagName !== "svg") return "invalid";
     // Standalone `image/svg+xml` renders as a broken image without the SVG namespace;
     // DTD entity references (e.g. legacy Illustrator `xmlns="&ns_svg;"`) are not expanded and fail here too.
-    return attrs.get("xmlns") === SVG_NAMESPACE;
+    if (attrs.get("xmlns") === SVG_NAMESPACE) return "valid";
+    return attrs.has("xmlns") ? "invalid" : "missing_xmlns";
   }
   // Reject multiple colons or empty prefix/local name.
-  if (colon === 0 || tagName.indexOf(":", colon + 1) !== -1) return false;
+  if (colon === 0 || tagName.indexOf(":", colon + 1) !== -1) return "invalid";
   const prefix = tagName.slice(0, colon);
   const local = tagName.slice(colon + 1);
-  if (local !== "svg") return false;
-  return attrs.get(`xmlns:${prefix}`) === SVG_NAMESPACE;
+  if (local !== "svg") return "invalid";
+  const nsAttr = `xmlns:${prefix}`;
+  if (attrs.get(nsAttr) === SVG_NAMESPACE) return "valid";
+  return attrs.has(nsAttr) ? "invalid" : "missing_xmlns";
 }
