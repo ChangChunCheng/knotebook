@@ -33,15 +33,20 @@ function isValidXmlCodePoint(cp: number): boolean {
   );
 }
 
-export type SvgValidationResult = "valid" | "missing_xmlns" | "invalid";
+export type SvgValidationResult = "valid" | "missing_xmlns" | "undeclared_prefix" | "invalid";
 
-/** True when `bytes` is valid UTF-8 well-formed XML 1.0 whose root element is `<svg>` in the SVG namespace. */
+/** Filled with the offending prefix when `validateSvgXml` returns `"undeclared_prefix"`. */
+export interface SvgValidationDetail {
+  prefix?: string;
+}
+
+/** True when `bytes` is valid UTF-8 well-formed XML 1.0 whose root element is `<svg>` in the SVG namespace; undeclared prefixes fail too, since browsers render such files as broken images. */
 export function isValidSvgXml(bytes: Uint8Array): boolean {
   return validateSvgXml(bytes) === "valid";
 }
 
 /** Validates UTF-8 XML 1.0 well-formedness and checks for a root `<svg>` element declaring the SVG namespace. */
-export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
+export function validateSvgXml(bytes: Uint8Array, detail?: SvgValidationDetail): SvgValidationResult {
   if (bytes.length === 0) return "invalid";
 
   let text: string;
@@ -287,14 +292,13 @@ export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
     return null;
   }
 
-  function parseStartTag(collectAttrs: boolean): { tagName: string; attrs: Map<string, string> | null; selfClosing: boolean } | null {
+  function parseStartTag(): { tagName: string; attrs: Map<string, string>; selfClosing: boolean } | null {
     // Caller verified `<` at `i`.
     i++;
     const tagName = readName();
     if (tagName === null) return null;
 
-    const attrs = collectAttrs ? new Map<string, string>() : null;
-    const seenAttrs = collectAttrs ? null : new Set<string>();
+    const attrs = new Map<string, string>();
     let selfClosing = false;
     while (true) {
       const beforeSpace = i;
@@ -314,22 +318,70 @@ export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
       if (i === beforeSpace) return null; // whitespace required between tag and attributes
       const attrName = readName();
       if (attrName === null) return null;
-      if (attrs !== null) {
-        if (attrs.has(attrName)) return null;
-      } else {
-        if (seenAttrs!.has(attrName)) return null;
-        seenAttrs!.add(attrName);
-      }
+      if (attrs.has(attrName)) return null;
       skipSpace();
       if (i >= len || text.charCodeAt(i) !== 0x3d /* '=' */) return null;
       i++;
       skipSpace();
       const attrValue = parseAttributeValue();
       if (attrValue === null) return null;
-      attrs?.set(attrName, attrValue);
+      attrs.set(attrName, attrValue);
     }
     return { tagName, attrs, selfClosing };
   }
+
+  // Count of open elements that declare each prefix; a prefix is bound while its count is above zero.
+  const boundPrefixes = new Map<string, number>();
+
+  function declarePrefixes(attrs: ReadonlyMap<string, string>): string[] | null {
+    const declared: string[] = [];
+    for (const [name, value] of attrs) {
+      if (!name.startsWith("xmlns:")) continue;
+      const prefix = name.slice(6);
+      if (prefix === "" || prefix === "xmlns" || prefix.includes(":") || value === "") return null;
+      declared.push(prefix);
+      boundPrefixes.set(prefix, (boundPrefixes.get(prefix) ?? 0) + 1);
+    }
+    return declared;
+  }
+
+  function releasePrefixes(declared: readonly string[]): void {
+    for (const prefix of declared) boundPrefixes.set(prefix, boundPrefixes.get(prefix)! - 1);
+  }
+
+  // Returns the first prefix that is not bound, "" for a malformed QName, or null when every prefix is bound.
+  function findUnboundPrefix(tagName: string, attrs: ReadonlyMap<string, string>): string | null {
+    const names = [tagName];
+    for (const name of attrs.keys()) {
+      if (name !== "xmlns" && !name.startsWith("xmlns:")) names.push(name);
+    }
+    for (const name of names) {
+      const colon = name.indexOf(":");
+      if (colon === -1) continue;
+      if (colon === 0 || colon === name.length - 1 || name.indexOf(":", colon + 1) !== -1) return "";
+      const prefix = name.slice(0, colon);
+      if (prefix === "xmlns") return "";
+      if (prefix !== "xml" && !(boundPrefixes.get(prefix)! > 0)) return prefix;
+    }
+    return null;
+  }
+
+  function openElement(tag: { tagName: string; attrs: ReadonlyMap<string, string>; selfClosing: boolean }): "ok" | "invalid" | "undeclared_prefix" {
+    const declared = declarePrefixes(tag.attrs);
+    if (declared === null) return "invalid";
+    const unbound = findUnboundPrefix(tag.tagName, tag.attrs);
+    if (unbound === "") return "invalid";
+    // The missing root namespace is the more useful thing to report, so it wins over an unbound prefix.
+    if (unbound !== null && rootStatus !== "missing_xmlns") {
+      if (detail) detail.prefix = unbound;
+      return "undeclared_prefix";
+    }
+    if (tag.selfClosing) releasePrefixes(declared);
+    else frames.push(declared);
+    return "ok";
+  }
+
+  const frames: string[][] = [];
 
   if (text.startsWith("<?xml", 0)) {
     if (!parsePI(true)) return "invalid";
@@ -358,10 +410,12 @@ export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
   while (i < len) {
     if (rootStatus === null) {
       if (text.charCodeAt(i) !== 0x3c /* '<' */) return "invalid";
-      const root = parseStartTag(true);
+      const root = parseStartTag();
       if (root === null) return "invalid";
-      rootStatus = classifySvgRootElement(root.tagName, root.attrs!);
+      rootStatus = classifySvgRootElement(root.tagName, root.attrs);
       if (rootStatus === "invalid") return "invalid";
+      const rootOpen = openElement(root);
+      if (rootOpen !== "ok") return rootOpen;
       if (!root.selfClosing) stack.push(root.tagName);
       if (stack.length === 0) break;
       continue;
@@ -377,6 +431,7 @@ export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
         if (i >= len || text.charCodeAt(i) !== 0x3e /* '>' */) return "invalid";
         i++;
         if (stack.length === 0 || stack.pop() !== endName) return "invalid";
+        releasePrefixes(frames.pop()!);
         if (stack.length === 0) break;
       } else if (text.startsWith("<!--", i)) {
         if (!parseComment()) return "invalid";
@@ -388,8 +443,10 @@ export function validateSvgXml(bytes: Uint8Array): SvgValidationResult {
       } else if (text.startsWith("<?", i)) {
         if (!parsePI(false)) return "invalid";
       } else {
-        const child = parseStartTag(false);
+        const child = parseStartTag();
         if (child === null) return "invalid";
+        const childOpen = openElement(child);
+        if (childOpen !== "ok") return childOpen;
         if (!child.selfClosing) stack.push(child.tagName);
       }
     } else if (ch === 0x26 /* '&' */) {

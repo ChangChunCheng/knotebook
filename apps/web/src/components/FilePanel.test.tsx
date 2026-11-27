@@ -179,6 +179,23 @@ describe("FilePanel (image block recovery + own Upload/Embed tabs)", () => {
       expect((block!.props as Record<string, unknown>).url).toBe("");
     });
 
+    it.each([
+      ["by extension with no MIME type", new File(["x"], "logo.SVG", { type: "" })],
+      ["by MIME type", new File(["x"], "logo", { type: "image/svg+xml" })],
+    ])("an SVG refused as unsupported (%s) shows the SVG-specific text, not the generic file-type one", async (_label, svgFile) => {
+      stubFetch(vi.fn().mockResolvedValue(fakeResponse({ ok: false, status: 415, json: () => Promise.resolve({ error: { code: "unsupported_media_type", message: "nope" } }) })));
+
+      const blockId = insertBlock(editor, "image");
+      renderPanel(editor, "note-1", blockId);
+
+      fireEvent.change(screen.getByLabelText("Choose an image file to upload"), { target: { files: [svgFile] } });
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(/^This SVG can.t be used\. Check that it.s well-formed XML/);
+      });
+      expect(screen.getByRole("alert")).not.toHaveTextContent("That file type isn't supported.");
+    });
+
     it("upload rejected by quota (with numbers): two inline lines, 'Storage is full' plus a usage sentence; block untouched", async () => {
       stubFetch(vi.fn().mockResolvedValue(fakeResponse({
         ok: false, status: 409,

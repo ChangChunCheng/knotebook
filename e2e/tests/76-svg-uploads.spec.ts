@@ -245,6 +245,8 @@ test("viewBox-only SVG without width/height renders at a visible default size an
     expect(box!.width).toBeGreaterThan(0);
     expect(box!.height).toBeGreaterThan(0);
     expect(Math.abs(box!.width / box!.height - 800 / 450)).toBeLessThan(0.05);
+    // Precondition for the lightbox check below: the note renders it wider than the browser's fallback natural width.
+    expect(box!.width).toBeGreaterThan(natural.w + 1);
 
     // Lightbox zoom: hover reveals Zoom in button, clicking opens the dialog with a zoomable <img>.
     await img.hover();

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { kindOfMime } from "@knotebook/shared";
 import { detectImageMimeType, detectRasterImageMimeType, type ImageMimeType } from "../../src/uploads/magic-bytes.js";
 import { validateSvgXml } from "../../src/uploads/svg.js";
+import { echoablePrefix } from "../../src/routes/uploads.js";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 const JPEG_BYTES = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -166,11 +167,67 @@ describe("detectImageMimeType (SVG XML content validation, #389)", () => {
     expect(validateSvgXml(enc('<svg xmlns="http://www.w3.org/1999/xhtml"/>'))).toBe("invalid");
   });
 
+  describe("namespace prefix binding", () => {
+    const NS = 'xmlns="http://www.w3.org/2000/svg"';
+    const XLINK = 'xmlns:xlink="http://www.w3.org/1999/xlink"';
+    const check = (xml: string) => {
+      const detail: { prefix?: string } = {};
+      return { result: validateSvgXml(enc(xml), detail), prefix: detail.prefix };
+    };
+
+    it.each([
+      ["xlink declared on the root", `<svg ${NS} ${XLINK}><use xlink:href="#r"/></svg>`],
+      ["xlink declared on the element itself", `<svg ${NS}><use ${XLINK} xlink:href="#r"/></svg>`],
+      ["xlink declared on an ancestor", `<svg ${NS}><g ${XLINK}><g><use xlink:href="#r"/></g></g></svg>`],
+      ["prefixed element declared on its own tag", `<svg ${NS}><x:a xmlns:x="urn:x"/></svg>`],
+      ["xml:lang and xml:space need no declaration", `<svg ${NS} xml:lang="en"><text xml:space="preserve">a</text></svg>`],
+    ])("bound prefix is valid (%s)", (_label, xml) => {
+      expect(check(xml).result).toBe("valid");
+    });
+
+    it("unbound element prefix is refused and named", () => {
+      expect(check(`<svg ${NS}><x:a/></svg>`)).toEqual({ result: "undeclared_prefix", prefix: "x" });
+    });
+
+    it("unbound attribute prefix is refused and named", () => {
+      expect(check(`<svg ${NS}><use xlink:href="#r"/></svg>`)).toEqual({ result: "undeclared_prefix", prefix: "xlink" });
+      expect(check(`<svg ${NS} xlink:title="t"/>`)).toEqual({ result: "undeclared_prefix", prefix: "xlink" });
+    });
+
+    it("a prefix declared on a sibling or a closed element does not leak", () => {
+      expect(check(`<svg ${NS}><g ${XLINK}/><use xlink:href="#r"/></svg>`).result).toBe("undeclared_prefix");
+      expect(check(`<svg ${NS}><g ${XLINK}><rect/></g><use xlink:href="#r"/></svg>`).result).toBe("undeclared_prefix");
+    });
+
+    it("malformed prefixed names and declarations are invalid", () => {
+      expect(check(`<svg ${NS}><:a/></svg>`).result).toBe("invalid");
+      expect(check(`<svg ${NS}><a:/></svg>`).result).toBe("invalid");
+      expect(check(`<svg ${NS} xmlns:x=""/>`).result).toBe("invalid");
+    });
+
+    it("the reserved xmlns prefix on an element is invalid, not undeclared", () => {
+      expect(check(`<svg ${NS}><xmlns:a/></svg>`).result).toBe("invalid");
+    });
+
+    it("missing root xmlns is still reported as missing_xmlns", () => {
+      expect(check(`<svg><use xlink:href="#r"/></svg>`).result).toBe("missing_xmlns");
+    });
+  });
+
   it("large SVG parses in linear time (no quadratic DOM cost)", () => {
     const big = enc(`<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="1" height="1"/>'.repeat(50_000)}</svg>`);
     const start = performance.now();
     expect(detectImageMimeType(big)).toBe("image/svg+xml");
     expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
+describe("echoablePrefix (untrusted prefix echoed in the 415 message)", () => {
+  it("caps a huge prefix and strips bidi/format characters", () => {
+    const huge = echoablePrefix("a".repeat(5_000_000));
+    expect(huge).toBe(`${"a".repeat(64)}…`);
+    expect(echoablePrefix("x\u061Cy\u202Ez\u2066w\u2069")).toBe("xyzw");
+    expect(echoablePrefix("xlink")).toBe("xlink");
   });
 });
 
