@@ -71,7 +71,7 @@ export function CommentItem({ comment, blockIds, highlighted, onQuote, onReplySu
           ))}
         {anchor !== null &&
           (passageGone ? (
-            <p data-testid="comment-quote" data-passage-deleted="" className="rounded-md border-l-2 border-border bg-muted px-2 py-1 text-xs text-muted-foreground">
+            <p data-testid="comment-quote" data-passage-deleted="" className="rounded-md border border-dashed border-border px-2 py-1 text-xs text-muted-foreground">
               <span className="block font-medium">{t("comments.passageDeleted")}</span>
               {anchor.quote !== null && <span className="line-clamp-2 line-through">{anchor.quote}</span>}
             </p>
@@ -81,7 +81,7 @@ export function CommentItem({ comment, blockIds, highlighted, onQuote, onReplySu
               data-testid="comment-quote"
               title={t("comments.quoteJump")}
               onClick={() => onQuote(anchor.blockId)}
-              className="block w-full rounded-md border-l-2 border-brand bg-muted px-2 py-1 text-left text-xs hover:bg-accent"
+              className="block w-full rounded-md border border-border bg-brand-soft px-2 py-1 text-left text-xs hover:bg-brand-soft-strong"
             >
               <span className="line-clamp-2">{anchor.quote ?? t("comments.passage")}</span>
             </button>

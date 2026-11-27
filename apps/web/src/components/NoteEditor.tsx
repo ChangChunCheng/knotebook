@@ -1,6 +1,6 @@
 // This one import is enough: it @imports the mantine theme and `@blocknote/react` styles. `@blocknote/core/fonts/inter.css` is deliberately not imported (Latin-only woff that only grows the bundle for a CJK UI); fonts come from the app CSS.
 import "@blocknote/mantine/style.css";
-import { lazy, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import type * as Y from "yjs";
@@ -68,6 +68,7 @@ import { CommentsLazyBoundary } from "@/components/comments/CommentsLazyBoundary
 import { ViewerCommentToolbar } from "@/components/comments/ViewerCommentToolbar";
 import { useComments } from "@/lib/comments-context";
 import { useVersions } from "@/lib/versions-context";
+import { preloadableLazy } from "@/lib/preloadable-lazy";
 import { notifyEditorEditable, registerEditor } from "@/lib/tour-bridge";
 import { tourTarget } from "@/lib/tour-targets";
 import { VERSIONS_ERROR_FRAME, VersionsLazyBoundary } from "@/components/versions/VersionsLazyBoundary";
@@ -99,10 +100,8 @@ import { useOutlinePinned, usePinMotionReady } from "@/components/outline/outlin
 import { useOutlineBox } from "@/components/outline/use-outline-box";
 import { useOutlineHeadings } from "@/components/outline/use-outline-headings";
 
-const VersionsPanel = lazy(() =>
-  import("@/components/versions/VersionsLazy").then(m => ({ default: m.VersionsPanel })),
-);
-const CommentsPanel = lazy(() => import("@/components/comments/CommentsLazy").then((m) => ({ default: m.CommentsPanel })));
+const VersionsPanel = preloadableLazy(() => import("@/components/versions/VersionsLazy").then((m) => m.VersionsPanel));
+const CommentsPanel = preloadableLazy(() => import("@/components/comments/CommentsLazy").then((m) => m.CommentsPanel));
 
 export { collabUserColor };
 
@@ -409,10 +408,16 @@ export function NoteEditor({
   // While any drag runs, floating layers like ⋮⋮ must not take pointer events so the drop reaches the editor (`index.css`).
   useDragActiveClass(columnEl);
   const { resolvedTheme } = useTheme();
-  const { panelOpen: versionsPanelOpen } = useVersions();
-  const commentsPanelOpen = useComments().panelOpen;
+  const { panelOpen: versionsPanelOpen, enabled: versionsEnabled } = useVersions();
+  const { panelOpen: commentsPanelOpen, enabled: commentsEnabled } = useComments();
   // Both panels share the right-hand slot, its width setting and its floating rules; at most one is open.
   const panelOpen = versionsPanelOpen || commentsPanelOpen;
+  useEffect(() => {
+    if (!panelOpen || !versionsEnabled || !commentsEnabled) return;
+    // A bubble switches to the other panel: unloaded, the slot would stay empty while its chunk loads.
+    VersionsPanel.preload();
+    CommentsPanel.preload();
+  }, [panelOpen, versionsEnabled, commentsEnabled]);
   const corner = useCornerStackBubbles();
   const panelWidth = useVersionsPanelWidth();
   // floating panel (640-1279: the versions panel floats over the note): top edge leaves room for the header (`floating-panel.ts`)
