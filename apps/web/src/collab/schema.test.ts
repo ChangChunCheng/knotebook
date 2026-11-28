@@ -859,6 +859,31 @@ describe("#590: case-insensitive code block language matching", () => {
     }
   });
 
+  it("changing the language dropdown on a pre-existing mixed-case block writes the selected canonical id", async () => {
+    const editor = BlockNoteEditor.create({
+      schema: noteSchema,
+      initialContent: [{ type: "codeBlock", props: { language: "Python" }, content: "const x = 1;" }],
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    try {
+      editor.mount(container);
+      const select = container.querySelector<HTMLSelectElement>('[data-content-type="codeBlock"] select');
+      expect(select?.value).toBe("python");
+
+      select!.value = "typescript";
+      select!.dispatchEvent(new Event("change", { bubbles: true }));
+
+      expect((editor.document[0]!.props as { language: string }).language).toBe("typescript");
+      expect(container.querySelector<HTMLSelectElement>('[data-content-type="codeBlock"] select')?.value).toBe("typescript");
+      await waitForHighlight(container);
+      expect(container.querySelectorAll('[data-content-type="codeBlock"] .shiki').length).toBeGreaterThan(0);
+    } finally {
+      editor.unmount();
+      container.remove();
+    }
+  });
+
   it("pasteMarkdown stores canonical lowercase language ids for mixed-case fences", () => {
     const editor = BlockNoteEditor.create({
       schema: noteSchema,

@@ -47,7 +47,7 @@ Releases before 0.16 are in [`docs/changelog/`](docs/changelog/), one file per m
 
 ### Fixed
 
-- **Code block fence languages now match without regard to case everywhere** (#590). Writing, pasting, importing, or sending a fence such as ```` ```Python ````, ```` ```LaTeX ````, ```` ```TS ````, or ```` ```Mermaid ```` over MCP, the API, bulk transfer, or in-app AI used to leave supported code blocks plain in the editor with no match in the language menu, even though presentation mode colored them. Fence language names and aliases are now matched case-insensitively across all paths and stored under their canonical lowercase id; existing notes that already have mixed-case or alias language names are also highlighted and matched in the editor's language menu.
+- **Code block fence languages match without regard to case (```` ```Python ````, ```` ```TS ````, ```` ```Mermaid ````), and are stored under their lowercase id** (#590). Existing notes with mixed-case or alias language names also highlight and match the language menu.
 
 - **Typing ```` ```mermaid ```` and pressing Enter or Space now makes a diagram block** and opens its source for editing. It used to make a code block with the language `mermaid`; pasting already made a diagram.
 

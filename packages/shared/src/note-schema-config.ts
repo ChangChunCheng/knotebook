@@ -68,13 +68,6 @@ export function resolveCodeBlockLanguage(raw: string | null | undefined): string
   return key === "" ? undefined : LANGUAGE_ID_BY_LOWER.get(key);
 }
 
-/**
- * Normalizes a parsed or typed fence language name:
- * - Supported languages and aliases (any case) → canonical lowercase id (e.g. `"Python"` → `"python"`, `"TS"` → `"typescript"`).
- * - `"mermaid"` (any case) → `"mermaid"`, so typed/pasted/imported diagram paths match uniformly.
- * - Empty / whitespace-only → `undefined` (callers fall back to `defaultLanguage`).
- * - Unknown languages → trimmed raw string unchanged (preserves existing fallback behavior).
- */
 export function normalizeCodeBlockLanguage(raw: string | null | undefined): string | undefined {
   const trimmed = (raw ?? "").trim();
   if (trimmed === "") return undefined;
