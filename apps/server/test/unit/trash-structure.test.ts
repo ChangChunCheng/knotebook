@@ -161,8 +161,8 @@ const REGISTRY: Record<string, Disposition> = {
   "tags/tx/note-tags.ts": { excludes: 1 },
   // excludes: the source note of a copy (a live note, with deleted_at IS NULL); includes: the notes of a group being handed over, trashed ones too.
   "tags/tx/space-change.ts": { excludes: 1, includes: 1, why: "handing a group over maps the tags of every group note, trashed or not" },
-  // trashOnly: the two list queries, loadTrashedMeta (re-read after delete_note moves to trash), loadTrashedPurgeAt (re-read after delete_folder moves to trash).
-  "trash/list.ts": { trashOnly: 4 },
+  // trashOnly: the two list queries, loadTrashPreview, loadTrashedMeta (re-read after delete_note moves to trash), loadTrashedPurgeAt (re-read after delete_folder moves to trash).
+  "trash/list.ts": { trashOnly: 5 },
   // Pre-read of the space for restore.
   "trash/service.ts": { trashOnly: 1 },
   "uploads/tx/insert-upload.ts": { excludes: 1 },
