@@ -167,7 +167,7 @@ describe("TrashPreviewPage", () => {
     expect(screen.getByText("This link is invalid or the note doesn't exist.")).toBeInTheDocument();
   });
 
-  it("404 after loaded (e.g. restored or purged from sidebar) navigates home without an invalid-link toast", async () => {
+  it("404 after loaded (e.g. purged from sidebar) navigates home without an invalid-link toast", async () => {
     let gone = false;
     vi.stubGlobal(
       "fetch",
@@ -190,6 +190,34 @@ describe("TrashPreviewPage", () => {
     });
 
     await waitFor(() => expect(screen.getByTestId("pathname").textContent).toBe("/"));
+    expect(screen.queryByText("This link is invalid or the note doesn't exist.")).toBeNull();
+  });
+
+  it("404 after loaded when sidebar restore seeded ['note', id] navigates to the restored note's canonical URL", async () => {
+    let gone = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input) === `/api/trash/${NOTE_ID}`) {
+          return Promise.resolve(
+            gone ? fakeResponse({ error: { code: "not_found", message: "x" } }, 404) : fakeResponse(PREVIEW),
+          );
+        }
+        throw new Error(`unexpected fetch: ${String(input)}`);
+      }),
+    );
+
+    const { queryClient } = renderPage();
+    await screen.findByTestId("mock-trash-preview-editor");
+
+    gone = true;
+    await act(async () => {
+      queryClient.setQueryData(["note", NOTE_ID], RESTORED);
+      await queryClient.invalidateQueries({ queryKey: ["trash"] });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("pathname")).toHaveTextContent("/n/tester/old-draft"));
+    expect(screen.getByText("restored note view")).toBeInTheDocument();
     expect(screen.queryByText("This link is invalid or the note doesn't exist.")).toBeNull();
   });
 });

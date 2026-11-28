@@ -124,9 +124,11 @@ export function InTrashCard({ noteId, onRestored, onPurged, onNotFound, showGoTo
         <header className="flex items-center gap-2 border-b border-border px-5 py-3 sm:gap-3 max-sm:px-3 max-sm:pt-[calc(0.75rem+env(safe-area-inset-top))]">
           <BackToListButton />
           <SidebarDrawerButton />
-          <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
-            {preview.data?.title ?? t("trash.inTrashTitle")}
-          </h1>
+          {preview.data ? (
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{preview.data.title}</h1>
+          ) : (
+            <div aria-hidden="true" className="min-h-7 min-w-0 flex-1" />
+          )}
           <span className="inline-flex shrink-0 items-center rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
             {t("trash.previewReadonly")}
           </span>

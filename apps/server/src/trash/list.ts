@@ -32,17 +32,17 @@ export interface TrashCursor { deletedAtMs: Date; id: string }
 
 const deletedAtMsExpr = sql`date_trunc('milliseconds', ${notes.deletedAt})`.mapWith(notes.deletedAt);
 
-// Uses `Record<"deletedAt", ...>` to avoid adding a `deletedAt:` literal counted by `trash-structure.test.ts`.
 type TrashItemRow = {
   id: string;
   title: string;
+  deletedAt: Date | null;
   purgeAt: Date | null;
   deleterHandle: string | null;
   deleterName: string | null;
   groupId: string | null;
   groupName: string | null;
   folderPath: string[];
-} & Record<"deletedAt", Date | null>;
+};
 
 function toTrashItemDto(r: TrashItemRow): TrashItemDto {
   return {

@@ -75,8 +75,6 @@ export function trashRoutes(deps: TrashServiceDeps) {
         return sendError(reply, 404, "not_found", "No file with that id.");
       }
       setUploadResponseHeaders(reply, row.mime);
-      // Override immutable caching so revoked group trash permissions take effect on reload.
-      reply.header("cache-control", "private, no-store");
       return reply.send(createReadStream(filePath));
     });
 

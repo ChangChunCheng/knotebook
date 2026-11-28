@@ -225,7 +225,7 @@ describe("GET /api/trash/:id/uploads/:uploadId", () => {
     }
   });
 
-  it("authorized caller gets 200 with bytes, upload CSP, nosniff, and private, no-store", async () => {
+  it("authorized caller gets 200 with bytes and the same headers as GET /api/uploads/:id", async () => {
     const payload = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const dir = makeUploadsDir(UPLOAD_ID, payload);
     mockResolveTrashedNoteAccess.mockResolvedValue(true);
@@ -243,7 +243,7 @@ describe("GET /api/trash/:id/uploads/:uploadId", () => {
     expect(res.headers["content-type"]).toBe("image/png");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["content-security-policy"]).toBe(UPLOAD_CSP);
-    expect(res.headers["cache-control"]).toBe("private, no-store");
+    expect(res.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
     await app.close();
   });
 });

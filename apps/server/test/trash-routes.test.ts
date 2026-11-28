@@ -593,7 +593,8 @@ describe("trash preview uploads", () => {
     await expect204(del(app, n.id, owner.id));
     const ok = await inject(app, "GET", `/api/trash/${n.id}/uploads/${up}`, owner.id);
     expect(ok.statusCode).toBe(200);
-    expect(ok.headers["cache-control"]).toBe("private, no-store");
+    expect(ok.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(ok.headers["x-content-type-options"]).toBe("nosniff");
     expect((await inject(app, "GET", `/api/trash/${n.id}/uploads/${otherUp}`, owner.id)).statusCode).toBe(404);
     expect((await inject(app, "GET", `/api/trash/${n.id}/uploads/${up}`, friend.id)).statusCode).toBe(404);
   });

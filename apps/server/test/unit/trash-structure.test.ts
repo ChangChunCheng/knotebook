@@ -173,7 +173,7 @@ const DELETED_AT_WRITERS: Record<string, number> = {
   "db/schema.ts": 2, // column definitions deleted_at, deleted_by
   "mcp/tools/list-trash.ts": 4, // two outputSchema keys, one DTO-mapping key, one type annotation `let deletedBy:` (all reads, not writes)
   "notes/tx/trash.ts": 5, // lock-read column selection, two columns set on move-to-trash, two set on restore
-  "trash/list.ts": 3, // list column selection, two DTO-mapping columns
+  "trash/list.ts": 4, // list column selection, row type field, two DTO-mapping columns
 };
 
 /** Values are hit counts. */

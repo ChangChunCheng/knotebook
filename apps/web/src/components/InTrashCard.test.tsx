@@ -141,6 +141,14 @@ describe("InTrashCard", () => {
     vi.unstubAllGlobals();
   });
 
+  it("while loading, renders only one heading named 'This note is in the trash'", () => {
+    stubServer({ preview: "pending" });
+    renderCard();
+
+    expect(screen.getAllByRole("heading", { name: "This note is in the trash" })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+
   it("renders title, read-only badge, trash banner with retention info, preview content, and three actions", async () => {
     stubServer();
     renderCard();

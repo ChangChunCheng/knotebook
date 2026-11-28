@@ -4,11 +4,9 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
-import { NOTE_TABLE_SETTINGS } from "@/collab/editor-options";
-import { noteSchema } from "@/collab/schema";
+import { buildNoteEditorOptionsBase } from "@/collab/editor-options";
 import { MediaZoomContext } from "@/components/media-zoom/context";
 import { ARTICLE_TEXT_INSET } from "@/components/ui/article-column";
-import { blocknoteZhTW } from "@/i18n/blocknote-zh-TW";
 import { trashMediaUrl } from "@/lib/trash-media-url";
 import { ydocBytesToBlocks } from "@/lib/version-snapshot";
 import { useTheme } from "@/theme";
@@ -39,9 +37,7 @@ function ReadonlyBlocksView({ noteId, blocks }: { noteId: string; blocks: readon
   const resolveUrl = useMemo(() => trashMediaUrl(noteId), [noteId]);
   const editor = useCreateBlockNote(
     {
-      schema: noteSchema,
-      tables: NOTE_TABLE_SETTINGS,
-      dictionary: i18n.language.startsWith("zh") ? blocknoteZhTW : undefined,
+      ...buildNoteEditorOptionsBase(i18n.language),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PartialBlock generic triple (repo convention)
       initialContent: blocks as any,
       resolveFileUrl: (url: string) => Promise.resolve(resolveUrl(url)),
